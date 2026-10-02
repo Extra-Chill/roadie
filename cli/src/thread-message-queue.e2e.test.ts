@@ -449,7 +449,9 @@ e2eTest('thread message queue ordering', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'ok',
-        timeout: 10_000,
+        // A cold server bootstraps the directory instance on the first
+        // session.create (config, plugins, skills, watcher): several seconds.
+        timeout: 20_000,
       })
 
       await waitForFooterMessage({
@@ -467,7 +469,7 @@ e2eTest('thread message queue ordering', () => {
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
-    12_000,
+    30_000,
   )
 
   test(
