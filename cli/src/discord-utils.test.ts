@@ -172,26 +172,11 @@ describe('hasRoadieBotPermission', () => {
     expect(hasRoadieBotPermission(member, guild)).toBe(true)
   })
 
-  test('accepts the legacy Kimaki role name', () => {
+  test('the old Kimaki role name grants nothing', () => {
     const roleId = 'legacy-role'
     const guild = {
       ownerId: 'owner-id',
       roles: { cache: new Map([[roleId, { id: roleId, name: 'KIMAKI' }]]) },
-    } as unknown as Guild
-    const member = {
-      user: { id: 'member-id' },
-      permissions: '0',
-      roles: [roleId],
-    } as unknown as APIInteractionGuildMember
-
-    expect(hasRoadieBotPermission(member, guild)).toBe(true)
-  })
-
-  test('legacy no-kimaki role continues to block bot access', () => {
-    const roleId = 'legacy-block-role'
-    const guild = {
-      ownerId: 'owner-id',
-      roles: { cache: new Map([[roleId, { id: roleId, name: 'NO-KIMAKI' }]]) },
     } as unknown as Guild
     const member = {
       user: { id: 'member-id' },

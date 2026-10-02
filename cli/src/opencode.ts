@@ -58,7 +58,6 @@ import {
 } from './session-handler/global-event-listener.js'
 import {
   getDataDir,
-  withKimakiEnvAliases,
   getLockPort,
   getRestrictExternalDirectories,
   getOpencodeHostname,
@@ -955,14 +954,13 @@ async function startSingleServer({
       // No project-specific cwd — the server handles all directories via
       // x-opencode-directory header. Use home dir as a neutral working dir.
       cwd: os.homedir(),
-      env: withKimakiEnvAliases({
+      env: {
         ...process.env,
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         ROADIE: '1',
         // The browser is not on this machine, so no localhost callback fires.
         SUBROUTER_MANUAL_OAUTH: '1',
-        OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         OPENCODE_ENABLE_EXA: '1',
         ROADIE_DATA_DIR: getDataDir(),
         ROADIE_LOCK_PORT: getLockPort().toString(),
@@ -977,7 +975,7 @@ async function startSingleServer({
         }),
         ...vitestOpencodeEnv,
         ...(pathEnv && { [pathEnvKey]: pathEnv }),
-      }),
+      },
     },
   )
 

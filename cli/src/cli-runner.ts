@@ -66,7 +66,7 @@ import {
 } from './discord-utils.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
-import { backgroundUpgradeKimaki } from './upgrade.js'
+import { backgroundUpgradeRoadie } from './upgrade.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
@@ -1286,7 +1286,7 @@ export async function run({
 
 
   if (store.getState().autoUpgradeEnabled) {
-    void backgroundUpgradeKimaki()
+    void backgroundUpgradeRoadie()
   }
 
   // Start in-process Hrana server before database init. Required for the bot
