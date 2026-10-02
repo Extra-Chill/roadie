@@ -5,8 +5,7 @@
 //
 // Plugins are split into focused modules:
 // - ipc-tools-plugin: file upload, action buttons, and session sleep
-// - context-awareness-plugin: branch, pwd, memory reminder, onboarding tutorial
-// - memory-overview-plugin: frozen MEMORY.md heading overview per session
+// - context-awareness-plugin: branch, pwd, onboarding tutorial
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
 // - kitty-graphics-plugin: extract Kitty Graphics Protocol images from bash output
 // - file-edit-log: record edit/write/apply_patch files per session
@@ -15,7 +14,6 @@
 
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
-export { memoryOverviewPlugin } from './memory-overview-plugin.js'
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
 // LEGACY per-provider account rotation. Superseded by @subrouter/opencode
 // (registered separately in opencode.ts), which also fails over across
