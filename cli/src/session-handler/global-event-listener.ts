@@ -8,7 +8,7 @@
 // which uses a single global.event() SSE stream for all directories.
 
 import type { Event as OpenCodeEvent, GlobalEvent } from '@opencode-ai/sdk/v2'
-import { OpenCodeBackend } from '../agent-backend/opencode.js'
+import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
 
 import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -153,8 +153,8 @@ async function resolveBaseUrlGetter(): Promise<() => string | null> {
   return _getBaseUrl
 }
 
-function createGlobalClient(baseUrl: string): OpenCodeBackend {
-  return OpenCodeBackend.createGlobal({ baseUrl, headers: getOpencodeServerAuthHeaders() })
+function createGlobalClient(baseUrl: string): OpencodeClient {
+  return createOpencodeClient({ baseUrl, headers: getOpencodeServerAuthHeaders() })
 }
 
 function dispatchEvent(globalEvent: GlobalEvent): void {

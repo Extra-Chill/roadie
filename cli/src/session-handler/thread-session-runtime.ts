@@ -21,10 +21,9 @@ import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
-  getOpencodeClient,
-  initializeOpencodeForDirectory,
   buildSessionPermissions,
   parsePermissionRules,
   writeInjectionGuardConfig,
@@ -504,7 +503,7 @@ function cleanupPendingUiForThread(threadId: string): void {
     for (const [, entry] of threadPerms) {
       const ctx = pendingPermissionContexts.get(entry.contextHash)
       if (ctx) {
-        const client = getOpencodeClient(ctx.directory)
+        const client = getAgentBackendProvider().getBackend(ctx.directory)
         if (client) {
           const requestIds: string[] = ctx.requestIds.length > 0
             ? ctx.requestIds
@@ -1247,7 +1246,7 @@ export class ThreadSessionRuntime {
     channelId?: string
     appId?: string
     agentPreference?: string
-    getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+    getClient: Error | AgentBackendGetter
     variant?: string
   }) {
     if (!variant) return
@@ -2252,7 +2251,7 @@ export class ThreadSessionRuntime {
     if (this.modelContextLimit && this.modelContextLimitKey === key) {
       return
     }
-    const client = getOpencodeClient(this.sdkDirectory)
+    const client = getAgentBackendProvider().getBackend(this.sdkDirectory)
     if (!client) {
       return
     }
@@ -3991,7 +3990,7 @@ export class ThreadSessionRuntime {
     reason: string
     sessionId: string
   }): Promise<void> {
-    const client = getOpencodeClient(this.sdkDirectory)
+    const client = getAgentBackendProvider().getBackend(this.sdkDirectory)
     if (!client) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} skipped=no-client`,
@@ -4311,7 +4310,7 @@ export class ThreadSessionRuntime {
       return 'idle'
     }
     await this.hydrateSessionEventsFromDatabase({ sessionId })
-    const getClient = await initializeOpencodeForDirectory(this.sdkDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory)
     if (getClient instanceof Error) {
       logger.warn(
         `[QUEUE] OpenCode unavailable while restoring queue for ${this.threadId}: ${getClient.message}`,
@@ -5043,7 +5042,7 @@ export class ThreadSessionRuntime {
     createdNewSession,
     permissions,
   }: {
-    client: OpencodeClient
+    client: AgentBackend
     sessionId: string
     createdNewSession: boolean
     permissions?: string[]
@@ -5087,7 +5086,7 @@ export class ThreadSessionRuntime {
     | Error
     | {
         session: { id: string }
-        getClient: () => OpencodeClient
+        getClient: AgentBackendGetter
         createdNewSession: boolean
       }
   > {
@@ -5103,7 +5102,7 @@ export class ThreadSessionRuntime {
       ? workspaceInfo?.project_directory
       : undefined
 
-    const getClientResult = await initializeOpencodeForDirectory(directory, {
+    const getClientResult = await getAgentBackendProvider().initializeForDirectory(directory, {
       originalRepoDirectory,
       channelId: this.channelId,
     })
@@ -5305,7 +5304,7 @@ export class ThreadSessionRuntime {
     let contextInfo = ''
     const folderName = path.basename(this.sdkDirectory)
 
-    const client = getOpencodeClient(this.sdkDirectory)
+    const client = getAgentBackendProvider().getBackend(this.sdkDirectory)
 
     // Run git branch and token fetch in parallel (fast, no external CLI)
     const [branchResult, contextResult] = await Promise.all([

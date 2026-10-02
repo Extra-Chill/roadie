@@ -6,7 +6,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
-import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
+import type { Provider } from '@opencode-ai/sdk/v2'
+import type { AgentBackendGetter } from '../agent-backend/types.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   formatCandidateRef,
   PROVIDER_ID as SUBROUTER_PROVIDER_ID,
@@ -14,7 +16,6 @@ import {
 } from '@subrouter/cli'
 import { InvalidModelError, OpenCodeSdkError } from '../errors.js'
 import {
-  initializeOpencodeForDirectory,
   subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -256,7 +257,7 @@ export async function listModels({
   getClient,
   directory,
 }: {
-  getClient: () => OpencodeClient
+  getClient: AgentBackendGetter
   directory?: string
 }): Promise<ListedModel[] | OpenCodeSdkError> {
   const cacheKey = directory ?? ''
@@ -351,7 +352,7 @@ export async function validateModelId({
   directory,
 }: {
   model: string
-  getClient: () => OpencodeClient
+  getClient: AgentBackendGetter
   directory?: string
 }): Promise<
   { providerID: string; modelID: string } | InvalidModelError | OpenCodeSdkError
@@ -378,7 +379,7 @@ export async function validateCliModelOption({
   }
   if (!directory) return parsed
 
-  const getClient = await initializeOpencodeForDirectory(directory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(directory)
   if (getClient instanceof Error) return getClient
   return validateModelId({ model, getClient, directory })
 }
@@ -395,7 +396,7 @@ export async function getDefaultModel({
   getClient,
   directory,
 }: {
-  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  getClient: Error | AgentBackendGetter
   directory?: string
 }): Promise<
   | { providerID: string; modelID: string; source: DefaultModelSource }

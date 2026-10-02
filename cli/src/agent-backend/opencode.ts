@@ -1,23 +1,21 @@
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
-import type { AgentBackend } from './types.js'
+// OpenCode implementation of the agent backend seam.
+//
+// The OpenCode SDK client already satisfies `AgentBackend` structurally, so
+// this provider hands the runtime the exact same client objects as before.
+// Behavior is unchanged; only the import path the runtime depends on moves.
 
-/** Thin adapter preserving the OpenCode SDK call and response behavior. */
-export class OpenCodeBackend implements AgentBackend {
-  constructor(private readonly client: AgentBackend) {}
+import {
+  getOpencodeClient,
+  initializeOpencodeForDirectory,
+} from '../opencode.js'
+import type { AgentBackendProvider } from './types.js'
 
-  get session() { return this.client.session }
-  get permission() { return this.client.permission }
-  get question() { return this.client.question }
-  get provider() { return this.client.provider }
-  get config() { return this.client.config }
-  get app() { return this.client.app }
-  get global() { return this.client.global }
-
-  static fromClient(client: OpencodeClient): OpenCodeBackend {
-    return new OpenCodeBackend(client)
-  }
-
-  static createGlobal({ baseUrl, headers }: { baseUrl: string; headers: Record<string, string> }): OpenCodeBackend {
-    return OpenCodeBackend.fromClient(createOpencodeClient({ baseUrl, headers }))
-  }
+export const openCodeBackendProvider: AgentBackendProvider = {
+  id: 'opencode',
+  getBackend(directory) {
+    return getOpencodeClient(directory)
+  },
+  initializeForDirectory(directory, options) {
+    return initializeOpencodeForDirectory(directory, options)
+  },
 }
