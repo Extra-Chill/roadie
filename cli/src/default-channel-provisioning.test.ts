@@ -118,12 +118,9 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
     for (const channel of created) {
       expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        **Roadie** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
-        **What you can do:**
-        - Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
-        - Collaborate with teammates in the same session
-        - Upload images and files, the bot can share screenshots back
-        Want to build an example browser game? Respond in this thread."
+        <@100000000000000555> **Roadie** connects this server to a coding agent. Send a message in a project channel to start a session in its own thread.
+        - \`/add-project\` links a channel to a project directory
+        - Upload images and files; the agent can send files back"
       `)
     }
     expect(created.map((channel) => channel.guildId)).toEqual([trustedGuildId])

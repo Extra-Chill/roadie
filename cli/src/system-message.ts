@@ -188,36 +188,6 @@ export function isSystemPromptForSession({
   return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
 }
 
-const ROADIE_TUNNEL_INSTRUCTIONS = `
-## running dev servers with tunnel access
-
-Localhost URLs are useless from Discord. When the user should open a local dev server in a browser, wrap it in \`roadie tunnel\` to get a public URL, and run it in a named background \`tuistory\` session so you can wait for output, read logs, and stop it later. Name it descriptively (e.g. \`projectname-dev\`) so you can reuse it. Run \`bunx tuistory --help\` first. Invoke \`roadie\` directly, not via \`npx\` or \`bunx\`.
-
-- Use random tunnel IDs by default. Pass \`-t <id>\` only for services that are safe to be publicly discoverable.
-- \`roadie tunnel\` detects the local port from the child output. Pass \`--port\` only when the server prints no detectable localhost URL or port line.
-- \`roadie tunnel\` injects \`TRAFORO_URL\` into the child process. Wire the app to it so OAuth callbacks, webhook URLs, and absolute links use the public URL.
-
-\`\`\`bash
-# start in a named background session, wait for output, then read the tunnel URL
-bunx tuistory launch "roadie tunnel -- pnpm dev" -s myapp-dev
-bunx tuistory -s myapp-dev wait "/ready|local|tunnel/i" --timeout 30000
-bunx tuistory read -s myapp-dev
-
-# pass the public URL to the app (better-auth, Next.js, Vite; node can read process.env.TRAFORO_URL)
-bunx tuistory launch "roadie tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-bunx tuistory launch "roadie tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-bunx tuistory launch "roadie tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-
-# custom tunnel ID (only for intentionally public-safe services)
-bunx tuistory launch "roadie tunnel -t holocron -- pnpm dev" -s holocron-dev
-
-# list sessions; stop with Ctrl+C, then close
-bunx tuistory sessions
-bunx tuistory -s myapp-dev press ctrl c
-bunx tuistory -s myapp-dev close
-\`\`\`
-`
-
 export type WorktreeInfo = {
   /** The worktree directory path */
   worktreeDirectory: string
@@ -908,7 +878,6 @@ When pulling submodules and they jump to a new commit, commit that submodule poi
 `
     : ''
 }
-${ROADIE_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:

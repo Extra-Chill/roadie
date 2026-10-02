@@ -1,7 +1,6 @@
 // OpenCode plugin that injects synthetic message parts for context awareness:
 // - Git branch / detached HEAD changes
 // - Working directory (pwd) changes (e.g. a thread bound to another checkout)
-// - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 // - Missing roadie system prompt on session.command user messages
 //
 // Synthetic parts are hidden from the TUI but sent to the model, keeping it
@@ -28,10 +27,6 @@ import { createPluginClient } from './plugin-opencode-client.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './exec-async.js'
 import {
-  ONBOARDING_TUTORIAL_INSTRUCTIONS,
-  TUTORIAL_WELCOME_TEXT,
-} from './onboarding-tutorial.js'
-import {
   deleteSessionSystemPrompt,
   readSessionSystemPrompt,
 } from './system-message.js'
@@ -50,7 +45,6 @@ type GitState = {
 // All per-session mutable state in one place. One Map entry, one delete.
 type SessionState = {
   gitState: GitState | undefined
-  tutorialInjected: boolean
   // Last directory observed via session.get(). Refreshed on each real user
   // message so directory-change reminders compare the latest observed session
   // directory against the current request directory.
@@ -121,21 +115,6 @@ export function shouldInjectPwd({
       `that folder is a separate checkout and the user or another agent may be actively working there, ` +
       `so writing to it would override their unrelated changes.]\n`,
   }
-}
-
-export function shouldInjectTutorial({
-  alreadyInjected,
-  parts,
-}: {
-  alreadyInjected: boolean
-  parts: Array<{ type: string; text?: string }>
-}): boolean {
-  if (alreadyInjected) {
-    return false
-  }
-  return parts.some((part) => {
-    return part.type === 'text' && part.text?.includes(TUTORIAL_WELCOME_TEXT)
-  })
 }
 
 // ── Impure helpers (I/O) ─────────────────────────────────────────
@@ -253,7 +232,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
     }
     const state: SessionState = {
       gitState: undefined,
-      tutorialInjected: false,
       resolvedDirectory: undefined,
       announcedDirectory: undefined,
     }
@@ -282,26 +260,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
             if (persistedSystem) {
               output.message.system = persistedSystem
             }
-          }
-
-          // -- Onboarding tutorial injection --
-          // Runs before the non-synthetic text guard because the tutorial
-          // marker (TUTORIAL_WELCOME_TEXT) can appear in synthetic/system
-          // parts prepended by message-preprocessing.ts. The old separate
-          // plugin had no such guard, so this preserves that behavior.
-          const firstTextPart = output.parts.find((part) => {
-            return part.type === 'text'
-          })
-          if (firstTextPart && shouldInjectTutorial({ alreadyInjected: state.tutorialInjected, parts: output.parts })) {
-            state.tutorialInjected = true
-            output.parts.push({
-              id: `prt_${crypto.randomUUID()}`,
-              sessionID,
-              messageID: firstTextPart.messageID,
-              type: 'text' as const,
-              text: `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>\n`,
-              synthetic: true,
-            })
           }
 
           // -- Find first non-synthetic user text part --

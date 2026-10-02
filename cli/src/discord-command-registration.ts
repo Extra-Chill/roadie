@@ -230,11 +230,6 @@ export async function registerCommands({
       .toJSON(),
 
     new SlashCommandBuilder()
-      .setName('share')
-      .setDescription(truncateCommandDescription('Share the current session as a public URL'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Fork the session from a past user message'))
       .setDMPermission(false)
@@ -401,24 +396,6 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('mcp')
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('screenshare')
-      .setDescription(
-        truncateCommandDescription(
-          'Start screen sharing via VNC tunnel (auto-stops after 30 minutes; Stop button on reply)',
-        ),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('vscode')
-      .setDescription(
-        truncateCommandDescription(
-          'Open VS Code in the browser (auto-stops after 30 minutes; Stop button on reply)',
-        ),
-      )
       .setDMPermission(false)
       .toJSON(),
   ]
