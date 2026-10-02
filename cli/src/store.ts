@@ -62,11 +62,6 @@ export type RoadieState = {
   // Read by: database.ts (fallback in getChannelMentionMode), discord-bot.ts guard.
   defaultMentionMode: boolean
 
-  // Whether critique.work diff URL generation is enabled. When false,
-  // the system message omits critique instructions from the AI context.
-  // Changes: set once at startup from --no-critique CLI flag.
-  // Read by: system-message.ts (conditionally appends critique instructions).
-  critiqueEnabled: boolean
 
   // Whether final session footers mention the thread creator.
   // Changes: set once at startup from --enable-footer-mentions (default off).
@@ -203,7 +198,6 @@ export const store = createStore<RoadieState>(() => ({
   projectsDir: null,
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
-  critiqueEnabled: true,
   footerMentionsEnabled: false,
   enabledSkills: [],
   disabledSkills: [],

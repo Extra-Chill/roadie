@@ -74,7 +74,7 @@ cli
   )
   .option(
     '--no-critique',
-    'Disable automatic diff upload to critique.work in system prompts',
+    'Deprecated no-op: Roadie no longer includes critique.work instructions',
   )
   .option(
     '--enable-footer-mentions',
@@ -320,7 +320,6 @@ cli
             defaultVerbosity,
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
-          ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.enableFooterMentions && { footerMentionsEnabled: true }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
@@ -376,9 +375,7 @@ cli
           )
         }
         if (options.noCritique) {
-          cliLogger.log(
-            'Critique disabled: diffs will not be auto-uploaded to critique.work',
-          )
+          cliLogger.log('--no-critique is a no-op: critique support was removed')
         }
         if (options.enableFooterMentions) {
           cliLogger.log(

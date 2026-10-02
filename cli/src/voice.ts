@@ -871,9 +871,7 @@ ${prompt}
 </file_tree>
 ${sessionContextSection}
 
-REMEMBER: Call "transcriptionResult" tool with your transcription. This is mandatory.
-
-Note: "critique" is a CLI tool for showing diffs in the browser.`
+REMEMBER: Call "transcriptionResult" tool with your transcription. This is mandatory.`
 
   const agentNames = agents
     ?.map((a) => { return a.name })

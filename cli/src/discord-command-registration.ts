@@ -304,11 +304,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('diff')
-      .setDescription(truncateCommandDescription('Show git diff as a shareable URL'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Fork the session from a past user message'))
       .setDMPermission(false)

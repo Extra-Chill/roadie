@@ -808,40 +808,7 @@ describe('system-message', () => {
 
       ## submodules
 
-      When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
-
-
-      ## showing diffs
-
-      The user cannot see tool output. Share diffs as critique web URLs, never raw \`git diff\` output:
-      - After editing any files, run critique before your final message and copy the printed URL into that message as plain text or a markdown link. This applies even if the user did not ask. Skip only when the session made no file edits.
-      - When the user asks to see a diff or review changes, use critique too.
-      - Pass every file you edited as \`--filter\` so unrelated working-tree changes are excluded.
-      - The string after \`--web\` is the page title. Describe what the change does (e.g. "Add retry logic to API client").
-
-      \`\`\`bash
-      # working tree changes, only files you edited (default at end of session)
-      bunx critique --web "Fix database connection retry" --filter "src/config.ts" --filter "src/utils.ts"
-
-      # staged changes
-      bunx critique --staged --web "Describe staged changes"
-
-      # changes since base branch (on a feature branch)
-      bunx critique main --web "Describe branch changes"
-
-      # new-branch changes compared to main, or two branches
-      bunx critique main...new-branch --web "Describe branch changes"
-      bunx critique main feature-branch --web "Compare branches"
-
-      # a single commit
-      bunx critique --commit HEAD --web "Describe latest commit"
-      \`\`\`
-
-      If the changes are already committed (only commit when the user asks), show one URL per commit with \`bunx critique --commit <hash> --web\`, running the critique calls in parallel.
-
-      Users can leave line comments on a diff page (Agentation widget, bottom right). When they say they did, read them with \`curl https://critique.work/v/<id>/annotations\` (or WebFetch). It returns markdown with file, line, and comment text.
-
-      critique is open source (MIT, https://github.com/remorses/critique). Diff URLs are unique, unguessable, not indexed, and ephemeral. If the user is worried about uploading code, tell them this and that they can restart roadie with \`--no-critique\` to disable it.
+      When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise later diffs will include the noisy submodule jump along with the real changes.
 
 
       ## running dev servers with tunnel access

@@ -41,7 +41,6 @@ import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
-import { handleDiffCommand } from './commands/diff.js'
 import {
   handleForkCommand,
   handleForkSelectMenu,
@@ -368,10 +367,6 @@ export function registerInteractionHandler({
 
             case 'share':
               await handleShareCommand({ command: interaction, appId })
-              return
-
-            case 'diff':
-              await handleDiffCommand({ command: interaction, appId })
               return
 
             case 'fork':
