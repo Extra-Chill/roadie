@@ -62,7 +62,7 @@ cli
   )
   .option(
     '--enable-voice-channels',
-    'Create voice channels for projects (disabled by default)',
+    'Deprecated no-op: voice support was removed',
   )
   .option(
     '--verbosity <level>',
@@ -415,7 +415,6 @@ cli
           addChannels: options.addChannels,
           dataDir: options.dataDir,
           useWorktrees: options.useWorktrees,
-          enableVoiceChannels: options.enableVoiceChannels,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))

@@ -10,7 +10,6 @@
     "watch": "tsx scripts/watch-session.ts",
     "generate": "pnpm generate:sql",
     "generate:sql": "tsx scripts/generate-schema-sql.ts",
-    "pcm-to-mp3": "bun scripts/pcm-to-mp3",
     "test": "vitest",
     "validate-typing-indicator": "doppler run -- tsx scripts/validate-typing-indicator.ts",
     "test:send": "tsx send-test-message.ts",
@@ -57,12 +56,9 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.3.0",
-    "@discordjs/voice": "^0.19.2",
-    "@google/genai": "^1.46.0",
     "@libsql/client": "^0.17.2",
     "@opencode-ai/plugin": "^1.16.2",
     "@opencode-ai/sdk": "^1.16.2",
-    "@purinton/resampler": "^1.0.4",
     "@subrouter/cli": "workspace:^",
     "@subrouter/opencode": "workspace:^",
     "cron-parser": "^5.5.0",
@@ -79,7 +75,6 @@
     "marked": "^17.0.5",
     "mime": "^4.1.0",
     "opencode-injection-guard": "workspace:^",
-    "opusscript": "^0.0.8",
     "picocolors": "^1.1.1",
     "pretty-ms": "^9.3.0",
     "proper-lockfile": "^4.1.2",
@@ -94,7 +89,6 @@
   "optionalDependencies": {
     "@snazzah/davey": "^0.1.10",
     "heic-convert": "^2.1.0",
-    "prism-media": "^1.3.5",
     "sharp": "^0.34.5"
   }
 }

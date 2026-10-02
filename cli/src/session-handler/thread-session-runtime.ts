@@ -689,7 +689,7 @@ export type EnqueueResult = {
 
 /**
  * Result of the preprocess callback. Returns the resolved prompt, images,
- * and mode after expensive async work (voice transcription, context fetch,
+ * and mode after expensive async work (context fetch,
  * attachment download) completes.
  */
 export type PreprocessResult = {
@@ -697,11 +697,11 @@ export type PreprocessResult = {
   queuedAction?: 'btw'
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
-  /** Resolved mode based on voice transcription result. */
+  /** Resolved ingress mode (queue suffix or forced queue). */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
   skip?: boolean
-  /** Agent name extracted from voice transcription. Applied to the session if set. */
+  /** Agent requested during preprocessing. Applied to the session if set. */
   agent?: string
 }
 
@@ -802,7 +802,7 @@ export type IngressInput = {
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
    * from the raw Discord message. This replaces the threadIngressQueue in
-   * discord-bot.ts: expensive async work (voice transcription, context fetch,
+   * discord-bot.ts: expensive async work (context fetch,
    * attachment download) runs in arrival order but outside dispatchAction,
    * so SSE event handling and permission UI are not blocked.
    *
@@ -950,7 +950,7 @@ export class ThreadSessionRuntime {
   private processingAction = false
 
   // Lightweight promise chain for serializing preprocess callbacks.
-  // Runs OUTSIDE dispatchAction so heavy work (voice transcription, context
+  // Runs OUTSIDE dispatchAction so heavy work (context
   // fetch, attachment download) doesn't block SSE event handling, permission
   // UI, or queue drain. Only preprocess ordering is serialized here; the
   // resolved input is then routed through the normal enqueue paths which
@@ -2729,7 +2729,7 @@ export class ThreadSessionRuntime {
         return
       }
       // Drain any local-queue items that arrived while the session was busy
-      // (e.g. slow voice transcription with queueMessage=true completing
+      // (e.g. slow preprocessing with a forced queue completing
       // during or just before idle). Same pattern as handleSessionError.
       await this.tryDrainQueue({ showIndicator: true })
       return
@@ -3839,7 +3839,7 @@ export class ThreadSessionRuntime {
    * route the resolved input through the normal enqueue paths.
    *
    * The preprocess chain is separate from dispatchAction so heavy work
-   * (voice transcription, context fetch, attachment download) doesn't
+   * (context fetch, attachment download) doesn't
    * block SSE event handling, permission UI, or queue drain. Only the
    * preprocessing order is serialized here — the enqueue itself goes
    * through dispatchAction as usual.
@@ -3872,8 +3872,8 @@ export class ThreadSessionRuntime {
           queuedAction: result.queuedAction,
           images: result.images,
           mode: result.mode,
-          // Voice transcription can extract an agent name — apply it only if
-          // no explicit agent was already set (CLI --agent flag wins).
+          // Preprocessing may request an agent — apply it only if no
+          // explicit agent was already set (CLI --agent flag wins).
           agent: input.agent || result.agent,
           repliedMessage: result.repliedMessage,
           preprocess: undefined,

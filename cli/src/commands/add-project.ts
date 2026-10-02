@@ -64,16 +64,15 @@ export async function handleAddProjectCommand({
       return
     }
 
-    const { textChannelId, voiceChannelId, channelName } =
+    const { textChannelId, channelName } =
       await createProjectChannels({
         guild,
         projectDirectory: directory,
         botName: command.client.user?.username,
       })
 
-    const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
-      `✅ Created channels for project:\n📝 Text: <#${textChannelId}>${voiceInfo}\n📁 Directory: \`${directory}\``,
+      `✅ Created channel for project:\n📝 Text: <#${textChannelId}>\n📁 Directory: \`${directory}\``,
     )
 
     logger.log(`Created channels for project ${channelName} at ${directory}`)

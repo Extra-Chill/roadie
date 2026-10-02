@@ -32,7 +32,6 @@ export async function createNewProject({
   botName?: string
 }): Promise<{
   textChannelId: string
-  voiceChannelId: string | null
   channelName: string
   projectDirectory: string
   sanitizedName: string
@@ -73,7 +72,7 @@ export async function createNewProject({
     )
   }
 
-  const { textChannelId, voiceChannelId, channelName } =
+  const { textChannelId, channelName } =
     await createProjectChannels({
       guild,
       projectDirectory,
@@ -82,7 +81,6 @@ export async function createNewProject({
 
   return {
     textChannelId,
-    voiceChannelId,
     channelName,
     projectDirectory,
     sanitizedName,
@@ -142,7 +140,6 @@ export async function handleCreateNewProjectCommand({
 
     const {
       textChannelId,
-      voiceChannelId,
       channelName,
       projectDirectory,
       sanitizedName,
@@ -156,9 +153,8 @@ export async function handleCreateNewProjectCommand({
     }
     const textChannel = fetchedChannel
 
-    const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
-      `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>${voiceInfo}\n_Starting session..._`,
+      `✅ Created new project **${sanitizedName}**\n📁 Directory: \`${projectDirectory}\`\n📝 Text: <#${textChannelId}>\n_Starting session..._`,
     )
 
     const starterMessage = await textChannel.send({

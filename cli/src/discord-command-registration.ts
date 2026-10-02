@@ -468,13 +468,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('transcription-key')
-      .setDescription(
-        truncateCommandDescription('Set API key for voice message transcription (OpenAI or Gemini)'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('mcp')
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
       .setDMPermission(false)

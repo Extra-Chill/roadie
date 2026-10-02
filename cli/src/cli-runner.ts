@@ -889,7 +889,6 @@ type CliOptions = {
   addChannels?: boolean
   dataDir?: string
   useWorktrees?: boolean
-  enableVoiceChannels?: boolean
 }
 
 
@@ -930,20 +929,6 @@ export async function storeChannelDirectories({
           channelType: 'text',
           skipIfExists: true,
         })
-
-        const voiceChannel = guild.channels.cache.find(
-          (ch) =>
-            ch.type === ChannelType.GuildVoice && ch.name === channel.name,
-        )
-
-        if (voiceChannel) {
-          await setChannelDirectory({
-            channelId: voiceChannel.id,
-            directory: channel.roadieDirectory,
-            channelType: 'voice',
-            skipIfExists: true,
-          })
-        }
       }
     }
   }
@@ -1261,7 +1246,6 @@ export async function run({
   restartOnboarding,
   addChannels,
   useWorktrees,
-  enableVoiceChannels,
 }: CliOptions) {
   startCaffeinate()
 
@@ -1668,7 +1652,6 @@ export async function run({
               guild: targetGuild,
               projectDirectory: project.worktree,
               botName: discordClient.user?.username,
-              enableVoiceChannels,
             })
 
             createdChannels.push({

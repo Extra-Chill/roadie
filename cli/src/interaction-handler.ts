@@ -67,11 +67,6 @@ import {
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
-  handleTranscriptionApiKeyButton,
-  handleTranscriptionApiKeyCommand,
-  handleTranscriptionApiKeyModalSubmit,
-} from './commands/gemini-apikey.js'
-import {
   handleAgentCommand,
   handleAgentSelectMenu,
   handleQuickAgentCommand,
@@ -463,20 +458,6 @@ export function registerInteractionHandler({
               })
               return
 
-            case 'transcription-key':
-              if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
-                await interaction.reply({
-                  content: `Only server admins or users with the **Roadie** role can configure API keys.`,
-                  flags: MessageFlags.Ephemeral,
-                })
-                return
-              }
-              await handleTranscriptionApiKeyCommand({
-                interaction,
-                appId,
-              })
-              return
-
             case 'mcp':
               await handleMcpCommand({ command: interaction, appId })
               return
@@ -521,18 +502,6 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
-
-          if (customId.startsWith('transcription_apikey:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure API keys.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleTranscriptionApiKeyButton(interaction)
-            return
-          }
 
           if (
             customId.startsWith('permission_once:') ||
@@ -731,18 +700,6 @@ export function registerInteractionHandler({
               return
             }
             await handleOAuthCodeModalSubmit(interaction)
-            return
-          }
-
-          if (customId.startsWith('transcription_apikey_modal:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleTranscriptionApiKeyModalSubmit(interaction)
             return
           }
 

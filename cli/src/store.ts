@@ -18,22 +18,6 @@ export type RegisteredUserCommand = {
   source?: 'command' | 'mcp' | 'skill'
 }
 
-// Deterministic transcription config for e2e tests.
-// When set, processVoiceAttachment() skips the real AI model call and
-// returns this canned result after sleeping for delayMs. This lets tests
-// control transcription output, timing, and queue behavior deterministically.
-export type DeterministicTranscriptionConfig = {
-  transcription: string
-  queueMessage: boolean
-  sessionAction?: 'btw' | 'new-session'
-  /** Exercise the production API-key prompt before returning the canned result. */
-  requireApiKey?: boolean
-  /** Agent name extracted from voice message. Only set if user explicitly requested an agent. */
-  agent?: string
-  /** Artificial delay before returning the result (ms). Default 0. */
-  delayMs?: number
-}
-
 export type RoadieState = {
   // ── Config state (set once at CLI startup, read everywhere) ──────────
 
@@ -181,16 +165,6 @@ export type RoadieState = {
   // Read by: runtime state helpers (isRunActive, canDispatchNext), session
   // orchestration in ThreadSessionRuntime, /abort and /queue via runtime APIs.
   threads: Map<string, ThreadRunState>
-
-  // ── Test-only state ─────────────────────────────────────────────────
-  test: {
-    // When set, processVoiceAttachment() skips the real AI transcription
-    // call and returns this canned result after sleeping delayMs.
-    // Lets e2e tests control transcription output and timing.
-    // Changes: set/cleared by e2e test setup/teardown only.
-    // Read by: voice-handler.ts processVoiceAttachment().
-    deterministicTranscription: DeterministicTranscriptionConfig | null
-  }
 }
 
 export const store = createStore<RoadieState>(() => ({
@@ -214,5 +188,4 @@ export const store = createStore<RoadieState>(() => ({
   gatewayToken: null,
   registeredUserCommands: [],
   threads: new Map(),
-  test: { deterministicTranscription: null },
 }))

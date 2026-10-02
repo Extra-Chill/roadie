@@ -160,26 +160,16 @@ export function ensureRoadieCategory(guild: Guild, botName?: string) {
   })
 }
 
-export function ensureRoadieAudioCategory(guild: Guild, botName?: string) {
-  return ensureCategorySerialized({
-    key: `${guild.id}:audio`,
-    run: () => resolveRoadieCategory({ guild, kind: 'audio', botName }),
-  })
-}
-
 export async function createProjectChannels({
   guild,
   projectDirectory,
   botName,
-  enableVoiceChannels = false,
 }: {
   guild: Guild
   projectDirectory: string
   botName?: string
-  enableVoiceChannels?: boolean
 }): Promise<{
   textChannelId: string
-  voiceChannelId: string | null
   channelName: string
 }> {
   const baseName = path.basename(projectDirectory)
@@ -204,30 +194,8 @@ export async function createProjectChannels({
     guildId: guild.id,
   })
 
-  let voiceChannelId: string | null = null
-
-  if (enableVoiceChannels) {
-    const roadieAudioCategory = await ensureRoadieAudioCategory(guild, botName)
-
-    const voiceChannel = await guild.channels.create({
-      name: channelName,
-      type: ChannelType.GuildVoice,
-      parent: roadieAudioCategory,
-    })
-
-    await setChannelDirectory({
-      channelId: voiceChannel.id,
-      directory: projectDirectory,
-      channelType: 'voice',
-      guildId: guild.id,
-    })
-
-    voiceChannelId = voiceChannel.id
-  }
-
   return {
     textChannelId: textChannel.id,
-    voiceChannelId,
     channelName,
   }
 }

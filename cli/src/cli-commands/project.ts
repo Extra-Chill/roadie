@@ -111,7 +111,7 @@ cli
 
       const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
 
-      const { textChannelId, voiceChannelId, channelName } =
+      const { textChannelId, channelName } =
         await createProjectChannels({
           guild,
           projectDirectory: absolutePath,
@@ -120,14 +120,14 @@ cli
 
       void client.destroy()
 
-      if (textChannelId || voiceChannelId) {
+      if (textChannelId) {
         cliLogger.log('Channels created!')
       }
 
       const channelUrl = `https://discord.com/channels/${guild.id}/${textChannelId}`
 
       note(
-        `Created channels for project:\n\n📝 Text: #${channelName}\n🔊 Voice: #${channelName}\n📁 Directory: ${absolutePath}\n\nURL: ${channelUrl}`,
+        `Created channel for project:\n\n📝 Text: #${channelName}\n📁 Directory: ${absolutePath}\n\nURL: ${channelUrl}`,
         '✅ Success',
       )
 

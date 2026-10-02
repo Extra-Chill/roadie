@@ -3,25 +3,18 @@
 // The user's message must appear as a real user message in the thread, not
 // get consumed as a tool result answer (which lost voice/image content).
 
-import { describe, test, expect, afterEach } from 'vitest'
+import { describe, test, expect } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import {
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
 } from './test-utils.js'
-import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
-
-function setDeterministicTranscription(config: DeterministicTranscriptionConfig | null) {
-  store.setState({
-    test: { deterministicTranscription: config },
-  })
-}
 
 type SessionMessage = { info: Message; parts: Part[] }
 
@@ -127,10 +120,6 @@ describe('queue advanced: question tool answer', () => {
     username: 'queue-question-tester',
   })
 
-  afterEach(() => {
-    setDeterministicTranscription(null)
-  })
-
   test('user text message dismisses pending question and enqueues as normal prompt', async () => {
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
       content: 'QUESTION_TEXT_ANSWER_MARKER',
@@ -198,125 +187,5 @@ describe('queue advanced: question tool answer', () => {
     expect(timeline).toContain('Which option do you prefer?')
     // The user's marker message triggered the question
     expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
-  }, 20_000)
-
-  test('voice message during pending question dismisses question and transcribes normally', async () => {
-    // This is the exact bug scenario: user sends a voice message while a
-    // question dropdown is pending. Voice messages have empty message.content
-    // (audio is in attachments, transcription happens later). The old code
-    // passed "" as the question answer and consumed the message — the voice
-    // content was completely lost.
-    const marker = 'QUESTION_TEXT_ANSWER_MARKER voice'
-    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-      content: marker,
-    })
-
-    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-      timeout: 8_000,
-      predicate: (t) => {
-        return t.name === marker
-      },
-    })
-
-    const th = ctx.discord.thread(thread.id)
-
-    // Wait for the question dropdown message to appear in Discord
-    await waitForBotMessageContaining({
-      discord: ctx.discord,
-      threadId: thread.id,
-      text: 'Which option do you prefer?',
-      timeout: 12_000,
-    })
-
-    // Send a voice message while the question is pending.
-    // Reproduction: Discord voice messages can still carry non-empty
-    // message.content. The bug consumed that raw text before transcription,
-    // so the session never received the spoken content.
-    setDeterministicTranscription({
-      transcription: 'I want option Alpha please',
-      queueMessage: false,
-    })
-
-    await th.user(TEST_USER_ID).sendVoiceMessage({
-      content: 'VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL',
-    })
-
-    // Voice content should be transcribed and appear as the next user message,
-    // processed after the model responds to the empty question answer.
-    await waitForBotMessageContaining({
-      discord: ctx.discord,
-      threadId: thread.id,
-      text: 'I want option Alpha please',
-      timeout: 8_000,
-    })
-
-    await waitForFooterMessage({
-      discord: ctx.discord,
-      threadId: thread.id,
-      timeout: 8_000,
-      afterMessageIncludes: 'I want option Alpha please',
-      afterAuthorId: ctx.discord.botUserId,
-    })
-
-    const sessionId = await getThreadSession(thread.id)
-    expect(sessionId).toBeTruthy()
-
-    const sessionMessages = await waitForSessionMessages({
-      projectDirectory: ctx.directories.projectDirectory,
-      sessionId: sessionId!,
-      timeoutMs: 8_000,
-      predicate: (messages) => {
-        const timeline = getSessionRoleTextTimeline(messages)
-        return timeline.some((entry) => {
-          return entry.text.includes('I want option Alpha please')
-        })
-      },
-    })
-
-    const sessionTimeline = getSessionRoleTextTimeline(sessionMessages)
-    const sessionSummary = getSessionMessageSummary(sessionMessages)
-
-    const latestUserText = sessionTimeline
-      .filter((entry) => {
-        return entry.role === 'user'
-      })
-      .at(-1)?.text
-    const assistantTexts = sessionTimeline.flatMap((entry) => {
-      if (entry.role === 'assistant') {
-        return [entry.text]
-      }
-      return []
-    })
-
-    expect(latestUserText).toContain('I want option Alpha please')
-    expect(latestUserText).not.toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
-    expect(assistantTexts).toContain('ok')
-    expect(
-      sessionSummary.some((message) => {
-        return message.role === 'user'
-          && message.parts.some((part) => {
-            return part.type === 'text' && part.text.includes('I want option Alpha please')
-          })
-      }),
-    ).toBe(true)
-    expect(
-      sessionSummary.some((message) => {
-        return message.role === 'assistant'
-          && message.parts.some((part) => {
-            return part.type === 'text' && part.text === 'ok'
-          })
-      }),
-    ).toBe(true)
-
-    const timeline = await th.text({ showInteractions: true })
-    expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
-    expect(timeline).toContain('Which option do you prefer?')
-    expect(timeline).toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
-    expect(timeline).toContain('🎤 Transcribing voice message...')
-    expect(timeline).toContain('📝 **Transcribed message:** I want option Alpha please')
-    expect(timeline).toContain('ok')
-
-    // Voice content must be present as a real transcribed message, not lost
-    expect(timeline).toContain('I want option Alpha please')
   }, 20_000)
 })
