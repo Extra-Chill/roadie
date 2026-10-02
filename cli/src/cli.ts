@@ -27,6 +27,7 @@ import sessionCommands from './cli-commands/session.js'
 import taskCommands from './cli-commands/task.js'
 import threadCommands from './cli-commands/thread.js'
 import userCommands from './cli-commands/user.js'
+import { isIdentityHookConfigured, setIdentityHookCommand } from './identity.js'
 import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
@@ -86,6 +87,10 @@ cli
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Roadie role or admin permissions (no-roadie role still blocks)',
+  )
+  .option(
+    '--identity-hook <command>',
+    'Command that maps a chat user to a person and their capabilities (JSON on stdin/stdout). Replaces role checks. Also ROADIE_IDENTITY_HOOK',
   )
   .option(
     '--restrict-directories',
@@ -161,6 +166,7 @@ cli
       noCritique?: boolean
       enableFooterMentions?: boolean
       allowAllUsers?: boolean
+      identityHook?: string
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
@@ -339,6 +345,14 @@ cli
           )
         }
 
+        if (options.identityHook) {
+          setIdentityHookCommand(options.identityHook)
+        }
+        if (isIdentityHookConfigured()) {
+          cliLogger.log(
+            'Identity hook enabled: access and capabilities come from the hook, not Discord roles',
+          )
+        }
         if (options.allowAllUsers) {
           cliLogger.log(
             'Allow all users: any Discord member can start sessions (no-roadie role still blocks)',

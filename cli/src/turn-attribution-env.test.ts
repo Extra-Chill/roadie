@@ -130,6 +130,25 @@ describe('session turn attribution', () => {
     })
   })
 
+  test('stores the person id with the actor, and clears it with the actor', async () => {
+    const sessionId = id('ses')
+    await setSessionTurnAttribution({
+      sessionId,
+      threadId: 'thread-p',
+      actor: { platform: 'discord', id: 'user-38', via: 'chat' },
+      personId: 'wp:38',
+    })
+    const recorded = await getSessionTurnAttribution(sessionId)
+    expect(recorded?.personId).toBe('wp:38')
+    const env: Record<string, string> = {}
+    applyTurnAttributionEnv({ env, attribution: recorded })
+    expect(env.ROADIE_PERSON_ID).toBe('wp:38')
+    expect(env.KIMAKI_PERSON_ID).toBe('wp:38')
+
+    await setSessionTurnAttribution({ sessionId, threadId: 'thread-p', personId: 'wp:38' })
+    expect((await getSessionTurnAttribution(sessionId))?.personId).toBeUndefined()
+  })
+
   test('falls back to the thread binding when no turn has been recorded', async () => {
     const sessionId = id('ses')
     const threadId = id('thread')

@@ -13,6 +13,7 @@
 //   ROADIE_ACTOR_NAME      display name, for display only
 //   ROADIE_ACTOR_VIA       "chat" = authenticated by the chat platform;
 //                          "cli" = asserted by a local `roadie send --user`
+//   ROADIE_PERSON_ID       opaque host person id from the identity hook
 // Each is also exported under its KIMAKI_* name for existing consumers.
 //
 // Attribution only. The actor is not authority: hosts that grant permissions
@@ -31,6 +32,7 @@ export const TURN_ATTRIBUTION_ENV_NAMES = [
   'ACTOR_ID',
   'ACTOR_NAME',
   'ACTOR_VIA',
+  'PERSON_ID',
 ] as const
 
 /**
@@ -58,6 +60,7 @@ export function applyTurnAttributionEnv({
     ACTOR_ID: attribution.actor?.id,
     ACTOR_NAME: attribution.actor?.name,
     ACTOR_VIA: attribution.actor?.via,
+    PERSON_ID: attribution.personId,
   }
   for (const [name, value] of Object.entries(values)) {
     if (!value) continue

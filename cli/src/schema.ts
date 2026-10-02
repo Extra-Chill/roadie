@@ -158,6 +158,8 @@ export const session_actors = sqliteCore.sqliteTable('session_actors', {
   // How the actor was established: 'chat' = the platform authenticated the
   // message author; 'cli' = asserted by a local `roadie send --user` caller.
   actor_via: sqliteCore.text('actor_via', { enum: ['chat', 'cli'] }),
+  // Opaque host person id from the identity hook, when one is configured.
+  person_id: sqliteCore.text('person_id'),
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
