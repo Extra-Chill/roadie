@@ -1,0 +1,12 @@
+{
+  "auto_cleanup": false,
+  "changelog_target": "cli/CHANGELOG.md",
+  "id": "roadie",
+  "remote_path": "",
+  "version_targets": [
+    {
+      "file": "cli/package.json",
+      "pattern": "\"version\": \"([0-9.]+)\""
+    }
+  ]
+}
