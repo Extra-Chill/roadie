@@ -30,11 +30,6 @@ export class OpencodeIncompatibleVersionError extends errore.createTaggedError({
     'Roadie is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
 }) {}
 
-export class ApiKeyMissingError extends errore.createTaggedError({
-  name: 'ApiKeyMissingError',
-  message: '$service API key is required',
-}) {}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ABORT ERRORS - Session cancellation with typed reasons
 // ═══════════════════════════════════════════════════════════════════════════
@@ -65,26 +60,6 @@ export class MessagesNotFoundError extends errore.createTaggedError({
   message: 'No messages found for session $sessionId',
 }) {}
 
-export class TranscriptionError extends errore.createTaggedError({
-  name: 'TranscriptionError',
-  message: 'Transcription failed: $reason',
-}) {}
-
-export class TranscriptionApiError extends errore.createTaggedError({
-  name: 'TranscriptionApiError',
-  message: 'Transcription API returned HTTP $status: $body',
-}) {}
-
-export class TranscriptionBlockedError extends errore.createTaggedError({
-  name: 'TranscriptionBlockedError',
-  message: 'Transcription blocked by the provider content filter ($reason)',
-}) {}
-
-export class SpeechGenerationError extends errore.createTaggedError({
-  name: 'SpeechGenerationError',
-  message: 'Speech generation failed: $reason',
-}) {}
-
 export class GrepSearchError extends errore.createTaggedError({
   name: 'GrepSearchError',
   message: 'Grep search failed for pattern: $pattern',
@@ -98,16 +73,6 @@ export class GlobSearchError extends errore.createTaggedError({
 // ═══════════════════════════════════════════════════════════════════════════
 // VALIDATION ERRORS - Input validation, format checks
 // ═══════════════════════════════════════════════════════════════════════════
-
-export class InvalidAudioFormatError extends errore.createTaggedError({
-  name: 'InvalidAudioFormatError',
-  message: 'Invalid audio format',
-}) {}
-
-export class EmptyTranscriptionError extends errore.createTaggedError({
-  name: 'EmptyTranscriptionError',
-  message: 'Model returned empty transcription',
-}) {}
 
 export class NoResponseContentError extends errore.createTaggedError({
   name: 'NoResponseContentError',
@@ -165,50 +130,6 @@ export class OpenCodeApiError extends errore.createTaggedError({
 // MERGE/WORKTREE ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export class DirtyWorktreeError extends errore.createTaggedError({
-  name: 'DirtyWorktreeError',
-  message:
-    'Uncommitted changes in worktree. Commit all changes before merging.',
-}) {}
-
-export class NothingToMergeError extends errore.createTaggedError({
-  name: 'NothingToMergeError',
-  message: 'No commits to merge -- branch is already up to date with $target',
-}) {}
-
-export class RebaseConflictError extends errore.createTaggedError({
-  name: 'RebaseConflictError',
-  message:
-    'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
-}) {}
-
-export class RebaseError extends errore.createTaggedError({
-  name: 'RebaseError',
-  message: 'Rebase onto $target failed',
-}) {}
-
-export class NotFastForwardError extends errore.createTaggedError({
-  name: 'NotFastForwardError',
-  message: 'Cannot fast-forward: $target has commits not in this branch',
-}) {}
-
-export class ConflictingFilesError extends errore.createTaggedError({
-  name: 'ConflictingFilesError',
-  message:
-    'Cannot merge: $target worktree has uncommitted changes in overlapping files. Commit changes in main worktree first, then run `/merge-worktree` again.',
-}) {}
-
-export class TargetDirtyWorktreeError extends errore.createTaggedError({
-  name: 'TargetDirtyWorktreeError',
-  message:
-    'Cannot merge: $target worktree has uncommitted changes. Commit changes in main worktree first, then run `/merge-worktree` again.',
-}) {}
-
-export class PushError extends errore.createTaggedError({
-  name: 'PushError',
-  message: 'Push to $target failed',
-}) {}
-
 export class GitCommandError extends errore.createTaggedError({
   name: 'GitCommandError',
   message: 'Git command failed: $command',
@@ -217,15 +138,6 @@ export class GitCommandError extends errore.createTaggedError({
 // ═══════════════════════════════════════════════════════════════════════════
 // UNION TYPES - For function signatures
 // ═══════════════════════════════════════════════════════════════════════════
-
-export type TranscriptionErrors =
-  | ApiKeyMissingError
-  | InvalidAudioFormatError
-  | TranscriptionError
-  | TranscriptionApiError
-  | TranscriptionBlockedError
-  | EmptyTranscriptionError
-  | NoResponseContentError
 
 export type OpenCodeErrors =
   | DirectoryNotAccessibleError
@@ -238,17 +150,3 @@ export type SessionErrors =
   | MessagesNotFoundError
   | OpenCodeApiError
 
-export type SpeechGenerationErrors =
-  | ApiKeyMissingError
-  | SpeechGenerationError
-
-export type MergeWorktreeErrors =
-  | DirtyWorktreeError
-  | NothingToMergeError
-  | RebaseConflictError
-  | RebaseError
-  | NotFastForwardError
-  | ConflictingFilesError
-  | TargetDirtyWorktreeError
-  | PushError
-  | GitCommandError

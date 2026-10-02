@@ -14,7 +14,7 @@ import path from 'node:path'
 import { getDb } from '../db.js'
 import { getChannelDirectory } from '../database.js'
 import { splitTablesFromMarkdown, truncateComponents } from '../format-tables.js'
-import { formatTimeAgo } from './worktrees.js'
+import { formatTimeAgo } from '../time-format.js'
 
 const MAX_ROWS = 20
 

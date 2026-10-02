@@ -434,7 +434,7 @@ ${escapePromptText(repliedMessage.text)}
       : []),
     ...(worktree && worktreeChanged
       ? [
-          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) has changed. The user expects you to edit files in the new cwd. You MUST operate inside the new worktree from now on.\n- New worktree path (new cwd / pwd, edit files here): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo path (previous folder, DO NOT TOUCH): ${worktree.mainRepoDirectory}\n- To find the base branch (the branch this worktree was created from): \`git -C ${worktree.mainRepoDirectory} symbolic-ref --short HEAD\`\n- To find the base commit (the commit this worktree diverged from): \`git merge-base <base-branch> HEAD\`\nYou MUST read, write, and edit files only under the new worktree path ${worktree.worktreeDirectory}. You MUST NOT read, write, or edit any files under the main repo path ${worktree.mainRepoDirectory} — even though it is the same project, that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes. Run all checks (tests, builds, lint) inside the new worktree. Do not create another worktree by default. To merge this worktree into the main branch, run \`roadie merge-worktree\`. If it reports rebase conflicts, resolve them and rerun until it succeeds.\n</system-reminder>`,
+          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) has changed. The user expects you to edit files in the new cwd. You MUST operate inside the new worktree from now on.\n- New worktree path (new cwd / pwd, edit files here): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo path (previous folder, DO NOT TOUCH): ${worktree.mainRepoDirectory}\n- To find the base branch (the branch this worktree was created from): \`git -C ${worktree.mainRepoDirectory} symbolic-ref --short HEAD\`\n- To find the base commit (the commit this worktree diverged from): \`git merge-base <base-branch> HEAD\`\nYou MUST read, write, and edit files only under the new worktree path ${worktree.worktreeDirectory}. You MUST NOT read, write, or edit any files under the main repo path ${worktree.mainRepoDirectory} — even though it is the same project, that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes. Run all checks (tests, builds, lint) inside the new worktree.\n</system-reminder>`,
         ]
       : []),
   ]
@@ -657,7 +657,6 @@ Choose the destination:
 - Default to this channel unless the user explicitly asks for another place.
 - Another project channel (for example \`#website\`): resolve it with \`roadie project list --json\` and use that channel ID or \`--project /path/to/project\`. See cross-project commands below.
 - A path: \`--project /path/to/project\` for a project root, or \`--cwd /path/to/checkout\` for an existing subfolder or worktree.
-- NEVER use \`--worktree\` unless the user explicitly asks for a worktree. See creating worktrees below.
 
 More \`roadie send\` flags and examples:
 
@@ -738,7 +737,6 @@ ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron e
 
 \`--send-at\` works with these new-thread options:
 - \`--notify-only\`: reminder thread without auto-starting a session
-- \`--worktree\`: scheduled worktree session (only if the user explicitly asks for a worktree)
 - \`--agent\` and \`--model\`: control scheduled session behavior
 - \`--pre-run '<command>'\`: Roadie runs the command in the project directory. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output goes to the Roadie log.
 - \`--allow-concurrency\`: scheduled tasks do not overlap by default. Add this only when concurrent sessions from the same task are safe.
@@ -797,24 +795,9 @@ Use case patterns:
 
 ${remindSelfCommand} --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent>${userArg}
 
-## creating worktrees
+## sending sessions to existing directories
 
-ONLY create worktrees when the user explicitly asks for one. Worktrees isolate parallel tasks (each session works on its own branch). When the user asks to "create a worktree" or "make a worktree", use the roadie CLI, never raw \`git worktree add\`:
-
-\`\`\`bash
-roadie send --channel ${channelId} --prompt 'your task description' --worktree worktree-name --agent <current_agent>${parentSessionArg}${userArg}
-\`\`\`
-
-This creates a new Discord thread with an isolated git worktree and starts a session in it. Use a kebab-case name that describes the task. Worktrees are created from \`HEAD\` (whatever the current checkout is on). For a different base, pass \`--base-branch\` or use the slash command option explicitly.
-
-The prompt passed with \`--worktree\` is the task for the new thread running inside that worktree:
-- Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
-- Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
-- If you already are in a worktree thread, run commands in the current worktree and do not use \`roadie send --worktree\` unless the user explicitly asks for a nested worktree.
-
-### sending sessions to existing directories
-
-Use \`--cwd\` to reuse an existing project subfolder or git worktree directory instead of the project root. Use \`--worktree\` to create a new worktree.
+Use \`--cwd\` to reuse an existing project subfolder or git worktree directory instead of the project root. Roadie does not create worktrees: create the checkout with your project's tooling first, then pass it with \`--cwd\`.
 
 \`\`\`bash
 roadie send --channel ${channelId} --prompt 'Run restricted task X' --cwd /path/to/project/restricted-task --agent <current_agent>${parentSessionArg}${userArg}

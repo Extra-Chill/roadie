@@ -47,13 +47,6 @@ import {
   getCurrentModelInfo,
   type CurrentModelInfo,
 } from './model.js'
-import { isGitRepositoryRoot } from '../worktrees.js'
-import {
-  formatAutoWorktreeName,
-  createWorktreeInBackground,
-  worktreeCreatingMessage,
-} from './new-worktree.js'
-import { WORKTREE_PREFIX } from './merge-worktree.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 import {
@@ -751,24 +744,8 @@ async function handleQuickAgentWithPrompt({
 
     await command.deferReply()
 
-    // Check if worktrees should be enabled (CLI flag OR channel setting),
-    // mirroring the logic in discord-bot.ts message handler.
-    const wantsWorktrees =
-      store.getState().useWorktrees ||
-      (await getChannelWorktreesEnabled(channel.id))
-    const shouldUseWorktrees =
-      wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
-
-    if (wantsWorktrees && !shouldUseWorktrees) {
-      agentLogger.warn(
-        `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
-      )
-    }
-
     const baseThreadName = prompt.slice(0, 80)
-    const threadName = shouldUseWorktrees
-      ? `${WORKTREE_PREFIX}${baseThreadName}`
-      : baseThreadName
+    const threadName = baseThreadName
 
     const starterMessage = await channel.send({
       content: `${QUEUE_PREFIX}**${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
@@ -783,34 +760,7 @@ async function handleQuickAgentWithPrompt({
 
     await thread.members.add(command.user.id)
 
-    // Create worktree in background if enabled, same as discord-bot.ts
-    let worktreePromise: Promise<string | Error> | undefined
-    if (shouldUseWorktrees) {
-      const worktreeName = formatAutoWorktreeName(baseThreadName.slice(0, 50))
-      agentLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
-
-      const worktreeStatusMessage = await thread
-        .send({
-          content: worktreeCreatingMessage(worktreeName),
-          flags: SILENT_MESSAGE_FLAGS,
-        })
-        .catch(() => undefined)
-
-      worktreePromise = createWorktreeInBackground({
-        thread,
-        starterMessage: worktreeStatusMessage,
-        worktreeName,
-        projectDirectory,
-        rest: command.client.rest,
-      })
-    }
-
-    const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
-    if (worktreeResult instanceof Error) {
-      await command.editReply(`Worktree creation failed: ${worktreeResult.message}`)
-      return
-    }
-    const sessionDirectory = worktreeResult
+    const sessionDirectory = projectDirectory
 
     await command
       .editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
