@@ -48,14 +48,6 @@ cli
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.roadie)',
   )
-  .option(
-    '--gateway',
-    'Print the gateway install URL and create local gateway credentials if missing',
-  )
-  .option(
-    '--gateway-callback-url <url>',
-    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
-  )
   .action(async (options) => {
     try {
       if (options.dataDir) {
@@ -64,10 +56,7 @@ cli
       }
 
       initLogFile(getDataDir())
-      await printDiscordInstallUrlAndExit({
-        gateway: options.gateway,
-        gatewayCallbackUrl: options.gatewayCallbackUrl,
-      })
+      await printDiscordInstallUrlAndExit()
     } catch (error) {
       cliLogger.error(
         'Error:',
@@ -103,14 +92,6 @@ cli
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.roadie)',
   )
-  .option(
-    '--gateway',
-    'Print the gateway install URL and create local gateway credentials if missing',
-  )
-  .option(
-    '--gateway-callback-url <url>',
-    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
-  )
   .action(async (options) => {
     try {
       if (options.dataDir) {
@@ -119,10 +100,7 @@ cli
       }
 
       initLogFile(getDataDir())
-      await printDiscordInstallUrlAndExit({
-        gateway: options.gateway,
-        gatewayCallbackUrl: options.gatewayCallbackUrl,
-      })
+      await printDiscordInstallUrlAndExit()
     } catch (error) {
       cliLogger.error(
         'Error:',

@@ -35,14 +35,8 @@ function defaultCategoryName(kind: CategoryKind, botName?: string) {
   return botName && !isRoadieBot ? `Roadie ${botName}` : 'Roadie'
 }
 
-function defaultRoadieChannelName({
-  botName,
-  isGatewayMode,
-}: {
-  botName?: string
-  isGatewayMode: boolean
-}) {
-  if (isGatewayMode || !botName) return 'roadie'
+function defaultRoadieChannelName({ botName }: { botName?: string }) {
+  if (!botName) return 'roadie'
   const sanitized = botName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
@@ -307,12 +301,10 @@ export async function createDefaultRoadieChannel({
   guild,
   botName,
   appId,
-  isGatewayMode,
 }: {
   guild: Guild
   botName?: string
   appId: string
-  isGatewayMode: boolean
 }): Promise<{
   textChannel: TextChannel
   textChannelId: string
@@ -378,7 +370,7 @@ export async function createDefaultRoadieChannel({
 
   // 2. Fallback: detect an existing default channel in THIS machine's group.
   // A #roadie channel in another machine's group is ignored.
-  const channelName = defaultRoadieChannelName({ botName, isGatewayMode })
+  const channelName = defaultRoadieChannelName({ botName })
   const roadieCategory = await ensureRoadieCategory(guild, botName)
   const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {

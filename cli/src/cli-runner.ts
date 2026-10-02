@@ -17,9 +17,6 @@ import {
 import {
   deduplicateByKey,
   generateBotInstallUrl,
-  generateDiscordInstallUrlForBot,
-  ROADIE_GATEWAY_APP_ID,
-  ROADIE_WEBSITE_URL,
   abbreviatePath,
 } from './utils.js'
 import {
@@ -39,7 +36,6 @@ import {
   getBotTokenWithMode,
   ensureServiceAuthToken,
   setBotToken,
-  setBotMode,
   setChannelDirectory,
   findChannelsByDirectory,
   getDb,
@@ -55,7 +51,7 @@ import {
   Routes,
   AttachmentBuilder,
 } from 'discord.js'
-import { discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInternetReachableBaseUrl } from './discord-urls.js'
+import { discordApiUrl, getDiscordRestApiUrl } from './discord-urls.js'
 import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
@@ -80,19 +76,7 @@ import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registra
 
 export const cliLogger = createLogger(LogPrefix.CLI)
 
-// Gateway bot mode constants.
-// ROADIE_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
-// ROADIE_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
-// ROADIE_GATEWAY_PROXY_URL is the gateway-proxy base URL.
-// We derive REST base from this URL by swapping ws/wss to http/https.
-// These are hardcoded because they're deploy-time constants for the gateway infrastructure.
-export const ROADIE_GATEWAY_PROXY_URL =
-  process.env.ROADIE_GATEWAY_PROXY_URL ||
-  'wss://discord-gateway.kimaki.dev'
 
-export const ROADIE_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
-  gatewayUrl: ROADIE_GATEWAY_PROXY_URL,
-})
 
 export type OpenUrlCommand = {
   command: string
@@ -145,10 +129,9 @@ export function stripBracketedPaste(value: string | undefined): string {
 // Derive the Discord Application ID from a bot token.
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
-// For gateway mode tokens (client_id:secret format), this function returns
-// undefined -- the caller should use ROADIE_GATEWAY_APP_ID instead.
+// Tokens in "client_id:secret" form (Kimaki's removed gateway mode) are not
+// bot tokens and return undefined.
 export function appIdFromToken(token: string): string | undefined {
-  // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
     return undefined
   }
@@ -170,24 +153,16 @@ export function appIdFromToken(token: string): string | undefined {
 // Resolve bot token and app ID from env var or database.
 // Used by CLI subcommands (send, project add) that need credentials
 // but don't run the interactive wizard.
-// In gateway mode, also sets store.discordBaseUrl so REST calls
-// are routed through the gateway-proxy REST endpoint.
 //
 // Priority: ROADIE_BOT_TOKEN env var takes precedence over saved DB
 // credentials. This lets CI and cross-instance commands override the
-// local bot identity. If the env token looks like a gateway credential
-// (clientId:clientSecret), the gateway proxy REST URL is set automatically.
+// local bot identity.
 export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
   token: string
   appId: string | undefined
 }> {
   const envToken = process.env.ROADIE_BOT_TOKEN
   if (envToken) {
-    const isGatewayToken = envToken.includes(':')
-    if (isGatewayToken) {
-      // Gateway tokens need REST calls routed through the proxy, not discord.com
-      store.setState({ discordBaseUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL })
-    }
     const appId = appIdOverride || appIdFromToken(envToken)
     return { token: envToken, appId }
   }
@@ -718,83 +693,8 @@ export function emitJsonEvent(event: ProgrammaticEvent): void {
 	process.stdout.write(`data: ${JSON.stringify(event)}\n\n`)
 }
 
-export async function resolveGatewayInstallCredentials(): Promise<
-  Error | { clientId: string; clientSecret: string; createdNow: boolean }
-> {
-  if (!ROADIE_GATEWAY_APP_ID) {
-    return new Error(
-      'Gateway mode is not available yet. ROADIE_GATEWAY_APP_ID is not configured.',
-    )
-  }
-
-  const db = await getDb()
-  const gatewayBot = await db.query.bot_tokens.findFirst({
-    where: { app_id: ROADIE_GATEWAY_APP_ID },
-  })
-
-  if (gatewayBot?.client_id && gatewayBot.client_secret) {
-    return {
-      clientId: gatewayBot.client_id,
-      clientSecret: gatewayBot.client_secret,
-      createdNow: false,
-    }
-  }
-
-  const clientId = crypto.randomUUID()
-  const clientSecret = crypto.randomBytes(32).toString('hex')
-
-  await setBotMode({
-    appId: ROADIE_GATEWAY_APP_ID,
-    mode: 'gateway',
-    clientId,
-    clientSecret,
-    proxyUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL,
-  })
-
-  return {
-    clientId,
-    clientSecret,
-    createdNow: true,
-  }
-}
-
-export async function printDiscordInstallUrlAndExit({
-  gateway,
-  gatewayCallbackUrl,
-}: {
-  gateway?: boolean
-  gatewayCallbackUrl?: string
-} = {}) {
+export async function printDiscordInstallUrlAndExit() {
   await initDatabase()
-
-  if (gateway) {
-    const gatewayCredentials = await resolveGatewayInstallCredentials()
-    if (gatewayCredentials instanceof Error) {
-      cliLogger.error(`Failed to resolve gateway install URL: ${gatewayCredentials.message}`)
-      process.exit(EXIT_NO_RESTART)
-    }
-
-    const installUrl = generateDiscordInstallUrlForBot({
-      appId: ROADIE_GATEWAY_APP_ID,
-      mode: 'gateway',
-      clientId: gatewayCredentials.clientId,
-      clientSecret: gatewayCredentials.clientSecret,
-      gatewayCallbackUrl,
-    })
-    if (installUrl instanceof Error) {
-      cliLogger.error(`Failed to build install URL: ${installUrl.message}`)
-      process.exit(EXIT_NO_RESTART)
-    }
-
-    cliLogger.log(installUrl)
-    if (gatewayCredentials.createdNow) {
-      cliLogger.log('Generated and saved new local gateway client credentials.')
-    }
-    cliLogger.log(
-      'This gateway install URL contains your client credentials. Do not share it.',
-    )
-    process.exit(0)
-  }
 
   const existingBot = await getBotTokenWithMode()
 
@@ -803,23 +703,7 @@ export async function printDiscordInstallUrlAndExit({
     process.exit(EXIT_NO_RESTART)
   }
 
-  const installUrl = generateDiscordInstallUrlForBot({
-    appId: existingBot.appId,
-    mode: existingBot.mode,
-    clientId: existingBot.clientId,
-    clientSecret: existingBot.clientSecret,
-  })
-  if (installUrl instanceof Error) {
-    cliLogger.error(`Failed to build install URL: ${installUrl.message}`)
-    process.exit(EXIT_NO_RESTART)
-  }
-
-  cliLogger.log(installUrl)
-  if (existingBot.mode === 'gateway') {
-    cliLogger.log(
-      'This gateway install URL contains your client credentials. Do not share it.',
-    )
-  }
+  cliLogger.log(generateBotInstallUrl({ clientId: existingBot.appId }))
 
   process.exit(0)
 }
@@ -998,8 +882,6 @@ type CredentialResult = {
   appId: string
   token: string
   credentialSource: 'env' | 'saved' | 'wizard'
-  isGatewayMode: boolean
-  installerDiscordUserId?: string
 }
 
 type CliOptions = {
@@ -1008,8 +890,6 @@ type CliOptions = {
   dataDir?: string
   useWorktrees?: boolean
   enableVoiceChannels?: boolean
-  gateway?: boolean
-  gatewayCallbackUrl?: string
 }
 
 
@@ -1121,7 +1001,7 @@ export function showReadyMessage({
 }
 
 /**
- * Create default channels in locally configured guilds, or proxy-authorized gateway guilds.
+ * Create default channels in locally configured guilds.
  * Idempotent: skips guilds that already have the channel.
  * Extracted so both the interactive and headless startup paths share the same logic.
  */
@@ -1129,31 +1009,24 @@ export async function ensureDefaultChannelsWithWelcome({
   guilds,
   discordClient,
   appId,
-  isGatewayMode,
-  installerDiscordUserId,
 }: {
   guilds: Guild[]
   discordClient: import('discord.js').Client
   appId: string
-  isGatewayMode: boolean
-  installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
   if (process.env['ROADIE_NO_DEFAULT_CHANNEL'] === '1') return []
 
-  const localMappings = isGatewayMode ? [] : await findChannelsByDirectory({})
+  const localMappings = await findChannelsByDirectory({})
   const created: { name: string; id: string; guildId: string }[] = []
   for (const guild of guilds) {
     try {
-      if (!isGatewayMode) {
-        // Match live channel IDs: older local mappings have no guild_id.
-        const channels = await guild.channels.fetch()
-        if (!localMappings.some((row) => channels.has(row.channel_id))) continue
-      }
+      // Match live channel IDs: older local mappings have no guild_id.
+      const channels = await guild.channels.fetch()
+      if (!localMappings.some((row) => channels.has(row.channel_id))) continue
       const result = await createDefaultRoadieChannel({
         guild,
         botName: discordClient.user?.username,
         appId,
-        isGatewayMode,
       })
       if (result) {
         created.push({
@@ -1163,8 +1036,8 @@ export async function ensureDefaultChannelsWithWelcome({
         })
 
         // Send welcome message to the newly created default channel.
-        // Mention the installer so they get a notification.
-        const mentionUserId = installerDiscordUserId || guild.ownerId
+        // Mention the server owner so they get a notification.
+        const mentionUserId = guild.ownerId
         await sendWelcomeMessage({
           channel: result.textChannel,
           mentionUserId,
@@ -1247,36 +1120,23 @@ export async function backgroundInit({
 
 // Resolve bot credentials from (in priority order):
 // 1. ROADIE_BOT_TOKEN env var (headless/CI deployments)
-// 2. Saved credentials in the database (self-hosted or gateway mode)
-// 3. Interactive wizard (gateway OAuth or self-hosted token entry)
+// 2. Saved credentials in the database
+// 3. Interactive wizard (bot token entry)
 //
 // credentialSource tells the caller how creds were obtained:
 //   'env'    — ROADIE_BOT_TOKEN env var
 //   'saved'  — reused from database
-//   'wizard' — user just completed onboarding (gateway OAuth or self-hosted)
+//   'wizard' — user just completed onboarding
 export async function resolveCredentials({
   forceRestartOnboarding,
-  forceGateway,
-  gatewayCallbackUrl,
 }: {
   forceRestartOnboarding: boolean
-  forceGateway: boolean
-  gatewayCallbackUrl?: string
 }): Promise<CredentialResult> {
   const envToken = process.env.ROADIE_BOT_TOKEN
   const existingBot = await getBotTokenWithMode()
-  // When --gateway is requested and the resolved bot is still self-hosted,
-  // check if saved gateway credentials exist by looking up the gateway app_id
-  // directly. This lets users switch back and forth between modes without
-  // re-running the onboarding wizard each time.
-  const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
-    ? await (await getDb()).query.bot_tokens.findFirst({
-        where: { app_id: ROADIE_GATEWAY_APP_ID },
-      })
-    : undefined
 
   // 1. Env var takes precedence (headless deployments)
-  if (envToken && !forceRestartOnboarding && !forceGateway) {
+  if (envToken && !forceRestartOnboarding) {
     const derivedAppId = appIdFromToken(envToken)
     if (!derivedAppId) {
       cliLogger.error(
@@ -1286,230 +1146,38 @@ export async function resolveCredentials({
     }
     await setBotToken(derivedAppId, envToken)
     cliLogger.log(`Using ROADIE_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-    return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
+    return { appId: derivedAppId, token: envToken, credentialSource: 'env' }
   }
 
   // 2. Saved credentials in the database
-  // Reuse saved creds unless: --restart-onboarding forces re-setup, or --gateway
-  // overrides saved self-hosted creds (saved gateway creds are still used).
-  const canReuseSavedCreds = existingBot && !forceRestartOnboarding
-    && !(forceGateway && existingBot.mode !== 'gateway')
-  if (canReuseSavedCreds) {
-    const modeLabel =
-      existingBot.mode === 'gateway' ? ' (gateway mode)' : ''
+  // Reuse saved creds unless --restart-onboarding forces re-setup.
+  // Rows saved by Kimaki's removed gateway mode hold shared hosted-bot
+  // credentials that no longer work here, so they are never reused.
+  if (existingBot && existingBot.mode === 'gateway' && !forceRestartOnboarding) {
+    cliLogger.error(
+      'Saved credentials use the hosted gateway bot, which Roadie does not support. Run with --restart-onboarding to set up your own Discord bot, or set ROADIE_BOT_TOKEN.',
+    )
+    process.exit(EXIT_NO_RESTART)
+  }
+  if (existingBot && !forceRestartOnboarding) {
     note(
-      `Using saved bot credentials${modeLabel}:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
+      `Using saved bot credentials:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
       'Existing Bot Found',
     )
-    if (existingBot.mode !== 'gateway') {
-      note(
-        `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
-        'Install URL',
-      )
-    }
-    return { appId: existingBot.appId, token: existingBot.token, credentialSource: 'saved', isGatewayMode: existingBot.mode === 'gateway' }
-  }
-
-  // 2b. Switching to gateway: saved gateway credentials exist from a previous
-  // gateway setup. Reuse them without re-running the onboarding wizard.
-  if (hasGatewayCreds && !forceRestartOnboarding) {
-    const gatewayToken = (hasGatewayCreds.client_id && hasGatewayCreds.client_secret)
-      ? `${hasGatewayCreds.client_id}:${hasGatewayCreds.client_secret}`
-      : hasGatewayCreds.token
     note(
-      `Switching to saved gateway credentials:\nApp ID: ${hasGatewayCreds.app_id}`,
-      'Mode Switch',
+      `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.appId })}`,
+      'Install URL',
     )
-    return {
-      appId: hasGatewayCreds.app_id,
-      token: gatewayToken,
-      credentialSource: 'saved',
-      isGatewayMode: true,
-    }
+    return { appId: existingBot.appId, token: existingBot.token, credentialSource: 'saved' }
   }
 
-  // 3. Interactive setup wizard (first-time users, --restart-onboarding, or --gateway override).
-  //    Non-TTY: gateway mode proceeds headlessly (JSON events on stdout),
-  //    self-hosted mode requires interactive prompts so we exit.
-  if (!canUseInteractivePrompts() && !forceGateway) {
+  // 3. Interactive setup wizard (first-time users, --restart-onboarding).
+  if (!canUseInteractivePrompts()) {
     exitNonInteractiveSetup()
   }
 
-  if (existingBot && forceGateway && existingBot.mode !== 'gateway') {
-    note(
-      'Ignoring saved self-hosted credentials due to --gateway flag.\nSwitching to gateway mode.',
-      'Gateway Mode',
-    )
-  } else if (forceRestartOnboarding && existingBot) {
+  if (forceRestartOnboarding && existingBot) {
     note('Ignoring saved credentials due to --restart-onboarding flag', 'Restart Onboarding')
-  }
-
-  // When --gateway is passed or we're in non-TTY mode, skip the mode selector.
-  // Non-TTY without --gateway was already rejected above.
-  const modeChoice: 'gateway' | 'self_hosted' = forceGateway
-    ? 'gateway'
-    : await (async () => {
-        const choice = await select({
-          message:
-            'How do you want to connect to Discord?\n\nGateway: uses Roadie\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
-          options: [
-            {
-              value: 'gateway' as const,
-              label: 'Gateway (pre-built Roadie bot, no setup needed)',
-            },
-            {
-              value: 'self_hosted' as const,
-              label: 'Self-hosted (your own Discord bot, 5-10 min setup)',
-            },
-          ],
-        })
-        if (isCancel(choice)) {
-          cancel('Setup cancelled')
-          process.exit(0)
-        }
-        return choice
-      })()
-
-  // ── Gateway mode flow ──
-  if (modeChoice === 'gateway') {
-    if (!ROADIE_GATEWAY_APP_ID) {
-      cliLogger.error(
-        'Gateway mode is not available yet. ROADIE_GATEWAY_APP_ID is not configured.',
-      )
-      process.exit(EXIT_NO_RESTART)
-    }
-
-    const gatewayCredentials = await resolveGatewayInstallCredentials()
-    if (gatewayCredentials instanceof Error) {
-      throw gatewayCredentials
-    }
-    const { clientId, clientSecret } = gatewayCredentials
-
-    const oauthUrlResult = generateDiscordInstallUrlForBot({
-      appId: ROADIE_GATEWAY_APP_ID,
-      mode: 'gateway',
-      clientId,
-      clientSecret,
-      gatewayCallbackUrl,
-      reachableUrl: getInternetReachableBaseUrl() || undefined,
-    })
-    if (oauthUrlResult instanceof Error) {
-      throw oauthUrlResult
-    }
-    const oauthUrl = oauthUrlResult
-    const isInteractive = canUseInteractivePrompts()
-
-    if (isInteractive) {
-      note(
-        `Open this URL to install the Roadie bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
-        'Install Bot',
-      )
-
-      // Open URL in default browser
-      openUrlInDefaultBrowser(oauthUrl)
-    } else {
-      // Non-TTY: emit structured JSON so the host process can show the URL to the user.
-      emitJsonEvent({ type: 'install_url', url: oauthUrl })
-    }
-
-    // Poll until the user installs the bot in a Discord server.
-    // 100 attempts x 3s = 5 minutes timeout.
-    const s = isInteractive ? spinner() : undefined
-    s?.start('Waiting for a Discord server with the bot installed...')
-
-    const pollUrl = new URL('/api/onboarding/status', ROADIE_WEBSITE_URL)
-    pollUrl.searchParams.set('client_id', clientId)
-    pollUrl.searchParams.set('secret', clientSecret)
-
-    let guildId: string | undefined
-    let installerDiscordUserId: string | undefined
-    let onboardingError: string | undefined
-    for (let attempt = 0; attempt < 100; attempt++) {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 3000)
-      })
-
-      // Progressive hints for interactive users who may be stuck
-      if (isInteractive) {
-        if (attempt === 15) {
-          s?.message(
-            'Still waiting... Select a server in the Discord authorization page and click "Authorize"',
-          )
-        } else if (attempt === 45) {
-          s?.message(
-            `Still waiting... If you don't see any servers, create one first (+ button in Discord sidebar), then reopen the URL above`,
-          )
-        } else if (attempt === 75) {
-          s?.message(
-            `Still waiting... Reopen the install URL if you closed it:\n${oauthUrl}`,
-          )
-        }
-      }
-
-      try {
-        const resp = await fetch(pollUrl.toString())
-        if (resp.ok) {
-          const data = (await resp.json()) as {
-            guild_id?: string
-            discord_user_id?: string
-          } | null
-          if (data?.guild_id) {
-            guildId = data.guild_id
-            installerDiscordUserId = data.discord_user_id
-            break
-          }
-        } else if (resp.status === 404) {
-          // Check if the server returned a specific onboarding error
-          // (e.g. guild_id missing from Discord callback)
-          const data = (await resp.json().catch(() => null)) as {
-            error?: string
-            onboarding_error?: boolean
-          } | null
-          if (data?.onboarding_error && data.error) {
-            onboardingError = data.error
-            break
-          }
-        }
-      } catch {
-        // Network error, retry
-      }
-    }
-
-    if (!guildId) {
-      const errorMsg = onboardingError
-        ? `Authorization failed: ${onboardingError}`
-        : 'Bot authorization timed out after 5 minutes. Please try again.'
-      if (isInteractive) {
-        s?.stop(onboardingError ? 'Authorization failed' : 'Authorization timed out')
-      } else {
-        emitJsonEvent({ type: 'error', message: errorMsg })
-      }
-      cliLogger.error(errorMsg)
-      process.exit(EXIT_NO_RESTART)
-    }
-
-    if (isInteractive) {
-      s?.stop('Bot authorized successfully!')
-      const syncSpinner = spinner()
-      syncSpinner.start('Waiting for gateway sync...')
-      await new Promise((resolve) => {
-        setTimeout(resolve, 2000)
-      })
-      syncSpinner.stop('Gateway sync completed')
-    } else {
-      emitJsonEvent({ type: 'authorized', guild_id: guildId })
-      await new Promise((resolve) => {
-        setTimeout(resolve, 2000)
-      })
-    }
-
-    return {
-      appId: ROADIE_GATEWAY_APP_ID,
-      token: `${clientId}:${clientSecret}`,
-      credentialSource: 'wizard',
-      isGatewayMode: true,
-      installerDiscordUserId,
-    }
   }
 
   // ── Self-hosted mode flow (existing wizard) ──
@@ -1586,7 +1254,7 @@ export async function resolveCredentials({
     process.exit(0)
   }
 
-  return { appId: derivedAppId, token: wizardToken, credentialSource: 'wizard', isGatewayMode: false }
+  return { appId: derivedAppId, token: wizardToken, credentialSource: 'wizard' }
 }
 
 export async function run({
@@ -1594,13 +1262,10 @@ export async function run({
   addChannels,
   useWorktrees,
   enableVoiceChannels,
-  gateway,
-  gatewayCallbackUrl,
 }: CliOptions) {
   startCaffeinate()
 
   const forceRestartOnboarding = Boolean(restartOnboarding)
-  const forceGateway = Boolean(gateway)
 
   // Step 0: Ensure opencode and bun are installed
   await Promise.all([
@@ -1648,7 +1313,6 @@ export async function run({
   // don't work. CLI subcommands skip the server and use file: directly.
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
-    bindAll: getInternetReachableBaseUrl() !== null,
   })
   if (hranaResult instanceof Error) {
     cliLogger.error('Failed to start hrana server:', hranaResult.message)
@@ -1661,38 +1325,17 @@ export async function run({
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
 
-  const { appId, token, credentialSource, isGatewayMode, installerDiscordUserId } = await resolveCredentials({
+  const { appId, token, credentialSource } = await resolveCredentials({
     forceRestartOnboarding,
-    forceGateway,
-    gatewayCallbackUrl,
   })
 
 
   const gatewayToken = await ensureServiceAuthToken({
     appId,
-    preferredGatewayToken: isGatewayMode ? token : undefined,
   })
   // Always set service auth token so local and internet control-plane paths
-  // share one auth model (/roadie/wake and future service endpoints).
+  // share one auth model (Hrana and future service endpoints).
   store.setState({ gatewayToken })
-
-  // In gateway mode, ensure REST calls route through the gateway proxy.
-  // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
-  // onboarding path returns directly without going through getBotTokenWithMode(),
-  // leaving store.discordBaseUrl at the default 'https://discord.com'.
-  // Without this, discord.js sends the clientId:clientSecret token to Discord
-  // directly, which rejects it with "An invalid token was provided".
-  if (isGatewayMode) {
-    store.setState({ discordBaseUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL })
-  }
-
-  // When ROADIE_INTERNET_REACHABLE_URL is set, the hrana server exposes
-  // a /roadie/wake endpoint for the gateway-proxy to wake this instance and
-  // wait until discord.js is connected. Keep Discord traffic on the normal
-  // configured base URL (gateway-proxy in gateway mode).
-  if (getInternetReachableBaseUrl()) {
-    cliLogger.log('Internet-reachable mode: enabling /roadie/wake endpoint on hrana server')
-  }
 
   // Start OpenCode server as early as possible — non-blocking.
   // All dependencies are met (dataDir, lockPort, gatewayToken, hranaUrl set).
@@ -1725,18 +1368,17 @@ export async function run({
   // skipChannelSetup: when true, skip interactive project/channel selection
   // and go straight to bot startup. Channel sync happens in the background.
   //
-  // Skip when: creds came from env/saved (not first-time wizard), OR non-TTY
-  // gateway (headless), OR user didn't pass --add-channels/--restart-onboarding.
+  // Skip when: creds came from env/saved (not first-time wizard), OR
+  // user didn't pass --add-channels/--restart-onboarding.
   // Force channel setup when: first-time quick-start with no channels configured
   // and TTY is available, or user explicitly passed --add-channels.
-  const isHeadlessGateway = isGatewayMode && !canUseInteractivePrompts()
   const hasConfiguredTextChannels = Boolean(
     await (await getDb()).query.channel_directories.findFirst({
       where: { channel_type: 'text' },
       columns: { channel_id: true },
     }),
   )
-  const skipChannelSetup = isHeadlessGateway || (() => {
+  const skipChannelSetup = (() => {
     // Wizard source always shows channel setup (user just completed onboarding)
     if (credentialSource === 'wizard') {
       return false
@@ -1764,8 +1406,7 @@ export async function run({
       discordClient.once(Events.ClientReady, async (c) => {
         // Guild discovery comes from the Gateway WebSocket READY payload, not
         // from a separate REST fetch. discord.js consumes READY and hydrates
-        // client.guilds.cache from d.guilds. In gateway mode, gateway-proxy
-        // already filters this list to authorized guilds for client_id:secret.
+        // client.guilds.cache from d.guilds.
         // Example payload fragment received over WS:
         // {
         //   "op": 0,
@@ -1826,39 +1467,6 @@ export async function run({
   }
   await setBotToken(appId, token)
 
-   // In gateway mode the bot only sees guilds the user has installed
-  // it in. Zero guilds means the install URL callback never completed or the
-  // user removed the bot from all servers — there is nothing the bot can do.
-  if (isGatewayMode && guilds.length === 0) {
-    // Rebuild the install URL from the current credentials so the user can
-    // add the bot to a server without going through the full --restart-onboarding flow.
-    const [clientId, clientSecret] = token.split(':')
-    if (!clientId || !clientSecret) {
-      throw new Error('Malformed gateway token: expected clientId:clientSecret format')
-    }
-    const installUrlResult = generateDiscordInstallUrlForBot({
-      appId: ROADIE_GATEWAY_APP_ID,
-      mode: 'gateway',
-      clientId,
-      clientSecret,
-    })
-    if (installUrlResult instanceof Error) {
-      throw installUrlResult
-    }
-    const installUrl = installUrlResult
-    if (!canUseInteractivePrompts()) {
-      emitJsonEvent({ type: 'error', message: 'No Discord servers found', install_url: installUrl })
-    }
-    cliLogger.error(
-      'No Discord servers found. The bot must be installed in at least one server.\n' +
-        `Install URL: ${installUrl}\n` +
-        'Do not share this URL with anyone — it contains your credentials.\n' +
-        'Open the URL above to add the bot to a server, then run roadie again.',
-    )
-    void discordClient.destroy()
-    process.exit(EXIT_NO_RESTART)
-  }
-
   if (skipChannelSetup) {
     // Start bot immediately — channel sync happens in the background.
     cliLogger.log('Starting Discord bot...')
@@ -1884,15 +1492,13 @@ export async function run({
         )
       }
 
-      // Create default channels only in locally configured or gateway-authorized guilds.
+      // Create default channels only in locally configured guilds.
       // Runs after channel sync so existing channels are detected correctly.
       try {
         await ensureDefaultChannelsWithWelcome({
           guilds,
           discordClient,
           appId,
-          isGatewayMode,
-          installerDiscordUserId,
         })
       } catch (error) {
         cliLogger.warn(
@@ -2090,13 +1696,11 @@ export async function run({
     }
 
     // Create default roadie channel for general-purpose tasks.
-    // Only locally configured or gateway-authorized guilds are eligible.
+    // Only locally configured guilds are eligible.
     const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
       guilds,
       discordClient,
       appId,
-      isGatewayMode,
-      installerDiscordUserId,
     })
     createdChannels.push(...defaultChannelResults)
 
