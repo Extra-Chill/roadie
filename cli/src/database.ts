@@ -965,6 +965,85 @@ export async function getThreadIdBySessionId(sessionId: string) {
   return rows[0]?.thread_id
 }
 
+export type SessionActorVia = 'chat' | 'cli'
+
+export type SessionActor = {
+  platform: string
+  id: string
+  name?: string
+  via: SessionActorVia
+}
+
+export type SessionTurnAttribution = {
+  sessionId: string
+  threadId?: string
+  channelId?: string
+  actor?: SessionActor
+}
+
+/**
+ * Record who is speaking in the current turn of a session. Called before every
+ * prompt/command dispatch. Passing no actor clears the actor columns, so a
+ * turn without a human speaker never inherits the previous turn's actor.
+ */
+export async function setSessionTurnAttribution({
+  sessionId,
+  threadId,
+  channelId,
+  actor,
+}: SessionTurnAttribution) {
+  const db = await getDb()
+  const values = {
+    session_id: sessionId,
+    thread_id: threadId ?? null,
+    channel_id: channelId ?? null,
+    actor_platform: actor?.platform ?? null,
+    actor_id: actor?.id ?? null,
+    actor_name: actor?.name ?? null,
+    actor_via: actor?.via ?? null,
+    updated_at: new Date(),
+  }
+  await db.insert(schema.session_actors)
+    .values(values)
+    .onConflictDoUpdate({
+      target: schema.session_actors.session_id,
+      set: {
+        thread_id: values.thread_id,
+        channel_id: values.channel_id,
+        actor_platform: values.actor_platform,
+        actor_id: values.actor_id,
+        actor_name: values.actor_name,
+        actor_via: values.actor_via,
+        updated_at: values.updated_at,
+      },
+    })
+}
+
+export async function getSessionTurnAttribution(
+  sessionId: string,
+): Promise<SessionTurnAttribution | undefined> {
+  const db = await getDb()
+  const [row] = await db.select()
+    .from(schema.session_actors)
+    .where(orm.eq(schema.session_actors.session_id, sessionId))
+    .limit(1)
+  if (!row) return undefined
+  const actor = row.actor_platform && row.actor_id && row.actor_via
+    ? {
+        platform: row.actor_platform,
+        id: row.actor_id,
+        ...(row.actor_name ? { name: row.actor_name } : {}),
+        via: row.actor_via,
+      }
+    : undefined
+  return {
+    sessionId: row.session_id,
+    ...(row.thread_id ? { threadId: row.thread_id } : {}),
+    ...(row.channel_id ? { channelId: row.channel_id } : {}),
+    ...(actor ? { actor } : {}),
+  }
+}
+
 export async function getAllThreadSessionIds() {
   const db = await getDb()
   const rows = await db.query.thread_sessions.findMany({ columns: { session_id: true } })

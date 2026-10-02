@@ -47,6 +47,7 @@ export async function forkSessionToBtwThread({
   prompt,
   modelPrompt = prompt,
   userId,
+  actorVia,
   username,
   appId,
   agent,
@@ -59,6 +60,7 @@ export async function forkSessionToBtwThread({
   prompt: string
   modelPrompt?: string
   userId: string
+  actorVia?: 'chat' | 'cli'
   username: string
   appId: string | undefined
   agent?: string
@@ -235,6 +237,7 @@ export async function forkSessionToBtwThread({
     agent,
     images,
     userId,
+    actorVia,
     username,
     appId,
     mode: 'opencode',

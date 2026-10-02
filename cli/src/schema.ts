@@ -143,6 +143,24 @@ export const session_models = sqliteCore.sqliteTable('session_models', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+// Current-turn actor per OpenCode session. Written by the bot before every
+// prompt/command dispatch and read by the OpenCode plugin's shell.env hook so
+// tool processes see who is speaking right now. One row per session, replaced
+// each turn; a turn without a human speaker clears the actor columns so a
+// previous speaker is never reported as stale. Attribution only, not authority.
+export const session_actors = sqliteCore.sqliteTable('session_actors', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  thread_id: sqliteCore.text('thread_id'),
+  channel_id: sqliteCore.text('channel_id'),
+  actor_platform: sqliteCore.text('actor_platform'),
+  actor_id: sqliteCore.text('actor_id'),
+  actor_name: sqliteCore.text('actor_name'),
+  // How the actor was established: 'chat' = the platform authenticated the
+  // message author; 'cli' = asserted by a local `roadie send --user` caller.
+  actor_via: sqliteCore.text('actor_via', { enum: ['chat', 'cli'] }),
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const channel_agents = sqliteCore.sqliteTable('channel_agents', {
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   agent_name: sqliteCore.text('agent_name').notNull(),

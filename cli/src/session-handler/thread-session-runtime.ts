@@ -62,6 +62,7 @@ import {
   type AssistantTurnFlushMode,
 } from '../message-formatting.js'
 import {
+  setSessionTurnAttribution,
   getChannelVerbosity,
   getPartMessageIds,
   getDb,
@@ -715,6 +716,9 @@ export type IngressInput = {
   queuedAction?: 'btw'
   userId: string
   username: string
+  // How userId was established: 'chat' (platform-authenticated author,
+  // default) or 'cli' (asserted by a local `roadie send --user` caller).
+  actorVia?: 'chat' | 'cli'
   // Discord message ID and thread ID for the source message, embedded in
   // <discord-user> synthetic context so the external sync loop can detect
   // messages that originated from Discord and skip re-mirroring them.
@@ -3393,6 +3397,38 @@ export class ThreadSessionRuntime {
    * recovery so that promptAsync receives the same agent/model/variant/system
    * fields that the local-queue path provides.
    */
+  /**
+   * Record the current turn's speaker for this session before dispatching it,
+   * so tool processes (via the plugin's shell.env hook) see who is speaking.
+   * A turn without a userId clears the actor. Failures are logged, never fatal.
+   */
+  private async recordTurnAttribution({
+    sessionId,
+    input,
+  }: {
+    sessionId: string
+    input: Pick<IngressInput, 'userId' | 'username' | 'actorVia'>
+  }): Promise<void> {
+    const result = await setSessionTurnAttribution({
+      sessionId,
+      threadId: this.thread.id,
+      channelId: this.channelId,
+      ...(input.userId
+        ? {
+            actor: {
+              platform: 'discord',
+              id: input.userId,
+              ...(input.username ? { name: input.username } : {}),
+              via: input.actorVia ?? 'chat',
+            },
+          }
+        : {}),
+    }).catch((e) => new Error('Failed to record session turn attribution', { cause: e }))
+    if (result instanceof Error) {
+      logger.warn(`[ACTOR] ${result.message} for session ${sessionId}: ${String(result.cause)}`)
+    }
+  }
+
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
@@ -3674,6 +3710,7 @@ export class ThreadSessionRuntime {
         ...variantField,
         ...(input.noReply ? { noReply: true } : {}),
       }
+      await this.recordTurnAttribution({ sessionId: session.id, input })
       await waitForGlobalEventListener()
       const promptResult = await getClient().session.promptAsync(request)
         .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
@@ -4815,6 +4852,7 @@ export class ThreadSessionRuntime {
         systemPromptFromSourceSession,
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
+      await this.recordTurnAttribution({ sessionId: session.id, input })
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,
@@ -4899,6 +4937,7 @@ export class ThreadSessionRuntime {
       return true
     }
 
+    await this.recordTurnAttribution({ sessionId: session.id, input })
     await waitForGlobalEventListener()
     const promptResponse = await getClient().session.promptAsync({
       sessionID: session.id,

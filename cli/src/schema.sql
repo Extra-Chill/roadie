@@ -152,6 +152,17 @@ CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
 	CONSTRAINT `fk_scheduled_tasks_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS `session_actors` (
+	`session_id` text PRIMARY KEY,
+	`thread_id` text,
+	`channel_id` text,
+	`actor_platform` text,
+	`actor_id` text,
+	`actor_name` text,
+	`actor_via` text,
+	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `session_agents` (
 	`session_id` text PRIMARY KEY,
 	`agent_name` text NOT NULL,
