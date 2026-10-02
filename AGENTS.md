@@ -16,61 +16,20 @@ read the matching doc **before** starting these tasks. they hold the full proced
 
 | task                                                                               | read first                                |
 | ---------------------------------------------------------------------------------- | ----------------------------------------- |
-| gateway-proxy, website onboarding, `gateway_clients`, `--gateway`, bot credentials  | `docs/gateway-architecture.md`            |
-| publish, release notes, #changelog post, website deploy, roadie-demo deploy         | `docs/release-process.md`                 |
 | logs, session event jsonl, jq, heap snapshots, cpu profiling, `~/.roadie/bin` shim  | `docs/debugging-roadie.md`                |
 | editing `discord-slack-bridge/` (Slack API links, ID encoding, KV auth cache)       | `discord-slack-bridge/AGENTS.md`          |
-| Strada events, DAU/WAU/MAU, funnels, retention SQL                                  | `docs/strada-product-analytics.md`        |
 | event sourcing patterns and examples                                                | `docs/event-sourcing-for-application-state.md` |
 
 # repo architecture
 
-```
-cli/ (bot + CLI, local SQLite) ──REST+WS (clientId:secret)──▶ gateway-proxy/ (Rust, fly.io) ──▶ Discord
-   │                                                                 ▲ polls every 1s
-   └─ polls /api/onboarding/status ──▶ website/ (CF Worker) ──▶ shared Postgres (db/, gateway_clients)
-```
+Roadie is a chat-to-agent bridge: a chat adapter (Discord today) on one side, an agent runtime (OpenCode today) on the other. It knows nothing about the host it runs in; hosts extend it through hooks (identity, channel policy, and the ones tracked in the issues).
 
 - `cli/`: TypeScript CLI + Discord bot. `src/cli.ts` main CLI and onboarding, `src/discord-bot.ts` event loop and session routing, SQLite at `~/.roadie/discord-sessions.db`.
-- `gateway-proxy/`: multi-tenant Discord Gateway + REST proxy. one shared bot for all users.
-- `website/`: https://kimaki.dev, OAuth callback and onboarding status routes.
-- `db/`: shared Postgres schema (`db/schema.prisma`).
-
-full diagram, gateway-proxy key files, auth flow, and the 8-step onboarding flow: `docs/gateway-architecture.md`.
-
-## gateway REST safety
-
-gateway REST rule for cli package code: when running with `client_id:secret`
-through gateway-proxy, Discord REST calls must be guild-scoped or explicitly
-allowlisted by the proxy (`/gateway/bot`, `/users/@me`, etc). avoid global
-application routes like `/applications/{app_id}/commands`; use
-`/applications/{app_id}/guilds/{guild_id}/commands` instead so auth can resolve
-scope and allow the request.
-
-multi-tenant REST safety invariant:
-
-- never allow client-authenticated requests to hit unscoped bot-token routes.
-- only tokenized interaction/webhook routes are allowed without auth
-  (`/interactions/{id}/{token}/...`, `/webhooks/{id}/{token}/...`).
-- never treat `/webhooks/{id}` as allowlisted.
-- for `AllowedWithoutAuth` routes, do not inject bot `Authorization` upstream.
-- fail closed (`403`/`401`) when route scope cannot be proven as guild-scoped or
-  token-scoped.
-
-## db package
-
-`db` is a devDependency of `cli`. this means cli can only import **types** from `db`, not runtime values. use `import type { ... } from 'db/...'` in cli code. website has `db` as a normal dependency so it can import runtime values (functions, classes, etc.).
-
-## opencode SDK
-
-always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). the v2 SDK uses flat parameters instead of nested `path`/`query`/`body` objects. for example:
-
-- `session.get({ sessionID: id })` not `session.get({ path: { id } })`
-- `session.messages({ sessionID: id, directory })` not `session.messages({ path: { id }, query: { directory } })`
-- `session.create({ title, directory })` not `session.create({ body: { title }, query: { directory } })`
-- `provider.list({ directory })` not `provider.list({ query: { directory } })`
-
-if I ask you questions about opencode you can opensrc it from anomalyco/opencode (not opencode-ai/opencode, which is an unrelated repo).
+- `discord-digital-twin/`, `opencode-deterministic-provider/`, `opencode-cached-provider/`: test harness for the e2e suite.
+- `discord-slack-bridge/`, `slack-digital-twin/`: Slack support via Discord emulation, until the native Slack adapter replaces it.
+- `libsqlproxy/`: Hrana protocol used by the bot's local SQLite server.
+- `errore/`, `opencode-injection-guard/`, `subrouter/`: submodule dependencies.
+- `slop/`: upstream design notes (Slack adapter, platform abstraction).
 
 # restarting the discord bot
 
@@ -125,31 +84,31 @@ schema.sql handles new installs, the ALTER handles existing installs. if a gener
 
 do NOT add simple Drizzle query wrappers to `database.ts`. inline straightforward `db.query.*.findFirst/findMany`, `db.insert`, `db.update`, etc. at the call site. `database.ts` holds genuinely complex or widely reused queries, not a repository layer.
 
-Prisma still belongs to the separate `db/` Postgres package and some test-support packages. Do not remove their Prisma dependencies or schemas when working on the cli SQLite database.
+Prisma belongs to test-support packages (`discord-digital-twin`). The cli SQLite schema is `cli/src/schema.ts`.
 
 ## publishing
 
-before any publish, read `docs/release-process.md`. it covers `pnpm sync-skills` first, the #changelog notification via sigillo with the demo bot token, the website production deploy, and roadie-demo deploys.
+before any publish, run `pnpm sync-skills` in `cli`.
 
 ## github issues
 
-never suggest installing roadie from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
+never suggest installing roadie from git (e.g. `npm i -g Extra-Chill/roadie#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
-the user-facing bug report workflow (export jsonl, share evidence in a gist, issue vs PR) lives in `website/src/docs/docs/guides/report-bugs.mdx` and at https://kimaki.dev/docs/guides/report-bugs. keep that page in sync when these debug commands change.
+the bug report workflow (export jsonl, share evidence in a gist) is in `docs/debugging-roadie.md`. keep it in sync when these debug commands change.
 
 ## git submodules
 
-submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
+submodules: `errore`, `opencode-injection-guard`, `subrouter`. their configured branches are in `.gitmodules`.
 
 **never rewrite or force-push a submodule branch in a way that drops commits roadie still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
 
 workflow when changing a submodule:
 
 1. commit and **push** the submodule branch first so GitHub has the objects
-2. only then bump the gitlink in roadie (`git add gateway-proxy` etc.) and commit that pointer update
-3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/remorses/gateway-proxy/commits/<sha> --jq .sha` (must not 422)
+2. only then bump the gitlink in roadie (`git add errore` etc.) and commit that pointer update
+3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/<owner>/<submodule>/commits/<sha> --jq .sha` (must not 422)
 
-when pulling submodules and they jump to a new commit, commit that pointer update right away before other work. otherwise critique diffs later include the noisy submodule jump along with the real changes.
+when pulling submodules and they jump to a new commit, commit that pointer update right away before other work. otherwise later diffs include the noisy submodule jump along with the real changes.
 
 if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" roadie by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
 
@@ -164,17 +123,6 @@ this project uses goke (not cac) for CLI parsing. goke auto-infers option types 
 ## logging
 
 always use logger instead of console so cli logs look uniform, with short log prefixes. logs go to `<dataDir>/roadie.log` (default `~/.roadie/roadie.log`), reset on every bot startup. event jsonl env vars, jq recipes, and profiling: `docs/debugging-roadie.md`.
-
-## product analytics (Strada)
-
-anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Roadie token usage can be summed.
-
-- prod project slug: `roadie`
-- local/dev bot (this repo `cli/.env`): `roadie-local`
-- disable: `roadie --no-analytics` or `ROADIE_STRADA_ENABLED=0`
-- query with `strada` CLI; login as the org owner (t.de Google account)
-
-full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: `docs/strada-product-analytics.md`.
 
 ## opencode plugin and env vars
 
@@ -275,8 +223,7 @@ use this to write tests that find messages matching specific patterns.
 - the verbosity setting decides which tool parts show. the default skips `thinking` (┣), file reads, and bash parts without `sideEffect` (a param passed by the model).
 - all non-text parts (tools, thinking, task titles) are wrapped in the `-# ` subtext prefix, e.g. `-# ┣ bash _ls_`. `formatPart()` in `cli/src/message-formatting.ts` does this via `asSubtext()`. bot status lines (banner, footer, context usage, queue notices) use plain `asSubtext()` with no glyph. only tool-related status lines (like `bash returned N tokens`) keep the `⬦ ` glyph so they line up with ┣.
 - context usage is shown at 10% windows, prefixed with `-# `.
-- on normal assistant completion a footer shows folder, branch, time, context used, model id: `-# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. never show it on interruptions or aborts.
-- voice messages are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
+- on normal assistant completion a footer shows folder, branch, time, context used, model id: `-# *my-project ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. never show it on interruptions or aborts.
 - /queue queues a user message for the end of the current run. each queue confirmation has a Remove button. when it is sent, the bot shows `» Tommy: content`.
 
 # session runtime
