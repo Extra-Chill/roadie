@@ -1402,7 +1402,7 @@ export async function startDiscordBot({
         return
       }
 
-      // Worktree creation moved to host tooling (e.g. Homeboy). A marker from
+      // Worktree creation is left to host tooling. A marker from
       // an older `send --worktree` client gets a clear notice; the session
       // runs in the project directory instead.
       if (marker.worktree) {

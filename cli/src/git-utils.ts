@@ -1,6 +1,6 @@
 // Git and working-directory helpers.
 //
-// Roadie does not create or merge git worktrees (host tooling such as Homeboy
+// Roadie does not create or merge git worktrees (host tooling
 // does). It only needs to run git, recognize a repository root, and validate
 // a directory a thread is asked to run in (`roadie send --cwd`).
 

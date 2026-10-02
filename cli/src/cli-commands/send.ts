@@ -256,7 +256,7 @@ cli
 
         if (options.worktree) {
           cliLogger.error(
-            '--worktree was removed: Roadie no longer creates git worktrees. Create the checkout with your host tooling (e.g. Homeboy) and pass it with --cwd <path>.',
+            '--worktree was removed: Roadie no longer creates git worktrees. Create the checkout with your own tooling and pass it with --cwd <path>.',
           )
           process.exit(EXIT_NO_RESTART)
         }
