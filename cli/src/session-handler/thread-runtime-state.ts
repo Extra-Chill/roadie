@@ -31,6 +31,9 @@ export type QueuedMessage = {
   userId: string
   // Discord display name. Used in runtime drain logging.
   username: string
+  // How userId was established: 'chat' (platform-authenticated author,
+  // default) or 'cli' (asserted by a local `roadie send --user` caller).
+  actorVia?: 'chat' | 'cli'
   // Image/file attachments extracted from the Discord message. Sent as
   // file parts alongside the prompt in the SDK call.
   images?: DiscordFileAttachment[]

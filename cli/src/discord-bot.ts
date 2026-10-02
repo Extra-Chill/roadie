@@ -864,6 +864,7 @@ export async function startDiscordBot({
             modelPrompt: [suffix.prompt, btwTextAttachments].filter(Boolean).join('\n\n'),
             images: btwImages.length > 0 ? btwImages : undefined,
             userId: cliInjectedUserId || message.author.id,
+            actorVia: cliInjectedUserId ? 'cli' : 'chat',
             username:
               cliInjectedUsername ||
               message.member?.displayName ||
@@ -973,6 +974,7 @@ export async function startDiscordBot({
         const enqueueResult = await runtime.enqueueIncoming({
           prompt: '',
           userId: cliInjectedUserId || message.author.id,
+            actorVia: cliInjectedUserId ? 'cli' : 'chat',
           username:
             cliInjectedUsername ||
             message.member?.displayName ||
@@ -1536,6 +1538,7 @@ export async function startDiscordBot({
       await runtime.enqueueIncoming({
         prompt: '',
         userId: marker.userId || '',
+        actorVia: 'cli',
         username: marker.username || 'bot',
         appId: currentAppId,
         agent: marker.agent,

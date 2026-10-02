@@ -7,9 +7,19 @@
 // Also injects ROADIE_SESSION_ID into bash env. /btw and /fork clone parent
 // history, so the copied system prompt still says --session <parent>. Upload
 // then prefers this live env over that stale flag.
+//
+// And the current turn's attribution (thread, channel, speaker); see
+// turn-attribution-env.ts for the env contract.
 
 import type { Plugin } from '@opencode-ai/plugin'
 import { z } from 'zod'
+import { createLogger, LogPrefix } from './logger.js'
+import {
+  applyTurnAttributionEnv,
+  resolveTurnAttribution,
+} from './turn-attribution-env.js'
+
+const logger = createLogger(LogPrefix.OPENCODE)
 
 export const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
 
@@ -73,6 +83,18 @@ export const bashToolSchemaPlugin: Plugin = async () => {
     },
     'shell.env': async (input, output) => {
       injectRoadieSessionEnv({ sessionID: input.sessionID, env: output.env })
+      if (!input.sessionID) {
+        applyTurnAttributionEnv({ env: output.env, attribution: undefined })
+        return
+      }
+      const attribution = await resolveTurnAttribution(input.sessionID)
+        .catch((e) => new Error('Failed to resolve turn attribution', { cause: e }))
+      if (attribution instanceof Error) {
+        logger.warn(`[ACTOR] ${attribution.message} for session ${input.sessionID}: ${String(attribution.cause)}`)
+        applyTurnAttributionEnv({ env: output.env, attribution: undefined })
+        return
+      }
+      applyTurnAttributionEnv({ env: output.env, attribution })
     },
   }
 }
