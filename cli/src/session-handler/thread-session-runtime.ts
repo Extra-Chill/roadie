@@ -23,6 +23,7 @@ import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import {
   buildSessionPermissions,
   parsePermissionRules,
@@ -711,6 +712,28 @@ export type PreprocessResult = {
   agent?: string
 }
 
+/**
+ * Apply the identity hook's per-person overrides to a chat turn. Only
+ * platform-authenticated speakers ('chat') get a person: a CLI-asserted actor
+ * is never treated as that person. Explicit agent/model on the input win;
+ * person permission rules are added to any explicit ones.
+ */
+export function applyPersonToIngress(input: IngressInput): IngressInput {
+  if (!isIdentityHookConfigured()) return input
+  if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
+  const person = getCachedPerson({ platform: 'discord', id: input.userId })
+  if (!person?.allowed) return input
+  return {
+    ...input,
+    ...(person.personId ? { personId: person.personId } : {}),
+    ...(input.agent || !person.agent ? {} : { agent: person.agent }),
+    ...(input.model || !person.model ? {} : { model: person.model }),
+    ...(person.permissions.length > 0
+      ? { permissions: [...(input.permissions ?? []), ...person.permissions] }
+      : {}),
+  }
+}
+
 export type IngressInput = {
   prompt: string
   queuedAction?: 'btw'
@@ -719,6 +742,8 @@ export type IngressInput = {
   // How userId was established: 'chat' (platform-authenticated author,
   // default) or 'cli' (asserted by a local `roadie send --user` caller).
   actorVia?: 'chat' | 'cli'
+  // Opaque host person id resolved by the identity hook for this turn.
+  personId?: string
   // Discord message ID and thread ID for the source message, embedded in
   // <discord-user> synthetic context so the external sync loop can detect
   // messages that originated from Discord and skip re-mirroring them.
@@ -3407,7 +3432,7 @@ export class ThreadSessionRuntime {
     input,
   }: {
     sessionId: string
-    input: Pick<IngressInput, 'userId' | 'username' | 'actorVia'>
+    input: Pick<IngressInput, 'userId' | 'username' | 'actorVia' | 'personId'>
   }): Promise<void> {
     const result = await setSessionTurnAttribution({
       sessionId,
@@ -3421,6 +3446,7 @@ export class ThreadSessionRuntime {
               ...(input.username ? { name: input.username } : {}),
               via: input.actorVia ?? 'chat',
             },
+            ...(input.personId ? { personId: input.personId } : {}),
           }
         : {}),
     }).catch((e) => new Error('Failed to record session turn attribution', { cause: e }))
@@ -3869,6 +3895,7 @@ export class ThreadSessionRuntime {
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
+    input = applyPersonToIngress(input)
     threadState.setSessionUsername(this.threadId, input.username)
     const botUserId = this.thread.client.user?.id
     if (input.userId && input.userId !== botUserId) {

@@ -979,6 +979,7 @@ export type SessionTurnAttribution = {
   threadId?: string
   channelId?: string
   actor?: SessionActor
+  personId?: string
 }
 
 /**
@@ -991,6 +992,7 @@ export async function setSessionTurnAttribution({
   threadId,
   channelId,
   actor,
+  personId,
 }: SessionTurnAttribution) {
   const db = await getDb()
   const values = {
@@ -1001,6 +1003,7 @@ export async function setSessionTurnAttribution({
     actor_id: actor?.id ?? null,
     actor_name: actor?.name ?? null,
     actor_via: actor?.via ?? null,
+    person_id: actor ? (personId ?? null) : null,
     updated_at: new Date(),
   }
   await db.insert(schema.session_actors)
@@ -1014,6 +1017,7 @@ export async function setSessionTurnAttribution({
         actor_id: values.actor_id,
         actor_name: values.actor_name,
         actor_via: values.actor_via,
+        person_id: values.person_id,
         updated_at: values.updated_at,
       },
     })
@@ -1041,6 +1045,7 @@ export async function getSessionTurnAttribution(
     ...(row.thread_id ? { threadId: row.thread_id } : {}),
     ...(row.channel_id ? { channelId: row.channel_id } : {}),
     ...(actor ? { actor } : {}),
+    ...(actor && row.person_id ? { personId: row.person_id } : {}),
   }
 }
 

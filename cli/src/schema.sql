@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS `session_actors` (
 	`actor_id` text,
 	`actor_name` text,
 	`actor_via` text,
+	`person_id` text,
 	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 

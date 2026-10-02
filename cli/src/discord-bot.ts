@@ -49,6 +49,7 @@ import {
   reactToThread,
   stripMentions,
   hasRoadieBotPermission,
+  hasRoadieShellPermission,
   hasNoRoadieRole,
   resolveGuildMessageMember,
 } from './discord-utils.js'
@@ -159,6 +160,7 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
+import { isIdentityHookConfigured, resolvePerson } from './identity.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
@@ -308,6 +310,28 @@ export async function createDiscordClient() {
     rest: { api: restApiUrl },
     allowedMentions: { parse: allowedMentions },
   })
+}
+
+/**
+ * Gate raw shell execution (`!cmd`). CLI-injected prompts from this bot keep
+ * working as before; human authors need the shell capability. Replies and
+ * returns false when denied.
+ */
+async function allowShellCommand({
+  message,
+  isCliInjectedPrompt,
+}: {
+  message: Message
+  isCliInjectedPrompt: boolean
+}): Promise<boolean> {
+  if (isCliInjectedPrompt || !message.guild) return true
+  const member = await resolveGuildMessageMember(message)
+  if (hasRoadieShellPermission(member, message.guild)) return true
+  await message.reply({
+    content: "You don't have permission to run shell commands.",
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+  return false
 }
 
 export async function startDiscordBot({
@@ -695,6 +719,17 @@ export async function startDiscordBot({
           return
         }
 
+        // Identity hook (if configured): resolve the person before the
+        // synchronous permission checks below, which read the cached result.
+        await resolvePerson({
+          actor: {
+            platform: 'discord',
+            id: message.author.id,
+            name: member.displayName || message.author.displayName,
+          },
+          context: { guildId: message.guild.id, channelId: message.channelId },
+        })
+
         if (hasNoRoadieRole(member)) {
           await message.reply({
             content: `You have the **no-roadie** role which blocks bot access.\nRemove this role to use Roadie.`,
@@ -705,7 +740,9 @@ export async function startDiscordBot({
 
         if (!hasRoadieBotPermission(member, message.guild)) {
           await message.reply({
-            content: `You don't have permission to start sessions.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
+            content: isIdentityHookConfigured()
+              ? `You don't have permission to start sessions.\nAsk an admin to link and authorize your account.`
+              : `You don't have permission to start sessions.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
@@ -813,6 +850,9 @@ export async function startDiscordBot({
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
+            if (!(await allowShellCommand({ message, isCliInjectedPrompt }))) {
+              return
+            }
             const shellDir =
               worktreeInfo?.status === 'ready' &&
               worktreeInfo.workspace_directory
@@ -1092,6 +1132,9 @@ export async function startDiscordBot({
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
+            if (!(await allowShellCommand({ message, isCliInjectedPrompt }))) {
+              return
+            }
             const loadingReply = await message.reply({
               content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
             })

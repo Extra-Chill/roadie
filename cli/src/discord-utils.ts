@@ -6,6 +6,12 @@
 // exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
 // discord.js uses tslib's __exportStar which is opaque to static analysis.
 import * as discord from 'discord.js'
+import {
+  getCachedPerson,
+  isIdentityHookConfigured,
+  personHas,
+  type Capability,
+} from './identity.js'
 import type {
   APIInteractionGuildMember,
   AutocompleteInteraction,
@@ -54,6 +60,40 @@ export async function buildThreadStartEmbeds(marker: ThreadStartMarker) {
   ]
 }
 
+function memberUserId(member: GuildMemberType | APIInteractionGuildMember): string {
+  return member instanceof GuildMember ? member.id : member.user.id
+}
+
+/**
+ * When an identity hook is configured, the hook decides. Entry points call
+ * resolvePerson() first, so the person is cached by the time these synchronous
+ * checks run; an uncached actor is denied (fail closed). Returns undefined
+ * when no hook is configured, so callers keep the built-in role checks.
+ */
+function hookCapability(
+  member: GuildMemberType | APIInteractionGuildMember,
+  capability: Capability,
+): boolean | undefined {
+  if (!isIdentityHookConfigured()) return undefined
+  const person = getCachedPerson({ platform: 'discord', id: memberUserId(member) })
+  return person ? personHas(person, capability) : false
+}
+
+/**
+ * Whether this member may run raw shell commands (`!cmd`, /run-shell-command).
+ * With an identity hook this is its own capability. Without one, Roadie keeps
+ * its built-in behavior: anyone with bot permission may run shell commands.
+ */
+export function hasRoadieShellPermission(
+  member: GuildMemberType | APIInteractionGuildMember | null,
+  guild?: Guild | null,
+): boolean {
+  if (!member) return false
+  const hooked = hookCapability(member, 'shell')
+  if (hooked !== undefined) return hooked
+  return hasRoadieBotPermission(member, guild)
+}
+
 /**
  * Centralized permission check for Roadie bot access.
  * Returns true if the member has permission to use the bot:
@@ -67,6 +107,8 @@ export function hasRoadieBotPermission(
   if (!member) {
     return false
   }
+  const hooked = hookCapability(member, 'sessions')
+  if (hooked !== undefined) return hooked
   const hasNoRoadieRole = hasRoleByName(member, 'no-roadie', guild)
   if (hasNoRoadieRole) {
     return false
@@ -100,6 +142,8 @@ export function hasRoadieAdminPermission(
   if (!member) {
     return false
   }
+  const hooked = hookCapability(member, 'admin')
+  if (hooked !== undefined) return hooked
   const hasNoRoadie = hasRoleByName(member, 'no-roadie', guild)
   if (hasNoRoadie) {
     return false

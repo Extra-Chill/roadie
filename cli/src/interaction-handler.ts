@@ -114,7 +114,12 @@ import {
   handleVariantQuickSelectMenu,
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
-import { hasRoadieAdminPermission, hasRoadieBotPermission } from './discord-utils.js'
+import {
+  hasRoadieAdminPermission,
+  hasRoadieBotPermission,
+  hasRoadieShellPermission,
+} from './discord-utils.js'
+import { resolvePerson } from './identity.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory } from './database.js'
@@ -220,6 +225,22 @@ export function registerInteractionHandler({
           // Do not respond at all — consuming the interaction token would
           // prevent the owning machine from responding (tokens are single-use).
           return
+        }
+
+        // Identity hook (if configured): resolve the person once, before the
+        // synchronous permission checks below read the cached result.
+        if (interaction.guild) {
+          await resolvePerson({
+            actor: {
+              platform: 'discord',
+              id: interaction.user.id,
+              name: interaction.user.displayName,
+            },
+            context: {
+              guildId: interaction.guild.id,
+              ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
+            },
+          })
         }
 
         if (interaction.isAutocomplete()) {
@@ -420,6 +441,13 @@ export function registerInteractionHandler({
               return
 
             case 'run-shell-command':
+              if (!hasRoadieShellPermission(interaction.member, interaction.guild)) {
+                await interaction.reply({
+                  content: "You don't have permission to run shell commands.",
+                  flags: MessageFlags.Ephemeral,
+                })
+                return
+              }
               await handleRunCommand({ command: interaction, appId })
               return
 

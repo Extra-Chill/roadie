@@ -220,6 +220,8 @@ async function migrateSchema({
     'ALTER TABLE session_sleeps ADD COLUMN delivery_id TEXT',
     'ALTER TABLE session_sleeps ADD COLUMN attempts INTEGER DEFAULT 0',
     'ALTER TABLE session_sleeps ADD COLUMN last_attempt_at DATETIME',
+    // session_actors shipped without person_id (identity hook added later).
+    'ALTER TABLE session_actors ADD COLUMN person_id TEXT',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)
