@@ -170,8 +170,8 @@ describe('who', () => {
     expect(matchesWho(['user:u1'], subject())).toBe(true)
     expect(matchesWho(['role:Team'], subject({ roleNames: ['team'] }))).toBe(true)
     expect(matchesWho(['role:999'], subject({ roleIds: ['999'] }))).toBe(true)
-    expect(matchesWho(['person:wp:38'], subject({ personId: 'wp:38' }))).toBe(true)
-    expect(matchesWho(['person:wp:38'], subject())).toBe(false)
+    expect(matchesWho(['person:host:38'], subject({ personId: 'host:38' }))).toBe(true)
+    expect(matchesWho(['person:host:38'], subject())).toBe(false)
   })
 
   test('channel audience applies per channel', () => {

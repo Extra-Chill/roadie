@@ -136,16 +136,16 @@ describe('session turn attribution', () => {
       sessionId,
       threadId: 'thread-p',
       actor: { platform: 'discord', id: 'user-38', via: 'chat' },
-      personId: 'wp:38',
+      personId: 'host:38',
     })
     const recorded = await getSessionTurnAttribution(sessionId)
-    expect(recorded?.personId).toBe('wp:38')
+    expect(recorded?.personId).toBe('host:38')
     const env: Record<string, string> = {}
     applyTurnAttributionEnv({ env, attribution: recorded })
-    expect(env.ROADIE_PERSON_ID).toBe('wp:38')
-    expect(env.KIMAKI_PERSON_ID).toBe('wp:38')
+    expect(env.ROADIE_PERSON_ID).toBe('host:38')
+    expect(env.KIMAKI_PERSON_ID).toBe('host:38')
 
-    await setSessionTurnAttribution({ sessionId, threadId: 'thread-p', personId: 'wp:38' })
+    await setSessionTurnAttribution({ sessionId, threadId: 'thread-p', personId: 'host:38' })
     expect((await getSessionTurnAttribution(sessionId))?.personId).toBeUndefined()
   })
 

@@ -7,7 +7,7 @@
 //   channels:
 //     "123456789012345678":          # channel id, category id, or "*"
 //       respond: always               # always | mention | never
-//       who: [owner, "role:team", "user:42", "person:wp:38"]   # or "everyone"
+//       who: [owner, "role:team", "user:42", "person:<host id>"]   # or "everyone"
 //       threads: per-message          # per-message | existing-only
 //       directory: /var/www/site
 //       agent: build
