@@ -1,7 +1,6 @@
 // OpenCode plugin that injects synthetic message parts for context awareness:
 // - Git branch / detached HEAD changes
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
-// - MEMORY.md reminder after a large assistant reply
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 // - Missing roadie system prompt on session.command user messages
 //
@@ -51,7 +50,6 @@ type GitState = {
 // All per-session mutable state in one place. One Map entry, one delete.
 type SessionState = {
   gitState: GitState | undefined
-  lastMemoryReminderAssistantMessageId: string | undefined
   tutorialInjected: boolean
   // Last directory observed via session.get(). Refreshed on each real user
   // message so directory-change reminders compare the latest observed session
@@ -65,11 +63,6 @@ type SessionState = {
 type PluginClient = {
   session: {
     get: (params: { sessionID: string; directory?: string }) => Promise<{ data?: { directory?: string } }>
-    messages: (params: {
-      sessionID: string
-      directory?: string
-      limit?: number
-    }) => Promise<{ data?: Array<{ info: AssistantMessageInfo }> }>
   }
 }
 
@@ -128,56 +121,6 @@ export function shouldInjectPwd({
       `that folder is a separate checkout and the user or another agent may be actively working there, ` +
       `so writing to it would override their unrelated changes.]\n`,
   }
-}
-
-const MEMORY_REMINDER_OUTPUT_TOKENS = 12_000
-
-type AssistantTokenUsage = {
-  input: number
-  output: number
-  reasoning: number
-  cache: { read: number; write: number }
-}
-
-type AssistantMessageInfo = {
-  id: string
-  role: string
-  time?: { completed?: number; created?: number }
-  tokens?: AssistantTokenUsage
-}
-
-export function shouldInjectMemoryReminderFromLatestAssistant({
-  lastMemoryReminderAssistantMessageId,
-  latestAssistantMessage,
-  threshold = MEMORY_REMINDER_OUTPUT_TOKENS,
-}: {
-  lastMemoryReminderAssistantMessageId?: string
-  latestAssistantMessage: AssistantMessageInfo | undefined
-  threshold?: number
-}): { inject: false } | { inject: true; assistantMessageId: string } {
-  if (!latestAssistantMessage) {
-    return { inject: false }
-  }
-  if (latestAssistantMessage.role !== 'assistant') {
-    return { inject: false }
-  }
-  if (typeof latestAssistantMessage.time?.completed !== 'number') {
-    return { inject: false }
-  }
-  if (!latestAssistantMessage.tokens) {
-    return { inject: false }
-  }
-  if (lastMemoryReminderAssistantMessageId === latestAssistantMessage.id) {
-    return { inject: false }
-  }
-  const outputTokens = Math.max(
-    0,
-    latestAssistantMessage.tokens.output + latestAssistantMessage.tokens.reasoning,
-  )
-  if (outputTokens < threshold) {
-    return { inject: false }
-  }
-  return { inject: true, assistantMessageId: latestAssistantMessage.id }
 }
 
 export function shouldInjectTutorial({
@@ -310,7 +253,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
     }
     const state: SessionState = {
       gitState: undefined,
-      lastMemoryReminderAssistantMessageId: undefined,
       tutorialInjected: false,
       resolvedDirectory: undefined,
       announcedDirectory: undefined,
@@ -363,7 +305,7 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
           }
 
           // -- Find first non-synthetic user text part --
-          // All remaining injections (branch, pwd, memory, time gap) only
+          // All remaining injections (branch, pwd) only
           // apply to real user messages, not empty or synthetic-only messages.
           const first = output.parts.find((part) => {
             if (part.type !== 'text') {
@@ -376,21 +318,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
           }
 
           const messageID = first.messageID
-
-          const latestAssistantMessageResult = await client.session.messages({
-            sessionID,
-            directory,
-            limit: 20,
-          }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
-          const latestAssistantMessage =
-            latestAssistantMessageResult instanceof Error
-              ? undefined
-              : [...(latestAssistantMessageResult.data || [])]
-                  .reverse()
-                  .find((entry) => {
-                    return entry.info.role === 'assistant'
-                  })
-                  ?.info
 
           // -- Resolve session working directory --
           const sessionDirectory = await resolveSessionDirectory({
@@ -428,24 +355,6 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
               text: pwdResult.text,
               synthetic: true,
             })
-          }
-
-          const memoryReminder = shouldInjectMemoryReminderFromLatestAssistant({
-            lastMemoryReminderAssistantMessageId:
-              state.lastMemoryReminderAssistantMessageId,
-            latestAssistantMessage,
-          })
-          if (memoryReminder.inject) {
-            output.parts.push({
-              id: `prt_${crypto.randomUUID()}`,
-              sessionID,
-              messageID,
-              type: 'text' as const,
-              text: '<system-reminder>The previous assistant message was large. If the conversation had non-obvious learnings that prevent future mistakes and are not already in code comments or AGENTS.md, add them to MEMORY.md with concise titles and brief content (2-3 sentences max).</system-reminder>\n',
-              synthetic: true,
-            })
-            state.lastMemoryReminderAssistantMessageId =
-              memoryReminder.assistantMessageId
           }
 
           // -- Branch injection (last synthetic part) --

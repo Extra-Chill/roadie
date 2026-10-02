@@ -192,7 +192,7 @@ export async function handleForkCommand(
 
     const recentMessages = userMessages.slice(-25)
 
-    // Filter out synthetic parts (branch context, memory reminders, etc.)
+    // Filter out synthetic parts (branch context, pwd reminders, etc.)
     // injected by the opencode plugin — they clutter the dropdown preview.
     const options = recentMessages
       .map(
