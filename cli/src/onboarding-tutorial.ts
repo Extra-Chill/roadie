@@ -148,13 +148,7 @@ ${backticks}
 
 If the tunnel URL is not visible yet, run the capture command again — it usually appears within a few seconds.
 
-After the tunnel is up, also generate a diff URL so the user can browse the code:
-
-${backticks}bash
-git init && git add -A && critique --url
-${backticks}
-
-Share both URLs prominently so the user can play the game and browse the code. Put each URL on its own line, not buried in text.
+Share the tunnel URL prominently so the user can play the game. Put it on its own line, not buried in text.
 
 ## Behavior
 
