@@ -5,8 +5,6 @@
 import { goke } from 'goke'
 import { z } from 'zod'
 import path from 'node:path'
-import fs from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
 import {
   setDataDir,
@@ -256,35 +254,6 @@ cli
           )
           process.exit(EXIT_NO_RESTART)
         }
-        // Soft-validate skill names against the bundled skills/ folder. Users
-        // may rely on skills loaded from their own .opencode / .claude / .agents
-        // dirs, so unknown names only emit a warning rather than hard-failing.
-        if (enabledSkills.length > 0 || disabledSkills.length > 0) {
-          const bundledSkillsDir = path.resolve(
-            path.dirname(fileURLToPath(import.meta.url)),
-            '..',
-            'skills',
-          )
-          const availableBundledSkills: string[] = (() => {
-            try {
-              return fs
-                .readdirSync(bundledSkillsDir, { withFileTypes: true })
-                .filter((entry) => entry.isDirectory())
-                .map((entry) => entry.name)
-            } catch {
-              return []
-            }
-          })()
-          const availableSet = new Set(availableBundledSkills)
-          for (const name of [...enabledSkills, ...disabledSkills]) {
-            if (!availableSet.has(name)) {
-              cliLogger.warn(
-                `Skill "${name}" is not a bundled roadie skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
-              )
-            }
-          }
-        }
-
         // --permission-timeout-minutes validation
         // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
         const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
