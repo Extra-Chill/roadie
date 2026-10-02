@@ -888,7 +888,6 @@ type CliOptions = {
   restartOnboarding?: boolean
   addChannels?: boolean
   dataDir?: string
-  useWorktrees?: boolean
 }
 
 
@@ -1245,7 +1244,6 @@ export async function resolveCredentials({
 export async function run({
   restartOnboarding,
   addChannels,
-  useWorktrees,
 }: CliOptions) {
   startCaffeinate()
 
@@ -1454,7 +1452,7 @@ export async function run({
   if (skipChannelSetup) {
     // Start bot immediately — channel sync happens in the background.
     cliLogger.log('Starting Discord bot...')
-    await startDiscordBot({ token, appId, discordClient, useWorktrees })
+    await startDiscordBot({ token, appId, discordClient })
     if (global.shuttingDown) {
       return
     }
@@ -1722,7 +1720,7 @@ export async function run({
     // Start bot after channel setup is complete so it doesn't handle
     // messages/interactions while the user is still going through prompts.
     cliLogger.log('Starting Discord bot...')
-    await startDiscordBot({ token, appId, discordClient, useWorktrees })
+    await startDiscordBot({ token, appId, discordClient })
     cliLogger.log('Discord bot is running!')
   }
 

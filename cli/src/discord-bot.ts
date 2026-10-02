@@ -19,7 +19,6 @@ import {
   closeDatabase,
   getThreadWorktreeOrWorkspace,
   getThreadSession,
-  getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
@@ -35,9 +34,7 @@ import {
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
-import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
-import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
+import { resolveSessionWorkingDirectory, git } from './worktrees.js'
 import { asSubtext } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -280,8 +277,6 @@ function parseSessionStartSourceFromMarker(
 type StartOptions = {
   token: string
   appId?: string
-  /** When true, all new sessions from channel messages create git worktrees */
-  useWorktrees?: boolean
 }
 
 export async function createDiscordClient() {
@@ -338,13 +333,11 @@ export async function startDiscordBot({
   token,
   appId,
   discordClient,
-  useWorktrees,
 }: StartOptions & { discordClient?: Client }) {
   if (!discordClient) {
     discordClient = await createDiscordClient()
   }
 
-  store.setState({ useWorktrees: Boolean(useWorktrees) })
   activeDiscordClient = discordClient
   registerBotLifecycleHandlers()
 
@@ -771,7 +764,7 @@ export async function startDiscordBot({
 
         // Only respond in threads roadie knows about (has a session row in DB),
         // where the bot is explicitly @mentioned, or where the bot created the
-        // thread itself (e.g. /new-worktree, /fork, roadie send). This prevents
+        // thread itself (e.g. /fork, roadie send). This prevents
         // the bot from hijacking user-created threads in project channels while
         // still responding to bot-created threads that may not yet have a session
         // row with a non-empty session_id (createPendingWorkspace sets ''). (GitHub #84)
@@ -1155,26 +1148,7 @@ export async function startDiscordBot({
             .replace(/\s+/g, ' ')
             .trim() || 'roadie thread'
 
-        // Check if worktrees should be enabled (CLI flag OR channel setting).
-        // Only create worktrees from the configured project directory when that
-        // directory is itself the git root. If the user registered a non-git
-        // workspace folder under a larger repo, git would create the worktree
-        // from the parent repo and strand follow-up messages on failure.
-        const wantsWorktrees =
-          useWorktrees || (await getChannelWorktreesEnabled(channel.id))
-        const shouldUseWorktrees =
-          wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
-
-        if (wantsWorktrees && !shouldUseWorktrees) {
-          discordLogger.warn(
-            `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
-          )
-        }
-
-        // Add worktree prefix if worktrees are enabled
-        const threadName = shouldUseWorktrees
-          ? `${WORKTREE_PREFIX}${baseThreadName}`
-          : baseThreadName
+        const threadName = baseThreadName
 
         const thread = await message.startThread({
           name: threadName.slice(0, 80),
@@ -1189,36 +1163,7 @@ export async function startDiscordBot({
 
         // Create runtime immediately so follow-up messages queue naturally
         // via the preprocess chain instead of being rejected with "please wait".
-        // When worktrees are enabled, the worktree promise runs concurrently
-        // and the first message's preprocess callback awaits it before resolving.
-        let worktreePromise: Promise<string | Error> | undefined
-        if (shouldUseWorktrees) {
-          // Auto-derived from thread name -- compress long slugs so the
-          // folder path stays short and the agent doesn't reuse old worktrees.
-          const worktreeName = formatAutoWorktreeName(
-            threadName.slice(0, 50),
-          )
-          discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
-
-          const worktreeStatusMessage = await thread
-            .send({
-              content: worktreeCreatingMessage(worktreeName),
-              flags: SILENT_MESSAGE_FLAGS,
-            })
-            .catch(() => undefined)
-
-          worktreePromise = createWorktreeInBackground({
-            thread,
-            starterMessage: worktreeStatusMessage,
-            worktreeName,
-            projectDirectory,
-            rest: discordClient.rest,
-          })
-        }
-
-        const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
-        if (worktreeResult instanceof Error) return
-        const sessionDirectory = worktreeResult
+        const sessionDirectory = projectDirectory
 
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
@@ -1457,47 +1402,14 @@ export async function startDiscordBot({
         return
       }
 
-      // Start worktree creation concurrently if requested via marker OR
-      // if the channel/global toggle enables auto-worktrees.
-      // The runtime is created immediately so follow-up messages queue
-      // naturally; the worktree promise is awaited inside enqueueIncoming.
-      const autoWorktreeEnabled =
-        !marker.worktree &&
-        !marker.cwd &&
-        (store.getState().useWorktrees ||
-          (await getChannelWorktreesEnabled(parent.id)))
-      const effectiveWorktreeName =
-        marker.worktree ||
-        (autoWorktreeEnabled
-          ? formatAutoWorktreeName(thread.name.slice(0, 50))
-          : undefined)
-
-      let worktreePromise: Promise<string | Error> | undefined
-      if (effectiveWorktreeName && (await isGitRepositoryRoot(projectDirectory))) {
-        discordLogger.log(`[BOT_SESSION] Creating worktree: ${effectiveWorktreeName}`)
-
-        const worktreeStatusMessage = await thread
-          .send({
-            content: worktreeCreatingMessage(effectiveWorktreeName),
-            flags: SILENT_MESSAGE_FLAGS,
-          })
-          .catch(() => undefined)
-
-        worktreePromise = createWorktreeInBackground({
-          thread,
-          starterMessage: worktreeStatusMessage,
-          worktreeName: effectiveWorktreeName,
-          projectDirectory,
-          rest: discordClient.rest,
+      // Worktree creation moved to host tooling (e.g. Homeboy). A marker from
+      // an older `send --worktree` client gets a clear notice; the session
+      // runs in the project directory instead.
+      if (marker.worktree) {
+        await thread.send({
+          content: `Roadie no longer creates worktrees (requested: \`${String(marker.worktree).slice(0, 100)}\`). Create the checkout with your host tooling and use \`roadie send --cwd <path>\`. Continuing in the project directory.`,
+          flags: NOTIFY_MESSAGE_FLAGS,
         })
-      } else if (marker.worktree) {
-        discordLogger.warn(
-          `[BOT_SESSION] Skipping requested worktree for non-git project directory: ${projectDirectory}`,
-        )
-      } else if (autoWorktreeEnabled) {
-        discordLogger.warn(
-          `[BOT_SESSION] Skipping auto-worktree for non-git project directory: ${projectDirectory}`,
-        )
       }
 
       // --cwd: reuse an existing project subfolder or worktree directory. Revalidate at bot-time
@@ -1558,9 +1470,7 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
-      const worktreeResult = worktreePromise ? await worktreePromise : undefined
-      if (worktreeResult instanceof Error) return
-      const sessionDirectory = cwdDirectory ?? worktreeResult ?? projectDirectory
+      const sessionDirectory = cwdDirectory ?? projectDirectory
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,

@@ -1,6 +1,6 @@
 // OpenCode plugin that injects synthetic message parts for context awareness:
 // - Git branch / detached HEAD changes
-// - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
+// - Working directory (pwd) changes (e.g. a thread bound to another checkout)
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
 // - Missing roadie system prompt on session.command user messages
 //

@@ -24,7 +24,7 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import { runScheduledTaskNow } from '../task-runner.js'
-import { formatTimeAgo } from './worktrees.js'
+import { formatTimeAgo } from '../time-format.js'
 
 function formatTimeUntil(date: Date): string {
   const diffMs = date.getTime() - Date.now()

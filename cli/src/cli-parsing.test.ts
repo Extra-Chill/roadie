@@ -251,41 +251,6 @@ describe('goke CLI ID parsing', () => {
     expect(stdout).toContain('multioauth')
   })
 
-  test('merge-worktree parses strategy and target branch', async () => {
-    const result = await maintenanceCommands.parse(
-      [
-        'node',
-        'roadie',
-        'merge-worktree',
-        '--strategy',
-        'squash',
-        '--target-branch',
-        'release',
-        '--thread',
-        '123456789012345678',
-        '--thread-name',
-        'feature work',
-      ],
-      { run: false },
-    )
-
-    expect({
-      command: maintenanceCommands.matchedCommandName,
-      strategy: result.options.strategy,
-      targetBranch: result.options.targetBranch,
-      thread: result.options.thread,
-      threadName: result.options.threadName,
-    }).toMatchInlineSnapshot(`
-      {
-        "command": "merge-worktree",
-        "strategy": "squash",
-        "targetBranch": "release",
-        "thread": "123456789012345678",
-        "threadName": "feature work",
-      }
-    `)
-  })
-
   test('parses root bot boolean flags', async () => {
     const result = await parseRootBotOptions([
       'node',

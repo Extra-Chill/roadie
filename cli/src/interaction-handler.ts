@@ -12,15 +12,6 @@ import {
   handleSessionCommand,
   handleSessionAutocomplete,
 } from './commands/session.js'
-import {
-  handleNewWorktreeCommand,
-  handleNewWorktreeAutocomplete,
-} from './commands/new-worktree.js'
-import {
-  handleMergeWorktreeCommand,
-  handleMergeWorktreeAutocomplete,
-} from './commands/merge-worktree.js'
-import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
 import { handleLastSessionsCommand } from './commands/last-sessions.js'
 
@@ -304,14 +295,6 @@ export function registerInteractionHandler({
               await handleQueueCommandAutocomplete({ interaction, appId })
               return
 
-            case 'new-worktree':
-              await handleNewWorktreeAutocomplete({ interaction, appId })
-              return
-
-            case 'merge-worktree':
-              await handleMergeWorktreeAutocomplete({ interaction, appId })
-              return
-
             default:
               if (
                 interaction.commandName.endsWith('-agent') &&
@@ -341,21 +324,6 @@ export function registerInteractionHandler({
           switch (interaction.commandName) {
             case 'new-session':
               await handleSessionCommand({ command: interaction, appId })
-              return
-
-            case 'new-worktree':
-              await handleNewWorktreeCommand({ command: interaction, appId })
-              return
-
-            case 'merge-worktree':
-              await handleMergeWorktreeCommand({ command: interaction, appId })
-              return
-
-            case 'worktrees':
-              await handleWorktreesCommand({
-                command: interaction,
-                appId,
-              })
               return
 
             case 'tasks':

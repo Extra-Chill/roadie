@@ -15,18 +15,16 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getChannelWorktreesEnabled } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
-import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
-import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, resolveSessionWorkingDirectory, isGitRepositoryRoot } from '../worktrees.js'
+import { execAsync, resolveSessionWorkingDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
@@ -76,7 +74,7 @@ cli
   )
   .option(
     '--worktree [name]',
-    'Create git worktree for session (name optional, derives from thread name)',
+    'Removed: create the checkout with your host tooling, then pass it with --cwd',
   )
   .option(
     '--cwd <path>',
@@ -256,13 +254,10 @@ cli
 
         const waitStartedAtMs = options.wait ? Date.now() : undefined
 
-        if (!existingThreadMode && options.worktree && notifyOnly) {
-          cliLogger.error('Cannot use --worktree with --notify-only')
-          process.exit(EXIT_NO_RESTART)
-        }
-
-        if (options.cwd && options.worktree) {
-          cliLogger.error('Cannot use --cwd with --worktree')
+        if (options.worktree) {
+          cliLogger.error(
+            '--worktree was removed: Roadie no longer creates git worktrees. Create the checkout with your host tooling (e.g. Homeboy) and pass it with --cwd <path>.',
+          )
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -280,9 +275,6 @@ cli
           const incompatibleFlags: string[] = []
           if (notifyOnly) {
             incompatibleFlags.push('--notify-only')
-          }
-          if (options.worktree) {
-            incompatibleFlags.push('--worktree')
           }
           if (options.cwd) {
             incompatibleFlags.push('--cwd')
@@ -688,25 +680,7 @@ cli
           (cleanPrompt.length > 80
             ? cleanPrompt.slice(0, 77) + '...'
             : cleanPrompt)
-        // Explicit string => use as-is via formatWorktreeName (no vowel strip).
-        // Boolean true => derived from thread/prompt, compress via formatAutoWorktreeName.
-        // When no --worktree flag but channel has worktrees enabled via toggle,
-        // the bot-side ThreadCreate handler auto-creates the worktree. We add
-        // the prefix here for cosmetic consistency (thread name shows 🌳).
-        const channelWorktreesEnabled =
-          !options.worktree && !options.cwd && !notifyOnly && projectDirectory
-            ? (await getChannelWorktreesEnabled(channelId)) &&
-              (await isGitRepositoryRoot(projectDirectory))
-            : false
-        const worktreeName = options.worktree
-          ? typeof options.worktree === 'string'
-            ? formatWorktreeName(options.worktree)
-            : formatAutoWorktreeName(baseThreadName)
-          : undefined
-        const threadName =
-          worktreeName || channelWorktreesEnabled
-            ? `${WORKTREE_PREFIX}${baseThreadName}`
-            : baseThreadName
+        const threadName = baseThreadName
 
         if (parsedSchedule) {
           const payload: ScheduledTaskPayload = {
@@ -715,7 +689,7 @@ cli
             prompt,
             name: name || null,
             notifyOnly: Boolean(notifyOnly),
-            worktreeName: worktreeName || null,
+            worktreeName: null,
             cwd: resolvedCwd || null,
             agent: options.agent || null,
             model: options.model || null,
@@ -749,12 +723,11 @@ cli
         }
 
         // Embed marker for auto-start sessions (unless --notify-only)
-        // Bot parses this YAML to know it should start a session, optionally create a worktree, and set initial user
+        // Bot parses this YAML to know it should start a session and set the initial user
         const embedMarker: ThreadStartMarker | undefined = notifyOnly
           ? undefined
           : {
               start: true,
-              ...(worktreeName && { worktree: worktreeName }),
               ...(resolvedCwd && { cwd: resolvedCwd }),
               ...(resolvedUser && {
                 userId: resolvedUser.id,
@@ -831,11 +804,9 @@ cli
           })
         }
 
-        const worktreeNote = worktreeName
-          ? `\nWorktree: ${worktreeName} (will be created by bot)`
-          : resolvedCwd
-            ? `\nWorking directory: ${resolvedCwd}`
-            : ''
+        const worktreeNote = resolvedCwd
+          ? `\nWorking directory: ${resolvedCwd}`
+          : ''
         const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
         const directoryLine = projectDirectory ? `\nDirectory: ${projectDirectory}` : ''
         const successMessage = notifyOnly

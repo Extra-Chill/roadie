@@ -63,7 +63,7 @@ cli
   .option('--install-url', 'Print the bot install URL and exit')
   .option(
     '--use-worktrees',
-    'Create git worktrees for all new sessions started from channel messages',
+    'Deprecated no-op: worktrees are created by host tooling; use roadie send --cwd',
   )
   .option(
     '--enable-voice-channels',
@@ -387,6 +387,9 @@ cli
             'Default mention mode: enabled (bot only responds when @mentioned)',
           )
         }
+        if (options.useWorktrees) {
+          cliLogger.log('--use-worktrees is a no-op: create checkouts with host tooling and use roadie send --cwd')
+        }
         if (options.noCritique) {
           cliLogger.log('--no-critique is a no-op: critique support was removed')
         }
@@ -432,7 +435,6 @@ cli
           restartOnboarding: options.restartOnboarding,
           addChannels: options.addChannels,
           dataDir: options.dataDir,
-          useWorktrees: options.useWorktrees,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))
