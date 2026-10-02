@@ -1,13 +1,13 @@
 // Detect a /commandname token on its own line in a user prompt and resolve it
 // to a registered opencode command. Mirrors the Discord slash command flow
 // (commands/user-command.ts) so users can type `/build foo` or `/build-cmd foo`
-// in chat, via `/new-session`, through `kimaki send --prompt`, or scheduled
+// in chat, via `/new-session`, through `roadie send --prompt`, or scheduled
 // tasks and have it routed to opencode's session.command API instead of going
 // to the model as plain text.
 //
 // Detection is line-based: we scan each line and return the first one whose
 // first non-whitespace token is `/<registered-command>`. This keeps the
-// detector oblivious to prefix lines (`» **kimaki-cli:**`, `Context from
+// detector oblivious to prefix lines (`» **roadie-cli:**`, `Context from
 // thread:`, etc). Producers that add such prefixes must put them on their
 // own line so the user's content starts on a fresh line.
 

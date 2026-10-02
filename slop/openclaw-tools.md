@@ -173,7 +173,7 @@ On error (quota/provider):
 
 OpenClaw uses **five distinct mechanisms** to force the model to
 actually read from and write to memory. Without these, models tend
-to ignore memory instructions. Kimaki currently only has passive
+to ignore memory instructions. Roadie currently only has passive
 instructions in the system prompt (mechanism 1, partially). The
 other four are what make openclaw's memory actually work.
 
@@ -334,14 +334,14 @@ prompt pressure (makes the model want to comply) + automated
 fallbacks (catches the cases where it doesn't) is what makes
 openclaw's memory reliable.
 
-### Gap analysis: kimaki vs openclaw
+### Gap analysis: roadie vs openclaw
 
-Kimaki currently has **only mechanism 2, partially**. The system
+Roadie currently has **only mechanism 2, partially**. The system
 prompt in `cli/src/system-message.ts:122-183` says "before
 answering questions about prior work... list existing files and read
 relevant ones" but:
 
-- **No mandatory startup read**: kimaki doesn't force the model to
+- **No mandatory startup read**: roadie doesn't force the model to
   read memory files at session start. The instruction is passive
   ("before answering questions about..." vs "before doing anything
   else, don't ask permission, just do it").
@@ -352,7 +352,7 @@ relevant ones" but:
   re-read memory files. It just continues with the summary.
 - **No auto-save hook**: when a session ends or resets, nothing
   automatically saves the conversation to memory files.
-- **No semantic search**: kimaki uses plain file read/write, not
+- **No semantic search**: roadie uses plain file read/write, not
   vector-indexed search. This means the model has to know which file
   to read upfront, rather than searching across all memory files.
 

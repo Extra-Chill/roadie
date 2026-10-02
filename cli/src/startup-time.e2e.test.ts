@@ -1,4 +1,4 @@
-// Measures time-to-ready for the kimaki Discord bot startup.
+// Measures time-to-ready for the roadie Discord bot startup.
 // Used as a baseline to track startup performance and guide optimizations
 // for scale-to-zero deployments where cold start time is critical.
 //
@@ -107,7 +107,7 @@ const TEST_USER_ID = '900000000000000777'
 const TEXT_CHANNEL_ID = '900000000000000778'
 
 const startupBenchmark = describe.skipIf(
-  process.env['KIMAKI_STARTUP_BENCHMARK'] !== '1',
+  process.env['ROADIE_STARTUP_BENCHMARK'] !== '1',
 )
 
 startupBenchmark('startup time measurement', () => {
@@ -135,8 +135,8 @@ startupBenchmark('startup time measurement', () => {
       discord?.stop().catch(() => {}),
     ])
 
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
 
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -147,7 +147,7 @@ startupBenchmark('startup time measurement', () => {
     directories = createRunDirectories()
     const lockPort = chooseLockPort({ key: 'startup-time-e2e' })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
 
     const digitalDiscordDbPath = path.join(
@@ -216,7 +216,7 @@ startupBenchmark('startup time measurement', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     const hranaMs = performance.now() - hranaStart
 
     // Phase 2: Database init
@@ -273,7 +273,7 @@ startupBenchmark('startup time measurement', () => {
 
     // Print timings for CI/local visibility
     console.log('\n┌─────────────────────────────────────────────┐')
-    console.log('│         Kimaki Startup Time Breakdown       │')
+    console.log('│         Roadie Startup Time Breakdown       │')
     console.log('├─────────────────────────────────────────────┤')
     console.log(`│  Hrana server:       ${String(timings.hranaServerMs).padStart(6)} ms             │`)
     console.log(`│  Database init:      ${String(timings.databaseInitMs).padStart(6)} ms             │`)

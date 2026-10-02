@@ -1,4 +1,4 @@
-// OpenCode plugin entry point for Kimaki Discord bot.
+// OpenCode plugin entry point for Roadie Discord bot.
 // Each export is treated as a separate plugin by OpenCode's plugin loader.
 // CRITICAL: never export utility functions from this file — only plugin
 // initializer functions. OpenCode calls every export as a plugin.
@@ -28,7 +28,7 @@ export { imageOptimizerPlugin } from './image-optimizer-plugin.js'
 export { cacheDriftPlugin } from './cache-drift-plugin.js'
 export { kittyGraphicsPlugin } from 'kitty-graphics-agent'
 export { injectionGuardInternal as injectionGuard } from 'opencode-injection-guard'
-export { kimakiWorkspaceAdaptorPlugin } from './kimaki-workspace-adaptor.js'
+export { roadieWorkspaceAdaptorPlugin } from './roadie-workspace-adaptor.js'
 export { fileEditTrackerPlugin } from './file-edit-log.js'
 export { bashToolSchemaPlugin } from './bash-tool-schema-plugin.js'
 export { taskIdPlugin } from './task-id-plugin.js'

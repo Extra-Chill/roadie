@@ -118,7 +118,7 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
     for (const channel of created) {
       expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        **Kimaki** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
+        **Roadie** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
         **What you can do:**
         - Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
         - Collaborate with teammates in the same session
@@ -143,7 +143,7 @@ test('gateway startup provisions every proxy-authorized guild without local mapp
   for (const channel of created) {
     expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
       "--- from: assistant (TestBot)
-      **Kimaki** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
+      **Roadie** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
       **What you can do:**
       - Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
       - Collaborate with teammates in the same session

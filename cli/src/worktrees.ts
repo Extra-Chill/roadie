@@ -16,17 +16,17 @@ const logger = createLogger(LogPrefix.WORKTREE)
 /**
  * Build the on-disk directory for a managed worktree.
  *
- * Layout: `<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`
+ * Layout: `<roadieDataDir>/worktrees/<8charProjectHash>/<basename>`
  *
- * - Lives under the kimaki data dir instead of the long
+ * - Lives under the roadie data dir instead of the long
  *   `~/.local/share/opencode/worktree/<40-char-hash>/<name>` path so folder
  *   names stay short and readable (agents tend to give up and reuse the old
  *   worktree when paths get absurdly long).
  * - The 8-char project hash keeps worktrees from different projects that
  *   happen to share a slug from colliding.
- * - Strips the `opencode/kimaki-` (or `opencode-kimaki-`) prefix from the
+ * - Strips the `opencode/roadie-` (or `opencode-roadie-`) prefix from the
  *   folder name since it's redundant noise on disk. The git branch name
- *   itself still uses `opencode/kimaki-<slug>` so merge/cleanup logic is
+ *   itself still uses `opencode/roadie-<slug>` so merge/cleanup logic is
  *   unchanged.
  */
 export function getManagedWorktreeDirectory({
@@ -42,7 +42,7 @@ export function getManagedWorktreeDirectory({
     .digest('hex')
     .slice(0, 8)
   const withoutPrefix = name
-    .replace(/^opencode\/kimaki-/, '')
+    .replace(/^opencode\/roadie-/, '')
     .replaceAll('/', '-')
   return path.join(getDataDir(), 'worktrees', projectHash, withoutPrefix)
 }
@@ -462,7 +462,7 @@ export async function mergeWorktree({
   let tempBranch: string | null = null
   const branchResult = await git(worktreeDir, ['symbolic-ref', '--short', 'HEAD'])
   if (branchResult instanceof Error) {
-    tempBranch = `kimaki-merge-${Date.now()}`
+    tempBranch = `roadie-merge-${Date.now()}`
     const createResult = await git(worktreeDir, ['checkout', '-b', tempBranch])
     if (createResult instanceof Error) return createResult
     branchName = tempBranch
@@ -891,7 +891,7 @@ export async function resolveSessionWorkingDirectory({
 }
 
 // Parsed entry from `git worktree list --porcelain`.
-// Represents any worktree (kimaki, opencode, manual) visible to git.
+// Represents any worktree (roadie, opencode, manual) visible to git.
 export type GitWorktree = {
   directory: string
   branch: string | null // null for detached HEAD
@@ -946,7 +946,7 @@ export function parseGitWorktreeListPorcelain(
       continue
     }
     if (line.startsWith('branch ')) {
-      // "branch refs/heads/opencode/kimaki-foo" → "opencode/kimaki-foo"
+      // "branch refs/heads/opencode/roadie-foo" → "opencode/roadie-foo"
       current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
       continue
     }

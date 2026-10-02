@@ -1,6 +1,6 @@
 // /worktrees command — list all git worktrees for the current channel's project.
 // Uses `git worktree list --porcelain` as source of truth, enriched with
-// DB metadata (thread link, created_at) when available. Shows kimaki-created,
+// DB metadata (thread link, created_at) when available. Shows roadie-created,
 // opencode-created, and manually created worktrees in a single table.
 // Renders a markdown table that the CV2 pipeline auto-formats for Discord,
 // including HTML-backed action buttons for deletable worktrees.
@@ -84,7 +84,7 @@ type WorktreeRow = {
   threadId: string | null
   guildId: string | null
   createdAt: Date | null
-  source: 'kimaki' | 'opencode' | 'manual'
+  source: 'roadie' | 'opencode' | 'manual'
   workspaceId: string | null
   // DB-only worktrees (pending/error) won't appear in git list
   dbStatus: 'ready' | 'pending' | 'error'
@@ -118,16 +118,16 @@ const GIT_CMD_TIMEOUT = 5_000
 const GLOBAL_TIMEOUT = 10_000
 
 // Detect worktree source from branch name and directory path.
-// opencode/kimaki-* branches → kimaki, opencode worktree paths → opencode, else manual.
+// opencode/roadie-* branches → roadie, opencode worktree paths → opencode, else manual.
 function detectWorktreeSource({
   branch,
   directory,
 }: {
   branch: string | null
   directory: string
-}): 'kimaki' | 'opencode' | 'manual' {
-  if (branch?.startsWith('opencode/kimaki-')) {
-    return 'kimaki'
+}): 'roadie' | 'opencode' | 'manual' {
+  if (branch?.startsWith('opencode/roadie-')) {
+    return 'roadie'
   }
   // opencode stores worktrees under ~/.local/share/opencode/worktree/
   if (directory.includes('/opencode/worktree/')) {
@@ -371,7 +371,7 @@ async function buildWorktreeRows({
       threadId: ws.thread_id,
       guildId: null,
       createdAt: toDate(ws.created_at),
-      source: 'kimaki' as const,
+      source: 'roadie' as const,
       workspaceId: ws.workspace_id,
       dbStatus: ws.status === 'error' ? 'error' : ws.status === 'pending' ? 'pending' : 'ready',
       locked: false,

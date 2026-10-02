@@ -269,7 +269,7 @@ export function createFileEditHooks({
 }
 
 export const fileEditTrackerPlugin: Plugin = async ({ directory }) => {
-  const dataDir = process.env.KIMAKI_DATA_DIR
+  const dataDir = process.env.ROADIE_DATA_DIR
   if (!dataDir) return {}
   setPluginLogFilePath(dataDir)
   const created = errore.try(

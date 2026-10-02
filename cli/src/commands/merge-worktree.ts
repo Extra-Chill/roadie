@@ -196,7 +196,7 @@ export async function handleMergeWorktreeCommand({
         ? thread.name.slice(prefixLength)
         : thread.name
       const mergeCommand = [
-        'kimaki merge-worktree',
+        'roadie merge-worktree',
         `--strategy ${strategyOption}`,
         `--target-branch ${quoteShellArg(String(result.target))}`,
         `--thread ${quoteShellArg(thread.id)}`,

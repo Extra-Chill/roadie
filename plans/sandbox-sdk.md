@@ -4,7 +4,7 @@ description: |
   Plan for a TypeScript package that wraps multiple sandbox providers
   (Vercel, Daytona, E2B, etc.) behind a single class interface.
   Inspired by cased/sandboxes (Python, 79 stars) but purpose-built
-  for kimaki's use case: bootstrapping opencode inside sandboxes and
+  for roadie's use case: bootstrapping opencode inside sandboxes and
   exposing a URL for the opencode SDK client to connect to.
 prompt: |
   User asked to recreate cased/sandboxes in TypeScript for our use
@@ -40,7 +40,7 @@ a running sandbox: run commands, expose ports, read/write files.
 
 ## Two-phase architecture
 
-After bootstrap, kimaki does NOT use the sandbox handle for runtime
+After bootstrap, roadie does NOT use the sandbox handle for runtime
 operations. The opencode SDK (`@opencode-ai/sdk/v2`) handles
 everything once `opencode serve` is running:
 
@@ -67,7 +67,7 @@ All git operations (checkout, commit, push, branch) happen through
 ## Package location
 
 `cli/src/sandbox/` — not a separate npm package, lives inside
-the kimaki cli package. Can be extracted later if needed.
+the roadie cli package. Can be extracted later if needed.
 
 ```
 cli/src/sandbox/
@@ -223,7 +223,7 @@ Uses only `SandboxHandle` methods — provider-agnostic.
 const OPENCODE_PORT = 7777
 
 type BootstrapOpts = {
-  /** Env vars for the opencode process (KIMAKI_DB_URL, etc.) */
+  /** Env vars for the opencode process (ROADIE_DB_URL, etc.) */
   envVars: Record<string, string>
   /** Pin opencode version, default 'latest' */
   opencodeVersion?: string
@@ -268,7 +268,7 @@ async function bootstrapOpencode(
   const envContent = Object.entries(opts.envVars)
     .map(([k, v]) => `${k}=${v}`)
     .join('\n')
-  await handle.writeFile('/tmp/kimaki-env', envContent)
+  await handle.writeFile('/tmp/roadie-env', envContent)
 
   // 4. Start opencode serve (detached)
   await handle.runCommand({
@@ -277,7 +277,7 @@ async function bootstrapOpencode(
       '-c',
       [
         'set -a',
-        'source /tmp/kimaki-env',
+        'source /tmp/roadie-env',
         'set +a',
         `opencode serve --port ${port} --hostname 0.0.0.0`,
       ].join(' && '),
@@ -626,7 +626,7 @@ class DaytonaSandboxHandle extends SandboxHandle {
 }
 ```
 
-## How kimaki uses this
+## How roadie uses this
 
 ### Full flow: user runs `/sandbox`
 
@@ -639,9 +639,9 @@ const handle = await provider.create({
   ports: [7777],
   runtime: 'node24',
   envVars: {
-    KIMAKI_DB_URL: `http://${hranaHost}:${hranaPort}`,
-    KIMAKI_BOT_TOKEN: botToken,
-    KIMAKI_LOCK_PORT: String(lockPort),
+    ROADIE_DB_URL: `http://${hranaHost}:${hranaPort}`,
+    ROADIE_BOT_TOKEN: botToken,
+    ROADIE_LOCK_PORT: String(lockPort),
   },
 })
 
@@ -708,7 +708,7 @@ await prisma.sandboxes.update({
 | index.ts             | ~10      | Re-exports                               |
 | **Total**            | **~650** |                                          |
 
-Plus integration into kimaki:
+Plus integration into roadie:
 
 | File                | Changes                                                   |
 | ------------------- | --------------------------------------------------------- |
@@ -717,7 +717,7 @@ Plus integration into kimaki:
 | opencode.ts         | Sandbox-aware initializeOpencodeForDirectory              |
 | discord-utils.ts    | resolveWorkingDirectory returns sandbox info              |
 | commands/sandbox.ts | /sandbox, /sandbox-list, /sandbox-destroy                 |
-| cli.ts              | kimaki sandbox subcommand, --sandbox/--new-sandbox flags  |
+| cli.ts              | roadie sandbox subcommand, --sandbox/--new-sandbox flags  |
 
 ## Implementation order
 

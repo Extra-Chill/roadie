@@ -1,4 +1,4 @@
-// Runtime startup and shared helpers for the Kimaki goke CLI.
+// Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
 import {
   intro,
@@ -18,8 +18,8 @@ import {
   deduplicateByKey,
   generateBotInstallUrl,
   generateDiscordInstallUrlForBot,
-  KIMAKI_GATEWAY_APP_ID,
-  KIMAKI_WEBSITE_URL,
+  ROADIE_GATEWAY_APP_ID,
+  ROADIE_WEBSITE_URL,
   abbreviatePath,
 } from './utils.js'
 import {
@@ -32,7 +32,7 @@ import {
   initializeOpencodeForDirectory,
   assertCompatibleOpencodeVersion,
   createProjectChannels,
-  createDefaultKimakiChannel,
+  createDefaultRoadieChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -70,7 +70,7 @@ import {
 } from './discord-utils.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
-import { backgroundUpgradeKimaki } from './upgrade.js'
+import { backgroundUpgradeRoadie } from './upgrade.js'
 import { initAnalytics, setAnalyticsBotMode } from './analytics.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'
@@ -82,17 +82,17 @@ import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registra
 export const cliLogger = createLogger(LogPrefix.CLI)
 
 // Gateway bot mode constants.
-// KIMAKI_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
-// KIMAKI_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
-// KIMAKI_GATEWAY_PROXY_URL is the gateway-proxy base URL.
+// ROADIE_GATEWAY_APP_ID is the Discord Application ID of the gateway bot.
+// ROADIE_WEBSITE_URL is the website that handles OAuth callback + onboarding status.
+// ROADIE_GATEWAY_PROXY_URL is the gateway-proxy base URL.
 // We derive REST base from this URL by swapping ws/wss to http/https.
 // These are hardcoded because they're deploy-time constants for the gateway infrastructure.
-export const KIMAKI_GATEWAY_PROXY_URL =
-  process.env.KIMAKI_GATEWAY_PROXY_URL ||
+export const ROADIE_GATEWAY_PROXY_URL =
+  process.env.ROADIE_GATEWAY_PROXY_URL ||
   'wss://discord-gateway.kimaki.dev'
 
-export const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
-  gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
+export const ROADIE_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
+  gatewayUrl: ROADIE_GATEWAY_PROXY_URL,
 })
 
 export type OpenUrlCommand = {
@@ -147,7 +147,7 @@ export function stripBracketedPaste(value: string | undefined): string {
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
 // For gateway mode tokens (client_id:secret format), this function returns
-// undefined -- the caller should use KIMAKI_GATEWAY_APP_ID instead.
+// undefined -- the caller should use ROADIE_GATEWAY_APP_ID instead.
 export function appIdFromToken(token: string): string | undefined {
   // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
@@ -174,7 +174,7 @@ export function appIdFromToken(token: string): string | undefined {
 // In gateway mode, also sets store.discordBaseUrl so REST calls
 // are routed through the gateway-proxy REST endpoint.
 //
-// Priority: KIMAKI_BOT_TOKEN env var takes precedence over saved DB
+// Priority: ROADIE_BOT_TOKEN env var takes precedence over saved DB
 // credentials. This lets CI and cross-instance commands override the
 // local bot identity. If the env token looks like a gateway credential
 // (clientId:clientSecret), the gateway proxy REST URL is set automatically.
@@ -182,12 +182,12 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   token: string
   appId: string | undefined
 }> {
-  const envToken = process.env.KIMAKI_BOT_TOKEN
+  const envToken = process.env.ROADIE_BOT_TOKEN
   if (envToken) {
     const isGatewayToken = envToken.includes(':')
     if (isGatewayToken) {
       // Gateway tokens need REST calls routed through the proxy, not discord.com
-      store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
+      store.setState({ discordBaseUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL })
     }
     const appId = appIdOverride || appIdFromToken(envToken)
     return { token: envToken, appId }
@@ -202,7 +202,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
     return { token: botRow.token, appId: appIdOverride || botRow.appId }
   }
 
-  cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
+  cliLogger.error('No bot token found. Set ROADIE_BOT_TOKEN env var or run `roadie` first to set up.')
   process.exit(EXIT_NO_RESTART)
 }
 
@@ -304,7 +304,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
 
     // When prompt exceeds Discord's limit, attach it as prompt.md alongside
     // user files so nothing is silently lost. Build prompt.md from memory so
-    // parallel kimaki send processes never share or unlink a temp path.
+    // parallel roadie send processes never share or unlink a temp path.
     const longPrompt = prompt.length > discordMaxLength
       ? buildLongPromptMessage(prompt)
       : undefined
@@ -631,10 +631,10 @@ export function isDiscordMemberLookupUnavailable(error: Error): boolean {
 export function formatMemberLookupUnavailableMessage(): string {
   return [
     'Discord member search is unavailable for this bot.',
-    'Most Kimaki features still work. Searching names with `--user` needs Server Members Intent.',
+    'Most Roadie features still work. Searching names with `--user` needs Server Members Intent.',
     'Use a Discord user ID or raw mention with the same `--user` flag instead:',
-    `  kimaki send --channel <channelId> --prompt '...' --user 535922349652836367`,
-    `  kimaki send --channel <channelId> --prompt '...' --user '<@535922349652836367>'`,
+    `  roadie send --channel <channelId> --prompt '...' --user 535922349652836367`,
+    `  roadie send --channel <channelId> --prompt '...' --user '<@535922349652836367>'`,
   ].join('\n')
 }
 
@@ -697,7 +697,7 @@ export function canUseInteractivePrompts(): boolean {
 
 export function exitNonInteractiveSetup(): never {
   cliLogger.error(
-    'Setup requires an interactive terminal (TTY) for prompts. Run `kimaki` in an interactive shell to complete setup.',
+    'Setup requires an interactive terminal (TTY) for prompts. Run `roadie` in an interactive shell to complete setup.',
   )
   process.exit(EXIT_NO_RESTART)
 }
@@ -722,15 +722,15 @@ export function emitJsonEvent(event: ProgrammaticEvent): void {
 export async function resolveGatewayInstallCredentials(): Promise<
   Error | { clientId: string; clientSecret: string; createdNow: boolean }
 > {
-  if (!KIMAKI_GATEWAY_APP_ID) {
+  if (!ROADIE_GATEWAY_APP_ID) {
     return new Error(
-      'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
+      'Gateway mode is not available yet. ROADIE_GATEWAY_APP_ID is not configured.',
     )
   }
 
   const db = await getDb()
   const gatewayBot = await db.query.bot_tokens.findFirst({
-    where: { app_id: KIMAKI_GATEWAY_APP_ID },
+    where: { app_id: ROADIE_GATEWAY_APP_ID },
   })
 
   if (gatewayBot?.client_id && gatewayBot.client_secret) {
@@ -745,11 +745,11 @@ export async function resolveGatewayInstallCredentials(): Promise<
   const clientSecret = crypto.randomBytes(32).toString('hex')
 
   await setBotMode({
-    appId: KIMAKI_GATEWAY_APP_ID,
+    appId: ROADIE_GATEWAY_APP_ID,
     mode: 'gateway',
     clientId,
     clientSecret,
-    proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
+    proxyUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL,
   })
 
   return {
@@ -776,7 +776,7 @@ export async function printDiscordInstallUrlAndExit({
     }
 
     const installUrl = generateDiscordInstallUrlForBot({
-      appId: KIMAKI_GATEWAY_APP_ID,
+      appId: ROADIE_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId: gatewayCredentials.clientId,
       clientSecret: gatewayCredentials.clientSecret,
@@ -800,7 +800,7 @@ export async function printDiscordInstallUrlAndExit({
   const existingBot = await getBotTokenWithMode()
 
   if (!existingBot) {
-    cliLogger.error('No bot configured yet. Run `kimaki` first to set up.')
+    cliLogger.error('No bot configured yet. Run `roadie` first to set up.')
     process.exit(EXIT_NO_RESTART)
   }
 
@@ -968,7 +968,7 @@ export async function ensureCommandAvailable({
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
 // Uses -s to also prevent sleep on lid close (AC power only, not battery).
-// Uses -w to watch the parent PID so caffeinate self-terminates if kimaki
+// Uses -w to watch the parent PID so caffeinate self-terminates if roadie
 // exits for any reason (SIGTERM, crash, process.exit, supervisor stop).
 export function startCaffeinate() {
   if (process.platform !== 'darwin') {
@@ -1014,7 +1014,7 @@ type CliOptions = {
 }
 
 
-export async function collectKimakiChannels({
+export async function collectRoadieChannels({
   guilds,
 }: {
   guilds: Guild[]
@@ -1022,9 +1022,9 @@ export async function collectKimakiChannels({
   const guildResults = await Promise.all(
     guilds.map(async (guild) => {
       const channels = await getChannelsWithDescriptions(guild)
-      const kimakiChans = channels.filter((ch) => ch.kimakiDirectory)
+      const roadieChans = channels.filter((ch) => ch.roadieDirectory)
 
-      return { guild, channels: kimakiChans }
+      return { guild, channels: roadieChans }
     }),
   )
 
@@ -1038,16 +1038,16 @@ export async function collectKimakiChannels({
  * Called after Discord login to persist channel configurations.
  */
 export async function storeChannelDirectories({
-  kimakiChannels,
+  roadieChannels,
 }: {
-  kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  roadieChannels: { guild: Guild; channels: ChannelWithTags[] }[]
 }): Promise<void> {
-  for (const { guild, channels } of kimakiChannels) {
+  for (const { guild, channels } of roadieChannels) {
     for (const channel of channels) {
-      if (channel.kimakiDirectory) {
+      if (channel.roadieDirectory) {
         await setChannelDirectory({
           channelId: channel.id,
-          directory: channel.kimakiDirectory,
+          directory: channel.roadieDirectory,
           channelType: 'text',
           skipIfExists: true,
         })
@@ -1060,7 +1060,7 @@ export async function storeChannelDirectories({
         if (voiceChannel) {
           await setChannelDirectory({
             channelId: voiceChannel.id,
-            directory: channel.kimakiDirectory,
+            directory: channel.roadieDirectory,
             channelType: 'voice',
             skipIfExists: true,
           })
@@ -1075,10 +1075,10 @@ export async function storeChannelDirectories({
  * Called at the end of startup to display available channels.
  */
 export function showReadyMessage({
-  kimakiChannels,
+  roadieChannels,
   createdChannels,
 }: {
-  kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[]
+  roadieChannels: { guild: Guild; channels: ChannelWithTags[] }[]
   createdChannels: { name: string; id: string; guildId: string }[]
 }): void {
   const allChannels: {
@@ -1090,13 +1090,13 @@ export function showReadyMessage({
 
   allChannels.push(...createdChannels)
 
-  kimakiChannels.forEach(({ guild, channels }) => {
+  roadieChannels.forEach(({ guild, channels }) => {
     channels.forEach((ch) => {
       allChannels.push({
         name: ch.name,
         id: ch.id,
         guildId: guild.id,
-        directory: ch.kimakiDirectory,
+        directory: ch.roadieDirectory,
       })
     })
   })
@@ -1110,13 +1110,13 @@ export function showReadyMessage({
       .join('\n')
 
     note(
-      `Your kimaki channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
+      `Your roadie channels are ready! Click any link below to open in Discord:\n\n${channelLinks}\n\nSend a message in any channel to start using OpenCode!`,
       '🚀 Ready to Use',
     )
   }
 
   note(
-    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx kimaki` again to start the bot.',
+    'Leave this process running to keep the bot active.\n\nIf you close this process or restart your machine, run `npx roadie` again to start the bot.',
     '⚠️  Keep Running',
   )
 }
@@ -1139,7 +1139,7 @@ export async function ensureDefaultChannelsWithWelcome({
   isGatewayMode: boolean
   installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
-  if (process.env['KIMAKI_NO_DEFAULT_CHANNEL'] === '1') return []
+  if (process.env['ROADIE_NO_DEFAULT_CHANNEL'] === '1') return []
 
   const localMappings = isGatewayMode ? [] : await findChannelsByDirectory({})
   const created: { name: string; id: string; guildId: string }[] = []
@@ -1150,7 +1150,7 @@ export async function ensureDefaultChannelsWithWelcome({
         const channels = await guild.channels.fetch()
         if (!localMappings.some((row) => channels.has(row.channel_id))) continue
       }
-      const result = await createDefaultKimakiChannel({
+      const result = await createDefaultRoadieChannel({
         guild,
         botName: discordClient.user?.username,
         appId,
@@ -1173,7 +1173,7 @@ export async function ensureDefaultChannelsWithWelcome({
       }
     } catch (error) {
       cliLogger.warn(
-        `Failed to create default kimaki channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
+        `Failed to create default roadie channel in ${guild.name}: ${error instanceof Error ? error.stack : String(error)}`,
       )
     }
   }
@@ -1247,12 +1247,12 @@ export async function backgroundInit({
 }
 
 // Resolve bot credentials from (in priority order):
-// 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
+// 1. ROADIE_BOT_TOKEN env var (headless/CI deployments)
 // 2. Saved credentials in the database (self-hosted or gateway mode)
 // 3. Interactive wizard (gateway OAuth or self-hosted token entry)
 //
 // credentialSource tells the caller how creds were obtained:
-//   'env'    — KIMAKI_BOT_TOKEN env var
+//   'env'    — ROADIE_BOT_TOKEN env var
 //   'saved'  — reused from database
 //   'wizard' — user just completed onboarding (gateway OAuth or self-hosted)
 export async function resolveCredentials({
@@ -1264,7 +1264,7 @@ export async function resolveCredentials({
   forceGateway: boolean
   gatewayCallbackUrl?: string
 }): Promise<CredentialResult> {
-  const envToken = process.env.KIMAKI_BOT_TOKEN
+  const envToken = process.env.ROADIE_BOT_TOKEN
   const existingBot = await getBotTokenWithMode()
   // When --gateway is requested and the resolved bot is still self-hosted,
   // check if saved gateway credentials exist by looking up the gateway app_id
@@ -1272,7 +1272,7 @@ export async function resolveCredentials({
   // re-running the onboarding wizard each time.
   const hasGatewayCreds = (forceGateway && existingBot?.mode !== 'gateway')
     ? await (await getDb()).query.bot_tokens.findFirst({
-        where: { app_id: KIMAKI_GATEWAY_APP_ID },
+        where: { app_id: ROADIE_GATEWAY_APP_ID },
       })
     : undefined
 
@@ -1281,12 +1281,12 @@ export async function resolveCredentials({
     const derivedAppId = appIdFromToken(envToken)
     if (!derivedAppId) {
       cliLogger.error(
-        'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
+        'Could not derive Application ID from ROADIE_BOT_TOKEN. The token appears malformed.',
       )
       process.exit(EXIT_NO_RESTART)
     }
     await setBotToken(derivedAppId, envToken)
-    cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
+    cliLogger.log(`Using ROADIE_BOT_TOKEN env var (App ID: ${derivedAppId})`)
     return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
   }
 
@@ -1352,11 +1352,11 @@ export async function resolveCredentials({
     : await (async () => {
         const choice = await select({
           message:
-            'How do you want to connect to Discord?\n\nGateway: uses Kimaki\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
+            'How do you want to connect to Discord?\n\nGateway: uses Roadie\'s pre-built bot — no setup, instant. Self-hosted: you create your own Discord bot at discord.com/developers.',
           options: [
             {
               value: 'gateway' as const,
-              label: 'Gateway (pre-built Kimaki bot, no setup needed)',
+              label: 'Gateway (pre-built Roadie bot, no setup needed)',
             },
             {
               value: 'self_hosted' as const,
@@ -1373,9 +1373,9 @@ export async function resolveCredentials({
 
   // ── Gateway mode flow ──
   if (modeChoice === 'gateway') {
-    if (!KIMAKI_GATEWAY_APP_ID) {
+    if (!ROADIE_GATEWAY_APP_ID) {
       cliLogger.error(
-        'Gateway mode is not available yet. KIMAKI_GATEWAY_APP_ID is not configured.',
+        'Gateway mode is not available yet. ROADIE_GATEWAY_APP_ID is not configured.',
       )
       process.exit(EXIT_NO_RESTART)
     }
@@ -1387,7 +1387,7 @@ export async function resolveCredentials({
     const { clientId, clientSecret } = gatewayCredentials
 
     const oauthUrlResult = generateDiscordInstallUrlForBot({
-      appId: KIMAKI_GATEWAY_APP_ID,
+      appId: ROADIE_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId,
       clientSecret,
@@ -1402,7 +1402,7 @@ export async function resolveCredentials({
 
     if (isInteractive) {
       note(
-        `Open this URL to install the Kimaki bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
+        `Open this URL to install the Roadie bot in your Discord server:\n\n${oauthUrl}\n\nDo not share this URL with anyone — it contains your credentials.\n\nIf you don't have a server, create one first (+ button in the Discord sidebar).`,
         'Install Bot',
       )
 
@@ -1418,7 +1418,7 @@ export async function resolveCredentials({
     const s = isInteractive ? spinner() : undefined
     s?.start('Waiting for a Discord server with the bot installed...')
 
-    const pollUrl = new URL('/api/onboarding/status', KIMAKI_WEBSITE_URL)
+    const pollUrl = new URL('/api/onboarding/status', ROADIE_WEBSITE_URL)
     pollUrl.searchParams.set('client_id', clientId)
     pollUrl.searchParams.set('secret', clientSecret)
 
@@ -1505,7 +1505,7 @@ export async function resolveCredentials({
     }
 
     return {
-      appId: KIMAKI_GATEWAY_APP_ID,
+      appId: ROADIE_GATEWAY_APP_ID,
       token: `${clientId}:${clientSecret}`,
       credentialSource: 'wizard',
       isGatewayMode: true,
@@ -1525,7 +1525,7 @@ export async function resolveCredentials({
     '1. Go to the "Bot" section in the left sidebar\n' +
       '2. Scroll down to "Privileged Gateway Intents"\n' +
       '3. Enable MESSAGE CONTENT INTENT by toggling it ON\n' +
-      '4. Optional: enable SERVER MEMBERS INTENT only if you want name lookup in `kimaki user list` and `kimaki send --user Tommy`\n' +
+      '4. Optional: enable SERVER MEMBERS INTENT only if you want name lookup in `roadie user list` and `roadie send --user Tommy`\n' +
       '5. Click "Save Changes" at the bottom',
     'Step 2: Enable Message Content Intent',
   )
@@ -1640,7 +1640,7 @@ export async function run({
 
 
   if (store.getState().autoUpgradeEnabled) {
-    void backgroundUpgradeKimaki()
+    void backgroundUpgradeRoadie()
   }
 
   // Start in-process Hrana server before database init. Required for the bot
@@ -1676,7 +1676,7 @@ export async function run({
     preferredGatewayToken: isGatewayMode ? token : undefined,
   })
   // Always set service auth token so local and internet control-plane paths
-  // share one auth model (/kimaki/wake and future service endpoints).
+  // share one auth model (/roadie/wake and future service endpoints).
   store.setState({ gatewayToken })
 
   // In gateway mode, ensure REST calls route through the gateway proxy.
@@ -1686,15 +1686,15 @@ export async function run({
   // Without this, discord.js sends the clientId:clientSecret token to Discord
   // directly, which rejects it with "An invalid token was provided".
   if (isGatewayMode) {
-    store.setState({ discordBaseUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL })
+    store.setState({ discordBaseUrl: ROADIE_GATEWAY_PROXY_REST_BASE_URL })
   }
 
-  // When KIMAKI_INTERNET_REACHABLE_URL is set, the hrana server exposes
-  // a /kimaki/wake endpoint for the gateway-proxy to wake this instance and
+  // When ROADIE_INTERNET_REACHABLE_URL is set, the hrana server exposes
+  // a /roadie/wake endpoint for the gateway-proxy to wake this instance and
   // wait until discord.js is connected. Keep Discord traffic on the normal
   // configured base URL (gateway-proxy in gateway mode).
   if (getInternetReachableBaseUrl()) {
-    cliLogger.log('Internet-reachable mode: enabling /kimaki/wake endpoint on hrana server')
+    cliLogger.log('Internet-reachable mode: enabling /roadie/wake endpoint on hrana server')
   }
 
   // Start OpenCode server as early as possible — non-blocking.
@@ -1759,7 +1759,7 @@ export async function run({
   const discordClient = await createDiscordClient()
 
   const guilds: Guild[] = []
-  const kimakiChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
+  const roadieChannels: { guild: Guild; channels: ChannelWithTags[] }[] = []
   const createdChannels: { name: string; id: string; guildId: string }[] = []
 
   try {
@@ -1787,11 +1787,11 @@ export async function run({
         }
 
         // Process guild metadata when setup flow needs channel prompts.
-        const guildResults = await collectKimakiChannels({ guilds })
+        const guildResults = await collectRoadieChannels({ guilds })
 
         // Collect results
         for (const result of guildResults) {
-          kimakiChannels.push(result)
+          roadieChannels.push(result)
         }
 
         resolve(null)
@@ -1840,7 +1840,7 @@ export async function run({
       throw new Error('Malformed gateway token: expected clientId:clientSecret format')
     }
     const installUrlResult = generateDiscordInstallUrlForBot({
-      appId: KIMAKI_GATEWAY_APP_ID,
+      appId: ROADIE_GATEWAY_APP_ID,
       mode: 'gateway',
       clientId,
       clientSecret,
@@ -1856,7 +1856,7 @@ export async function run({
       'No Discord servers found. The bot must be installed in at least one server.\n' +
         `Install URL: ${installUrl}\n` +
         'Do not share this URL with anyone — it contains your credentials.\n' +
-        'Open the URL above to add the bot to a server, then run kimaki again.',
+        'Open the URL above to add the bot to a server, then run roadie again.',
     )
     void discordClient.destroy()
     process.exit(EXIT_NO_RESTART)
@@ -1875,8 +1875,8 @@ export async function run({
     // Never blocks ready state.
     void (async () => {
       try {
-        const backgroundChannels = await collectKimakiChannels({ guilds })
-        await storeChannelDirectories({ kimakiChannels: backgroundChannels })
+        const backgroundChannels = await collectRoadieChannels({ guilds })
+        await storeChannelDirectories({ roadieChannels: backgroundChannels })
         cliLogger.log(
           `Background channel sync completed for ${backgroundChannels.length} guild(s)`,
         )
@@ -1917,25 +1917,25 @@ export async function run({
   } else {
     // ── Channel setup flow ──
     // Store channel-directory mappings discovered during Discord login.
-    await storeChannelDirectories({ kimakiChannels })
+    await storeChannelDirectories({ roadieChannels })
 
     if (!hasConfiguredTextChannels) {
       note(
-        'No Kimaki project channels are configured yet. Opening project/channel setup.',
+        'No Roadie project channels are configured yet. Opening project/channel setup.',
         'Channel Setup',
       )
     }
 
-    if (kimakiChannels.length > 0) {
-      const channelList = kimakiChannels
+    if (roadieChannels.length > 0) {
+      const channelList = roadieChannels
         .flatMap(({ guild, channels }) =>
           channels.map((ch) => {
-            return `#${ch.name} in ${guild.name}: ${ch.kimakiDirectory}`
+            return `#${ch.name} in ${guild.name}: ${ch.roadieDirectory}`
           }),
         )
         .join('\n')
 
-      note(channelList, 'Existing Kimaki Channels')
+      note(channelList, 'Existing Roadie Channels')
     }
 
     // Wait for OpenCode, fetch projects, show prompts, create channels if needed
@@ -1982,10 +1982,10 @@ export async function run({
 
     cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
 
-    const existingDirs = kimakiChannels.flatMap(({ channels }) =>
+    const existingDirs = roadieChannels.flatMap(({ channels }) =>
       channels
-        .filter((ch) => ch.kimakiDirectory)
-        .map((ch) => ch.kimakiDirectory)
+        .filter((ch) => ch.roadieDirectory)
+        .map((ch) => ch.roadieDirectory)
         .filter(Boolean),
     )
 
@@ -2093,7 +2093,7 @@ export async function run({
       }
     }
 
-    // Create default kimaki channel for general-purpose tasks.
+    // Create default roadie channel for general-purpose tasks.
     // Only locally configured or gateway-authorized guilds are eligible.
     const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
       guilds,
@@ -2151,7 +2151,7 @@ export async function run({
       guild_ids: guilds.map((g) => { return g.id }),
     })
   } else {
-    showReadyMessage({ kimakiChannels, createdChannels })
+    showReadyMessage({ roadieChannels, createdChannels })
     outro('✨ Bot ready! Listening for messages...')
   }
 }

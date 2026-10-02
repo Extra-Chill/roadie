@@ -3,7 +3,7 @@
 // A random install id is stored in {dataDir}/install-id for DAU-style queries.
 //
 // Metrics are "active installs", not people. Multiple --data-dir values count
-// as separate installs. Query with ServiceName = 'kimaki-cli' and
+// as separate installs. Query with ServiceName = 'roadie-cli' and
 // LogAttributes['custom.install_id'] / LogAttributes['event.name'].
 
 import fs from 'node:fs'
@@ -17,9 +17,9 @@ import { store } from './store.js'
 
 const logger = createLogger(LogPrefix.CLI)
 
-// Public Strada project for production kimaki usage (write-only ingest token).
-// Override with KIMAKI_STRADA_* for local/dev against kimaki-local.
-// Disable with --no-analytics or KIMAKI_STRADA_ENABLED=0.
+// Public Strada project for production roadie usage (write-only ingest token).
+// Override with ROADIE_STRADA_* for local/dev against roadie-local.
+// Disable with --no-analytics or ROADIE_STRADA_ENABLED=0.
 const DEFAULT_STRADA_PROJECT_ID = '01KYX3X6FEBBV5JV6Q8M97988C'
 const DEFAULT_STRADA_TOKEN =
   'str_9eee60d24a444da78107f8780fe965c5f8cae422def44dcb9ee94d8035a5a14f'
@@ -68,13 +68,13 @@ export type AnalyticsProps = Record<string, string | number | boolean>
 
 function isAnalyticsDisabled() {
   if (testCapture) return false
-  if (process.env.KIMAKI_VITEST) return true
-  if (process.env.KIMAKI_STRADA_ENABLED === '0') return true
-  if (process.env.KIMAKI_STRADA_ENABLED === 'false') return true
+  if (process.env.ROADIE_VITEST) return true
+  if (process.env.ROADIE_STRADA_ENABLED === '0') return true
+  if (process.env.ROADIE_STRADA_ENABLED === 'false') return true
   return false
 }
 
-function getKimakiVersion() {
+function getRoadieVersion() {
   const require = createRequire(import.meta.url)
   const pkg = require('../package.json') as { version: string }
   return pkg.version
@@ -186,10 +186,10 @@ export function initAnalytics(): void {
   }
 
   const projectId =
-    process.env.KIMAKI_STRADA_PROJECT_ID || DEFAULT_STRADA_PROJECT_ID
-  const token = process.env.KIMAKI_STRADA_TOKEN || DEFAULT_STRADA_TOKEN
+    process.env.ROADIE_STRADA_PROJECT_ID || DEFAULT_STRADA_PROJECT_ID
+  const token = process.env.ROADIE_STRADA_TOKEN || DEFAULT_STRADA_TOKEN
   const environment =
-    process.env.KIMAKI_STRADA_ENVIRONMENT ||
+    process.env.ROADIE_STRADA_ENVIRONMENT ||
     process.env.NODE_ENV ||
     'production'
 
@@ -197,11 +197,11 @@ export function initAnalytics(): void {
     initStrada({
       projectId,
       token,
-      service: 'kimaki-cli',
+      service: 'roadie-cli',
       environment,
-      version: getKimakiVersion(),
+      version: getRoadieVersion(),
       userId: installId,
-      // Kimaki owns crash handling in discord-bot.ts; the SDK must not exit the process.
+      // Roadie owns crash handling in discord-bot.ts; the SDK must not exit the process.
       captureUncaughtErrors: false,
     })
     initialized = true
@@ -265,7 +265,7 @@ export async function flushAnalytics(): Promise<void> {
 /** @deprecated Use commonAnalyticsProps / trackEvent common fields. */
 export function baseRuntimeProps(extra?: AnalyticsProps): AnalyticsProps {
   return {
-    version: getKimakiVersion(),
+    version: getRoadieVersion(),
     ...extra,
   }
 }

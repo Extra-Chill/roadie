@@ -1,4 +1,4 @@
-// Drizzle schema for Kimaki's local SQLite database.
+// Drizzle schema for Roadie's local SQLite database.
 // Defines the tables created by src/schema.sql during local database startup.
 
 import { defineRelations } from 'drizzle-orm'
@@ -27,9 +27,9 @@ const datetime = sqliteCore.customType<{
 export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   thread_id: sqliteCore.text('thread_id').primaryKey().notNull(),
   session_id: sqliteCore.text('session_id').notNull(),
-  source: sqliteCore.text('source', { enum: ['kimaki', 'external_poll'] }).notNull().default('kimaki'),
+  source: sqliteCore.text('source', { enum: ['roadie', 'external_poll'] }).notNull().default('roadie'),
   last_synced_name: sqliteCore.text('last_synced_name'),
-  // Parent OpenCode session that spawned this thread via kimaki send --parent-session.
+  // Parent OpenCode session that spawned this thread via roadie send --parent-session.
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
   parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
@@ -247,7 +247,7 @@ export const forum_sync_configs = sqliteCore.sqliteTable('forum_sync_configs', {
   sqliteCore.uniqueIndex('forum_sync_configs_app_id_forum_channel_id_key').on(table.app_id, table.forum_channel_id),
 ])
 
-// Durable "wake this session later" rows for the kimaki_sleep tool.
+// Durable "wake this session later" rows for the roadie_sleep tool.
 //
 // Delivery is at-least-once, and ingress makes it at-most-once-per-turn:
 //

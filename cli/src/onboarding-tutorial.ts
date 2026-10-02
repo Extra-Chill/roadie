@@ -15,7 +15,7 @@ const markdown = String.raw
 const backticks = '```'
 
 export const ONBOARDING_TUTORIAL_INSTRUCTIONS = markdown`
-You are helping a new user try Kimaki for the first time. The default suggestion is building a 3D game, but if the user asks to build something else, build that instead. Adapt all instructions below to whatever the user wants.
+You are helping a new user try Roadie for the first time. The default suggestion is building a 3D game, but if the user asks to build something else, build that instead. Adapt all instructions below to whatever the user wants.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ ${backticks}bash
 curl -fsSL https://bun.sh/install | bash
 ${backticks}
 
-**tuistory** — needed to run the dev server in the background with kimaki tunnel:
+**tuistory** — needed to run the dev server in the background with roadie tunnel:
 
 ${backticks}bash
 bunx tuistory --help
@@ -130,13 +130,13 @@ ${backticks}
 
 ## Dev server and tunnel
 
-After creating all files and running bun install, start the dev server and expose it via kimaki tunnel so the user can play immediately from their browser or phone. The user is on Discord, not at a terminal — localhost URLs are useless to them.
+After creating all files and running bun install, start the dev server and expose it via roadie tunnel so the user can play immediately from their browser or phone. The user is on Discord, not at a terminal — localhost URLs are useless to them.
 
 Pick a random port between 3000-9000 to avoid conflicts:
 
 ${backticks}bash
 PORT=$((RANDOM % 6000 + 3000))
-bunx tuistory launch "PORT=$PORT kimaki tunnel -- bun run server.ts" -s game-dev --cwd "$PWD"
+bunx tuistory launch "PORT=$PORT roadie tunnel -- bun run server.ts" -s game-dev --cwd "$PWD"
 ${backticks}
 
 Wait a moment, then get the tunnel URL:

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Main CLI entrypoint for the Kimaki Discord bot.
+// Main CLI entrypoint for the Roadie Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
 import { goke } from 'goke'
@@ -34,13 +34,13 @@ import {
 } from './cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
-const cli = goke('kimaki')
+const cli = goke('roadie')
 cli.use(multioauthCommands)
 
-process.title = 'kimaki'
+process.title = 'roadie'
 
 cli
-  .command('', 'Set up and run the Kimaki Discord bot')
+  .command('', 'Set up and run the Roadie Discord bot')
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
@@ -48,7 +48,7 @@ cli
   )
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .option(
     '--projects-dir <path>',
@@ -85,7 +85,7 @@ cli
   )
   .option(
     '--allow-all-users',
-    'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
+    'Allow all Discord users to start sessions without needing Roadie role or admin permissions (no-roadie role still blocks)',
   )
   .option(
     '--restrict-directories',
@@ -101,7 +101,7 @@ cli
   )
   .option(
     '--no-analytics',
-    'Disable anonymous product analytics (Strada). Same as KIMAKI_STRADA_ENABLED=0',
+    'Disable anonymous product analytics (Strada). Same as ROADIE_STRADA_ENABLED=0',
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
@@ -114,7 +114,7 @@ cli
   )
   .option(
     '--gateway',
-    'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
+    'Force gateway mode (use the gateway Roadie bot instead of a self-hosted bot)',
   )
   .option(
     '--gateway-callback-url <url>',
@@ -175,24 +175,24 @@ cli
       opencodeHostname?: string
       opencodePort?: string
     }) => {
-      // Guard: only one kimaki bot process can run per lock port. Agents may run
+      // Guard: only one roadie bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
-      const parentLockPort = process.env.KIMAKI_PARENT_LOCK_PORT
-      const currentLockPort = process.env.KIMAKI_LOCK_PORT
+      const parentLockPort = process.env.ROADIE_PARENT_LOCK_PORT
+      const currentLockPort = process.env.ROADIE_LOCK_PORT
       const usesDifferentLockPort = currentLockPort !== parentLockPort
 
-      if (process.env.KIMAKI_OPENCODE_PROCESS && !usesDifferentLockPort) {
+      if (process.env.ROADIE_OPENCODE_PROCESS && !usesDifferentLockPort) {
         cliLogger.error(
-          'Cannot run `kimaki` inside an OpenCode session — it would kill the already-running bot process.\n' +
-          'Only one kimaki bot can run at a time (they share a lock port).\n' +
-          'Set KIMAKI_LOCK_PORT to a different port for an isolated dev process, or use `kimaki send`, `kimaki session`, and other subcommands instead.',
+          'Cannot run `roadie` inside an OpenCode session — it would kill the already-running bot process.\n' +
+          'Only one roadie bot can run at a time (they share a lock port).\n' +
+          'Set ROADIE_LOCK_PORT to a different port for an isolated dev process, or use `roadie send`, `roadie session`, and other subcommands instead.',
         )
         process.exit(EXIT_NO_RESTART)
       }
 
-      if (process.env.KIMAKI_OPENCODE_PROCESS && usesDifferentLockPort) {
-        delete process.env['KIMAKI_DB_URL']
-        delete process.env['KIMAKI_DB_AUTH_TOKEN']
+      if (process.env.ROADIE_OPENCODE_PROCESS && usesDifferentLockPort) {
+        delete process.env['ROADIE_DB_URL']
+        delete process.env['ROADIE_DB_AUTH_TOKEN']
       }
 
       try {
@@ -207,7 +207,7 @@ cli
           cliLogger.log(`Using projects directory: ${getProjectsDir()}`)
         }
 
-        // Initialize file logging to <dataDir>/kimaki.log
+        // Initialize file logging to <dataDir>/roadie.log
         initLogFile(getDataDir())
 
         // Batch all CLI flag store updates into a single setState call.
@@ -265,7 +265,7 @@ cli
           for (const name of [...enabledSkills, ...disabledSkills]) {
             if (!availableSet.has(name)) {
               cliLogger.warn(
-                `Skill "${name}" is not a bundled kimaki skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
+                `Skill "${name}" is not a bundled roadie skill. Rule will still apply (user-provided skills from .opencode/.claude/.agents dirs may match). Available bundled skills: ${availableBundledSkills.join(', ')}`,
               )
             }
           }
@@ -341,7 +341,7 @@ cli
 
         if (options.allowAllUsers) {
           cliLogger.log(
-            'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
+            'Allow all users: any Discord member can start sessions (no-roadie role still blocks)',
           )
         }
         if (options.restrictDirectories) {
@@ -373,7 +373,7 @@ cli
         }
         if (options.noAutoUpgrade) {
           cliLogger.log(
-            'Auto-upgrade disabled: kimaki will not check for updates on startup',
+            'Auto-upgrade disabled: roadie will not check for updates on startup',
           )
         }
         if (options.disableSync) {
@@ -382,7 +382,7 @@ cli
           )
         }
         if (options.noAnalytics) {
-          process.env.KIMAKI_STRADA_ENABLED = '0'
+          process.env.ROADIE_STRADA_ENABLED = '0'
           cliLogger.log(
             'Anonymous product analytics disabled (--no-analytics)',
           )

@@ -1,6 +1,6 @@
 // Gateway-proxy integration test.
 // Starts a discord-digital-twin (fake Discord), a gateway-proxy Rust binary
-// in front of it, and the kimaki bot connecting through the proxy.
+// in front of it, and the roadie bot connecting through the proxy.
 // Validates that messages create threads, bot replies, and multi-tenant
 // guild filtering routes events to the right clients.
 //
@@ -220,7 +220,7 @@ function startGatewayProxy({
     env: { ...process.env, RUST_LOG: 'debug' },
   })
 
-  const showLogs = !!process.env['KIMAKI_TEST_LOGS']
+  const showLogs = !!process.env['ROADIE_TEST_LOGS']
   child.stdout?.on('data', (data: Buffer) => {
     const line = data.toString().trim()
     if (line && showLogs) {
@@ -255,8 +255,8 @@ describeIf('gateway-proxy e2e', () => {
     testStartTime = Date.now()
     const lockPort = chooseLockPort({ key: CHANNEL_1_ID })
     directories = createRunDirectories()
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
-    process.env['KIMAKI_VITEST'] = '1'
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_VITEST'] = '1'
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'text_only' })
@@ -331,24 +331,24 @@ describeIf('gateway-proxy e2e', () => {
     // Wait for proxy to be ready (HTTP server up)
     await waitForProxyReady({ port: proxyPort, timeoutMs: 30_000 })
 
-    // Initialize kimaki database
+    // Initialize roadie database
     const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
     const hranaResult = await startHranaServer({ dbPath })
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
 
-    // Register channel 1 with kimaki (bot will create sessions for messages here)
+    // Register channel 1 with roadie (bot will create sessions for messages here)
     await setChannelDirectory({
       channelId: CHANNEL_1_ID,
       directory: directories.projectDirectory,
       channelType: 'text',
     })
 
-    // Start the kimaki bot connected through the proxy
+    // Start the roadie bot connected through the proxy
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
 
     await startDiscordBot({
@@ -380,9 +380,9 @@ describeIf('gateway-proxy e2e', () => {
       discord?.stop().catch(() => {}),
     ])
 
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
-    delete process.env['KIMAKI_VITEST']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
+    delete process.env['ROADIE_VITEST']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }

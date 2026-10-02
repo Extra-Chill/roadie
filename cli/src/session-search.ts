@@ -1,4 +1,4 @@
-// Session search helpers for kimaki CLI commands.
+// Session search helpers for roadie CLI commands.
 // Parses string/regex queries and builds readable snippets from matched content.
 
 export type SessionSearchPattern =
@@ -55,7 +55,7 @@ export type SessionSearchMatch = {
   title: string
   directory: string
   updated: string
-  source: 'kimaki' | 'opencode'
+  source: 'roadie' | 'opencode'
   threadId: string | null
   snippets: string[]
 }
@@ -198,7 +198,7 @@ export function validateSessionSearchScope({
 }): Error | null {
   if (all && (project || channel)) {
     return new Error(
-      'Use --all alone. Do not combine it with --project or --channel. Search one project with: kimaki session search "query" --project /path',
+      'Use --all alone. Do not combine it with --project or --channel. Search one project with: roadie session search "query" --project /path',
     )
   }
   if (project && channel) {
@@ -251,7 +251,7 @@ export function resolveSessionSearchDirectories({
   const uniqueDirectories = [...new Set(registeredDirectories)]
   if (uniqueDirectories.length === 0) {
     return new Error(
-      'No registered projects found. Add a project first with `kimaki project add`, or search one directory with --project.',
+      'No registered projects found. Add a project first with `roadie project add`, or search one directory with --project.',
     )
   }
   return uniqueDirectories
@@ -369,7 +369,7 @@ export async function collectSessionSearchMatches({
         title: session.title || 'Untitled Session',
         directory: session.directory,
         updated: new Date(session.updated).toISOString(),
-        source: threadId ? 'kimaki' : 'opencode',
+        source: threadId ? 'roadie' : 'opencode',
         threadId: threadId || null,
         snippets,
       }

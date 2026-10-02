@@ -1,4 +1,4 @@
-// Kimaki git worktree adaptor for OpenCode's experimental workspace system.
+// Roadie git worktree adaptor for OpenCode's experimental workspace system.
 // Runs inside the opencode server process (NOT the bot process).
 //
 // PLUGIN SAFETY: This file must NOT import config.ts, logger.ts, or any
@@ -11,13 +11,13 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import {
   createWorktreeCore,
-  KIMAKI_WORKTREE_ADAPTER_TYPE,
+  ROADIE_WORKTREE_ADAPTER_TYPE,
   removeWorktreeFromOwnRepository,
 } from './git-worktree-core.js'
 
 /**
  * Compute the on-disk directory for a managed worktree.
- * Mirrors getManagedWorktreeDirectory from worktrees.ts but reads KIMAKI_DATA_DIR
+ * Mirrors getManagedWorktreeDirectory from worktrees.ts but reads ROADIE_DATA_DIR
  * from the environment instead of config.ts (which is not available in the
  * opencode server process).
  */
@@ -28,9 +28,9 @@ function computeWorktreeDirectory({
   projectDirectory: string
   branchName: string
 }): string | Error {
-  const dataDir = process.env.KIMAKI_DATA_DIR
+  const dataDir = process.env.ROADIE_DATA_DIR
   if (!dataDir) {
-    return new Error('KIMAKI_DATA_DIR not set — cannot compute worktree directory')
+    return new Error('ROADIE_DATA_DIR not set — cannot compute worktree directory')
   }
   const projectHash = crypto
     .createHash('sha1')
@@ -38,14 +38,14 @@ function computeWorktreeDirectory({
     .digest('hex')
     .slice(0, 8)
   const withoutPrefix = branchName
-    .replace(/^opencode\/kimaki-/, '')
+    .replace(/^opencode\/roadie-/, '')
     .replaceAll('/', '-')
   return path.join(dataDir, 'worktrees', projectHash, withoutPrefix)
 }
 
 function getWorktreeIdentity(info: WorkspaceInfo) {
   if (!info.extra || typeof info.extra !== 'object') {
-    return new Error('Kimaki worktree identity is missing')
+    return new Error('Roadie worktree identity is missing')
   }
   const identity: { projectDirectory?: string; baseCommit?: string } = {}
   Object.assign(identity, info.extra)
@@ -53,13 +53,13 @@ function getWorktreeIdentity(info: WorkspaceInfo) {
     typeof identity.projectDirectory !== 'string' ||
     !path.isAbsolute(identity.projectDirectory)
   ) {
-    return new Error('Kimaki worktree project directory must be absolute')
+    return new Error('Roadie worktree project directory must be absolute')
   }
   if (
     typeof identity.baseCommit !== 'string' ||
     !/^[0-9a-f]{40}$/i.test(identity.baseCommit)
   ) {
-    return new Error('Kimaki worktree base commit must be a full commit SHA')
+    return new Error('Roadie worktree base commit must be a full commit SHA')
   }
   return {
     projectDirectory: identity.projectDirectory,
@@ -67,10 +67,10 @@ function getWorktreeIdentity(info: WorkspaceInfo) {
   }
 }
 
-function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
+function createRoadieWorktreeAdaptor(): WorkspaceAdapter {
   return {
-    name: 'Kimaki Worktree',
-    description: 'Create a git worktree managed by Kimaki',
+    name: 'Roadie Worktree',
+    description: 'Create a git worktree managed by Roadie',
 
     configure(info: WorkspaceInfo): WorkspaceInfo {
       const identity = getWorktreeIdentity(info)
@@ -130,15 +130,15 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
 }
 
 /**
- * Plugin entrypoint — registers the kimaki-worktree adaptor.
+ * Plugin entrypoint — registers the roadie-worktree adaptor.
  * Called by OpenCode's plugin loader.
  */
-export const kimakiWorkspaceAdaptorPlugin: Plugin = async ({
+export const roadieWorkspaceAdaptorPlugin: Plugin = async ({
   experimental_workspace,
 }) => {
   experimental_workspace.register(
-    KIMAKI_WORKTREE_ADAPTER_TYPE,
-    createKimakiWorktreeAdaptor(),
+    ROADIE_WORKTREE_ADAPTER_TYPE,
+    createRoadieWorktreeAdaptor(),
   )
   return {}
 }

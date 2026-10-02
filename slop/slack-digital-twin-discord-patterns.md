@@ -1,7 +1,7 @@
 # Slack Digital Twin - Discord Interaction Patterns & Test Scenarios
 
 ## Overview
-This document summarizes the Discord bot interaction patterns that the slack-digital-twin needs to replicate for testing Slack-based Kimaki deployments.
+This document summarizes the Discord bot interaction patterns that the slack-digital-twin needs to replicate for testing Slack-based Roadie deployments.
 
 ---
 
@@ -20,7 +20,7 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
   - `ThreadChannel.members.add(userId)`
 
 ### Pattern 1b: Bot-Initiated Thread (CLI/Scheduled)
-- **When:** Kimaki CLI sends initial prompt via REST, or scheduled task triggers session
+- **When:** Roadie CLI sends initial prompt via REST, or scheduled task triggers session
 - **What happens:**
   - CLI creates ephemeral bot message with embedded metadata in footer (YAML)
   - Footer contains: `cliThreadPrompt`, `userId`, `username`, `agent`, `model`
@@ -124,7 +124,7 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
   - `REST.put(Routes.channelMessageOwnReaction(channelId, messageId, emoji))`
 
 ### Pattern 4b: Reaction to User Message
-- **Currently:** Not heavily used in Kimaki
+- **Currently:** Not heavily used in Roadie
 - **Potential:** Could mark completed sessions, errors, etc.
 
 ---
@@ -224,9 +224,9 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
 ### Pattern 8a: Bot Access Check
 - **When:** Message received
 - **What happens:**
-  - Check `hasKimakiBotPermission(member, guild)`
-  - Returns true if: owner, admin, "Manage Guild", or "kimaki" role
-  - Returns false if: "no-kimaki" role present (override)
+  - Check `hasRoadieBotPermission(member, guild)`
+  - Returns true if: owner, admin, "Manage Guild", or "roadie" role
+  - Returns false if: "no-roadie" role present (override)
 - **Key:** Permission checks happen early, before session creation
 
 ### Pattern 8b: Mention Mode
@@ -325,7 +325,7 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
   - Frees memory for inactive threads
 
 ### Pattern 12c: Permission Denied
-- **When:** User lacks "kimaki" role
+- **When:** User lacks "roadie" role
 - **What happens:**
   - Reply: "You don't have permission to start sessions"
   - Message flags: `SILENT_MESSAGE_FLAGS` (no ping, hide preview)
@@ -368,7 +368,7 @@ Below are 18+ concrete scenarios that should be tested to ensure Slack behavior 
 ### **Concurrent & Edge Cases** (3 scenarios)
 18. **Rapid message succession** - User sends 5 messages in <1 second → all handled in FIFO order → none lost
 19. **Thread deleted while session active** - Thread running → user deletes thread → session stops → no errors in logs
-20. **Permission denied for no-kimaki role** - User has no-kimaki role → sends message → bot replies "blocked" → no session created
+20. **Permission denied for no-roadie role** - User has no-roadie role → sends message → bot replies "blocked" → no session created
 
 ### **Voice Messages** (1 scenario)
 21. **Voice message transcription** - User attaches audio file → bot transcribes → prepends "Transcribed: " → processes as text

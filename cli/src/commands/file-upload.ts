@@ -1,5 +1,5 @@
 // File upload tool handler - Shows Discord modal with FileUploadBuilder.
-// When the AI uses the kimaki_file_upload tool, the plugin inserts a row into
+// When the AI uses the roadie_file_upload tool, the plugin inserts a row into
 // the ipc_requests DB table. The bot polls this table, picks up the request,
 // and shows a button in the thread. User clicks it to open a modal with a
 // native file picker. Uploaded files are downloaded to the project directory.

@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// Generates the idempotent SQLite bootstrap schema consumed at Kimaki startup.
+// Generates the idempotent SQLite bootstrap schema consumed at Roadie startup.
 
 import fs from 'node:fs'
 import path from 'node:path'

@@ -752,7 +752,7 @@ describe('truncateComponents', () => {
     const header = '| Source | Name | Status | Created | Folder | Action |'
     const sep = '|---|---|---|---|---|---|'
     const rows = Array.from({ length: rowCount }, (_, i) => {
-      return `| kimaki | wt-${i} | merged | ${i}m ago | /tmp/wt-${i} | <button id="del-${i}" variant="secondary">Delete</button> |`
+      return `| roadie | wt-${i} | merged | ${i}m ago | /tmp/wt-${i} | <button id="del-${i}" variant="secondary">Delete</button> |`
     }).join('\n')
     const markdown = `${header}\n${sep}\n${rows}`
     return splitTablesFromMarkdown(markdown, {
@@ -800,7 +800,7 @@ describe('truncateComponents', () => {
       {
         "components": [
           {
-            "content": "**Source** kimaki
+            "content": "**Source** roadie
       **Name** wt-0
       **Status** merged
       **Created** 0m ago
@@ -825,7 +825,7 @@ describe('truncateComponents', () => {
             "type": 14,
           },
           {
-            "content": "**Source** kimaki
+            "content": "**Source** roadie
       **Name** wt-1
       **Status** merged
       **Created** 1m ago
@@ -950,7 +950,7 @@ describe('truncateComponents', () => {
     const sep = '|---|---|'
     const rows = Array.from({ length: 10 }, (_, i) => {
       // Each row has ~120 chars of text content
-      const longPath = `/Users/morse/.kimaki/worktrees/abcd1234/very-long-branch-name-${i}-feature`
+      const longPath = `/Users/morse/.roadie/worktrees/abcd1234/very-long-branch-name-${i}-feature`
       return `| worktree-${i} | ${longPath} |`
     }).join('\n')
     const markdown = `${header}\n${sep}\n${rows}`

@@ -1,4 +1,4 @@
-// Tests that simulate real bot workflows similar to what Kimaki does on Discord.
+// Tests that simulate real bot workflows similar to what Roadie does on Discord.
 // These validate the slack-digital-twin handles the interaction patterns that
 // the discord-slack-bridge relies on: thread creation via first message,
 // sequential bot messages in threads, edit-then-delete flows, reactions,
@@ -66,7 +66,7 @@ describe('bot workflows - thread creation and messaging', () => {
     expect(replies.messages?.[2]?.text).toBe('Editing src/index.ts...')
   })
 
-  // Kimaki posts many sequential messages in a thread (tool outputs, text
+  // Roadie posts many sequential messages in a thread (tool outputs, text
   // parts, context usage, footer). All must appear in order.
   test('sequential bot messages maintain order in thread', async () => {
     const channelId = twin.resolveChannelId('general')
@@ -643,7 +643,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
     await twin.stop()
   })
 
-  // The full Kimaki flow: user sends message -> bot creates thread -> bot
+  // The full Roadie flow: user sends message -> bot creates thread -> bot
   // posts multiple messages -> bot adds footer
   test('full session flow: user msg -> thread -> bot replies -> footer', async () => {
     const channelId = twin.resolveChannelId('general')

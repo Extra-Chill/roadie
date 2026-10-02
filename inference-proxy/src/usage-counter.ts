@@ -1,4 +1,4 @@
-// Usage counter Durable Object with SQLite storage for Kimaki Pro.
+// Usage counter Durable Object with SQLite storage for Roadie Pro.
 // One DO instance per org (via idFromName(orgId)).
 // Records cost per request in a single RPC call and enforces spending limits.
 
@@ -30,7 +30,7 @@ export class UsageCounter extends DurableObject<Env> {
         cost_usd REAL NOT NULL,
         input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0,
-        model TEXT NOT NULL DEFAULT 'kimaki',
+        model TEXT NOT NULL DEFAULT 'roadie',
         created_at INTEGER NOT NULL
       )
     `)
@@ -57,7 +57,7 @@ export class UsageCounter extends DurableObject<Env> {
       params.costUsd,
       params.inputTokens,
       params.outputTokens,
-      params.model ?? 'kimaki',
+      params.model ?? 'roadie',
       now,
     )
 

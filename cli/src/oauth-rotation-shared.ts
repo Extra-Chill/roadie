@@ -1,5 +1,5 @@
 /**
- * LEGACY. Superseded by @subrouter/opencode, registered alongside the kimaki
+ * LEGACY. Superseded by @subrouter/opencode, registered alongside the roadie
  * plugin in opencode.ts. This whole rotation path only cycles accounts inside
  * one provider; subrouter also fails over to a different provider when every
  * account of one is exhausted.

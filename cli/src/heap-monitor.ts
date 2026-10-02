@@ -1,6 +1,6 @@
 // Heap memory monitor and snapshot writer.
 // Periodically checks V8 heap usage and writes gzip-compressed .heapsnapshot.gz
-// files to ~/.kimaki/heap-snapshots/ when memory usage is high.
+// files to ~/.roadie/heap-snapshots/ when memory usage is high.
 // Also exposes writeHeapSnapshot() for on-demand snapshots via SIGUSR1.
 //
 // Snapshots use v8.getHeapSnapshot() streaming API piped through gzip for ~5-10x
@@ -56,7 +56,7 @@ function getHeapStats(): { usedMB: number; limitMB: number; ratio: number } {
 }
 
 /**
- * Write a gzip-compressed V8 heap snapshot to ~/.kimaki/heap-snapshots/.
+ * Write a gzip-compressed V8 heap snapshot to ~/.roadie/heap-snapshots/.
  * Uses v8.getHeapSnapshot() streaming API piped through gzip for ~5-10x
  * size reduction compared to v8.writeHeapSnapshot().
  * Filename includes ISO date and current heap size for easy identification.

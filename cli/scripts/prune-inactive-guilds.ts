@@ -1,16 +1,16 @@
 // Prune inactive guilds from the shared gateway bot.
 // Lists all guilds the bot is in, sorted by member count, and optionally
-// leaves guilds that have no kimaki users (no gateway_clients row).
+// leaves guilds that have no roadie users (no gateway_clients row).
 //
 // Usage:
 //   # Dry run — just list guilds and categorize them:
-//   doppler run -p kimaki -c production -- tsx scripts/prune-inactive-guilds.ts
+//   doppler run -p roadie -c production -- tsx scripts/prune-inactive-guilds.ts
 //
 //   # Actually leave inactive guilds:
-//   doppler run -p kimaki -c production -- tsx scripts/prune-inactive-guilds.ts --leave
+//   doppler run -p roadie -c production -- tsx scripts/prune-inactive-guilds.ts --leave
 //
 //   # Keep specific guild IDs even if they have no gateway_clients row:
-//   doppler run -p kimaki -c production -- tsx scripts/prune-inactive-guilds.ts --keep 123456,789012
+//   doppler run -p roadie -c production -- tsx scripts/prune-inactive-guilds.ts --keep 123456,789012
 //
 // Env vars:
 //   DISCORD_BOT_TOKEN — the real gateway bot token (not a clientId:secret credential)

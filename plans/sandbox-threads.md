@@ -1,7 +1,7 @@
 ---
 title: Sandbox Threads
 description: |
-  Architecture plan for thread-scoped sandbox sessions in Kimaki.
+  Architecture plan for thread-scoped sandbox sessions in Roadie.
   Sandboxes are reusable cloud environments (Vercel, Daytona, etc.)
   that any thread can attach to. Replaces channel-scoped sandbox model
   from remote-opencode-servers.md with a more flexible thread-scoped
@@ -66,17 +66,17 @@ For threads already open. Switches the thread's runtime from local
 to the selected sandbox. Like `/sandbox` but without creating a new
 thread.
 
-### `kimaki send` CLI
+### `roadie send` CLI
 
 ```bash
 # Create new sandbox + thread
-kimaki send --channel 123 --new-sandbox \
+roadie send --channel 123 --new-sandbox \
   --prompt 'Fix the auth bug' \
   --sandbox-provider vercel \
   --sandbox-repo github.com/user/app
 
 # Reuse existing sandbox
-kimaki send --channel 123 --sandbox my-frontend-sandbox \
+roadie send --channel 123 --sandbox my-frontend-sandbox \
   --prompt 'Continue fixing the auth bug'
 
 # Shorthand: just --sandbox with a name that doesn't exist yet
@@ -92,15 +92,15 @@ Flags:
 - `--sandbox-repo <url>` — git repo to clone into new sandbox
 - `--sandbox-snapshot <id>` — create from a saved snapshot
 
-### `kimaki sandbox` CLI subcommand
+### `roadie sandbox` CLI subcommand
 
 ```bash
-kimaki sandbox list                # list all sandboxes
-kimaki sandbox create              # create sandbox interactively
-kimaki sandbox destroy <name>      # destroy + cleanup
-kimaki sandbox stop <name>         # stop (save resources)
-kimaki sandbox start <name>        # restart a stopped sandbox
-kimaki sandbox snapshot <name>     # save state for fast resume
+roadie sandbox list                # list all sandboxes
+roadie sandbox create              # create sandbox interactively
+roadie sandbox destroy <name>      # destroy + cleanup
+roadie sandbox stop <name>         # stop (save resources)
+roadie sandbox start <name>        # restart a stopped sandbox
+roadie sandbox snapshot <name>     # save state for fast resume
 ```
 
 ## Provider SDK comparison
@@ -287,7 +287,7 @@ model sandbox_providers {
 
 ## Architecture: how sandboxes run opencode
 
-The sandbox needs to run an opencode server that kimaki can talk to.
+The sandbox needs to run an opencode server that roadie can talk to.
 Two approaches, depending on provider capabilities:
 
 ### Approach A: opencode inside sandbox (Daytona, SSH)
@@ -296,7 +296,7 @@ Daytona and SSH providers give full VM/container access. We install
 opencode inside the sandbox and run `opencode serve --port 7777`.
 
 ```
-Kimaki Host                    Daytona/SSH Sandbox
+Roadie Host                    Daytona/SSH Sandbox
 ┌──────────────┐              ┌──────────────────┐
 │ Discord Bot   │──SDK HTTP──>│ opencode serve   │
 │               │<──SSE──────│ port 7777         │
@@ -306,11 +306,11 @@ Kimaki Host                    Daytona/SSH Sandbox
                               └──────────────────┘
 ```
 
-The sandbox has a public URL or tunneled port. Kimaki connects to
+The sandbox has a public URL or tunneled port. Roadie connects to
 it the same way it would connect to any remote opencode server
 (from the remote-opencode-servers plan).
 
-### Approach B: opencode on kimaki host, sandbox as tool (Vercel)
+### Approach B: opencode on roadie host, sandbox as tool (Vercel)
 
 Vercel sandboxes are ephemeral microVMs with limited lifetime
 (5-45 min). Running opencode inside them is fragile. Instead:
@@ -318,7 +318,7 @@ Vercel sandboxes are ephemeral microVMs with limited lifetime
 **Run opencode locally. Give the AI agent sandbox access as tools.**
 
 ```
-Kimaki Host
+Roadie Host
 ┌──────────────────────────────────────┐
 │ Discord Bot                           │
 │    │                                  │
@@ -444,10 +444,10 @@ User: /sandbox sandbox:my-frontend-sandbox prompt:"add dark mode"
 6. Starts session
 ```
 
-### Flow 3: kimaki send --sandbox
+### Flow 3: roadie send --sandbox
 
 ```bash
-kimaki send --channel 123 --sandbox my-sandbox --prompt 'run tests'
+roadie send --channel 123 --sandbox my-sandbox --prompt 'run tests'
 
 1. CLI resolves sandbox by name from DB
 2. Creates Discord thread
@@ -455,10 +455,10 @@ kimaki send --channel 123 --sandbox my-sandbox --prompt 'run tests'
 4. Sends prompt to start session
 ```
 
-### Flow 4: kimaki send --new-sandbox
+### Flow 4: roadie send --new-sandbox
 
 ```bash
-kimaki send --channel 123 --new-sandbox \
+roadie send --channel 123 --new-sandbox \
   --sandbox-provider daytona \
   --prompt 'set up CI pipeline'
 
@@ -514,13 +514,13 @@ For Daytona:
 ### CLI setup
 
 ```bash
-kimaki sandbox setup vercel --token vercel_xxx --project-id prj_xxx
-kimaki sandbox setup daytona --api-key dtn_xxx
+roadie sandbox setup vercel --token vercel_xxx --project-id prj_xxx
+roadie sandbox setup daytona --api-key dtn_xxx
 ```
 
 ## Sandbox MCP tools (Approach B: Vercel)
 
-When a thread is on a Vercel sandbox, kimaki injects an MCP server
+When a thread is on a Vercel sandbox, roadie injects an MCP server
 that exposes sandbox operations as tools the AI agent can use:
 
 ```
@@ -578,7 +578,7 @@ opencode process needs DB access. That part is unchanged.
 - Run `pnpm generate` for Prisma client
 - Add migration code in db.ts for existing users
 - CRUD functions in database.ts
-- `kimaki sandbox list/create/destroy/stop/start` CLI commands
+- `roadie sandbox list/create/destroy/stop/start` CLI commands
 
 ### Phase 2: Thread attachment (2-3 days)
 
@@ -586,7 +586,7 @@ opencode process needs DB access. That part is unchanged.
 - Autocomplete for sandbox name field
 - Thread creation + sandbox linking
 - `resolveWorkingDirectory` returns sandbox metadata
-- `kimaki send --sandbox` and `--new-sandbox` flags
+- `roadie send --sandbox` and `--new-sandbox` flags
 
 ### Phase 3: Approach B — Vercel sandbox tools (3-4 days)
 
@@ -600,7 +600,7 @@ opencode process needs DB access. That part is unchanged.
 - Requires sqld + tunnel from remote-opencode-servers.md Phase 1
 - Bootstrap opencode inside Daytona/SSH sandboxes
 - Connect SDK client to remote opencode URL
-- Env var injection (KIMAKI_DB_URL, KIMAKI_BOT_TOKEN)
+- Env var injection (ROADIE_DB_URL, ROADIE_BOT_TOKEN)
 
 ### Phase 5: UX polish (2 days)
 

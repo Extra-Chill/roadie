@@ -1,6 +1,6 @@
 // DigitalDiscord - Local Discord API test server.
 // Creates a fake Discord server (REST + Gateway WebSocket) that discord.js
-// can connect to. Used for automated testing of the Kimaki bot without
+// can connect to. Used for automated testing of the Roadie bot without
 // hitting real Discord.
 
 import fs from 'node:fs'
@@ -42,7 +42,7 @@ import {
 const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
 
 function normalizeWaitTimeout(timeout: number): number {
-  if (process.env['KIMAKI_VITEST'] === '1') {
+  if (process.env['ROADIE_VITEST'] === '1') {
     return Math.min(timeout, MAX_VITEST_WAIT_TIMEOUT_MS)
   }
   return timeout

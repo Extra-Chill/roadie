@@ -25,7 +25,7 @@ import {
   getVariantCascade,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
@@ -142,12 +142,12 @@ export async function showModelVariantPicker({
       resolveTextChannel(thread),
       getThreadSession(thread.id),
     ])
-    const metadata = await getKimakiMetadata(textChannel)
+    const metadata = await getRoadieMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = textChannel?.id || channel.id
     sessionId = threadSessionId
   } else if (channel.type === ChannelType.GuildText) {
-    const metadata = await getKimakiMetadata(channel)
+    const metadata = await getRoadieMetadata(channel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = channel.id
   } else {

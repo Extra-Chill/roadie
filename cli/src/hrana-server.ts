@@ -4,7 +4,7 @@
 //
 // Protocol logic is implemented in the `libsqlproxy` package.
 // This file handles: server lifecycle, single-instance enforcement,
-// auth, and kimaki-specific endpoints (/kimaki/wake, /health).
+// auth, and roadie-specific endpoints (/roadie/wake, /health).
 //
 // Hrana v2 protocol spec ("Hrana over HTTP"):
 //   https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
@@ -76,7 +76,7 @@ function getRequestAuthToken(req: http.IncomingMessage): string | null {
 }
 
 // Timing-safe comparison to prevent timing attacks when the hrana server
-// is internet-facing (bindAll=true / KIMAKI_INTERNET_REACHABLE_URL set).
+// is internet-facing (bindAll=true / ROADIE_INTERNET_REACHABLE_URL set).
 function isAuthorizedRequest(req: http.IncomingMessage): boolean {
   const expectedToken = store.getState().gatewayToken
   if (!expectedToken) {
@@ -107,7 +107,7 @@ function ensureServiceAuthTokenInStore(): string {
 /**
  * Get the Hrana HTTP URL for injecting into plugin child processes.
  * Returns null if the server hasn't been started yet.
- * Only used for KIMAKI_DB_URL env var in opencode.ts — the bot process
+ * Only used for ROADIE_DB_URL env var in opencode.ts — the bot process
   * itself always uses direct file: access via Drizzle/libSQL.
  */
 export function getHranaUrl(): string | null {
@@ -124,7 +124,7 @@ export async function startHranaServer({
   bindAll = false,
 }: {
   dbPath: string
-  /** Bind to 0.0.0.0 instead of 127.0.0.1. Set when KIMAKI_INTERNET_REACHABLE_URL is defined. */
+  /** Bind to 0.0.0.0 instead of 127.0.0.1. Set when ROADIE_INTERNET_REACHABLE_URL is defined. */
   bindAll?: boolean
 }) {
   if (server && db && hranaUrl) return hranaUrl
@@ -132,7 +132,7 @@ export async function startHranaServer({
   const port = getLockPort()
   const bindHost = bindAll ? '0.0.0.0' : '127.0.0.1'
   const serviceAuthToken = ensureServiceAuthTokenInStore()
-  process.env.KIMAKI_DB_AUTH_TOKEN = serviceAuthToken
+  process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   await evictExistingInstance({ port })
@@ -150,10 +150,10 @@ export async function startHranaServer({
   const hranaFetchHandler = createLibsqlHandler(libsqlExecutor(database))
   const hranaNodeHandler = createLibsqlNodeHandler(hranaFetchHandler)
 
-  // Combined handler: kimaki-specific endpoints + hrana protocol
+  // Combined handler: roadie-specific endpoints + hrana protocol
   const handler: http.RequestListener = async (req, res) => {
     const pathname = new URL(req.url || '/', 'http://localhost').pathname
-    if (pathname === '/kimaki/wake') {
+    if (pathname === '/roadie/wake') {
       if (req.method !== 'POST') {
         res.writeHead(405, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: 'method_not_allowed' }))
@@ -183,7 +183,7 @@ export async function startHranaServer({
     // OpenCode server port discovery — no auth required (localhost only).
     // CLI subcommands query this to reuse the bot's running OpenCode server
     // instead of spawning a redundant second server process.
-    if (pathname === '/kimaki/opencode-port') {
+    if (pathname === '/roadie/opencode-port') {
       const port = getOpencodeServerPort()
       if (port === null) {
         res.writeHead(404, { 'content-type': 'application/json' })
@@ -265,7 +265,7 @@ export async function stopHranaServer() {
 // ── Single-instance enforcement ──────────────────────────────────────
 
 /**
- * Evict a previous kimaki instance on the lock port.
+ * Evict a previous roadie instance on the lock port.
  * Fetches /health to get the running process PID, then kills it directly.
  * No lsof/netstat/spawnSync needed — the PID comes from the health response.
  *
@@ -302,14 +302,14 @@ export async function evictExistingInstance({
     : null
 
   hranaLogger.log(
-    `Evicting existing kimaki process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`,
+    `Evicting existing roadie process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`,
   )
   const killResult = errore.try(
     () => {
       process.kill(wrapperPid ?? targetPid, 'SIGTERM')
     },
     (e) =>
-      new Error('Failed to send SIGTERM to existing kimaki process', {
+      new Error('Failed to send SIGTERM to existing roadie process', {
         cause: e,
       }),
   )
@@ -333,7 +333,7 @@ export async function evictExistingInstance({
         () => {
           process.kill(wrapperPid, 'SIGKILL')
         },
-        (e) => new Error('Failed to send SIGKILL to kimaki wrapper', { cause: e }),
+        (e) => new Error('Failed to send SIGKILL to roadie wrapper', { cause: e }),
       )
     : null
   if (wrapperKillResult instanceof Error) {
@@ -344,7 +344,7 @@ export async function evictExistingInstance({
       process.kill(targetPid, 'SIGKILL')
     },
     (e) =>
-      new Error('Failed to send SIGKILL to existing kimaki process', {
+      new Error('Failed to send SIGKILL to existing roadie process', {
         cause: e,
       }),
   )
@@ -361,7 +361,7 @@ export async function evictExistingInstance({
 // PID of the bin.ts respawn wrapper, only while it is alive (IPC connected).
 // Without the connected check an orphan would report ppid 1.
 function getWrapperPid(): number | null {
-  if (!process.env.__KIMAKI_CHILD || !process.connected) {
+  if (!process.env.__ROADIE_CHILD || !process.connected) {
     return null
   }
   return process.ppid

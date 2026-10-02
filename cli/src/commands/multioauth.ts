@@ -152,7 +152,7 @@ multioauth
     const resolvedIndex = resolveAccountIndex(indexOrEmail, store.accounts)
 
     if (resolvedIndex < 0) {
-      console.error('Usage: kimaki multioauth anthropic remove <index-or-email>')
+      console.error('Usage: roadie multioauth anthropic remove <index-or-email>')
       process.exit(EXIT_NO_RESTART)
     }
 
@@ -224,7 +224,7 @@ multioauth
     const resolvedIndex = resolveAccountIndex(indexOrEmail, store.accounts)
 
     if (resolvedIndex < 0) {
-      console.error('Usage: kimaki multioauth openai remove <index-or-email>')
+      console.error('Usage: roadie multioauth openai remove <index-or-email>')
       process.exit(EXIT_NO_RESTART)
     }
 
@@ -394,7 +394,7 @@ multioauth
     const resolvedIndex = resolveAccountIndex(indexOrEmail, store.accounts)
 
     if (resolvedIndex < 0) {
-      console.error('Usage: kimaki multioauth xai remove <index-or-email>')
+      console.error('Usage: roadie multioauth xai remove <index-or-email>')
       process.exit(EXIT_NO_RESTART)
     }
 

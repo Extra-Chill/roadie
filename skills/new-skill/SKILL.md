@@ -36,7 +36,7 @@ Personal skills are only available on your machine. Repository skills are shared
 
 ## Editing skills synced from other repositories
 
-Some projects (like kimaki) sync skills from external GitHub repositories into a local skills folder. If a skill was synced from another repo, **never edit the synced copy**. The synced folder is overwritten on every sync and your changes will be lost.
+Some projects (like roadie) sync skills from external GitHub repositories into a local skills folder. If a skill was synced from another repo, **never edit the synced copy**. The synced folder is overwritten on every sync and your changes will be lost.
 
 Instead, find the source repository where the skill originates and edit the SKILL.md there. The sync process will pick up the changes on the next run. If you are unsure which repo a skill comes from, check for a sync script (e.g. `scripts/sync-skills.ts`) or a `source-repo` field in the skill's frontmatter.
 

@@ -1,7 +1,7 @@
-// Shared OpenCode and Kimaki command resolution helpers.
+// Shared OpenCode and Roadie command resolution helpers.
 // Normalizes `which`/`where` output across platforms, builds safe spawn
 // arguments for Windows npm `.cmd` shims without relying on `shell: true`,
-// and creates a stable `kimaki` shim for OpenCode child processes.
+// and creates a stable `roadie` shim for OpenCode child processes.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -10,7 +10,7 @@ import { OpencodeIncompatibleVersionError } from './errors.js'
 const WINDOWS_CMD_SHIM_REGEX = /\.(cmd|bat)$/i
 const OPENCODE_SEMVER_REGEX = /(\d+)\.(\d+)\.(\d+)/
 
-// Kimaki still talks to OpenCode 1.x. Flip this to 1 after the v2 port ships.
+// Roadie still talks to OpenCode 1.x. Flip this to 1 after the v2 port ships.
 export const INCOMPATIBLE_OPENCODE_MAJOR_VERSION = 2
 
 export function parseOpencodeVersion(output: string): {
@@ -129,7 +129,7 @@ export function getSpawnCommandAndArgs({
 }
 
 // Remove flags from the parent process's execArgv that must not leak into the
-// relocatable kimaki shim. The shim runs from arbitrary working directories
+// relocatable roadie shim. The shim runs from arbitrary working directories
 // (it is on PATH for opencode child processes), so a relative `--env-file=.env`
 // would make node abort with ".env: not found" whenever the cwd has no .env.
 // The shim does not need to re-load env files at all: the env vars the bot
@@ -153,7 +153,7 @@ export function sanitizeShimExecArgv(execArgv: string[]): string[] {
   return sanitized
 }
 
-export function ensureKimakiCommandShim({
+export function ensureRoadieCommandShim({
   dataDir,
   execPath,
   execArgv,
@@ -174,7 +174,7 @@ export function ensureKimakiCommandShim({
     const launcherArgs = [...sanitizeShimExecArgv(execArgv), entryScript]
 
     if (effectivePlatform === 'win32') {
-      const shimPath = path.join(shimDirectory, 'kimaki.cmd')
+      const shimPath = path.join(shimDirectory, 'roadie.cmd')
       const shimContent = [
         '@echo off',
         [execPath, ...launcherArgs].map((segment) => {
@@ -189,7 +189,7 @@ export function ensureKimakiCommandShim({
       return shimDirectory
     }
 
-    const shimPath = path.join(shimDirectory, 'kimaki')
+    const shimPath = path.join(shimDirectory, 'roadie')
     const shimContent = [
       '#!/bin/sh',
       `exec ${[execPath, ...launcherArgs].map((segment) => {
@@ -204,7 +204,7 @@ export function ensureKimakiCommandShim({
     })
     return shimDirectory
   } catch (cause) {
-    return new Error('Failed to create kimaki command shim', { cause })
+    return new Error('Failed to create roadie command shim', { cause })
   }
 }
 

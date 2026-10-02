@@ -1,15 +1,15 @@
 ---
-title: Essential Tools Filtering in Kimaki
-description: How Kimaki determines which tools are "essential" and filters them based on verbosity level
+title: Essential Tools Filtering in Roadie
+description: How Roadie determines which tools are "essential" and filters them based on verbosity level
 ---
 
-# Essential Tools Filtering in Kimaki
+# Essential Tools Filtering in Roadie
 
-This document explains how Kimaki determines which OpenCode tools are "essential" and how verbosity filtering works to show/hide tool parts in Discord messages.
+This document explains how Roadie determines which OpenCode tools are "essential" and how verbosity filtering works to show/hide tool parts in Discord messages.
 
 ## Overview
 
-Kimaki implements three verbosity levels for Discord channels:
+Roadie implements three verbosity levels for Discord channels:
 
 1. **`text-only`** - Only text responses
 2. **`text-and-essential-tools`** - Text + essential tools (edits, custom MCP tools, etc.)
@@ -221,7 +221,7 @@ The `/verbosity` command allows users to set channel-level verbosity:
 Can also be set globally via CLI flag at startup:
 
 ```bash
-kimaki --verbosity text-and-essential-tools
+roadie --verbosity text-and-essential-tools
 ```
 
 ## Summary

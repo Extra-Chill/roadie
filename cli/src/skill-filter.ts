@@ -1,4 +1,4 @@
-// Computes opencode permission.skill rules from kimaki's --enable-skill /
+// Computes opencode permission.skill rules from roadie's --enable-skill /
 // --disable-skill CLI flags.
 //
 // OpenCode filters skills available to the model via

@@ -1,6 +1,6 @@
 // /memory-snapshot command - Write a V8 heap snapshot and show the file path.
 // Reuses writeHeapSnapshot() from heap-monitor.ts which writes gzip-compressed
-// .heapsnapshot.gz files to ~/.kimaki/heap-snapshots/.
+// .heapsnapshot.gz files to ~/.roadie/heap-snapshots/.
 
 import { MessageFlags } from 'discord.js'
 import type { CommandContext } from './types.js'

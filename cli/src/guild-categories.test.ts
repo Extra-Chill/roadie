@@ -6,9 +6,9 @@ import { DigitalDiscord } from 'discord-digital-twin/src'
 import { setDataDir } from './config.js'
 import { closeDb } from './db.js'
 import {
-  createDefaultKimakiChannel,
+  createDefaultRoadieChannel,
   createProjectChannels,
-  ensureKimakiCategory,
+  ensureRoadieCategory,
 } from './channel-management.js'
 import {
   getGuildCategories,
@@ -68,7 +68,7 @@ function guild() {
   return client.guilds.cache.get(guildId)!
 }
 
-test('first project creates a Kimaki group and stores its id', async () => {
+test('first project creates a Roadie group and stores its id', async () => {
   const created = await createProjectChannels({
     guild: guild(),
     projectDirectory: path.join(directory, 'web'),
@@ -76,7 +76,7 @@ test('first project creates a Kimaki group and stores its id', async () => {
   const channel = await guild().channels.fetch(created.textChannelId)
   expect(channel?.parentId).toBeTruthy()
   const category = await guild().channels.fetch(channel!.parentId!)
-  expect(category?.name).toBe('Kimaki')
+  expect(category?.name).toBe('Roadie')
   expect(await getGuildCategories(guildId)).toEqual({
     guild_id: guildId,
     category_id: category!.id,
@@ -103,7 +103,7 @@ test('renamed group still receives new project channels', async () => {
   )
 })
 
-test('a second machine creates its own Kimaki group', async () => {
+test('a second machine creates its own Roadie group', async () => {
   const first = await createProjectChannels({
     guild: guild(),
     projectDirectory: path.join(directory, 'web'),
@@ -125,8 +125,8 @@ test('a second machine creates its own Kimaki group', async () => {
     (channel) => channel.type === ChannelType.GuildCategory,
   )
   expect(categories.map((channel) => channel.name).sort()).toEqual([
-    'Kimaki',
-    'Kimaki',
+    'Roadie',
+    'Roadie',
   ])
 })
 
@@ -146,7 +146,7 @@ test('existing project channels adopt their parent without creating a new group'
     channelType: 'text',
     guildId,
   })
-  const resolved = await ensureKimakiCategory(guild())
+  const resolved = await ensureRoadieCategory(guild())
   expect(resolved.id).toBe(category.id)
   expect(await getGuildCategories(guildId)).toMatchObject({
     guild_id: guildId,
@@ -158,8 +158,8 @@ test('existing project channels adopt their parent without creating a new group'
   expect(categoryCount).toBe(1)
 })
 
-test('a second machine gets its own default kimaki channel', async () => {
-  const first = await createDefaultKimakiChannel({
+test('a second machine gets its own default roadie channel', async () => {
+  const first = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
@@ -168,7 +168,7 @@ test('a second machine gets its own default kimaki channel', async () => {
   await closeDb()
 
   await openDataDir()
-  const second = await createDefaultKimakiChannel({
+  const second = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
@@ -208,28 +208,28 @@ test('legacy rows from another guild do not block adoption', async () => {
     directory: path.join(directory, 'api'),
     channelType: 'text',
   })
-  const resolved = await ensureKimakiCategory(guild())
+  const resolved = await ensureRoadieCategory(guild())
   expect(resolved.id).toBe(localCategory.id)
 })
 
-test('a kimaki-prefixed project channel does not block the default channel', async () => {
+test('a roadie-prefixed project channel does not block the default channel', async () => {
   await createProjectChannels({
     guild: guild(),
-    projectDirectory: path.join(directory, 'kimaki-tools'),
+    projectDirectory: path.join(directory, 'roadie-tools'),
   })
-  const created = await createDefaultKimakiChannel({
+  const created = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
     isGatewayMode: true,
   })
   expect(created).toBeTruthy()
-  expect(created!.channelName).toBe('kimaki')
+  expect(created!.channelName).toBe('roadie')
 })
 
 test('concurrent first creates share one group', async () => {
   const [first, second] = await Promise.all([
-    ensureKimakiCategory(guild()),
-    ensureKimakiCategory(guild()),
+    ensureRoadieCategory(guild()),
+    ensureRoadieCategory(guild()),
   ])
   expect(first.id).toBe(second.id)
   const categories = [...guild().channels.cache.values()].filter(

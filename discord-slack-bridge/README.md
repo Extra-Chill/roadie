@@ -1,13 +1,13 @@
-<!-- Purpose: package overview and Slack OAuth scopes required for Kimaki parity. -->
+<!-- Purpose: package overview and Slack OAuth scopes required for Roadie parity. -->
 
 # discord-slack-bridge
 
 `discord-slack-bridge` lets a `discord.js` bot control a Slack workspace by
 translating Discord Gateway + REST behavior to Slack APIs.
 
-## Slack app scopes for Kimaki
+## Slack app scopes for Roadie
 
-To let Kimaki do the same core actions it does on Discord (commands, channel
+To let Roadie do the same core actions it does on Discord (commands, channel
 and thread lifecycle, messages, reactions, file uploads), configure these bot
 token scopes in your Slack app OAuth settings:
 

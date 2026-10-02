@@ -1,13 +1,13 @@
 ---
-title: Kimaki visual design
+title: Roadie visual design
 description: >
-  Brand assets and visual rules for Kimaki interfaces, charts, social images,
+  Brand assets and visual rules for Roadie interfaces, charts, social images,
   and generated graphics.
 ---
 
-# Kimaki visual design
+# Roadie visual design
 
-Kimaki uses a **dark, precise, editorial** visual style. Graphics should feel
+Roadie uses a **dark, precise, editorial** visual style. Graphics should feel
 like a well-designed developer tool, not a futuristic AI advertisement.
 
 ## Brand assets
@@ -23,7 +23,7 @@ The logo is a white, aliased Gothic `K` on pure black. Preserve its stepped
 pixel edges, split vertical stem, left spurs, and curved right limbs. Do not
 smooth, recolor, glow, bevel, or reinterpret it.
 
-For wide graphics, place the `K` at the top left. The lowercase word `kimaki`
+For wide graphics, place the `K` at the top left. The lowercase word `roadie`
 can follow in Inter, but the `K` remains the primary identifying mark.
 
 ## Colors
@@ -89,7 +89,7 @@ explicitly vertical.
 
 ## Borders, radius, and depth
 
-Kimaki documentation disables decorative grid lines with
+Roadie documentation disables decorative grid lines with
 `"decorativeLines": "none"` in `website/docs.json`.
 
 - Do not draw an outer frame around the graphic.
@@ -109,7 +109,7 @@ Pass references in this order:
 3. Optional website screenshot for mood and spacing.
 
 Tell the model what each image controls. A layout image must not override the
-Kimaki colors or logo. A logo image must not force its large black canvas into
+Roadie colors or logo. A logo image must not force its large black canvas into
 the final composition.
 
 ## Data graphics

@@ -1,4 +1,4 @@
-// E2e test for `kimaki send --channel` flow.
+// E2e test for `roadie send --channel` flow.
 // Reproduces the race condition where the bot's MessageCreate GuildText handler
 // tries to call startThread() on the same message that the CLI already created
 // a thread for via REST, causing DiscordAPIError[160004].
@@ -139,7 +139,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   return [userReplyMatcher, catchAll]
 }
 
-describe('kimaki send --channel thread creation', () => {
+describe('roadie send --channel thread creation', () => {
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
@@ -151,7 +151,7 @@ describe('kimaki send --channel thread creation', () => {
     directories = createRunDirectories()
     const lockPort = await chooseAvailableLockPort({ key: 'cli-send-thread-e2e' })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools_and_text' })
@@ -232,7 +232,7 @@ describe('kimaki send --channel thread creation', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
 
@@ -296,8 +296,8 @@ describe('kimaki send --channel thread creation', () => {
         return
       }),
     ])
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
@@ -330,8 +330,8 @@ describe('kimaki send --channel thread creation', () => {
         "--- from: user (cli-send-tester)
         --- from: assistant (TestBot)
         I can see you sent a message, but Discord did not include its text.
-        Mention me and send it again, like \`@Kimaki fix the failing test\`, so I can read it.
-        To avoid this reminder, start Kimaki with \`--mention-mode\` so it only reacts to mentioned messages."
+        Mention me and send it again, like \`@Roadie fix the failing test\`, so I can read it.
+        To avoid this reminder, start Roadie with \`--mention-mode\` so it only reacts to mentioned messages."
       `)
 
       const threads = await discord.channel(EMPTY_CONTENT_CHANNEL_ID).getThreads()
@@ -416,15 +416,15 @@ describe('kimaki send --channel thread creation', () => {
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)
         I can see you sent a message, but Discord did not include its text.
-        Mention me and send it again, like \`@Kimaki fix the failing test\`, so I can read it.
-        To avoid this reminder, start Kimaki with \`--mention-mode\` so it only reacts to mentioned messages."
+        Mention me and send it again, like \`@Roadie fix the failing test\`, so I can read it.
+        To avoid this reminder, start Roadie with \`--mention-mode\` so it only reacts to mentioned messages."
       `)
     },
     12_000,
   )
 
   test(
-    'kimaki send --prompt "/hello-test-cmd" falls through as text when registeredUserCommands is empty (repro #97)',
+    'roadie send --prompt "/hello-test-cmd" falls through as text when registeredUserCommands is empty (repro #97)',
     async () => {
       // Reproduce GitHub #97: when registeredUserCommands is empty (gateway mode
       // startup race, or backgroundInit not complete), the prompt "/hello-test-cmd"
@@ -504,7 +504,7 @@ describe('kimaki send --channel thread creation', () => {
   test(
     'bot-posted starter message with start marker creates thread without DiscordAPIError[160004]',
     async () => {
-      // Simulate what `kimaki send --channel` does:
+      // Simulate what `roadie send --channel` does:
       // 1. Bot posts a starter message with `start: true` embed marker
       // 2. Bot creates a thread on that message via REST
       // The ThreadCreate handler should pick it up. The MessageCreate GuildText

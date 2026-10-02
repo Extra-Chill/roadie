@@ -1,4 +1,4 @@
-// Live CPU profiling for the running Kimaki process.
+// Live CPU profiling for the running Roadie process.
 // Type `cpuprof` in the bot terminal to start. Type it again to stop,
 // or wait 20s for auto-stop. Writes Chrome DevTools .cpuprofile files
 // to <dataDir>/cpu-profiles/.
@@ -254,7 +254,7 @@ export function startStdinCpuProfListener({
   if (stdinReader) return
   const input = stdin ?? process.stdin
   if (!stdin) {
-    if (process.env.KIMAKI_VITEST) return
+    if (process.env.ROADIE_VITEST) return
     if (!process.stdin.isTTY) return
   }
 

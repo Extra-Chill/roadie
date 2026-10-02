@@ -11,7 +11,7 @@ import { Copy, Check } from 'lucide-react'
 
 export function InstallCommand() {
   const [copied, setCopied] = useState(false)
-  const command = 'npx -y kimaki@latest'
+  const command = 'npx -y roadie@latest'
 
   return (
     <button

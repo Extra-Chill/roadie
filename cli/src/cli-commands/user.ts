@@ -135,8 +135,8 @@ cli
 
       if (!options.port && command.length === 0) {
         cliLogger.error('Error: --port is required unless a command is provided after --')
-        cliLogger.error(`\nUsage: kimaki tunnel [-- command]`)
-        cliLogger.error(`   or: kimaki tunnel --port <port>`)
+        cliLogger.error(`\nUsage: roadie tunnel [-- command]`)
+        cliLogger.error(`   or: roadie tunnel --port <port>`)
         process.exit(EXIT_NO_RESTART)
       }
 

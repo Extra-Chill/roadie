@@ -3,11 +3,11 @@ title: Digital Discord - Local Discord API Test Server
 description: |
   Comprehensive plan for building a local Discord API server (REST + Gateway
   WebSocket) that discord.js can connect to, enabling automated testing of the
-  Kimaki bot without hitting real Discord. Uses Spiceflow for HTTP, ws for
+  Roadie bot without hitting real Discord. Uses Spiceflow for HTTP, ws for
   WebSocket, and Prisma + libsql for in-memory state.
 prompt: |
   Voice transcript from Tommy asking to create a "digital twin" of Discord for
-  testing Kimaki. The plan was created by reading: cli/src/discord-bot.ts,
+  testing Roadie. The plan was created by reading: cli/src/discord-bot.ts,
   cli/src/discord-utils.ts, cli/src/interaction-handler.ts, all files
   in cli/src/commands/, the cli/package.json, the official Discord
   OpenAPI spec at opensrc/repos/github.com/discord/discord-api-spec/specs/
@@ -23,7 +23,7 @@ prompt: |
 
 Build a local server that implements enough of the Discord API (REST + Gateway
 WebSocket) for the discord.js SDK to connect to it. This allows automated
-testing of the Kimaki bot without real Discord, rate limits, or networking.
+testing of the Roadie bot without real Discord, rate limits, or networking.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ testing of the Kimaki bot without real Discord, rate limits, or networking.
             ┌──────────────────┼──────────────────┐
             |                  |                   |
             v                  v                   v
-     DigitalDiscord      discord.js Client     Kimaki Bot
+     DigitalDiscord      discord.js Client     Roadie Bot
      test utilities      (pointed at local)    (unchanged)
      (inject messages,        |                    |
       assert state)           |                    |
@@ -1147,7 +1147,7 @@ never throttles itself.
 
 ## REST Endpoints to Implement
 
-Grouped by the Kimaki bot's actual usage. Each entry lists the HTTP method,
+Grouped by the Roadie bot's actual usage. Each entry lists the HTTP method,
 path (Spiceflow route format), the discord-api-types REST type for
 request/response, and the corresponding Gateway dispatch event (if any).
 
@@ -1511,7 +1511,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { Client, GatewayIntentBits } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 
-describe('Kimaki message handling', () => {
+describe('Roadie message handling', () => {
   let discord: DigitalDiscord
   let client: Client
 
@@ -1522,7 +1522,7 @@ describe('Kimaki message handling', () => {
         {
           name: 'general',
           type: ChannelType.GuildText,
-          topic: 'kimaki:/tmp/test-project app:BOT_ID',
+          topic: 'roadie:/tmp/test-project app:BOT_ID',
         },
       ],
       users: [{ username: 'TestUser' }],
@@ -1538,7 +1538,7 @@ describe('Kimaki message handling', () => {
       rest: { api: discord.restUrl, version: '10' },
     })
 
-    // Register Kimaki message handlers on this client
+    // Register Roadie message handlers on this client
     // (reuse startDiscordBot or similar)
     await client.login(discord.botToken)
     // Wait for READY + GUILD_CREATE
@@ -1702,7 +1702,7 @@ Prisma schema changes, these statements must be updated to match. Run
 - Fetch https://discord.com/developers/docs/events/gateway for the full
   Gateway connection flow documentation
 - Read `cli/src/discord-bot.ts:165-180` for the Client constructor
-  options Kimaki uses
+  options Roadie uses
 
 ### Phase 2: Messages + Reactions (~60k tokens estimated)
 
@@ -1796,7 +1796,7 @@ connections share the same in-memory DB.
 - OpenAPI spec: `/channels/{channel_id}/threads` paths
 - Fetch https://discord.com/developers/docs/resources/channel#start-thread-without-message
 - Read `cli/src/commands/worktree.ts` and `cli/src/discord-bot.ts`
-  for how Kimaki creates threads
+  for how Roadie creates threads
 
 ### Phase 4: Interactions (~60k tokens estimated)
 
@@ -1839,7 +1839,7 @@ connections share the same in-memory DB.
 - OpenAPI spec: `/interactions/{interaction_id}/{interaction_token}/callback`
 - Fetch https://discord.com/developers/docs/interactions/receiving-and-responding
 - Read `cli/src/interaction-handler.ts` and `cli/src/commands/`
-  for how Kimaki handles interactions
+  for how Roadie handles interactions
 - Read `cli/src/commands/permissions.ts` for button interaction flow
 - Read `cli/src/commands/model.ts` for select menu interaction flow
 
@@ -1866,24 +1866,24 @@ remaining guild operations.
 2. Add `simulateReaction()` to `DigitalDiscord` if not done in Phase 2
 3. Polish error responses to match Discord format
 4. Add missing rate limit headers to all responses
-5. Test full Kimaki bot startup flow end-to-end
+5. Test full Roadie bot startup flow end-to-end
 
 **How to validate**: Write integration tests that:
 
-- Start `DigitalDiscord` with channel topics matching Kimaki's format
-- Start the full Kimaki bot (reuse `startDiscordBot()` from
+- Start `DigitalDiscord` with channel topics matching Roadie's format
+- Start the full Roadie bot (reuse `startDiscordBot()` from
   `cli/src/discord-bot.ts`)
 - Verify the bot logs in, registers commands, and scans channels
-- Simulate a user message and verify Kimaki creates a thread + starts
+- Simulate a user message and verify Roadie creates a thread + starts
   processing
 - Verify the complete flow from message -> thread -> bot response
 
 **Key references**:
 
 - OpenAPI spec: `/guilds/{guild_id}/channels`, `/guilds/{guild_id}/roles`
-- Read `cli/src/channel-management.ts` for how Kimaki creates channels
+- Read `cli/src/channel-management.ts` for how Roadie creates channels
 - Read `cli/src/cli.ts` for command registration and startup flow
-- Read `cli/src/discord-utils.ts:604` (`getKimakiMetadata`) for how
+- Read `cli/src/discord-utils.ts:604` (`getRoadieMetadata`) for how
   channel topics are parsed
 
 ---
@@ -1901,7 +1901,7 @@ remaining guild operations.
 | Schema source       | Official `discord/discord-api-spec` OpenAPI                | 498 schemas, machine-readable, MIT licensed                                                                                                                                                                                                                                        |
 | Types               | `discord-api-types` npm package                            | 1:1 mapping to Discord API, maintained by discord.js team                                                                                                                                                                                                                          |
 | Input/output typing | Return type annotations + targeted `as` only, no Zod       | `discord-api-types` only publishes TS types, not Zod schemas. Return type annotations do the checking. Blanket `as Type` and `as unknown as Type` casts are banned -- they bypass the compiler. Targeted `as` only for: JSON.parse results, APIChannel union, enum bitfield zeros. |
-| Scope               | Only endpoints Kimaki uses (~30 REST + ~10 Gateway events) | Practical, not trying to implement all 139 endpoints                                                                                                                                                                                                                               |
+| Scope               | Only endpoints Roadie uses (~30 REST + ~10 Gateway events) | Practical, not trying to implement all 139 endpoints                                                                                                                                                                                                                               |
 | Voice               | Skipped entirely                                           | Separate protocol (UDP + Opus), extremely complex                                                                                                                                                                                                                                  |
 | Forum channels      | Included in schema but low priority                        | Used for memory sync, not core bot flow                                                                                                                                                                                                                                            |
 
@@ -1917,11 +1917,11 @@ remaining guild operations.
    queue requests unnecessarily. **Mitigation**: Return generous fake
    rate limit headers on every response.
 
-3. **Multipart file uploads**: Kimaki uses `multipart/form-data` for
+3. **Multipart file uploads**: Roadie uses `multipart/form-data` for
    file attachments. Spiceflow handles this via `request.formData()`.
    **Mitigation**: Parse form data, store file metadata (not content).
 
-4. **Components V2**: Kimaki uses Discord Components V2
+4. **Components V2**: Roadie uses Discord Components V2
    (`ContainerBuilder`, `TextDisplayBuilder`). These are JSON in message
    payloads. **Mitigation**: Store `components` as JSON string, return
    as-is.
@@ -1945,7 +1945,7 @@ next agent in the chain.
   or missing relation that discord.js expects, fix the schema in this
   plan document after fixing it in code. Add a note in the changelog
   section below explaining what was wrong and why.
-- **Missing endpoints**: If Kimaki uses a REST endpoint or Gateway event
+- **Missing endpoints**: If Roadie uses a REST endpoint or Gateway event
   not listed here, add it to the appropriate phase table.
 - **Wrong payload shapes**: If a Gateway event payload is missing a
   required field that discord.js expects, update the example payload in

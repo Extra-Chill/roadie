@@ -6,7 +6,7 @@ import { sanitizeSensitiveText, sanitizeUnknownValue } from './privacy-sanitizer
 let pluginLogFilePath: string | null = null
 
 export function setPluginLogFilePath(dataDir: string): void {
-  pluginLogFilePath = path.join(dataDir, 'kimaki.log')
+  pluginLogFilePath = path.join(dataDir, 'roadie.log')
 }
 
 function formatArg(arg: unknown): string {

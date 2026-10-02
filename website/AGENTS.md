@@ -2,7 +2,7 @@
 
 # website purpose
 
-The `website` package is the HTTP layer for Kimaki onboarding.
+The `website` package is the HTTP layer for Roadie onboarding.
 
 It is responsible for:
 
@@ -44,7 +44,7 @@ async handler({ state }) {
 
 Local development uses a **Prisma Dev** instance (PGlite-based local Postgres)
 instead of hitting the production PlanetScale database. Data persists across
-restarts; only `prisma dev rm kimaki` deletes it.
+restarts; only `prisma dev rm roadie` deletes it.
 
 The `pnpm dev` script in website automatically starts the local database before
 starting vite. You can also manage it manually from the `db/` package.

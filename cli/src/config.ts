@@ -1,4 +1,4 @@
-// Runtime configuration for Kimaki bot.
+// Runtime configuration for Roadie bot.
 // Thin re-export layer over the centralized zustand store (store.ts).
 // Getter/setter functions are kept for backwards compatibility so existing
 // import sites don't need to change. They delegate to store.getState() and
@@ -9,13 +9,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { store } from './store.js'
 
-const DEFAULT_DATA_DIR = path.join(os.homedir(), '.kimaki')
+const DEFAULT_DATA_DIR = path.join(os.homedir(), '.roadie')
 
 /**
  * Get the data directory path.
- * Order: store value, vitest temp dir, KIMAKI_DATA_DIR, then ~/.kimaki.
- * Under vitest (KIMAKI_VITEST env var), auto-creates an isolated temp dir so
- * tests never touch the real ~/.kimaki/ database. Tests that need a specific
+ * Order: store value, vitest temp dir, ROADIE_DATA_DIR, then ~/.roadie.
+ * Under vitest (ROADIE_VITEST env var), auto-creates an isolated temp dir so
+ * tests never touch the real ~/.roadie/ database. Tests that need a specific
  * dir can still call setDataDir() before any DB access to override this.
  */
 export function getDataDir(): string {
@@ -23,15 +23,15 @@ export function getDataDir(): string {
   if (current) {
     return current
   }
-  // Tests stay isolated even if the parent process exported KIMAKI_DATA_DIR.
-  if (process.env.KIMAKI_VITEST) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
+  // Tests stay isolated even if the parent process exported ROADIE_DATA_DIR.
+  if (process.env.ROADIE_VITEST) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-test-'))
     store.setState({ dataDir: tmpDir })
     return tmpDir
   }
-  // Child processes (OpenCode server, kimaki shim commands) inherit this from
-  // opencode.ts. Without it they would silently use ~/.kimaki.
-  const fromEnv = process.env.KIMAKI_DATA_DIR
+  // Child processes (OpenCode server, roadie shim commands) inherit this from
+  // opencode.ts. Without it they would silently use ~/.roadie.
+  const fromEnv = process.env.ROADIE_DATA_DIR
   if (fromEnv) {
     const resolved = path.resolve(fromEnv)
     store.setState({ dataDir: resolved })
@@ -115,12 +115,12 @@ const DEFAULT_LOCK_PORT = 29988
 
 /**
  * Derive a lock port from the data directory path.
- * If KIMAKI_LOCK_PORT is set to a valid TCP port, it takes precedence.
- * Returns 29988 for the default ~/.kimaki directory (backwards compatible).
+ * If ROADIE_LOCK_PORT is set to a valid TCP port, it takes precedence.
+ * Returns 29988 for the default ~/.roadie directory (backwards compatible).
  * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
  */
 export function getLockPort(): number {
-  const envPortRaw = process.env['KIMAKI_LOCK_PORT']
+  const envPortRaw = process.env['ROADIE_LOCK_PORT']
   if (envPortRaw) {
     const envPort = Number.parseInt(envPortRaw, 10)
     if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {

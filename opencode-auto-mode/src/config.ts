@@ -1,6 +1,6 @@
 // Config loading for opencode-auto-mode.
 // Opt-in for npm users: no file and no env = plugin is a no-op.
-// Kimaki always enables via autoModeInternal. Invalid JSON fails closed.
+// Roadie always enables via autoModeInternal. Invalid JSON fails closed.
 
 import fs from 'node:fs'
 import path from 'node:path'

@@ -1,6 +1,6 @@
 /**
  * Interactive Discord playground for the homepage hero.
- * Scripted Kimaki sessions (voice, queue, permissions, selects, worktrees)
+ * Scripted Roadie sessions (voice, queue, permissions, selects, worktrees)
  * with Discord UI. Sizes are em-based so the parent font-size scales the window.
  */
 'use client'
@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 type PlaygroundPermission = 'accept' | 'always' | 'deny'
 
 type PlaygroundMessage = {
-  author: 'user' | 'kimaki'
+  author: 'user' | 'roadie'
   time?: string
   text: string
   image?: {
@@ -44,11 +44,11 @@ type PlaygroundThreadUi = {
 }
 
 const DEPLOY_REPLY: PlaygroundMessage = {
-  author: 'kimaki',
+  author: 'roadie',
   time: 'Today at 4:01 PM',
-  text: 'To start using Kimaki, deploy your own bot with `npx -y kimaki@latest`.',
+  text: 'To start using Roadie, deploy your own bot with `npx -y roadie@latest`.',
   cta: true,
-  footer: 'kimaki ⋅ main ⋅ 2s ⋅ 4% ⋅ claude-opus-4-6',
+  footer: 'roadie ⋅ main ⋅ 2s ⋅ 4% ⋅ claude-opus-4-6',
 }
 
 const CHANNELS: {
@@ -71,7 +71,7 @@ const CHANNELS: {
         name: 'midjourney still',
         title: 'Generate a Midjourney still from a voice note',
         summary:
-          'Record a voice note. Kimaki transcribes it, then drives Midjourney in the browser.',
+          'Record a voice note. Roadie transcribes it, then drives Midjourney in the browser.',
         messages: [
           {
             author: 'user',
@@ -80,22 +80,22 @@ const CHANNELS: {
             voice: { duration: '0:08' },
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 2:14 PM',
             text: 'Transcribing voice message...',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 2:14 PM',
             text: '📝 **Transcribed message:** open midjourney in the browser and generate a still. pale light, almost nothing in it.',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 2:14 PM',
             text: '┣ bash playwriter open https://www.midjourney.com/imagine',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 2:15 PM',
             text: 'here.',
             image: {
@@ -112,7 +112,7 @@ const CHANNELS: {
         name: 'queue a commit',
         title: 'Queue a commit after the refactor',
         summary:
-          'Line up a follow-up for when the current run finishes. Kimaki commits after the refactor.',
+          'Line up a follow-up for when the current run finishes. Roadie commits after the refactor.',
         messages: [
           {
             author: 'user',
@@ -120,12 +120,12 @@ const CHANNELS: {
             text: 'extract formatFooter into cli/src/session-footer.ts',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:02 PM',
             text: '◼︎ write cli/src/session-footer.ts',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:02 PM',
             text: '◼︎ edit cli/src/session-handler/thread-session-runtime.ts',
           },
@@ -135,31 +135,31 @@ const CHANNELS: {
             text: 'commit this when you are done. queue',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:03 PM',
             text: 'Queued message (position 1)',
             queueAck: true,
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:03 PM',
             text: 'Moved `formatFooter` into `cli/src/session-footer.ts` and pointed the runtime at it.',
             footer: 'web-app ⋅ main ⋅ 48s ⋅ 17% ⋅ claude-opus-4-6',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:03 PM',
             text: '» **Tommy:** commit this when you are done',
             reveal: 'queue-kept',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:03 PM',
             text: '┣ bash git commit',
             reveal: 'queue-kept',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 3:03 PM',
             text: 'Committed on main: extract formatFooter helper.',
             footer: 'web-app ⋅ main ⋅ 12s ⋅ 19% ⋅ claude-opus-4-6',
@@ -178,7 +178,7 @@ const CHANNELS: {
         name: 'prod migration',
         title: 'Approve a production database migration',
         summary:
-          'Kimaki asks before a dangerous command. Accept once, always allow, or deny.',
+          'Roadie asks before a dangerous command. Accept once, always allow, or deny.',
         messages: [
           {
             author: 'user',
@@ -186,26 +186,26 @@ const CHANNELS: {
             text: 'run the production migration',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 11:41 AM',
             text: '⚠️ **Permission Required**\n**Type:** `bash`\n**Pattern:** `pnpm db:migrate --prod`',
             permission: true,
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 11:41 AM',
             text: '┣ bash pnpm db:migrate --prod',
             reveal: 'permission-accept',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 11:41 AM',
             text: 'Applied 3 migrations. `users` now has `last_seen_at`.',
             footer: 'api ⋅ main ⋅ 22s ⋅ 8% ⋅ claude-opus-4-6',
             reveal: 'permission-accept',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 11:41 AM',
             text: 'Skipped the production migrate. Say if you want a dry-run against staging instead.',
             footer: 'api ⋅ main ⋅ 4s ⋅ 6% ⋅ claude-opus-4-6',
@@ -232,7 +232,7 @@ const CHANNELS: {
             text: 'rewrite getting-started so a new user can install in one minute',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 4:18 PM',
             text: '',
             select: {
@@ -255,21 +255,21 @@ const CHANNELS: {
             },
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 4:18 PM',
             text: '» **Tommy:** {select}',
             reveal: 'select',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 4:18 PM',
             text: '◼︎ write docs/getting-started.mdx',
             reveal: 'select',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 4:19 PM',
-            text: 'Rewrote it around `npx -y kimaki@latest` first, then the Discord install click.',
+            text: 'Rewrote it around `npx -y roadie@latest` first, then the Discord install click.',
             footer: 'docs ⋅ main ⋅ 41s ⋅ 15% ⋅ claude-opus-4-6',
             reveal: 'select',
           },
@@ -286,7 +286,7 @@ const CHANNELS: {
         name: 'landing hero still',
         title: 'Generate a still for the landing hero',
         summary:
-          'Type a prompt. Kimaki generates the image and shows it inline in the thread.',
+          'Type a prompt. Roadie generates the image and shows it inline in the thread.',
         messages: [
           {
             author: 'user',
@@ -294,7 +294,7 @@ const CHANNELS: {
             text: 'generate a still for the landing hero. pale light, almost nothing in it.',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 1:13 PM',
             text: 'here.',
             image: {
@@ -319,9 +319,9 @@ const CHANNELS: {
             text: '/new-worktree dark-mode',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 5:08 PM',
-            text: 'Created worktree `opencode/kimaki-dark-mode`. This thread now edits an isolated checkout, not main.',
+            text: 'Created worktree `opencode/roadie-dark-mode`. This thread now edits an isolated checkout, not main.',
           },
           {
             author: 'user',
@@ -329,15 +329,15 @@ const CHANNELS: {
             text: 'make the hero dark by default',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 5:08 PM',
             text: '◼︎ edit src/components/hero-section.tsx',
           },
           {
-            author: 'kimaki',
+            author: 'roadie',
             time: 'Today at 5:09 PM',
             text: 'Hero now defaults to dark. The main checkout is untouched. Merge later with `/merge-worktree`.',
-            footer: 'website ⋅ opencode/kimaki-dark-mode ⋅ 27s ⋅ 11% ⋅ claude-opus-4-6',
+            footer: 'website ⋅ opencode/roadie-dark-mode ⋅ 27s ⋅ 11% ⋅ claude-opus-4-6',
           },
         ],
       },
@@ -620,7 +620,7 @@ function UserAvatar() {
   )
 }
 
-function KimakiAvatar() {
+function RoadieAvatar() {
   return (
     <img
       src='/logo.jpeg'
@@ -638,7 +638,7 @@ function DiscordButton() {
       rel='noopener noreferrer'
       className='mt-[0.5em] inline-flex h-[2em] items-center rounded-[0.25em] bg-[#5865f2] px-[1em] text-[0.875em] font-medium text-white no-underline hover:bg-[#4752c4] active:scale-[0.97]'
     >
-      Deploy Kimaki
+      Deploy Roadie
     </a>
   )
 }
@@ -915,7 +915,7 @@ export function DiscordPlayground() {
             <span className='absolute top-1/2 left-[0.25em] h-[2em] w-[0.25em] -translate-y-1/2 rounded-full bg-white' />
             <img
               src='/logo.jpeg'
-              alt='Kimaki'
+              alt='Roadie'
               className='size-[3em] rounded-[1em] object-cover'
             />
           </div>
@@ -924,7 +924,7 @@ export function DiscordPlayground() {
         <div className='flex w-[13.5em] shrink-0 flex-col bg-[#2b2d31]'>
           <div className='flex h-[3em] shrink-0 items-center justify-between px-[1em] shadow-[0_0.0625em_0_rgba(0,0,0,0.2)]'>
             <div className='flex min-w-0 items-center gap-[0.25em] text-[1em] font-medium text-white'>
-              <span className='truncate'>Kimaki</span>
+              <span className='truncate'>Roadie</span>
               <span className='text-[#b5bac1]'>
                 <ChevronIcon />
               </span>
@@ -1093,15 +1093,15 @@ export function DiscordPlayground() {
                   ) : message.author === 'user' ? (
                     <UserAvatar />
                   ) : (
-                    <KimakiAvatar />
+                    <RoadieAvatar />
                   )}
                   <div className='min-w-0'>
                     {!grouped && (
                       <div className='flex items-baseline gap-[0.375em]'>
                         <span className='text-[1em] font-medium leading-[1.375em] text-white'>
-                          {message.author === 'user' ? 'Tommy' : 'Kimaki'}
+                          {message.author === 'user' ? 'Tommy' : 'Roadie'}
                         </span>
-                        {message.author === 'kimaki' && (
+                        {message.author === 'roadie' && (
                           <span className='relative top-[-0.0625em] rounded-[0.1875em] bg-[#5865f2] px-[0.25em] text-[0.625em] font-medium leading-[0.9375em] text-white'>
                             APP
                           </span>
@@ -1172,7 +1172,7 @@ export function DiscordPlayground() {
               <div className='mb-[0.4em] flex h-[1.5em] items-center pl-[0.15em] text-[0.875em] leading-none'>
                 <TypingDots />
                 <span className='text-[#dbdee1]'>
-                  <span className='font-medium'>Kimaki</span>
+                  <span className='font-medium'>Roadie</span>
                   <span className='text-[#949ba4]'> is typing...</span>
                 </span>
               </div>

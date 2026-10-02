@@ -3,11 +3,11 @@ import { SlackInstallForm } from './slack-install-form.js'
 export function SlackInstallPage({
   clientId,
   clientSecret,
-  kimakiCallbackUrl,
+  roadieCallbackUrl,
 }: {
   clientId: string
   clientSecret: string
-  kimakiCallbackUrl: string | null
+  roadieCallbackUrl: string | null
 }) {
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-sm mx-auto px-4">
@@ -23,7 +23,7 @@ export function SlackInstallPage({
       <SlackInstallForm
         clientId={clientId}
         clientSecret={clientSecret}
-        kimakiCallbackUrl={kimakiCallbackUrl}
+        roadieCallbackUrl={roadieCallbackUrl}
       />
 
       <p className="text-xs text-gray-400 text-center">

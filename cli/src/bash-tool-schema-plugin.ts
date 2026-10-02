@@ -4,16 +4,16 @@
 // args before execute. Extra fields stay in the model-facing schema and in
 // Discord input; they never reach the shell.
 //
-// Also injects KIMAKI_SESSION_ID into bash env. /btw and /fork clone parent
+// Also injects ROADIE_SESSION_ID into bash env. /btw and /fork clone parent
 // history, so the copied system prompt still says --session <parent>. Upload
 // then prefers this live env over that stale flag.
 
 import type { Plugin } from '@opencode-ai/plugin'
 import { z } from 'zod'
 
-export const KIMAKI_SESSION_ID_ENV = 'KIMAKI_SESSION_ID'
+export const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
 
-export function injectKimakiSessionEnv({
+export function injectRoadieSessionEnv({
   sessionID,
   env,
 }: {
@@ -21,12 +21,12 @@ export function injectKimakiSessionEnv({
   env: Record<string, string>
 }) {
   if (!sessionID) return
-  env[KIMAKI_SESSION_ID_ENV] = sessionID
+  env[ROADIE_SESSION_ID_ENV] = sessionID
 }
 
 export function resolveUploadToDiscordSessionId({
   flagSessionId,
-  envSessionId = process.env[KIMAKI_SESSION_ID_ENV],
+  envSessionId = process.env[ROADIE_SESSION_ID_ENV],
 }: {
   flagSessionId?: string
   envSessionId?: string
@@ -71,7 +71,7 @@ export const bashToolSchemaPlugin: Plugin = async () => {
       extendBashToolDefinition(output)
     },
     'shell.env': async (input, output) => {
-      injectKimakiSessionEnv({ sessionID: input.sessionID, env: output.env })
+      injectRoadieSessionEnv({ sessionID: input.sessionID, env: output.env })
     },
   }
 }

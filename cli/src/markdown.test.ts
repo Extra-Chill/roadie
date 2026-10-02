@@ -189,7 +189,7 @@ beforeAll(async () => {
     JSON.stringify(opencodeConfig, null, 2),
   )
 
-  // Start the shared opencode server via kimaki's server manager
+  // Start the shared opencode server via roadie's server manager
   const getClient = await initializeOpencodeForDirectory(
     directories.projectDirectory,
   )

@@ -1,4 +1,4 @@
-// /screenshare command - Start screen sharing via VNC + WebSocket bridge + kimaki tunnel.
+// /screenshare command - Start screen sharing via VNC + WebSocket bridge + roadie tunnel.
 // On macOS: uses built-in Screen Sharing (port 5900).
 // On Linux: spawns x11vnc against the current $DISPLAY.
 // Exposes the VNC stream via an in-process websockify bridge and a traforo tunnel,

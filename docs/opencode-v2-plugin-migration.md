@@ -1,13 +1,13 @@
 ---
-title: OpenCode v2 Kimaki plugin migration
+title: OpenCode v2 Roadie plugin migration
 description: >
   Greenfield kimaki2 package. Test harness first. Then port features as
   OpenCode v2 plugins. Delete interrupt/abort-replay. Use inbox steer/queue.
 ---
 
-# OpenCode v2 Kimaki plugin migration
+# OpenCode v2 Roadie plugin migration
 
-Kimaki v1 is a Discord bot process plus an OpenCode child. Kimaki v2 is an **OpenCode plugin**. The CLI is a thin client.
+Roadie v1 is a Discord bot process plus an OpenCode child. Roadie v2 is an **OpenCode plugin**. The CLI is a thin client.
 
 Do this in a new package, `kimaki2/`. Do not rewrite `cli/` in place. Keep v1 shipping until v2 can replace it.
 
@@ -21,7 +21,7 @@ Measured on `opencode2 v0.0.0-beta-19271` in `/Users/morse/Documents/GitHub/open
   kimaki2 CLI  ── RPC ──►  opencode2 process
                                 │
                                 ▼
-                         kimaki.* plugins
+                         roadie.* plugins
                                 │
                     Discord Client (globalThis, once)
 ```
@@ -42,13 +42,13 @@ Do not copy files and "fix types". Port one feature per phase. Delete what v2 al
 
 ## What v2 already does (do not port)
 
-| V1 Kimaki | V2 OpenCode | Action |
+| V1 Roadie | V2 OpenCode | Action |
 |---|---|---|
 | Interrupt plugin: abort, wait 3s, `promptAsync` replay | Inbox `delivery: "steer"` | **Delete** |
 | Zustand `queueItems` for normal messages | Inbox `delivery: "queue"` | **Delete** the queue. Keep Discord Remove UI as a view |
 | `session.abort` + empty `promptAsync([])` | `session.interrupt({ continue })` | **Delete** |
 | Per-directory OpenCode child + `x-opencode-directory` | One server. `location[directory]` | **Delete** spawn in `opencode.ts` |
-| Hrana / `ipc_requests` JSON to the bot | `Rpc.define` + `client.rpc(Kimaki)` | **Replace** |
+| Hrana / `ipc_requests` JSON to the bot | `Rpc.define` + `client.rpc(Roadie)` | **Replace** |
 | Plugin-local `createPluginClient` because v1 `ctx.client` no-ops | `ctx` is the server client | **Delete** `plugin-opencode-client.ts` |
 | `question.asked` | `form.created` / `form.replied` | **Rewrite** UI only |
 
@@ -63,13 +63,13 @@ These are not guesses. They are from one `opencode2 serve` PID and two folders.
 3. **`ctx.event.subscribe()` is the process bus.** `session.created` in project-a was delivered to project-a **and** project-b. Filter by `event.location` / `sessionID`.
 4. **`plugins: ["./probe.ts"]` is rejected.** Configured plugin path must be a **directory**. Use `./probe` or `.opencode/plugins/probe.ts`.
 5. **`GET /api/plugin` is empty until `POST /api/plugin/await-activation`.**
-6. **Kimaki `OPENCODE_CONFIG` leaks into child env.** Isolation must set `OPENCODE_CONFIG` explicitly.
+6. **Roadie `OPENCODE_CONFIG` leaks into child env.** Isolation must set `OPENCODE_CONFIG` explicitly.
 
 ```
   opencode2 process
         │
-        ├─ Location A  ── setup(kimaki.probe) ── subscribe()
-        └─ Location B  ── setup(kimaki.probe) ── subscribe()
+        ├─ Location A  ── setup(roadie.probe) ── subscribe()
+        └─ Location B  ── setup(roadie.probe) ── subscribe()
                     │
                     ▼
               one Bus  (all events to all subscribers)
@@ -85,7 +85,7 @@ kimaki2/
   AGENTS.md                 v2-only rules (not generated)
   src/
     bin.ts                  thin CLI: Service.ensure + rpc
-    rpc.ts                  Kimaki Rpc.define contract
+    rpc.ts                  Roadie Rpc.define contract
     host.ts                 globalThis singleton (Discord, db, tasks)
     plugins/
       probe.ts              harness canary (phase 0 only)
@@ -168,7 +168,7 @@ V1 already did this for the interrupt plugin: a tiny HTTP stub in `cli/src/openc
 - isolated `HOME` / `XDG_*` / `OPENCODE_CONFIG`
 - plugin as a **directory**
 - `POST /api/plugin/await-activation`
-- assert `kimaki.probe` is `active`
+- assert `roadie.probe` is `active`
 - assert two locations → two `setup` lines in jsonl
 
 Depend on `@opencode-ai/plugin` and `@opencode-ai/client` from the beta tag. Do not depend on `@opencode-ai/core` just to get tests. That package has no test export.
@@ -196,21 +196,21 @@ That is the gate. No Discord plugin until these pass.
 
 Rule: one plugin, one feature, state inside it. Derive from events. Do not mirror busy/phase flags.
 
-### `kimaki.discord`
+### `roadie.discord`
 
-- `globalThis.__kimakiDiscord` + refcount
+- `globalThis.__roadieDiscord` + refcount
 - `Client` login once
 - slash command registration once
 - forwards message/interaction to other plugins via in-process bus or RPC
 - cleanup must not destroy Discord while other locations still exist
 
-### `kimaki.threads`
+### `roadie.threads`
 
 - The mapping table: Discord thread ↔ session ↔ directory ↔ worktree
 - SQLite or `ctx.storage` plus a process cache
 - Everyone else asks this plugin. Do not copy the map.
 
-### `kimaki.render`
+### `roadie.render`
 
 - Only consumer of the session fact stream for Discord output
 - Accumulate `session.text.delta`, commit on `session.text.ended`
@@ -222,7 +222,7 @@ Rule: one plugin, one feature, state inside it. Derive from events. Do not mirro
 
 Port `cli/src/session-handler/event-stream-state.ts` here. Rewrite types to v2 facts. Keep the "derive, do not store" rule.
 
-### `kimaki.queue`
+### `roadie.queue`
 
 - No `queueItems` array
 - `/queue` and queue-suffix → `session.prompt({ delivery: "queue" })`
@@ -230,28 +230,28 @@ Port `cli/src/session-handler/event-stream-state.ts` here. Rewrite types to v2 f
 - Drain line `» Tommy: …` from `session.inbox.delivered`
 - Tests: hook sets delivery; fake inbox events → Discord DTOs
 
-### `kimaki.btw`
+### `roadie.btw`
 
 - On idle + `btw:` suffix or `/btw`: `session.fork`, new Discord thread, `session.prompt` in the fork
-- State: forked session → thread in `kimaki.threads`
+- State: forked session → thread in `roadie.threads`
 
-### `kimaki.permissions`
+### `roadie.permissions`
 
 - `permission.asked` / `form.created` → Discord buttons
 - Reply through `ctx.permission.reply` / form reply
 - Keep GuildMember union narrowing. No `as GuildMember`
 
-### `kimaki.commands`
+### `roadie.commands`
 
 - Slash commands call `ctx.session.*` / RPC
 - Do not copy the 46-file `cli/src/commands/` tree. Port one command group per PR
 
 ### Ports of existing plugins (rewrite to `Plugin.define`)
 
-- `kimaki.context` from `context-awareness-plugin.ts`
-- `kimaki.memory` from `memory-overview-plugin.ts`
-- `kimaki.bash-schema` via `ctx.tool.transform`
-- `kimaki.images`, `kimaki.edits`, `kimaki.worktrees`
+- `roadie.context` from `context-awareness-plugin.ts`
+- `roadie.memory` from `memory-overview-plugin.ts`
+- `roadie.bash-schema` via `ctx.tool.transform`
+- `roadie.images`, `roadie.edits`, `roadie.worktrees`
 - Auth plugins only if Subrouter does not cover Anthropic OAuth
 
 ### Delete, do not port
@@ -267,8 +267,8 @@ Keep Discord limits: 100-char `custom_id`, 25-char nonce, Components V2 40-child
 ## RPC
 
 ```ts
-export const Kimaki = Rpc.define({
-  id: "kimaki",
+export const Roadie = Rpc.define({
+  id: "roadie",
   methods: {
     send: { input: SendInput, output: SendOutput },
     abort: { input: { sessionID: string } },
@@ -280,7 +280,7 @@ export const Kimaki = Rpc.define({
 })
 ```
 
-CLI: `Service.ensure()` then `client.rpc(Kimaki)`. Plugins call `ctx.rpc(Kimaki)`. Sleep / file-upload / action-buttons become RPC methods, not SQLite `ipc_requests`.
+CLI: `Service.ensure()` then `client.rpc(Roadie)`. Plugins call `ctx.rpc(Roadie)`. Sleep / file-upload / action-buttons become RPC methods, not SQLite `ipc_requests`.
 
 ## Phases
 
@@ -300,7 +300,7 @@ Each phase ends with tests green. Do not start the next phase with failing harne
 
 **Files:** `kimaki2/src/derive/event-stream-state.ts`, fixtures under `kimaki2/test/fixtures/`
 
-**Port:** helpers from `cli/src/session-handler/event-stream-state.ts` that Kimaki still needs: busy, abort, footer, latest user turn.
+**Port:** helpers from `cli/src/session-handler/event-stream-state.ts` that Roadie still needs: busy, abort, footer, latest user turn.
 
 **Tests:** jsonl of v2 facts → inline snapshots. Capture real streams from `opencode2` later with `export-events-jsonl`.
 
@@ -320,7 +320,7 @@ Each phase ends with tests green. Do not start the next phase with failing harne
 
 **Files:** `kimaki2/src/plugins/threads.ts`, `kimaki2/src/rpc.ts`, `kimaki2/src/bin.ts`
 
-**Tests:** create mapping, resolve thread → session, `kimaki send` equivalent via RPC against the fake host.
+**Tests:** create mapping, resolve thread → session, `roadie send` equivalent via RPC against the fake host.
 
 ### Phase 4 — Render DTOs
 
@@ -344,7 +344,7 @@ Each PR: harness tests first, then optional Digital Twin.
 
 ### Phase 7 — Cutover
 
-- `kimaki2` becomes the `kimaki` bin, or `kimaki` delegates to it
+- `kimaki2` becomes the `roadie` bin, or `roadie` delegates to it
 - Publish path, demo Dockerfile, website docs
 - Keep `cli/` until v2 has been the default for a release
 
@@ -366,7 +366,7 @@ Each PR: harness tests first, then optional Digital Twin.
 
 **Leave in `cli/`**
 
-- gateway-proxy, website, kimaki-demo, discord-slack-bridge
+- gateway-proxy, website, roadie-demo, discord-slack-bridge
 - v1 e2e suite until phase 5+
 
 ## Complexity to remove
@@ -377,7 +377,7 @@ Each PR: harness tests first, then optional Digital Twin.
 - Local FIFO for ordinary messages
 - Fake v2 client inside plugins
 - Toast-text session id markers
-- `KIMAKI_*` env spray into the OpenCode child (use plugin options + storage)
+- `ROADIE_*` env spray into the OpenCode child (use plugin options + storage)
 - Per-project OpenCode server map in Zustand
 
 Do not remove: event derivation, Discord API limits, SQLite thread durability, typing pulse, worktree directory vs branch name.
@@ -388,7 +388,7 @@ Do not remove: event derivation, Discord API limits, SQLite thread durability, t
 - Event subscribe is global. A render plugin that does not filter will duplicate Discord messages across projects.
 - `session.fork` vs btw (no Discord replay, copy model/worktree) needs a real check in phase 6.
 - Subrouter also needs a v2 plugin. Auth plugins may collapse into it.
-- Isolation: always set `OPENCODE_CONFIG` in tests or Kimaki's env will leak.
+- Isolation: always set `OPENCODE_CONFIG` in tests or Roadie's env will leak.
 
 ## Out of scope for kimaki2 v0
 

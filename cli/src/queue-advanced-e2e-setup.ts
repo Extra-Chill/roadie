@@ -57,7 +57,7 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
 export const EXTERNAL_DIRECTORY_PROBE_DIR = path.resolve(
   process.cwd(),
   'tmp',
-  'kimaki-external-directory-probe',
+  'roadie-external-directory-probe',
 )
 export const EXTERNAL_DIRECTORY_PROBE_FILE = `${EXTERNAL_DIRECTORY_PROBE_DIR}/probe.txt`
 
@@ -877,7 +877,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
   // Question tool for the abort-then-answer case: model asks a question via
   // dropdown. The test aborts the run before answering (session goes idle),
-  // then answers via select. Because the original run is dead, kimaki resumes
+  // then answers via select. Because the original run is dead, roadie resumes
   // the session by sending the answers back as a new prompt.
   const questionAbortResumeMatcher: DeterministicMatcher = {
     id: 'question-abort-resume-marker',
@@ -914,7 +914,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  // Follow-up after an aborted question is answered: kimaki resumes with a
+  // Follow-up after an aborted question is answered: roadie resumes with a
   // prompt containing the answers summary.
   const questionAbortResumeFollowupMatcher: DeterministicMatcher = {
     id: 'question-abort-resume-followup',
@@ -1008,7 +1008,7 @@ export function setupQueueAdvancedSuite({
   // matches the shipped default of allowing every directory.
   restrictExternalDirectories?: boolean
   // Extra `permission` block written into the project's opencode.json, as a
-  // real user would. Used to prove user rules still beat kimaki's generated
+  // real user would. Used to prove user rules still beat roadie's generated
   // config instead of being overridden by session-level rules.
   projectPermission?: Record<string, unknown>
 }): QueueAdvancedContext {
@@ -1029,10 +1029,10 @@ export function setupQueueAdvancedSuite({
     const sessionEventsDir = path.join(ctx.directories.root, 'opencode-session-events')
     fs.mkdirSync(sessionEventsDir, { recursive: true })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
-    process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] = '1'
-    process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
+    process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS'] = '1'
+    process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
@@ -1086,7 +1086,7 @@ export function setupQueueAdvancedSuite({
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(ctx.discord.botUserId, ctx.discord.botToken)
 
@@ -1131,11 +1131,11 @@ export function setupQueueAdvancedSuite({
       ctx.discord?.stop().catch(() => {}),
     ])
 
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
-    delete process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
-    delete process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS']
-    delete process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
+    delete process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS']
+    delete process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS']
+    delete process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }

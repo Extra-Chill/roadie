@@ -1,5 +1,5 @@
 // Drizzle client initialization with libSQL.
-// Uses KIMAKI_DB_URL env var when set (plugin process → Hrana HTTP),
+// Uses ROADIE_DB_URL env var when set (plugin process → Hrana HTTP),
 // otherwise falls back to direct file: access (bot process, CLI subcommands).
 // Schema bootstrap runs in both modes because tests and plugin children may be
 // the first process to touch a fresh SQLite file through Hrana.
@@ -23,22 +23,22 @@ function createDrizzleClient(client: Client) {
   return drizzle({ client, schema, relations: schema.relations })
 }
 
-export type KimakiDb = ReturnType<typeof createDrizzleClient>
+export type RoadieDb = ReturnType<typeof createDrizzleClient>
 
 const dbLogger = createLogger(LogPrefix.DB)
 
 let clientInstance: Client | null = null
-let dbInstance: KimakiDb | null = null
-let initPromise: Promise<KimakiDb> | null = null
+let dbInstance: RoadieDb | null = null
+let initPromise: Promise<RoadieDb> | null = null
 
-// Under vitest, clear any inherited KIMAKI_DB_URL from the parent bot process
+// Under vitest, clear any inherited ROADIE_DB_URL from the parent bot process
 // so tests default to file-based access using the auto-isolated temp data dir.
-// Tests that need Hrana can set KIMAKI_DB_URL explicitly after import.
-if (process.env.KIMAKI_VITEST) {
-  delete process.env['KIMAKI_DB_URL']
+// Tests that need Hrana can set ROADIE_DB_URL explicitly after import.
+if (process.env.ROADIE_VITEST) {
+  delete process.env['ROADIE_DB_URL']
 }
 
-export function getDb(): Promise<KimakiDb> {
+export function getDb(): Promise<RoadieDb> {
   if (dbInstance) {
     return Promise.resolve(dbInstance)
   }
@@ -51,8 +51,8 @@ export function getDb(): Promise<KimakiDb> {
 
 
 function getDbUrl(): string {
-  if (process.env.KIMAKI_DB_URL) {
-    return process.env.KIMAKI_DB_URL
+  if (process.env.ROADIE_DB_URL) {
+    return process.env.ROADIE_DB_URL
   }
   const dataDir = getDataDir()
   const dbPath = path.join(dataDir, 'discord-sessions.db')
@@ -60,14 +60,14 @@ function getDbUrl(): string {
 }
 
 function getDbAuthToken(): string | undefined {
-  const token = process.env.KIMAKI_DB_AUTH_TOKEN
+  const token = process.env.ROADIE_DB_AUTH_TOKEN
   if (!token) {
     return undefined
   }
   return token
 }
 
-async function initializeDb(): Promise<KimakiDb> {
+async function initializeDb(): Promise<RoadieDb> {
   const dbUrl = getDbUrl()
   const isFileMode = dbUrl.startsWith('file:')
 
@@ -166,7 +166,7 @@ async function migrateSchema({
   db,
   client,
 }: {
-  db: KimakiDb
+  db: RoadieDb
   client: Client
 }): Promise<void> {
   // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
@@ -211,7 +211,7 @@ async function migrateSchema({
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
-    "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
+    "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'roadie'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
@@ -269,7 +269,7 @@ async function migrateSchema({
       project_directory, workspace_directory, workspace_name, created_at
     )
     SELECT
-      thread_id, 'kimaki-worktree', status, error_message,
+      thread_id, 'roadie-worktree', status, error_message,
       project_directory, worktree_directory, worktree_name, created_at
     FROM thread_worktrees
     WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)

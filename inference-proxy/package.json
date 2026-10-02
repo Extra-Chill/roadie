@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "OpenAI-compatible inference proxy for Kimaki Pro, deployed at openai.kimaki.dev",
+  "description": "OpenAI-compatible inference proxy for Roadie Pro, deployed at openai.kimaki.dev",
   "scripts": {
     "dev": "doppler run -p website -c dev -- wrangler dev",
     "deploy": "doppler run -p website -c dev -- sh -c 'CLOUDFLARE_ENV=preview wrangler deploy --env preview'",

@@ -168,7 +168,7 @@ describe('resolveDisplayedModelId', () => {
   const previousHome = process.env.SUBROUTER_HOME
 
   beforeEach(async () => {
-    home = await mkdtemp(path.join(tmpdir(), 'kimaki-subrouter-model-'))
+    home = await mkdtemp(path.join(tmpdir(), 'roadie-subrouter-model-'))
     process.env.SUBROUTER_HOME = home
   })
 

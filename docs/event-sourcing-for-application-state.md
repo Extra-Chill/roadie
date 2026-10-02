@@ -5,7 +5,7 @@ description: |
   fields with event sourcing, and using event logs as the source of truth.
 ---
 
-<!-- Blog draft copied from Tommy's draft, then filled with simple TypeScript examples inspired by Kimaki. -->
+<!-- Blog draft copied from Tommy's draft, then filled with simple TypeScript examples inspired by Roadie. -->
 
 # event sourcing for application state
 
@@ -27,7 +27,7 @@ every boolean global variable you add:
 2. doubles your bugs
 3. doubles the coverage you need to get to 100% in the worst case
 
-here is a real-world example: I asked codex to make kimaki (a discord bot) show the footer only when the bot was not interrupted. here is his idea
+here is a real-world example: I asked codex to make roadie (a discord bot) show the footer only when the bot was not interrupted. here is his idea
 
 to answer one yes/no UI question, the agent starts mirroring facts into state.
 
@@ -159,16 +159,16 @@ also, this style is much easier for models to work with. the fix surface becomes
 
 ## debugging with event streams
 
-I also added a command `kimaki session export-events-jsonl <id>` that lets you export the opencode events for a session
+I also added a command `roadie session export-events-jsonl <id>` that lets you export the opencode events for a session
 
-now every time I find a bug in kimaki in Discord I tell kimaki "export opencode events from session xxx, create a failing test, then fix it".
+now every time I find a bug in roadie in Discord I tell roadie "export opencode events from session xxx, create a failing test, then fix it".
 
 the agent then adds a new test using the event stream as input. then it calls a pure transformation that computes data from the event stream
 
 I had to do this, for example, when I discovered there was a new way a session can end naturally in opencode. I just had to reference a session with this new behaviour to Opus and ask it to fix the bug. it just did so. one shot.
 
 ```bash
-kimaki session export-events-jsonl --session ses_123 --out ./tmp/session.jsonl
+roadie session export-events-jsonl --session ses_123 --out ./tmp/session.jsonl
 ```
 
 ```typescript
@@ -214,7 +214,7 @@ a good example of this is React `useState`. `useState` cannot escape the compone
 
 this same thing can be done in backend code.
 
-imagine adding a feature to debounce the messages you write in kimaki.
+imagine adding a feature to debounce the messages you write in roadie.
 
 one approach could be to add a timer and `setTimeout` in the class field.
 

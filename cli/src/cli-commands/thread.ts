@@ -20,13 +20,13 @@ cli
     '--limit <n>',
     z.number().default(50).describe('Maximum threads to show'),
   )
-  .example('kimaki thread list --channel 123456789012345678')
-  .example('kimaki thread list --channel 123456789012345678 --json')
+  .example('roadie thread list --channel 123456789012345678')
+  .example('roadie thread list --channel 123456789012345678 --json')
   .action(async (options, { console, process }) => {
     try {
       if (!options.channel) {
         cliLogger.error(
-          'Channel ID is required. Use --channel <channelId>. Find remote channels with `kimaki project list --all --json`.',
+          'Channel ID is required. Use --channel <channelId>. Find remote channels with `roadie project list --all --json`.',
         )
         process.exit(EXIT_NO_RESTART)
       }

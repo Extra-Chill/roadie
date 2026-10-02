@@ -17,7 +17,7 @@ describe('discord.js SDK compatibility', () => {
         {
           name: 'general',
           type: ChannelType.GuildText,
-          topic: 'kimaki:/tmp/test-project',
+          topic: 'roadie:/tmp/test-project',
         },
       ],
       users: [{ username: 'TestUser' }],

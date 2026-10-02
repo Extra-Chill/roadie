@@ -1,4 +1,4 @@
-// E2e coverage for the durable kimaki_sleep tool.
+// E2e coverage for the durable roadie_sleep tool.
 // Verifies the tool persists a wake row, the thread shows the sleep line,
 // the task runner wake resumes the same session, and a user message cancels
 // a planned sleep so the wake never fires.
@@ -43,7 +43,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'sleep-call-1',
-          toolName: 'kimaki_sleep',
+          toolName: 'roadie_sleep',
           input: JSON.stringify({
             until: SLEEP_UNTIL,
             reason: 'waiting for the deploy',
@@ -114,7 +114,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'sleep-cancel-call-1',
-          toolName: 'kimaki_sleep',
+          toolName: 'roadie_sleep',
           input: JSON.stringify({ duration: '2h', reason: 'cancel me' }),
         },
         {
@@ -165,7 +165,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'sleep-queue-call-1',
-          toolName: 'kimaki_sleep',
+          toolName: 'roadie_sleep',
           input: JSON.stringify({ duration: '2h', reason: 'queue supersedes' }),
         },
         {
@@ -268,7 +268,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
   ]
 }
 
-describe('kimaki_sleep', () => {
+describe('roadie_sleep', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
     channelName: 'sleep-e2e',
@@ -347,7 +347,7 @@ describe('kimaki_sleep', () => {
         -# *using deterministic-provider/deterministic-v2*
         > waiting for the deploy
 
-        -# ┣ kimaki_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
+        -# ┣ roadie_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
 
         sleep-started
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -466,7 +466,7 @@ describe('kimaki_sleep', () => {
         SLEEP_CANCEL_MARKER wait for something
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        -# ┣ kimaki_sleep for 2h _cancel me_
+        -# ┣ roadie_sleep for 2h _cancel me_
 
         cancel-sleep-started
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*

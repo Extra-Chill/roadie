@@ -430,7 +430,7 @@ describe('planAssistantTurnFlush', () => {
   })
 
   test('progress keeps sleep-tool quote context after that tool is already sent', () => {
-    const parts = [text('t1', 'wait'), tool('sleep1', 'kimaki_sleep')]
+    const parts = [text('t1', 'wait'), tool('sleep1', 'roadie_sleep')]
     expect(plan(parts, 'progress').send.find((entry) => entry.id === 't1')).toEqual({
       id: 't1',
       quoteText: false,
@@ -450,13 +450,13 @@ describe('planAssistantTurnFlush', () => {
     ).toEqual({ id: 't1', quoteText: false })
     expect(
       plan(
-        [text('t1', 'wait'), tool('sleep1', 'kimaki_sleep'), text('t2', 'later')],
+        [text('t1', 'wait'), tool('sleep1', 'roadie_sleep'), text('t2', 'later')],
         'progress',
       ).send.find((entry) => entry.id === 't1'),
     ).toEqual({ id: 't1', quoteText: false })
     expect(
       plan(
-        [text('t1', 'choose'), tool('buttons1', 'kimaki_action_buttons'), text('t2', 'later')],
+        [text('t1', 'choose'), tool('buttons1', 'roadie_action_buttons'), text('t2', 'later')],
         'progress',
       ).send.find((entry) => entry.id === 't1'),
     ).toEqual({ id: 't1', quoteText: false })
@@ -1325,7 +1325,7 @@ describe('getTextAttachments', () => {
     `)
   })
 
-  test('still inlines large prompt.md attachments from kimaki send', async () => {
+  test('still inlines large prompt.md attachments from roadie send', async () => {
     stubFetch(async () => {
       return new Response('the actual long prompt', { status: 200 })
     })

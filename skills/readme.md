@@ -1,4 +1,4 @@
-# Kimaki skills
+# Roadie skills
 
 This folder contains **local skills** maintained in this repo.
 
@@ -13,8 +13,8 @@ pnpm sync-skills
 Filter skills at runtime:
 
 ```bash
-kimaki --enable-skill npm-package --enable-skill new-skill
-kimaki --disable-skill playwriter --disable-skill zele
+roadie --enable-skill npm-package --enable-skill new-skill
+roadie --disable-skill playwriter --disable-skill zele
 ```
 
 Use either `--enable-skill` or `--disable-skill`, not both.

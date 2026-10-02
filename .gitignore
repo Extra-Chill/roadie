@@ -20,7 +20,7 @@ __snapshots__
 traforo/dist/
 skills/jitter/dist/
 bin-local.sh
-kimaki.log
+roadie.log
 app.log
 generated
 .zig-cache

@@ -45,7 +45,7 @@ const cli = goke()
 cli
   .command(
     'upgrade',
-    'Upgrade kimaki to the latest version and restart the running bot',
+    'Upgrade roadie to the latest version and restart the running bot',
   )
   .option('--skip-restart', 'Only upgrade, do not restart the running bot')
   .action(async (options) => {
@@ -65,10 +65,10 @@ cli
         process.exit(0)
       }
 
-      // Spawn a new kimaki process without args (starts the bot with default command).
+      // Spawn a new roadie process without args (starts the bot with default command).
       // The new process kills the old one via the single-instance lock.
       // No args passed to avoid recursively running `upgrade` again.
-      const child = spawn('kimaki', [], {
+      const child = spawn('roadie', [], {
         shell: true,
         stdio: 'ignore',
         detached: true,

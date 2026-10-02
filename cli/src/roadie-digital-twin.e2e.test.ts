@@ -1,4 +1,4 @@
-// End-to-end test using discord-digital-twin + real Kimaki bot runtime.
+// End-to-end test using discord-digital-twin + real Roadie bot runtime.
 // Verifies onboarding channel creation, message -> thread creation, and assistant reply.
 
 import fs from 'node:fs'
@@ -27,7 +27,7 @@ const geminiModel = process.env['GEMINI_FLASH_MODEL'] || 'gemini-2.5-flash'
 const e2eTest = geminiApiKey.length > 0 ? test : test.skip
 
 function createRunDirectories() {
-  const root = path.resolve(process.cwd(), 'tmp', 'kimaki-digital-twin-e2e')
+  const root = path.resolve(process.cwd(), 'tmp', 'roadie-digital-twin-e2e')
   fs.mkdirSync(root, { recursive: true })
 
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
@@ -70,9 +70,9 @@ e2eTest(
   async () => {
     const testStartTime = Date.now()
     const directories = createRunDirectories()
-    const lockPort = chooseLockPort({ key: 'kimaki-digital-twin-e2e' })
+    const lockPort = chooseLockPort({ key: 'roadie-digital-twin-e2e' })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
 
     const proxy = new CachedOpencodeProviderProxy({
@@ -90,13 +90,13 @@ e2eTest(
     )
     const discord = new DigitalDiscord({
       guild: {
-        name: 'Kimaki E2E Guild',
+        name: 'Roadie E2E Guild',
         ownerId: testUserId,
       },
       channels: [
         {
           id: textChannelId,
-          name: 'kimaki-e2e',
+          name: 'roadie-e2e',
           type: ChannelType.GuildText,
         },
       ],
@@ -130,7 +130,7 @@ e2eTest(
       if (hranaResult instanceof Error) {
         throw hranaResult
       }
-      process.env['KIMAKI_DB_URL'] = hranaResult
+      process.env['ROADIE_DB_URL'] = hranaResult
       await initDatabase()
       await setBotToken(discord.botUserId, discord.botToken)
 
@@ -148,13 +148,13 @@ e2eTest(
       })
 
       await discord.channel(textChannelId).user(testUserId).sendMessage({
-        content: 'Reply with exactly: kimaki digital twin ok',
+        content: 'Reply with exactly: roadie digital twin ok',
       })
 
       const createdThread = await discord.channel(textChannelId).waitForThread({
         timeout: 60_000,
         predicate: (thread) => {
-          return thread.name === 'Reply with exactly: kimaki digital twin ok'
+          return thread.name === 'Reply with exactly: roadie digital twin ok'
         },
       })
 
@@ -190,8 +190,8 @@ e2eTest(
         }),
       ])
 
-      delete process.env['KIMAKI_LOCK_PORT']
-      delete process.env['KIMAKI_DB_URL']
+      delete process.env['ROADIE_LOCK_PORT']
+      delete process.env['ROADIE_DB_URL']
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   },

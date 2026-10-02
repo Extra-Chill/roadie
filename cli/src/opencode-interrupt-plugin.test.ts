@@ -216,13 +216,13 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  delete process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+  delete process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS']
   await stub.close()
 })
 
 describe('interruptOpencodeSessionOnUserMessage', () => {
   test('aborts a busy session after timeout and replays the queued message', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
     const sessionID = 'ses-busy'
@@ -251,7 +251,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('assistant parent match cancels timer and skips abort/replay', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '40'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '40'
 
     const { eventHook, chatHook } = await requireHooks()
     const sessionID = 'ses-sent'
@@ -276,7 +276,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('empty resume messages do not schedule interruption tracking', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
 
@@ -295,7 +295,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('ignored context notices do not abort a busy session', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
     const sessionID = 'ses-oracle'
@@ -327,7 +327,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('replayed message does not schedule another interrupt (no abort loop)', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
     const sessionID = 'ses-loop'
@@ -360,7 +360,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('drains multiple queued messages in order', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
     const sessionID = 'ses-drain'
@@ -391,7 +391,7 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
   })
 
   test('preserves agent and model overrides on replay', async () => {
-    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
     const { chatHook } = await requireHooks()
     const sessionID = 'ses-overrides'

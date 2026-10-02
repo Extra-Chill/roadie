@@ -1,4 +1,4 @@
-// Test script: start kimaki in --gateway mode programmatically, parse SSE events from stdout.
+// Test script: start roadie in --gateway mode programmatically, parse SSE events from stdout.
 // Validates the non-TTY event flow: install_url → authorized → ready.
 // Run with: npx tsx scripts/test-gateway-programmatic.ts
 
@@ -63,33 +63,33 @@ function logEvent(event: ProgrammaticEvent): void {
 const tmpDir = path.join(
 	process.cwd(),
 	'tmp',
-	`kimaki-gateway-test-${crypto.randomBytes(4).toString('hex')}`,
+	`roadie-gateway-test-${crypto.randomBytes(4).toString('hex')}`,
 )
 fs.mkdirSync(tmpDir, { recursive: true })
 
-// Use a unique lock port to avoid conflicting with a running kimaki instance
+// Use a unique lock port to avoid conflicting with a running roadie instance
 const lockPort = 31100 + Math.floor(Math.random() * 900)
 
 console.log(`${pc.dim('[test]')} data dir: ${pc.dim(tmpDir)}`)
 console.log(`${pc.dim('[test]')} lock port: ${lockPort}`)
-console.log(`${pc.dim('[test]')} spawning kimaki --gateway --data-dir <tmpDir>`)
-console.log(`${pc.dim('[test]')} callback url: ${pc.cyan('https://example.com/kimaki-callback')}`)
+console.log(`${pc.dim('[test]')} spawning roadie --gateway --data-dir <tmpDir>`)
+console.log(`${pc.dim('[test]')} callback url: ${pc.cyan('https://example.com/roadie-callback')}`)
 console.log()
 
 const child = spawn(
-	'kimaki',
+	'roadie',
 	[
 		'--gateway',
 		'--restart-onboarding',
 		'--data-dir',
 		tmpDir,
 		'--gateway-callback-url',
-		'https://example.com/kimaki-callback',
+		'https://example.com/roadie-callback',
 	],
 	{
 		env: {
 			...process.env,
-			KIMAKI_LOCK_PORT: String(lockPort),
+			ROADIE_LOCK_PORT: String(lockPort),
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
 	},

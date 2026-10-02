@@ -1,4 +1,4 @@
-// E2E: Attachment parity flows used by Kimaki (Discord<->Slack bridge).
+// E2E: Attachment parity flows used by Roadie (Discord<->Slack bridge).
 // Covers discord.js multipart sends and Slack webhook file payload mapping.
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
@@ -6,7 +6,7 @@ import type { Message, TextChannel } from 'discord.js'
 import { setupE2E, teardownE2E, type E2EContext } from './e2e-setup.js'
 import { sendWebhookEvent } from 'slack-digital-twin/src'
 
-describe('attachments: bridge parity for kimaki', () => {
+describe('attachments: bridge parity for roadie', () => {
   let ctx: E2EContext
   let channel: TextChannel
 
@@ -29,7 +29,7 @@ describe('attachments: bridge parity for kimaki', () => {
       content: 'multipart upload from discord',
       files: [
         {
-          attachment: Buffer.from('hello from kimaki tests', 'utf8'),
+          attachment: Buffer.from('hello from roadie tests', 'utf8'),
           name: 'hello.txt',
         },
       ],

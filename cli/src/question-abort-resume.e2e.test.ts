@@ -1,5 +1,5 @@
 // E2e test: a question answered after its run was aborted elsewhere must not be
-// lost. The original run is dead, so question.reply is a no-op; kimaki resumes
+// lost. The original run is dead, so question.reply is a no-op; roadie resumes
 // the session by sending the answers back as a fresh prompt.
 
 import { describe, test, expect } from 'vitest'
@@ -63,8 +63,8 @@ describe('question answered after external abort resumes session', () => {
       const contextHash = pendingEntry[0]
 
       // Abort directly through opencode (simulating a different opencode client),
-      // so kimaki's dropdown context stays live but the question is gone in
-      // opencode. kimaki's own abort would clear the dropdown instead.
+      // so roadie's dropdown context stays live but the question is gone in
+      // opencode. roadie's own abort would clear the dropdown instead.
       const sessionId = await getThreadSession(thread.id)
       if (!sessionId) {
         throw new Error('Expected session id')
@@ -78,7 +78,7 @@ describe('question answered after external abort resumes session', () => {
         directory: ctx.directories.projectDirectory,
       })
 
-      // Wait until kimaki sees the session go idle (mirrors a user answering
+      // Wait until roadie sees the session go idle (mirrors a user answering
       // after they aborted in another opencode).
       const runtime = getRuntime(thread.id)
       if (!runtime) {
@@ -92,7 +92,7 @@ describe('question answered after external abort resumes session', () => {
       }
       expect(runtime.isBusy()).toBe(false)
 
-      // Answer the dropdown. reply fails (question no longer pending), so kimaki
+      // Answer the dropdown. reply fails (question no longer pending), so roadie
       // resumes the session with the answers as a new prompt.
       const interaction = await th.user(TEST_USER_ID).selectMenu({
         messageId: questionMsg.id,

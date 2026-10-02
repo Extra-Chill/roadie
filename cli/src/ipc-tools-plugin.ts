@@ -1,12 +1,12 @@
 // OpenCode plugin that provides Discord and session tools:
-// - kimaki_file_upload: prompts the Discord user to upload files via native picker
-// - kimaki_action_buttons: shows clickable action buttons in the Discord thread
-// - kimaki_sleep: persist a wake time so the session can sleep hours or days
+// - roadie_file_upload: prompts the Discord user to upload files via native picker
+// - roadie_action_buttons: shows clickable action buttons in the Discord thread
+// - roadie_sleep: persist a wake time so the session can sleep hours or days
 //
 // IPC tools talk to the bot process via SQLite rows. Sleep writes session_sleeps
 // directly. The plugin runs inside the OpenCode server process, not the bot.
 //
-// Exported from kimaki-opencode-plugin.ts — each export is treated as a separate
+// Exported from roadie-opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
@@ -19,7 +19,7 @@ import { initSentry } from './sentry.js'
 
 // Inlined from '@opencode-ai/plugin/tool' because the subpath value import
 // fails at runtime in global npm installs (#35). Opencode loads this plugin
-// file in its own process and resolves modules from kimaki's install dir,
+// file in its own process and resolves modules from roadie's install dir,
 // but the '/tool' subpath export isn't found by opencode's module resolver.
 // The type-only imports above are fine (erased at compile time).
 //
@@ -61,7 +61,7 @@ async function loadDatabaseModule() {
 const ipcToolsPlugin: any = async () => {
   initSentry()
 
-    const dataDir = process.env.KIMAKI_DATA_DIR
+    const dataDir = process.env.ROADIE_DATA_DIR
     if (dataDir) {
       setDataDir(dataDir)
       setPluginLogFilePath(dataDir)
@@ -69,13 +69,13 @@ const ipcToolsPlugin: any = async () => {
 
   return {
     tool: {
-      kimaki_file_upload: tool({
+      roadie_file_upload: tool({
         description:
           'Prompt the Discord user to upload files using a native file picker modal. ' +
           'The user sees a button, clicks it, and gets a file upload dialog. ' +
           'Returns the local file paths of downloaded files in the project directory. ' +
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
-          'You MUST call kimaki_file_upload LAST, after ALL text. NEVER call it before your text.',
+          'You MUST call roadie_file_upload LAST, after ALL text. NEVER call it before your text.',
         args: {
           prompt: z
             .string()
@@ -139,15 +139,15 @@ const ipcToolsPlugin: any = async () => {
           return 'File upload timed out - user did not upload files within the time limit'
         },
       }),
-      kimaki_action_buttons: tool({
+      roadie_action_buttons: tool({
         description: dedent`
           Show action buttons in the current Discord thread for quick confirmations.
           Use this when the user can respond by clicking one of up to 3 buttons.
           Prefer a single button whenever possible.
           Default color is white (same visual style as permission deny button).
           If you need more than 3 options, use \`question\` instead.
-          You MUST call kimaki_action_buttons LAST, after ALL text.
-          NEVER call kimaki_action_buttons before your text.
+          You MUST call roadie_action_buttons LAST, after ALL text.
+          NEVER call roadie_action_buttons before your text.
 
           Examples:
           - buttons: [{"label":"Yes, proceed"}]
@@ -223,22 +223,22 @@ const ipcToolsPlugin: any = async () => {
           return 'Action button request timed out'
         },
       }),
-      kimaki_sleep: tool({
+      roadie_sleep: tool({
         description: dedent`
-          Sleep this session until a future time. Kimaki later posts a wake
+          Sleep this session until a future time. Roadie later posts a wake
           message in this thread and the same session continues.
           Use this to wait hours or days for CI, a deploy, a date, or any later event.
           The sleep is stored in SQLite and survives bot restarts.
 
           Pass either duration (2h, 30m, 1d) or until (UTC ISO ending with Z).
-          Do not pass both. You MUST call kimaki_sleep LAST, after ALL text.
+          Do not pass both. You MUST call roadie_sleep LAST, after ALL text.
           Do not call more tools after it.
 
           The tool result is not a wake. After it succeeds, write one short
           waiting line and stop. Do not continue the waited work until a later
           Discord message that starts with "Woke after sleeping until".
           A new user message cancels the sleep. If you still need that later
-          wake after answering, call kimaki_sleep again with until set to the
+          wake after answering, call roadie_sleep again with until set to the
           original UTC time.
         `,
         args: {

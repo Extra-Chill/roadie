@@ -1,6 +1,6 @@
 // XML/HTML tag content extractor.
 // Parses XML-like tags from strings (e.g., channel topics) to extract
-// Kimaki configuration like directory paths and app IDs.
+// Roadie configuration like directory paths and app IDs.
 
 import { DomHandler, Parser, ElementType } from 'htmlparser2'
 import type { ChildNode, Element, Text } from 'domhandler'

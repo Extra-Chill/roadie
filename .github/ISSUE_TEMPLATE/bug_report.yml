@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a bug or unexpected behavior in Kimaki.
+description: Report a bug or unexpected behavior in Roadie.
 labels: ["bug"]
 body:
   - type: textarea
@@ -16,7 +16,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps to trigger the bug.
       placeholder: |
-        1. Run `kimaki ...`
+        1. Run `roadie ...`
         2. Send a message in Discord
         3. ...
     validations:
@@ -25,9 +25,9 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Kimaki logs
+      label: Roadie logs
       description: |
-        Paste relevant logs from `~/.kimaki/kimaki.log`. Wrap them in a code block.
+        Paste relevant logs from `~/.roadie/roadie.log`. Wrap them in a code block.
         You can also attach the full log file if it's large.
       render: shell
     validations:
@@ -36,8 +36,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Kimaki version
-      description: Output of `kimaki --version`.
+      label: Roadie version
+      description: Output of `roadie --version`.
       placeholder: "1.2.3"
     validations:
       required: true

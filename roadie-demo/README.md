@@ -1,19 +1,19 @@
-# kimaki-demo
+# roadie-demo
 
-Fly.io deployment for a public "try Kimaki" Discord server. Runs kimaki in **gateway mode** so no bot token or API keys are needed. Anyone who joins the Discord server can message the bot and get AI responses using free models.
+Fly.io deployment for a public "try Roadie" Discord server. Runs roadie in **gateway mode** so no bot token or API keys are needed. Anyone who joins the Discord server can message the bot and get AI responses using free models.
 
 ## How it works
 
-The Fly machine runs `kimaki --gateway`, which connects to the shared Kimaki bot via the gateway proxy. On first boot, kimaki generates credentials and emits an install URL in the logs. An admin visits that URL to authorize the bot in the demo Discord server. After that, credentials are saved on the persistent volume and subsequent deploys just work.
+The Fly machine runs `roadie --gateway`, which connects to the shared Roadie bot via the gateway proxy. On first boot, roadie generates credentials and emits an install URL in the logs. An admin visits that URL to authorize the bot in the demo Discord server. After that, credentials are saved on the persistent volume and subsequent deploys just work.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Fly.io org: kimaki-demo (isolated 6PN, no access to other  │
+│  Fly.io org: roadie-demo (isolated 6PN, no access to other  │
 │  orgs or internal services)                                  │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  Machine: shared-cpu-1x, 1GB RAM                       │  │
-│  │  node:24 + bun + git + kimaki                          │  │
+│  │  node:24 + bun + git + roadie                          │  │
 │  │                                                        │  │
 │  │  /data/ (persistent volume)                            │  │
 │  │    ├── discord-sessions.db  (bot state + creds)        │  │
@@ -26,13 +26,13 @@ The Fly machine runs `kimaki --gateway`, which connects to the shared Kimaki bot
 ┌──────────────────────────┐       ┌──────────────────────┐
 │  gateway-proxy            │  ◄──► │  Discord              │
 │  wss://discord-gateway    │       │  demo server          │
-│  .kimaki.dev              │       │  free models, no keys │
+│  .roadie.dev              │       │  free models, no keys │
 └──────────────────────────┘       └──────────────────────┘
 ```
 
 ## Security
 
-The demo machine runs in a **separate Fly.io organization** (`kimaki-demo`). This gives it a completely isolated 6PN private network with zero visibility into gateway-proxy, the website, or any other infrastructure. The machine connects to the gateway proxy over the public internet, same as any other kimaki user.
+The demo machine runs in a **separate Fly.io organization** (`roadie-demo`). This gives it a completely isolated 6PN private network with zero visibility into gateway-proxy, the website, or any other infrastructure. The machine connects to the gateway proxy over the public internet, same as any other roadie user.
 
 Users interact with the AI through Discord. The AI can run shell commands inside the Fly VM, but the root filesystem is ephemeral (wiped on redeploy) and only `/data` persists on the volume. The 1GB RAM shared CPU makes compute abuse impractical.
 
@@ -45,41 +45,41 @@ Users interact with the AI through Discord. The AI can run shell commands inside
 
 ```bash
 # create isolated org
-fly orgs create kimaki-demo
+fly orgs create roadie-demo
 
 # create the app inside the isolated org
-fly apps create kimaki-demo --org kimaki-demo
+fly apps create roadie-demo --org roadie-demo
 
 # create persistent volume (5GB, adjust region as needed)
-fly volumes create kimaki_data --size 5 --region iad --app kimaki-demo
+fly volumes create roadie_data --size 5 --region iad --app roadie-demo
 
 # deploy
-cd kimaki-demo
+cd roadie-demo
 fly deploy
 ```
 
 ## First-time authorization
 
-On the first deploy, kimaki needs to be authorized in the Discord server. Check the logs for the install URL:
+On the first deploy, roadie needs to be authorized in the Discord server. Check the logs for the install URL:
 
 ```bash
-fly logs --app kimaki-demo
+fly logs --app roadie-demo
 ```
 
 Look for a line like:
 
 ```
-data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&clientSecret=..."}
+data: {"type":"install_url","url":"https://roadie.dev/discord-install?clientId=...&clientSecret=..."}
 ```
 
 Visit that URL in your browser, select the demo Discord server, and click "Authorize". The bot will connect automatically. Credentials are saved to the persistent volume, so you only need to do this once.
 
 ## Updating
 
-Redeploy to pull the latest `kimaki@latest` from npm:
+Redeploy to pull the latest `roadie@latest` from npm:
 
 ```bash
-cd kimaki-demo
+cd roadie-demo
 fly deploy
 ```
 
@@ -88,11 +88,11 @@ The persistent volume keeps all credentials and project data across deploys.
 ## Logs
 
 ```bash
-fly logs --app kimaki-demo
+fly logs --app roadie-demo
 ```
 
 ## SSH into the machine
 
 ```bash
-fly ssh console --app kimaki-demo
+fly ssh console --app roadie-demo
 ```
