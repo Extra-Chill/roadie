@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "@slack/web-api": "^7.14.1",
-    "db": "workspace:^",
     "discord-api-types": "^0.38.40",
     "spiceflow": "1.26.0-rsc.3",
     "ws": "^8.18.0"
