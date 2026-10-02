@@ -29,6 +29,11 @@ import threadCommands from './cli-commands/thread.js'
 import userCommands from './cli-commands/user.js'
 import { isIdentityHookConfigured, setIdentityHookCommand } from './identity.js'
 import {
+  getChannelsConfigPath,
+  isChannelPolicyConfigured,
+  setChannelsConfigPath,
+} from './channel-policy.js'
+import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
   run,
@@ -87,6 +92,10 @@ cli
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Roadie role or admin permissions (no-roadie role still blocks)',
+  )
+  .option(
+    '--channels-config <path>',
+    'Per-channel policy file (YAML/JSON): who the bot answers, when, threads, directory, agent, model, capabilities. Also ROADIE_CHANNELS_CONFIG',
   )
   .option(
     '--identity-hook <command>',
@@ -163,6 +172,7 @@ cli
       enableFooterMentions?: boolean
       allowAllUsers?: boolean
       identityHook?: string
+      channelsConfig?: string
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
@@ -341,6 +351,14 @@ cli
 
         if (options.identityHook) {
           setIdentityHookCommand(options.identityHook)
+        }
+        if (options.channelsConfig) {
+          setChannelsConfigPath(path.resolve(options.channelsConfig))
+        }
+        if (isChannelPolicyConfigured()) {
+          cliLogger.log(
+            `Channel policy enabled: ${getChannelsConfigPath()} (unconfigured channels are not answered)`,
+          )
         }
         if (isIdentityHookConfigured()) {
           cliLogger.log(

@@ -148,7 +148,14 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
-import { isIdentityHookConfigured, resolvePerson } from './identity.js'
+import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from './identity.js'
+import {
+  channelAllowsCapability,
+  channelAllowsSpeaker,
+  channelStartsThreads,
+  decideRespond,
+  setChannelParentResolver,
+} from './channel-policy.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
@@ -314,7 +321,12 @@ async function allowShellCommand({
 }): Promise<boolean> {
   if (isCliInjectedPrompt || !message.guild) return true
   const member = await resolveGuildMessageMember(message)
-  if (hasRoadieShellPermission(member, message.guild)) return true
+  if (
+    channelAllowsCapability(message.channelId, 'shell') &&
+    hasRoadieShellPermission(member, message.guild)
+  ) {
+    return true
+  }
   await message.reply({
     content: "You don't have permission to run shell commands.",
     flags: SILENT_MESSAGE_FLAGS,
@@ -404,6 +416,10 @@ export async function startDiscordBot({
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
 
+    setChannelParentResolver((channelId) => {
+      const cached = c.channels.cache.get(channelId)
+      return cached && 'parentId' in cached ? cached.parentId : undefined
+    })
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     await reconcileDeletedDiscordChannels(c)
     startExternalOpencodeSessionSync({ discordClient: c })
@@ -639,14 +655,25 @@ export async function startDiscordBot({
         return
       }
 
-      if (channel.type === ChannelType.GuildText && !isCliInjectedPrompt) {
-        const mentionModeEnabled = await getChannelMentionMode(channel.id)
-        if (mentionModeEnabled) {
+      // Channel policy (if configured) decides whether this channel is
+      // answered at all and whether a mention is required. Without a policy
+      // file the built-in per-channel mention mode applies.
+      if (!isCliInjectedPrompt) {
+        const respond = decideRespond(channel.id)
+        if (respond === 'ignore') {
+          return
+        }
+        const mentionRequired =
+          respond === 'needs-mention' ||
+          (respond === 'builtin' && channel.type === ChannelType.GuildText &&
+            (await getChannelMentionMode(channel.id)))
+        // Mentions only gate new conversations in channels; threads continue.
+        if (mentionRequired && channel.type === ChannelType.GuildText) {
           const botMentioned =
             discordClient.user && message.mentions.has(discordClient.user.id)
           const isShellCommand = message.content?.startsWith('!')
           if (!botMentioned && !isShellCommand) {
-            voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
+            voiceLogger.log(`[IGNORED] Mention required in this channel, bot not mentioned`)
             return
           }
         }
@@ -698,6 +725,20 @@ export async function startDiscordBot({
           },
           context: { guildId: message.guild.id, channelId: message.channelId },
         })
+
+        // Channel policy audience. Speakers outside it are ignored silently so
+        // ordinary conversation in shared channels gets no denial replies.
+        const speakerAllowed = channelAllowsSpeaker(message.channelId, {
+          userId: message.author.id,
+          isGuildOwner: message.guild.ownerId === message.author.id,
+          roleNames: member.roles.cache.map((role) => role.name),
+          roleIds: [...member.roles.cache.keys()],
+          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId,
+        })
+        if (!speakerAllowed) {
+          voiceLogger.log(`[IGNORED] ${message.author.id} is outside this channel's audience`)
+          return
+        }
 
         if (hasNoRoadieRole(member)) {
           await message.reply({
@@ -1100,6 +1141,13 @@ export async function startDiscordBot({
             await loadingReply.edit({ content: result })
             return
           }
+        }
+
+        // Channel policy `threads: existing-only`: channel messages never start
+        // a new session thread; existing threads keep working.
+        if (!isCliInjectedPrompt && !channelStartsThreads(channel.id)) {
+          voiceLogger.log(`[IGNORED] Channel ${channel.id} does not start new threads`)
+          return
         }
 
         const baseThreadName =
