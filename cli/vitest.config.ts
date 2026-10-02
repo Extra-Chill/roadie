@@ -13,6 +13,7 @@ const cpuProf = process.env.VITEST_CPU_PROF === '1'
 
 export default defineConfig({
   test: {
+    globalSetup: ['./vitest.global-setup.ts'],
     testTimeout: 8_000,
     hookTimeout: 5_000,
     env: {
