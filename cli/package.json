@@ -62,7 +62,6 @@
     "@libsql/client": "^0.17.2",
     "@opencode-ai/plugin": "^1.16.2",
     "@opencode-ai/sdk": "^1.16.2",
-    "@parcel/watcher": "^2.5.6",
     "@purinton/resampler": "^1.0.4",
     "@subrouter/cli": "workspace:^",
     "@subrouter/opencode": "workspace:^",

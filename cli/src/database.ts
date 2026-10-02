@@ -1473,35 +1473,6 @@ export async function findTextChannelByVoiceChannel(voiceChannelId: string) {
   return (await db.query.channel_directories.findFirst({ where: { directory: voiceChannel.directory, channel_type: 'text' } }))?.channel_id
 }
 
-export type ForumSyncConfigRow = { appId: string; forumChannelId: string; outputDir: string; direction: string }
-
-export async function getForumSyncConfigs({ appId }: { appId: string }): Promise<ForumSyncConfigRow[]> {
-  const db = await getDb()
-  const rows = await db.query.forum_sync_configs.findMany({ where: { app_id: appId } })
-  return rows.map((row) => ({ appId: row.app_id, forumChannelId: row.forum_channel_id, outputDir: row.output_dir, direction: row.direction }))
-}
-
-export async function upsertForumSyncConfig({ appId, forumChannelId, outputDir, direction = 'bidirectional' }: { appId: string; forumChannelId: string; outputDir: string; direction?: string }) {
-  const db = await getDb()
-  await db.insert(schema.forum_sync_configs)
-    .values({ app_id: appId, forum_channel_id: forumChannelId, output_dir: outputDir, direction })
-    .onConflictDoUpdate({ target: [schema.forum_sync_configs.app_id, schema.forum_sync_configs.forum_channel_id], set: { output_dir: outputDir, direction, updated_at: new Date() } })
-}
-
-export async function deleteForumSyncConfig({ appId, forumChannelId }: { appId: string; forumChannelId: string }) {
-  const db = await getDb()
-  await db.delete(schema.forum_sync_configs).where(orm.and(orm.eq(schema.forum_sync_configs.app_id, appId), orm.eq(schema.forum_sync_configs.forum_channel_id, forumChannelId)))
-}
-
-export async function deleteStaleForumSyncConfigs({ appId, forumChannelId, outputDir }: { appId: string; forumChannelId: string; outputDir: string }) {
-  const db = await getDb()
-  await db.delete(schema.forum_sync_configs).where(orm.and(
-    orm.eq(schema.forum_sync_configs.app_id, appId),
-    orm.eq(schema.forum_sync_configs.output_dir, outputDir),
-    orm.ne(schema.forum_sync_configs.forum_channel_id, forumChannelId),
-  ))
-}
-
 export async function createIpcRequest({ type, sessionId, threadId, payload }: { type: IpcRequestType; sessionId: string; threadId: string; payload: string }) {
   const db = await getDb()
   const [row] = await db.insert(schema.ipc_requests).values({ type, session_id: sessionId, thread_id: threadId, payload }).returning()

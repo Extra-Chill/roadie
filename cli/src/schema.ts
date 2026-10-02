@@ -255,6 +255,8 @@ export const session_start_sources = sqliteCore.sqliteTable('session_start_sourc
   sqliteCore.index('session_start_sources_scheduled_task_id_idx').on(table.scheduled_task_id),
 ])
 
+// Unused since forum sync was removed. Kept so existing databases keep the
+// same schema; nothing reads or writes it.
 export const forum_sync_configs = sqliteCore.sqliteTable('forum_sync_configs', {
   id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
   app_id: sqliteCore.text('app_id').notNull().references(() => bot_tokens.app_id, { onDelete: 'cascade', onUpdate: 'cascade' }),

@@ -26,7 +26,6 @@ import {
   cleanupDeletedThread,
   clearGuildCategoryByChannelId,
   consumeSessionSleepWake,
-  deleteForumSyncConfig,
   deleteChannelDirectoryById,
   findChannelsByDirectory,
   isCurrentThreadSessionBinding,
@@ -112,7 +111,6 @@ import {
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
 } from './external-opencode-sync.js'
-import { stopForumSyncForChannel } from './forum-sync/watchers.js'
 
 export {
   initDatabase,
@@ -359,14 +357,7 @@ export async function startDiscordBot({
     const preserveMapping = mapping?.directory === getDefaultRoadieDirectory()
     const threadIds = getRuntimeThreadIdsForChannel(channelId)
     await Promise.all(threadIds.map(cleanupDeletedDiscordThread))
-    await stopForumSyncForChannel(channelId)
     await clearGuildCategoryByChannelId(channelId)
-    if (currentAppId) {
-      await deleteForumSyncConfig({
-        appId: currentAppId,
-        forumChannelId: channelId,
-      })
-    }
     const deleted = await deleteChannelDirectoryById(channelId, {
       preserveMapping,
     })
