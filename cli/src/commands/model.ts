@@ -27,6 +27,7 @@ import {
   getVariantCascade,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import type { AgentBackendGetter } from '../agent-backend/types.js'
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import {
   getDefaultModel,
@@ -204,7 +205,7 @@ export async function ensureSessionPreferencesSnapshot({
   sessionId: string
   channelId?: string
   appId?: string
-  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  getClient: Error | AgentBackendGetter
   directory?: string
   agentOverride?: string
   modelOverride?: string
@@ -299,7 +300,7 @@ async function getLastUserMessageAgent({
   before,
   page = 0,
 }: {
-  getClient: Exclude<Awaited<ReturnType<typeof initializeOpencodeForDirectory>>, Error>
+  getClient: AgentBackendGetter
   sessionId: string
   directory?: string
   before?: string
@@ -347,7 +348,7 @@ export async function copySessionPreferences({
   targetSessionId: string
   channelId?: string
   appId?: string
-  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  getClient: Error | AgentBackendGetter
   directory?: string
 }) {
   const [historyAgent, preferredAgent, modelInfo, variant] = await Promise.all([
@@ -405,7 +406,7 @@ export async function getCurrentModelInfo({
   channelId?: string
   appId?: string
   agentPreference?: string
-  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  getClient: Error | AgentBackendGetter
   directory?: string
 }): Promise<CurrentModelInfo> {
   if (getClient instanceof Error) {

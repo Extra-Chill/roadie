@@ -12,7 +12,7 @@ import {
 } from '../database.js'
 import { createLogger } from '../logger.js'
 import { OpenCodeSdkError } from '../errors.js'
-import { type initializeOpencodeForDirectory } from '../opencode.js'
+import type { AgentBackendGetter } from '../agent-backend/types.js'
 import { type AgentInfo } from '../system-message.js'
 
 const agentLogger = createLogger('agent')
@@ -51,7 +51,7 @@ export async function resolveValidatedAgentPreference({
   agent?: string
   sessionId: string
   channelId?: string
-  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  getClient: Error | AgentBackendGetter
   directory?: string
 }): Promise<{ agentPreference?: string; agents: AgentInfo[] }> {
   const agentPreference = agent || await resolveAgentPreference({ sessionId, channelId })
