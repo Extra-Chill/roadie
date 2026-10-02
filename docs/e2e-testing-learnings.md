@@ -1,7 +1,7 @@
 ---
 title: E2E Testing Learnings
 description: >
-  Hard-won lessons from writing and debugging kimaki's Discord e2e tests.
+  Hard-won lessons from writing and debugging roadie's Discord e2e tests.
   Covers caching behavior, flaky test patterns, timeouts, polling strategies,
   and the CachedOpencodeProviderProxy.
 prompt: |
@@ -130,12 +130,12 @@ like "Reply with exactly: foxtrot").
 
 ## Logger noise in tests
 
-Test logs are suppressed by default (`KIMAKI_VITEST=1` in vitest.config.ts).
-To debug a failing test, rerun with `KIMAKI_TEST_LOGS=1` to see all
-kimaki logger output in the terminal:
+Test logs are suppressed by default (`ROADIE_VITEST=1` in vitest.config.ts).
+To debug a failing test, rerun with `ROADIE_TEST_LOGS=1` to see all
+roadie logger output in the terminal:
 
 ```bash
-KIMAKI_TEST_LOGS=1 pnpm test --run src/thread-message-queue.e2e.test.ts
+ROADIE_TEST_LOGS=1 pnpm test --run src/thread-message-queue.e2e.test.ts
 ```
 
-File logging to `<dataDir>/kimaki.log` still works regardless of this flag.
+File logging to `<dataDir>/roadie.log` still works regardless of this flag.

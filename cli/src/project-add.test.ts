@@ -1,4 +1,4 @@
-// Tests that `kimaki project add` refuses a folder already registered locally.
+// Tests that `roadie project add` refuses a folder already registered locally.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -18,7 +18,7 @@ describe('project add duplicate directory', () => {
   let projectDir: string
 
   beforeEach(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-project-add-'))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-project-add-'))
     projectDir = path.join(tmpDir, 'repo')
     fs.mkdirSync(projectDir)
     setDataDir(path.join(tmpDir, 'data'))
@@ -74,7 +74,7 @@ describe('project add duplicate directory', () => {
     ).toMatchInlineSnapshot(`
       "Channel already exists for this directory: /tmp/repo
       Channel ID: 111
-      Remove the mapping first: kimaki project remove 111"
+      Remove the mapping first: roadie project remove 111"
     `)
   })
 })

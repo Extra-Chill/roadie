@@ -1,4 +1,4 @@
-// Respawn wrapper for the kimaki bot process.
+// Respawn wrapper for the roadie bot process.
 // When running the default command (no subcommand) with --auto-restart,
 // spawns cli.js as a child process and restarts it on non-zero exit codes
 // (crash, OOM kill, etc). Intentional exits (code 0 or EXIT_NO_RESTART=64)
@@ -7,7 +7,7 @@
 // Subcommands (send, tunnel, project, etc.) run directly without the wrapper
 // since they are short-lived and don't need crash recovery.
 //
-// When __KIMAKI_CHILD is set, we're the child process -- just run cli.js directly.
+// When __ROADIE_CHILD is set, we're the child process -- just run cli.js directly.
 //
 // V8 heap snapshot flags:
 // Injects --heapsnapshot-near-heap-limit=3 and --diagnostic-dir so V8 writes
@@ -20,8 +20,9 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { withKimakiEnvAliases } from './config.js'
 
-const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
+const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.roadie', 'heap-snapshots')
 
 // First arg after node + script is either a subcommand or a flag.
 // If it doesn't start with '-', it's a subcommand (e.g. "send", "tunnel", "project").
@@ -29,10 +30,10 @@ const firstArg = process.argv[2]
 const isSubcommand = firstArg && !firstArg.startsWith('-')
 const isHelpFlag = process.argv.includes('--help')
 
-if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
+if (process.env.__ROADIE_CHILD || isSubcommand || isHelpFlag) {
   await import('./cli.js')
 } else {
-  console.error('no subcommand detected. kimaki will automatically restart on crash')
+  console.error('no subcommand detected. roadie will automatically restart on crash')
   console.error()
   const EXIT_NO_RESTART = 64
   // Keep in sync with EXIT_TEMPFAIL in cli-runner.ts. Network-down login
@@ -80,7 +81,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       forceKillTimer = null
       if (child !== target) return
       console.error(
-        `[kimaki] Child did not exit within ${CHILD_EXIT_DEADLINE_MS / 1000}s, force-killing it`,
+        `[roadie] Child did not exit within ${CHILD_EXIT_DEADLINE_MS / 1000}s, force-killing it`,
       )
       target.kill('SIGKILL')
     }, CHILD_EXIT_DEADLINE_MS)
@@ -106,7 +107,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       args,
       {
         stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-        env: { ...process.env, __KIMAKI_CHILD: '1' },
+        env: {
+          ...withKimakiEnvAliases({ ...process.env, __ROADIE_CHILD: '1' }),
+          __KIMAKI_CHILD: '1',
+        },
       },
     )
     child = currentChild
@@ -132,7 +136,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
 
         if (restartTimestamps.length > MAX_RAPID_RESTARTS) {
           console.error(
-            `[kimaki] Crash loop detected (${MAX_RAPID_RESTARTS} crashes in ${RAPID_RESTART_WINDOW_MS / 1000}s), exiting`,
+            `[roadie] Crash loop detected (${MAX_RAPID_RESTARTS} crashes in ${RAPID_RESTART_WINDOW_MS / 1000}s), exiting`,
           )
           process.exit(1)
           return
@@ -147,7 +151,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
         : restartTimestamps.length - 1
       const delay = Math.min(RESTART_DELAY_MS * 2 ** backoffStep, 30_000)
       console.error(
-        `[kimaki] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
+        `[roadie] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
       )
       scheduledRestart = setTimeout(start, delay)
     })

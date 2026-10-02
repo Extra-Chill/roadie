@@ -189,7 +189,7 @@ describe('formatSessionSleepToolOutput', () => {
     })
 
     expect(output).toBe(
-      'Sleeping until 2026-09-07 13:21 UTC. Reason: Wait 1 day, then check mail. This tool result is not a wake. Do not continue the waited work. Do not call more tools. Reply with one short line that you are waiting until that time, then stop. The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason. A new user message in this thread cancels the sleep. If you still need that later wake after answering, call kimaki_sleep again with until set to the same UTC time.',
+      'Sleeping until 2026-09-07 13:21 UTC. Reason: Wait 1 day, then check mail. This tool result is not a wake. Do not continue the waited work. Do not call more tools. Reply with one short line that you are waiting until that time, then stop. The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason. A new user message in this thread cancels the sleep. If you still need that later wake after answering, call roadie_sleep again with until set to the same UTC time.',
     )
     expect(output.startsWith('Sleeping until ')).toBe(true)
     expect(output).toContain('This tool result is not a wake')
@@ -318,7 +318,7 @@ describe('scheduled task execution options', () => {
   })
 
   test('runs the pre-run command in the project directory', async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-task-'))
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-task-'))
     tempDirectories.push(directory)
     fs.writeFileSync(
       path.join(directory, 'should-run.ts'),
@@ -362,7 +362,7 @@ describe('scheduled task execution options', () => {
   })
 
   test('skips the task when the pre-run command exits nonzero', async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-task-'))
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-task-'))
     tempDirectories.push(directory)
     const taskId = await createScheduledTask({
       scheduleKind: 'cron',

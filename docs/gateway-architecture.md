@@ -10,7 +10,7 @@ description: >
 
 # Gateway architecture and onboarding
 
-kimaki is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
+roadie is a monorepo with three main packages that communicate via a shared Postgres database hosted on PlanetScale.
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -18,7 +18,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 │  cli/ (TypeScript CLI + Discord bot)                          │
 │  ├── src/cli.ts        main CLI, onboarding wizard            │
 │  ├── src/discord-bot.ts  event loop, session routing          │
-│  └── SQLite (~/.kimaki/discord-sessions.db)                   │
+│  └── SQLite (~/.roadie/discord-sessions.db)                   │
 │         local state: bot tokens, channels, threads, models    │
 └─────────┬────────────────────────────┬────────────────────────┘
           │ REST + WebSocket           │ polls /api/onboarding/status
@@ -39,7 +39,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 │  filters events per  │   │    → website/src/routes/         │
 │  client_id + guild   │   │      onboarding-status.ts        │
 │                      │   │                                  │
-│  wss://kimaki-       │   └──────────┬───────────────────────┘
+│  wss://roadie-       │   └──────────┬───────────────────────┘
 │  gateway-production  │              │
 │  .fly.dev            │              │
 └──────────┬───────────┘              │
@@ -50,7 +50,7 @@ kimaki is a monorepo with three main packages that communicate via a shared Post
 │  db/schema.prisma                                             │
 │                                                               │
 │  gateway_clients table:                                       │
-│    client_id  TEXT   ── identifies the kimaki user            │
+│    client_id  TEXT   ── identifies the roadie user            │
 │    secret     TEXT   ── authenticates gateway connections     │
 │    guild_id   TEXT   ── guild the user installed the bot in   │
 │    @@id([client_id, guild_id])                                │
@@ -93,7 +93,7 @@ Gateway-mode onboarding lives in `cli/src/cli.ts`, the `run()` function:
 1. CLI generates `clientId` (UUID) + `clientSecret` (32-byte hex)
 2. builds a Discord OAuth URL with `state=JSON({clientId, clientSecret})` and `redirect_uri=https://kimaki.dev/api/auth/callback/discord`
 3. opens the browser to the Discord install URL
-4. user authorizes the shared Kimaki bot in their server
+4. user authorizes the shared Roadie bot in their server
 5. Discord redirects to `website/src/routes/oauth-callback.tsx` with `guild_id` + `state`; the website upserts a `gateway_clients` row in Postgres
 6. CLI polls `website/src/routes/onboarding-status.ts` every 2s until it finds the `client_id` + `secret` row, and gets back `guild_id`
 7. CLI stores credentials locally via `setBotMode()` in SQLite with `bot_mode='gateway'` and `proxy_url` pointing to the gateway

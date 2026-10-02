@@ -17,7 +17,7 @@
 //   # Against production (just connect + kill WS + wait for reconnect):
 //   GATEWAY_TEST_URL=wss://discord-gateway.kimaki.dev \
 //   GATEWAY_TEST_TOKEN=myclientid:mysecret \
-//   KIMAKI_TEST_LOGS=1 \
+//   ROADIE_TEST_LOGS=1 \
 //   pnpm test --run src/gateway-proxy-reconnect.e2e.test.ts -t "production"
 
 import fs from 'node:fs'
@@ -170,7 +170,7 @@ function startProxy({
     env: { ...process.env, RUST_LOG: 'debug' },
   })
 
-  const showLogs = !!process.env['KIMAKI_TEST_LOGS']
+  const showLogs = !!process.env['ROADIE_TEST_LOGS']
   const logLines: string[] = []
   child.stdout?.on('data', (data: Buffer) => {
     const line = data.toString().trim()

@@ -1,5 +1,5 @@
 {
-  "name": "@kimaki/opencode-plugin",
+  "name": "@roadie/opencode-plugin",
   "version": "0.1.0",
   "type": "module",
   "description": "OpenCode plugin for Claude Pro/Max subscription support via Anthropic OAuth",
@@ -34,8 +34,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/remorses/kimaki",
-    "directory": "opencode-kimaki-plugin"
+    "url": "https://github.com/remorses/roadie",
+    "directory": "opencode-roadie-plugin"
   },
   "keywords": [
     "opencode",
@@ -43,10 +43,10 @@
     "anthropic",
     "claude",
     "oauth",
-    "kimaki"
+    "roadie"
   ],
   "dependencies": {
-    "kimaki": "workspace:^"
+    "@extrachill/roadie": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^24.3.0"

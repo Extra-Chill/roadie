@@ -1,6 +1,6 @@
 // Core Discord bot module that handles message events and bot lifecycle.
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
-// and orchestrates the main event loop for the Kimaki bot.
+// and orchestrates the main event loop for the Roadie bot.
 //
 // Shutdown resilience: during self-restart (gateway reconnect limit, SIGUSR2),
 // discord.js can still fire errors from pending async operations (DNS lookups,
@@ -48,8 +48,8 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   reactToThread,
   stripMentions,
-  hasKimakiBotPermission,
-  hasNoKimakiRole,
+  hasRoadieBotPermission,
+  hasNoRoadieRole,
   resolveGuildMessageMember,
 } from './discord-utils.js'
 import {
@@ -73,8 +73,8 @@ import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
-  ensureKimakiCategory,
-  ensureKimakiAudioCategory,
+  ensureRoadieCategory,
+  ensureRoadieAudioCategory,
   createProjectChannels,
   getChannelsWithDescriptions,
   type ChannelWithTags,
@@ -105,7 +105,7 @@ import { trackEvent, flushAnalytics } from './analytics.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
 import {
-  getDefaultKimakiDirectory,
+  getDefaultRoadieDirectory,
   getUserProjectCount,
 } from './channel-management.js'
 import { store } from './store.js'
@@ -127,10 +127,10 @@ export {
 } from './discord-utils.js'
 export { getOpencodeSystemMessage } from './system-message.js'
 export {
-  ensureKimakiCategory,
-  ensureKimakiAudioCategory,
+  ensureRoadieCategory,
+  ensureRoadieAudioCategory,
   createProjectChannels,
-  createDefaultKimakiChannel,
+  createDefaultRoadieChannel,
   getChannelsWithDescriptions,
 } from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
@@ -171,8 +171,8 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 
 const MISSING_MESSAGE_CONTENT_REPLY = dedent`
   I can see you sent a message, but Discord did not include its text.
-  Mention me and send it again, like \`@Kimaki fix the failing test\`, so I can read it.
-  To avoid this reminder, start Kimaki with \`--mention-mode\` so it only reacts to mentioned messages.
+  Mention me and send it again, like \`@Roadie fix the failing test\`, so I can read it.
+  To avoid this reminder, start Roadie with \`--mention-mode\` so it only reacts to mentioned messages.
 `
 
 function isMissingReadableMessageContent(message: Message) {
@@ -334,7 +334,7 @@ export async function startDiscordBot({
 
   const cleanupDeletedDiscordChannel = async (channelId: string) => {
     const mapping = await getChannelDirectory(channelId)
-    const preserveMapping = mapping?.directory === getDefaultKimakiDirectory()
+    const preserveMapping = mapping?.directory === getDefaultRoadieDirectory()
     const threadIds = getRuntimeThreadIdsForChannel(channelId)
     await Promise.all(threadIds.map(cleanupDeletedDiscordThread))
     await stopForumSyncForChannel(channelId)
@@ -429,11 +429,11 @@ export async function startDiscordBot({
         discordLogger.log(`${guild.name} (${guild.id})`)
 
         const channels = await getChannelsWithDescriptions(guild)
-        const kimakiChannels = channels.filter((ch) => ch.kimakiDirectory)
+        const roadieChannels = channels.filter((ch) => ch.roadieDirectory)
 
-        if (kimakiChannels.length > 0) {
+        if (roadieChannels.length > 0) {
           discordLogger.log(
-            `  Found ${kimakiChannels.length} channel(s) for this bot`,
+            `  Found ${roadieChannels.length} channel(s) for this bot`,
           )
           continue
         }
@@ -572,7 +572,7 @@ export async function startDiscordBot({
         ? parseSessionStartSourceFromMarker(promptMarker)
         : undefined
       const cliInjectedUsername = isCliInjectedPrompt
-        ? promptMarker?.username || 'kimaki-cli'
+        ? promptMarker?.username || 'roadie-cli'
         : undefined
       const cliInjectedUserId = isCliInjectedPrompt
         ? promptMarker?.userId
@@ -594,20 +594,20 @@ export async function startDiscordBot({
         : undefined
 
       // Always ignore our own messages (unless CLI-injected prompt above).
-      // Without this, assigning the Kimaki role to the bot itself would loop.
+      // Without this, assigning the Roadie role to the bot itself would loop.
       if (isSelfBotMessage && !isCliInjectedPrompt) {
         return
       }
 
-      // Allow CLI-injected prompts from this Kimaki bot through even when role
-      // reconciliation did not give the bot the "Kimaki" role yet. Other bots
-      // still need Kimaki permission so multi-agent orchestration stays opt-in.
+      // Allow CLI-injected prompts from this Roadie bot through even when role
+      // reconciliation did not give the bot the "Roadie" role yet. Other bots
+      // still need Roadie permission so multi-agent orchestration stays opt-in.
       const isInjectedSelfBotMessage =
         isCliInjectedPrompt && message.author?.id === discordClient.user?.id
 
       if (message.author?.bot && !isInjectedSelfBotMessage) {
         const member = await resolveGuildMessageMember(message)
-        if (!hasKimakiBotPermission(member, message.guild)) {
+        if (!hasRoadieBotPermission(member, message.guild)) {
           return
         }
       }
@@ -635,7 +635,7 @@ export async function startDiscordBot({
       }
 
       // Check mention mode BEFORE permission check for text channels.
-      // When mention mode is enabled, users without Kimaki role can message
+      // When mention mode is enabled, users without Roadie role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
 
@@ -695,17 +695,17 @@ export async function startDiscordBot({
           return
         }
 
-        if (hasNoKimakiRole(member)) {
+        if (hasNoRoadieRole(member)) {
           await message.reply({
-            content: `You have the **no-kimaki** role which blocks bot access.\nRemove this role to use Kimaki.`,
+            content: `You have the **no-roadie** role which blocks bot access.\nRemove this role to use Roadie.`,
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
         }
 
-        if (!hasKimakiBotPermission(member, message.guild)) {
+        if (!hasRoadieBotPermission(member, message.guild)) {
           await message.reply({
-            content: `You don't have permission to start sessions.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
+            content: `You don't have permission to start sessions.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
@@ -722,9 +722,9 @@ export async function startDiscordBot({
         const thread = channel as ThreadChannel
         discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
-        // Only respond in threads kimaki knows about (has a session row in DB),
+        // Only respond in threads roadie knows about (has a session row in DB),
         // where the bot is explicitly @mentioned, or where the bot created the
-        // thread itself (e.g. /new-worktree, /fork, kimaki send). This prevents
+        // thread itself (e.g. /new-worktree, /fork, roadie send). This prevents
         // the bot from hijacking user-created threads in project channels while
         // still responding to bot-created threads that may not yet have a session
         // row with a non-empty session_id (createPendingWorkspace sets ''). (GitHub #84)
@@ -851,7 +851,7 @@ export async function startDiscordBot({
             discordLogger.warn('Could not send btw ack:', error)
             return undefined
           })
-          // Long `kimaki send` prompts arrive as prompt.md, so the fork needs attachments too.
+          // Long `roadie send` prompts arrive as prompt.md, so the fork needs attachments too.
           const [btwImages, btwTextAttachments] = await Promise.all([
             getFileAttachments(message),
             getTextAttachments(message),
@@ -1024,7 +1024,7 @@ export async function startDiscordBot({
       }
 
       if (channel.type === ChannelType.GuildText) {
-        // `kimaki send` posts a starter message with a `start` embed marker,
+        // `roadie send` posts a starter message with a `start` embed marker,
         // then creates the thread via REST. The ThreadCreate handler picks up
         // that thread and starts the session. If we don't skip here, this
         // handler races the CLI to call startThread() on the same message,
@@ -1045,7 +1045,7 @@ export async function startDiscordBot({
             discordClient.user && message.mentions.has(discordClient.user.id),
           )
           if (botMentioned) {
-            // TODO: Consider creating/using a session for any text channel when Kimaki is
+            // TODO: Consider creating/using a session for any text channel when Roadie is
             // explicitly @mentioned, so the bot can answer quick questions even before
             // the channel is linked to a project.
             await message.reply({
@@ -1066,7 +1066,7 @@ export async function startDiscordBot({
         // Note: Mention mode is checked early in the handler (before permission check)
         // to avoid sending permission errors to users who just didn't @mention the bot.
 
-        discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
+        discordLogger.log(`DIRECTORY: Found roadie.directory: ${projectDirectory}`)
 
         if (!fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
@@ -1110,7 +1110,7 @@ export async function startDiscordBot({
           ? 'Voice Message'
           : stripMentions(message.content || '')
               .replace(/\s+/g, ' ')
-              .trim() || 'kimaki thread'
+              .trim() || 'roadie thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting).
         // Only create worktrees from the configured project directory when that
@@ -1229,7 +1229,7 @@ export async function startDiscordBot({
   })
 
   // Handle user message edits to update queued messages.
-  // When a user edits a message that is still waiting in kimaki's local queue,
+  // When a user edits a message that is still waiting in roadie's local queue,
   // the queue item is updated with the new content. If the edit removes the
   // queue suffix, the item is removed from the queue.
   discordClient.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
@@ -1330,7 +1330,7 @@ export async function startDiscordBot({
     }
   })
 
-  // Handle bot-initiated threads created by `kimaki send` (without --notify-only)
+  // Handle bot-initiated threads created by `roadie send` (without --notify-only)
   // Uses JSON embed marker to pass options (start, worktree name)
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
@@ -1496,7 +1496,7 @@ export async function startDiscordBot({
 
           await createPendingWorkspace({
             threadId: thread.id,
-            workspaceType: 'kimaki-worktree',
+            workspaceType: 'roadie-worktree',
             workspaceName: cwdWorktreeName,
             projectDirectory,
           })
@@ -1795,9 +1795,9 @@ async function selfRestart(reason: string) {
   discordLogger.log(`Self-restarting (reason: ${reason})...`)
   await shutdownBot(reason, { skipExit: true })
 
-  if (!process.env.__KIMAKI_CHILD) {
+  if (!process.env.__ROADIE_CHILD) {
     discordLogger.warn(
-      'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
+      'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `roadie` (npm) for auto-restart on crash.',
     )
   }
   process.kill(process.pid, 'SIGKILL')
@@ -1834,9 +1834,9 @@ export function registerBotLifecycleHandlers() {
 
   // bin.ts spawns us with an IPC channel. The OS closes it when the wrapper
   // dies for any reason (including SIGKILL), so an orphaned child exits instead
-  // of holding the lock port. Guarded by __KIMAKI_CHILD so vitest workers,
+  // of holding the lock port. Guarded by __ROADIE_CHILD so vitest workers,
   // which also have an IPC channel, are not affected.
-  if (!process.env.__KIMAKI_CHILD) {
+  if (!process.env.__ROADIE_CHILD) {
     return
   }
   // The wrapper can die before we get here (e.g. during the eviction wait);

@@ -7,7 +7,7 @@ describe('getTeamIdForWebhookEvent', () => {
   test('reads team_id from slash-command form payload', () => {
     const body = new URLSearchParams({
       team_id: 'T_SLASH',
-      command: '/kimaki',
+      command: '/roadie',
     }).toString()
 
     expect(getTeamIdForWebhookEvent({

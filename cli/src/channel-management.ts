@@ -1,5 +1,5 @@
 // Discord channel and category management.
-// Creates and manages Kimaki project channels (text + voice pairs),
+// Creates and manages Roadie project channels (text + voice pairs),
 // extracts channel metadata from topic tags, and ensures category structure.
 
 import {
@@ -37,7 +37,7 @@ import {
 export async function getUserProjectCount(): Promise<number | null> {
   try {
     const channels = await listTrackedTextChannels()
-    const defaultDir = path.resolve(getDefaultKimakiDirectory())
+    const defaultDir = path.resolve(getDefaultRoadieDirectory())
     const dirs = new Set(
       channels
         .map((row) => path.resolve(row.directory))
@@ -72,28 +72,28 @@ const logger = createLogger(LogPrefix.CHANNEL)
 type CategoryKind = 'text' | 'audio'
 
 function defaultCategoryName(kind: CategoryKind, botName?: string) {
-  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
+  const isRoadieBot = botName?.toLowerCase() === 'roadie'
   if (kind === 'audio') {
-    return botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+    return botName && !isRoadieBot ? `Roadie Audio ${botName}` : 'Roadie Audio'
   }
-  return botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
+  return botName && !isRoadieBot ? `Roadie ${botName}` : 'Roadie'
 }
 
-function defaultKimakiChannelName({
+function defaultRoadieChannelName({
   botName,
   isGatewayMode,
 }: {
   botName?: string
   isGatewayMode: boolean
 }) {
-  if (isGatewayMode || !botName) return 'kimaki'
+  if (isGatewayMode || !botName) return 'roadie'
   const sanitized = botName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-  if (!sanitized || sanitized === 'kimaki') return 'kimaki'
-  return `kimaki-${sanitized}`.slice(0, 100)
+  if (!sanitized || sanitized === 'roadie') return 'roadie'
+  return `roadie-${sanitized}`.slice(0, 100)
 }
 
 const categoryEnsures = new Map<string, Promise<CategoryChannel>>()
@@ -162,7 +162,7 @@ async function adoptParentFromTrackedChannels({
   return null
 }
 
-async function resolveKimakiCategory({
+async function resolveRoadieCategory({
   guild,
   kind,
   botName,
@@ -203,17 +203,17 @@ async function resolveKimakiCategory({
   return created
 }
 
-export function ensureKimakiCategory(guild: Guild, botName?: string) {
+export function ensureRoadieCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:text`,
-    run: () => resolveKimakiCategory({ guild, kind: 'text', botName }),
+    run: () => resolveRoadieCategory({ guild, kind: 'text', botName }),
   })
 }
 
-export function ensureKimakiAudioCategory(guild: Guild, botName?: string) {
+export function ensureRoadieAudioCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:audio`,
-    run: () => resolveKimakiCategory({ guild, kind: 'audio', botName }),
+    run: () => resolveRoadieCategory({ guild, kind: 'audio', botName }),
   })
 }
 
@@ -240,12 +240,12 @@ export async function createProjectChannels({
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 100)
 
-  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+  const roadieCategory = await ensureRoadieCategory(guild, botName)
 
   const textChannel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
-    parent: kimakiCategory,
+    parent: roadieCategory,
     // Channel configuration is stored in SQLite, not in the topic
   })
 
@@ -263,12 +263,12 @@ export async function createProjectChannels({
   let voiceChannelId: string | null = null
 
   if (enableVoiceChannels) {
-    const kimakiAudioCategory = await ensureKimakiAudioCategory(guild, botName)
+    const roadieAudioCategory = await ensureRoadieAudioCategory(guild, botName)
 
     const voiceChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildVoice,
-      parent: kimakiAudioCategory,
+      parent: roadieAudioCategory,
     })
 
     await setChannelDirectory({
@@ -292,7 +292,7 @@ export type ChannelWithTags = {
   id: string
   name: string
   description: string | null
-  kimakiDirectory?: string
+  roadieDirectory?: string
 }
 
 export async function getChannelsWithDescriptions(
@@ -314,7 +314,7 @@ export async function getChannelsWithDescriptions(
       id: channel.id,
       name: channel.name,
       description,
-      kimakiDirectory: channelConfig?.directory,
+      roadieDirectory: channelConfig?.directory,
     })
   }
 
@@ -335,25 +335,25 @@ __pycache__/
 *.egg-info/
 `
 
-/** Returns the absolute path to the default kimaki project directory. */
-export function getDefaultKimakiDirectory(): string {
-  return path.join(getProjectsDir(), 'kimaki')
+/** Returns the absolute path to the default roadie project directory. */
+export function getDefaultRoadieDirectory(): string {
+  return path.join(getProjectsDir(), 'roadie')
 }
 
 const DEFAULT_CHANNEL_TOPIC =
-  'General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository.'
+  'General channel for misc tasks with Roadie. Not connected to a specific OpenCode project or repository.'
 
 /**
- * Create (or find) the default "kimaki" channel for general-purpose tasks.
- * Channel name is "kimaki-{botName}" for self-hosted bots, "kimaki" for gateway.
- * Directory is ~/.kimaki/projects/kimaki, git-initialized with a .gitignore.
+ * Create (or find) the default "roadie" channel for general-purpose tasks.
+ * Channel name is "roadie-{botName}" for self-hosted bots, "roadie" for gateway.
+ * Directory is ~/.roadie/projects/roadie, git-initialized with a .gitignore.
  *
  * Idempotency: checks the database for an existing channel mapped to the
- * kimaki projects directory. Also scans this machine's category for the
+ * roadie projects directory. Also scans this machine's category for the
  * exact default channel name as a fallback for channels created before
  * DB mapping existed.
  */
-export async function createDefaultKimakiChannel({
+export async function createDefaultRoadieChannel({
   guild,
   botName,
   appId,
@@ -369,14 +369,14 @@ export async function createDefaultKimakiChannel({
   channelName: string
   projectDirectory: string
 } | null> {
-  const projectDirectory = getDefaultKimakiDirectory()
+  const projectDirectory = getDefaultRoadieDirectory()
 
-  // Ensure the default kimaki project directory exists before any DB mapping
+  // Ensure the default roadie project directory exists before any DB mapping
   // restoration or git setup. Custom data dirs may not have <dataDir>/projects
   // created yet, and later writes assume the full path is present.
   if (!fs.existsSync(projectDirectory)) {
     fs.mkdirSync(projectDirectory, { recursive: true })
-    logger.log(`Created default kimaki directory: ${projectDirectory}`)
+    logger.log(`Created default roadie directory: ${projectDirectory}`)
   }
 
   // Hydrate guild channels from API so the cache scan is complete
@@ -410,7 +410,7 @@ export async function createDefaultKimakiChannel({
         guildId: guild.id,
       })
     }
-    logger.log(`Default kimaki channel already exists: ${mappedRow.channel_id}`)
+    logger.log(`Default roadie channel already exists: ${mappedRow.channel_id}`)
     return null
   }
 
@@ -421,27 +421,27 @@ export async function createDefaultKimakiChannel({
   )
   if (staleForThisGuild) {
     logger.log(
-      `Default kimaki channel was previously provisioned for guild ${guild.name} (${guild.id}) as ${staleForThisGuild.channel_id}, but no longer exists. Skipping recreation.`,
+      `Default roadie channel was previously provisioned for guild ${guild.name} (${guild.id}) as ${staleForThisGuild.channel_id}, but no longer exists. Skipping recreation.`,
     )
     return null
   }
 
   // 2. Fallback: detect an existing default channel in THIS machine's group.
-  // A #kimaki channel in another machine's group is ignored.
-  const channelName = defaultKimakiChannelName({ botName, isGatewayMode })
-  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+  // A #roadie channel in another machine's group is ignored.
+  const channelName = defaultRoadieChannelName({ botName, isGatewayMode })
+  const roadieCategory = await ensureRoadieCategory(guild, botName)
   const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {
       return false
     }
-    if (ch.parentId !== kimakiCategory.id) {
+    if (ch.parentId !== roadieCategory.id) {
       return false
     }
     return ch.name === channelName
   })
   if (existingByName) {
     logger.log(
-      `Found existing default kimaki channel by name: ${existingByName.id}. Skipping recreation.`,
+      `Found existing default roadie channel by name: ${existingByName.id}. Skipping recreation.`,
     )
     return null
   }
@@ -468,7 +468,7 @@ export async function createDefaultKimakiChannel({
   const textChannel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
-    parent: kimakiCategory,
+    parent: roadieCategory,
     topic: DEFAULT_CHANNEL_TOPIC,
   })
 
@@ -483,7 +483,7 @@ export async function createDefaultKimakiChannel({
     source: 'onboarding',
   })
 
-  logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)
+  logger.log(`Created default roadie channel: #${channelName} (${textChannel.id})`)
 
   return {
     textChannel,

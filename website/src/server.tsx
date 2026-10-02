@@ -1,4 +1,4 @@
-// Cloudflare Worker entrypoint for the Kimaki website.
+// Cloudflare Worker entrypoint for the Roadie website.
 // Mounts holocron docs alongside onboarding, OAuth, and Slack gateway routes.
 //
 // Uses Hyperdrive for pooled DB connections (env.HYPERDRIVE binding).
@@ -63,7 +63,7 @@ export const app = new Spiceflow({
   .use(async ({ request }) => {
     const url = new URL(request.url)
     if (url.hostname === 'kimaki.xyz' || url.hostname.endsWith('.kimaki.xyz')) {
-      url.hostname = url.hostname.replace(/kimaki\.xyz$/, 'kimaki.dev')
+      url.hostname = url.hostname.replace(/roadie\.xyz$/, 'kimaki.dev')
       return new Response(null, {
         status: 301,
         headers: { Location: url.toString() },
@@ -123,7 +123,7 @@ export const app = new Spiceflow({
       return (
         <>
           <Head>
-            <Head.Title>Kimaki - Setup Error</Head.Title>
+            <Head.Title>Roadie - Setup Error</Head.Title>
           </Head>
 
           <main className="flex min-h-screen flex-col items-center justify-center px-6">
@@ -167,10 +167,10 @@ export const app = new Spiceflow({
     return (
       <>
         <Head>
-          <Head.Title>Kimaki Bot Installed</Head.Title>
+          <Head.Title>Roadie Bot Installed</Head.Title>
           <Head.Meta
             name="description"
-            content="Kimaki was installed successfully. Return to the terminal to continue onboarding."
+            content="Roadie was installed successfully. Return to the terminal to continue onboarding."
           />
         </Head>
 
@@ -228,7 +228,7 @@ export const app = new Spiceflow({
 
       const clientId = url.searchParams.get('clientId')
       const clientSecret = url.searchParams.get('clientSecret')
-      const kimakiCallbackUrl = url.searchParams.get('kimakiCallbackUrl')
+      const roadieCallbackUrl = url.searchParams.get('roadieCallbackUrl')
       const reachableUrl = url.searchParams.get('reachableUrl')
 
       if (!clientId || !clientSecret) {
@@ -254,16 +254,16 @@ export const app = new Spiceflow({
 
       // Early validation: reject non-https callback URLs (http://localhost allowed for dev).
       // Defense in depth — hooks.after also validates before redirecting.
-      if (kimakiCallbackUrl) {
+      if (roadieCallbackUrl) {
         try {
-          const parsed = new URL(kimakiCallbackUrl)
+          const parsed = new URL(roadieCallbackUrl)
           const isHttps = parsed.protocol === 'https:'
           const isLocalHttp =
             parsed.protocol === 'http:' &&
             (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
           if (!isHttps && !isLocalHttp) {
             throw new Response(
-              'kimakiCallbackUrl must use https (or http for localhost)',
+              'roadieCallbackUrl must use https (or http for localhost)',
               { status: 400 },
             )
           }
@@ -271,7 +271,7 @@ export const app = new Spiceflow({
           if (e instanceof Response) {
             throw e
           }
-          throw new Response('kimakiCallbackUrl is not a valid URL', {
+          throw new Response('roadieCallbackUrl is not a valid URL', {
             status: 400,
           })
         }
@@ -282,7 +282,7 @@ export const app = new Spiceflow({
 
       // signInSocial returns JSON data on server calls; use returnHeaders so we can
       // forward Set-Cookie and still issue a real browser redirect.
-      // kimakiCallbackUrl is an optional external URL passed by the CLI
+      // roadieCallbackUrl is an optional external URL passed by the CLI
       // (--gateway-callback-url). It's stored in additionalData so the hooks.after callback can redirect there
       // (with ?guild_id=<id>) instead of showing the default /install-success page.
       const { response: result, headers } = await auth.api.signInSocial({
@@ -291,7 +291,7 @@ export const app = new Spiceflow({
           additionalData: {
             clientId,
             clientSecret,
-            kimakiCallbackUrl,
+            roadieCallbackUrl,
             reachableUrl,
           },
           callbackURL: '/install-success',
@@ -321,7 +321,7 @@ export const app = new Spiceflow({
     return (
       <html lang="en">
         <Head>
-          <Head.Title>Kimaki - Connect to Slack</Head.Title>
+          <Head.Title>Roadie - Connect to Slack</Head.Title>
           <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
         </Head>
         <body className="min-h-screen bg-white font-sans text-stone-900 antialiased">
@@ -339,7 +339,7 @@ export const app = new Spiceflow({
       .object({
         clientId: z.string(),
         clientSecret: z.string(),
-        kimakiCallbackUrl: z.string().nullish(),
+        roadieCallbackUrl: z.string().nullish(),
       })
       .safeParse(Object.fromEntries(new URL(request.url).searchParams))
 
@@ -351,7 +351,7 @@ export const app = new Spiceflow({
       <SlackInstallPage
         clientId={params.data.clientId}
         clientSecret={params.data.clientSecret}
-        kimakiCallbackUrl={params.data.kimakiCallbackUrl ?? null}
+        roadieCallbackUrl={params.data.roadieCallbackUrl ?? null}
       />
     )
   })
@@ -400,13 +400,13 @@ export const app = new Spiceflow({
     query: z.object({
       clientId: z.string(),
       clientSecret: z.string(),
-      kimakiCallbackUrl: z.string().optional(),
+      roadieCallbackUrl: z.string().optional(),
       team: z.string().optional(),
     }),
     async handler({ query, request, state }) {
-      if (query.kimakiCallbackUrl && !parseAllowedCallbackUrl(query.kimakiCallbackUrl)) {
+      if (query.roadieCallbackUrl && !parseAllowedCallbackUrl(query.roadieCallbackUrl)) {
         throw new Response(
-          'kimakiCallbackUrl must use https (or http for localhost)',
+          'roadieCallbackUrl must use https (or http for localhost)',
           { status: 400 },
         )
       }
@@ -416,9 +416,9 @@ export const app = new Spiceflow({
         kv: state.env.GATEWAY_CLIENT_KV,
         state: oauthState,
         record: {
-          kimaki_client_id: query.clientId,
-          kimaki_client_secret: query.clientSecret,
-          kimaki_callback_url: query.kimakiCallbackUrl ?? null,
+          roadie_client_id: query.clientId,
+          roadie_client_secret: query.clientSecret,
+          roadie_callback_url: query.roadieCallbackUrl ?? null,
         },
       }).catch((cause) => {
         return new Error('Failed to persist Slack install state', { cause })
@@ -541,8 +541,8 @@ export const app = new Spiceflow({
 
       const upsertResult = await upsertGatewayClientAndRefreshKv({
         env: state.env,
-        clientId: installState.kimaki_client_id,
-        secret: installState.kimaki_client_secret,
+        clientId: installState.roadie_client_id,
+        secret: installState.roadie_client_secret,
         guildId: teamId,
         platform: 'slack',
         botToken,
@@ -571,12 +571,12 @@ export const app = new Spiceflow({
       }
 
       const callbackUrl = parseAllowedCallbackUrl(
-        installState.kimaki_callback_url,
+        installState.roadie_callback_url,
       )
       if (callbackUrl) {
         callbackUrl.searchParams.set('guild_id', teamId)
         callbackUrl.searchParams.set('team_id', teamId)
-        callbackUrl.searchParams.set('client_id', installState.kimaki_client_id)
+        callbackUrl.searchParams.set('client_id', installState.roadie_client_id)
         return new Response(null, {
           status: 302,
           headers: { Location: callbackUrl.toString() },
@@ -826,7 +826,7 @@ export const app = new Spiceflow({
     },
   })
 
-  // CLI polling endpoint. The kimaki CLI polls this every 2s during onboarding
+  // CLI polling endpoint. The roadie CLI polls this every 2s during onboarding
   // to check if the user has completed the bot authorization flow.
   // Returns 404 if not ready, 200 with guild_id if the client has been registered.
   .route({
@@ -912,7 +912,7 @@ export const app = new Spiceflow({
   // clientId:clientSecret pair the CLI already uses for gateway-proxy REST
   // calls, sent as `Authorization: Bearer <clientId>:<clientSecret>`.
   // Runs @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI
-  // account ($0.00051/audio minute), so this only costs Kimaki, never the
+  // account ($0.00051/audio minute), so this only costs Roadie, never the
   // user. Chosen over the plain @cf/openai/whisper model after a manual
   // side-by-side comparison: turbo caught words the base model missed and
   // matched the reference OpenAI gpt-audio transcription of the same clip

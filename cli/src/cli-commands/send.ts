@@ -1,5 +1,5 @@
 // Terminal send command for creating Discord threads and scheduling prompts.
-// Designed to work in CI/headless environments with just KIMAKI_BOT_TOKEN.
+// Designed to work in CI/headless environments with just ROADIE_BOT_TOKEN.
 // The local SQLite database (channel_directories) is NOT required for the basic
 // flow: post message → create thread → remote bot picks it up. The local project
 // directory mapping is only needed for --send-at, --wait, and --cwd.
@@ -370,7 +370,7 @@ cli
               if (!appId) {
                 cliLogger.log('Missing app ID')
                 cliLogger.error(
-                  'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+                  'App ID is required to create channels. Use --app-id or run `roadie` first.',
                 )
                 process.exit(EXIT_NO_RESTART)
               }
@@ -575,7 +575,7 @@ cli
           // Prefix the prompt so it's clear who sent it (matches /queue format).
           // Use a newline between prefix and prompt so leading /command
           // detection can find the command on its own line.
-          const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
+          const prefixedPrompt = `${QUEUE_PREFIX}**roadie-cli:**\n${prompt}`
 
           if (threadTargetUser) {
             cliLogger.log(

@@ -24,7 +24,7 @@ if (!parentPort) {
 const workerLogger = createLogger(`${LogPrefix.WORKER}_${threadId}`)
 workerLogger.log('GenAI worker started')
 
-// Initialize Sentry in worker thread (inherits KIMAKI_SENTRY_DSN from parent)
+// Initialize Sentry in worker thread (inherits ROADIE_SENTRY_DSN from parent)
 initSentry()
 
 // Define sendError early so it can be used by global handlers

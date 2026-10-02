@@ -20,7 +20,7 @@ describe('analytics', () => {
   let tmpDir: string
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-analytics-'))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-analytics-'))
     setDataDir(tmpDir)
     _resetAnalyticsForTests()
   })
@@ -62,9 +62,9 @@ describe('analytics', () => {
     }).not.toThrow()
   })
 
-  it('KIMAKI_STRADA_ENABLED=0 keeps initAnalytics from throwing', () => {
-    const prev = process.env.KIMAKI_STRADA_ENABLED
-    process.env.KIMAKI_STRADA_ENABLED = '0'
+  it('ROADIE_STRADA_ENABLED=0 keeps initAnalytics from throwing', () => {
+    const prev = process.env.ROADIE_STRADA_ENABLED
+    process.env.ROADIE_STRADA_ENABLED = '0'
     try {
       initAnalytics()
       expect(() => {
@@ -72,9 +72,9 @@ describe('analytics', () => {
       }).not.toThrow()
     } finally {
       if (prev === undefined) {
-        delete process.env.KIMAKI_STRADA_ENABLED
+        delete process.env.ROADIE_STRADA_ENABLED
       } else {
-        process.env.KIMAKI_STRADA_ENABLED = prev
+        process.env.ROADIE_STRADA_ENABLED = prev
       }
     }
   })

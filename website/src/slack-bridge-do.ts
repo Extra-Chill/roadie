@@ -269,7 +269,7 @@ export class SlackBridgeDO extends DurableObject<Env> {
     if (!botUserId) {
       throw new Error('Slack auth.test missing user_id')
     }
-    const botUsername = authResult.user ?? 'kimaki'
+    const botUsername = authResult.user ?? 'roadie'
 
     let publicGatewayUrl = 'wss://slack-gateway.kimaki.dev/slack/gateway'
 

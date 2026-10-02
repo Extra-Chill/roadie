@@ -86,7 +86,7 @@ cli
 
       if (!botRow) {
         cliLogger.error(
-          'No bot credentials found. Run `kimaki` first to set up the bot.',
+          'No bot credentials found. Run `roadie` first to set up the bot.',
         )
         process.exit(EXIT_NO_RESTART)
       }

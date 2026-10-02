@@ -15,7 +15,7 @@ if (projectId && token) {
   initStrada({
     projectId,
     token,
-    service: 'kimaki-website',
+    service: 'roadie-website',
     environment: workerEnv.ENVIRONMENT || 'production',
   })
 }
@@ -35,5 +35,5 @@ export function reportWebsiteError(
 // OTel Tracer is structurally compatible with Spiceflow's tracer hook.
 export const websiteTracer: SpiceflowTracer | undefined =
   projectId && token
-    ? (trace.getTracer('kimaki-website') as unknown as SpiceflowTracer)
+    ? (trace.getTracer('roadie-website') as unknown as SpiceflowTracer)
     : undefined

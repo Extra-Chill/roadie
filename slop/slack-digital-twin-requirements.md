@@ -1,6 +1,6 @@
 # Slack Digital Twin - Implementation Requirements
 
-**Purpose**: Define what the slack-digital-twin mock library must implement to support testing Kimaki with the Discord-Slack Bridge.
+**Purpose**: Define what the slack-digital-twin mock library must implement to support testing Roadie with the Discord-Slack Bridge.
 
 ---
 

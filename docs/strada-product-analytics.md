@@ -1,14 +1,14 @@
 ---
-title: Strada product analytics for Kimaki
+title: Strada product analytics for Roadie
 description: >
-  How to query Kimaki install-level product analytics with the Strada CLI.
+  How to query Roadie install-level product analytics with the Strada CLI.
   Covers event schema, DAU/WAU/MAU, funnels, retention, completion rate,
   and breakdowns by bot mode, platform, and turn source.
 ---
 
-# Strada product analytics for Kimaki
+# Strada product analytics for Roadie
 
-Kimaki sends **anonymous install-level** product events to Strada (OTLP logs) with `@strada.sh/sdk`, which has no dependencies. `captureUncaughtErrors: false` keeps its process handlers out of the bot.
+Roadie sends **anonymous install-level** product events to Strada (OTLP logs) with `@strada.sh/sdk`, which has no dependencies. `captureUncaughtErrors: false` keeps its process handlers out of the bot.
 No Discord IDs, paths, prompts, or secrets. Metrics count **active installs**, not people.
 
 **Source of truth for emitters:** `cli/src/analytics.ts`
@@ -31,25 +31,25 @@ tokens_used    ◄── billed tokens at session.idle (abort + subagents too)
 
 | Project | Slug | When to use |
 |---|---|---|
-| Production | `kimaki` | Published CLI installs (default project id in `analytics.ts`) |
-| Local / dev | `kimaki-local` | Bot launched from this repo with `cli/.env` overrides |
+| Production | `roadie` | Published CLI installs (default project id in `analytics.ts`) |
+| Local / dev | `roadie-local` | Bot launched from this repo with `cli/.env` overrides |
 
 ```bash
-# prod (default for released kimaki)
-strada analytics events -p kimaki --since 7d
+# prod (default for released roadie)
+strada analytics events -p roadie --since 7d
 
 # local bot while developing
-strada analytics events -p kimaki-local --since 7d
+strada analytics events -p roadie-local --since 7d
 ```
 
-Override local ingest with `KIMAKI_STRADA_PROJECT_ID` / `KIMAKI_STRADA_TOKEN` / `KIMAKI_STRADA_ENVIRONMENT`.
+Override local ingest with `ROADIE_STRADA_PROJECT_ID` / `ROADIE_STRADA_TOKEN` / `ROADIE_STRADA_ENVIRONMENT`.
 
 **Disable analytics** (no events leave the machine):
 
 ```bash
-kimaki --no-analytics
+roadie --no-analytics
 # or
-KIMAKI_STRADA_ENABLED=0 kimaki
+ROADIE_STRADA_ENABLED=0 roadie
 ```
 
 ## Login and setup
@@ -59,17 +59,17 @@ strada login
 strada whoami
 strada orgs list
 strada projects list
-strada setup --org Personal -p kimaki   # optional folder default
+strada setup --org Personal -p roadie   # optional folder default
 ```
 
-Use `-p kimaki` or `-p kimaki-local` on every command if setup is not configured.
+Use `-p roadie` or `-p roadie-local` on every command if setup is not configured.
 Login must use the Google account that owns the **Personal** org (t.de).
 
 ## Event schema
 
 All product events use:
 
-- **ServiceName:** `kimaki-cli`
+- **ServiceName:** `roadie-cli`
 - **Body / event name:** `LogAttributes['event.name']`
 - **Install id:** `LogAttributes['custom.install_id']` (UUID in `{dataDir}/install-id`)
 
@@ -106,23 +106,23 @@ Per-event props:
 
 ```bash
 # top events
-strada analytics events -p kimaki --since 7d -n 20
+strada analytics events -p roadie --since 7d -n 20
 
 # active services
-strada services list -p kimaki --since 7d
+strada services list -p roadie --since 7d
 
 # website/server errors (same project when website secrets are set)
-strada issues list -p kimaki --since 24h --status all
+strada issues list -p roadie --since 24h --status all
 
 # ad-hoc SQL (always LIMIT; never filter ProjectId yourself)
-strada query "SELECT count() AS c FROM otel_logs WHERE Timestamp >= now() - INTERVAL 1 DAY LIMIT 1" -p kimaki
+strada query "SELECT count() AS c FROM otel_logs WHERE Timestamp >= now() - INTERVAL 1 DAY LIMIT 1" -p roadie
 ```
 
 Interactive browse: run bare `strada` for the TUI.
 
 ## Core queries
 
-Replace `-p kimaki` with `-p kimaki-local` when inspecting the dev bot.
+Replace `-p roadie` with `-p roadie-local` when inspecting the dev bot.
 
 ### Event volume
 
@@ -134,12 +134,12 @@ SELECT
   uniqExact(LogAttributes['custom.install_id']) AS installs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 GROUP BY event
 ORDER BY events DESC
 LIMIT 20
-" -p kimaki
+" -p roadie
 ```
 
 ### DAU / turns per day
@@ -158,13 +158,13 @@ SELECT
   round(turns / nullIf(dau, 0), 1) AS turns_per_install
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 14 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
   AND LogAttributes['custom.install_id'] != ''
 GROUP BY day
 ORDER BY day DESC
 LIMIT 14
-" -p kimaki
+" -p roadie
 ```
 
 ### DAU / WAU / MAU + stickiness
@@ -178,11 +178,11 @@ SELECT
   round(dau / nullIf(wau, 0), 3) AS dau_wau
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
   AND LogAttributes['custom.install_id'] != ''
 LIMIT 1
-" -p kimaki
+" -p roadie
 ```
 
 `dau_wau` near **1.0** means almost everyone active this week was also active today (small or sticky base). Near **0.14** is closer to uniform weekday spread with little overlap.
@@ -199,10 +199,10 @@ SELECT
   uniqExactIf(LogAttributes['custom.install_id'], LogAttributes['event.name'] = 'turn_completed') AS completed
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 LIMIT 1
-" -p kimaki
+" -p roadie
 ```
 
 ### Turn completion rate and duration
@@ -230,10 +230,10 @@ SELECT
   ), 1) AS p90_sec
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 7 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 LIMIT 1
-" -p kimaki
+" -p roadie
 ```
 
 Completion is intentionally **success-shaped**: only clean visible finishes. A low rate can mean aborts, crashes, or long in-flight turns, not only failures.
@@ -250,12 +250,12 @@ SELECT
   countIf(LogAttributes['event.name'] = 'turn_started') AS turns
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 GROUP BY bot_mode, platform, arch
 ORDER BY turns DESC
 LIMIT 20
-" -p kimaki
+" -p roadie
 ```
 
 ### Turn breakdown (source / input / queue / agent)
@@ -270,12 +270,12 @@ SELECT
   count() AS turns
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 7 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND LogAttributes['event.name'] = 'turn_started'
 GROUP BY source, input_kind, ingress_mode, custom_agent
 ORDER BY turns DESC
 LIMIT 30
-" -p kimaki
+" -p roadie
 ```
 
 ### Project registration sources
@@ -289,12 +289,12 @@ SELECT
   uniqExact(LogAttributes['custom.install_id']) AS installs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND LogAttributes['event.name'] = 'project_registered'
 GROUP BY project_kind, source
 ORDER BY events DESC
 LIMIT 20
-" -p kimaki
+" -p roadie
 ```
 
 ### Sessions and worktrees
@@ -308,12 +308,12 @@ SELECT
   uniqExact(LogAttributes['custom.install_id']) AS installs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND LogAttributes['event.name'] = 'session_created'
 GROUP BY source, has_worktree
 ORDER BY sessions DESC
 LIMIT 20
-" -p kimaki
+" -p roadie
 ```
 
 ### Power installs (top users by turns)
@@ -329,13 +329,13 @@ SELECT
   max(Timestamp) AS last_seen
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
   AND LogAttributes['custom.install_id'] != ''
 GROUP BY install_id
 ORDER BY turns DESC
 LIMIT 20
-" -p kimaki
+" -p roadie
 ```
 
 ### Total token usage
@@ -355,10 +355,10 @@ SELECT
   uniqExact(LogAttributes['custom.install_id']) AS installs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND LogAttributes['event.name'] = 'tokens_used'
 LIMIT 1
-" -p kimaki
+" -p roadie
 ```
 
 ### Token usage by model
@@ -375,12 +375,12 @@ SELECT
   count() AS runs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 30 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND LogAttributes['event.name'] = 'tokens_used'
 GROUP BY provider, model, is_subagent
 ORDER BY tokens DESC
 LIMIT 30
-" -p kimaki
+" -p roadie
 ```
 
 ## Retention
@@ -412,7 +412,7 @@ FROM (
       min(toDate(Timestamp)) AS cohort_day
     FROM otel_logs
     WHERE Timestamp >= now() - INTERVAL 60 DAY
-      AND ServiceName = 'kimaki-cli'
+      AND ServiceName = 'roadie-cli'
       AND mapContains(LogAttributes, 'event.name')
       AND LogAttributes['custom.install_id'] != ''
     GROUP BY install_id
@@ -423,7 +423,7 @@ FROM (
       toDate(Timestamp) AS day
     FROM otel_logs
     WHERE Timestamp >= now() - INTERVAL 60 DAY
-      AND ServiceName = 'kimaki-cli'
+      AND ServiceName = 'roadie-cli'
       AND mapContains(LogAttributes, 'event.name')
       AND LogAttributes['custom.install_id'] != ''
     GROUP BY install_id, day
@@ -433,7 +433,7 @@ FROM (
 GROUP BY cohort_day
 ORDER BY cohort_day DESC
 LIMIT 30
-" -p kimaki
+" -p roadie
 ```
 
 ### Weekly cohort stickiness
@@ -456,7 +456,7 @@ FROM (
     countIf(LogAttributes['event.name'] = 'turn_started') AS turns
   FROM otel_logs
   WHERE Timestamp >= now() - INTERVAL 60 DAY
-    AND ServiceName = 'kimaki-cli'
+    AND ServiceName = 'roadie-cli'
     AND mapContains(LogAttributes, 'event.name')
     AND LogAttributes['custom.install_id'] != ''
   GROUP BY install_id
@@ -464,7 +464,7 @@ FROM (
 GROUP BY cohort_week
 ORDER BY cohort_week DESC
 LIMIT 12
-" -p kimaki
+" -p roadie
 ```
 
 ### Rolling retained installs (active in last 7d among installs first seen 8-30d ago)
@@ -484,7 +484,7 @@ FROM (
     max(toDate(Timestamp)) AS last_day
   FROM otel_logs
   WHERE Timestamp >= now() - INTERVAL 60 DAY
-    AND ServiceName = 'kimaki-cli'
+    AND ServiceName = 'roadie-cli'
     AND mapContains(LogAttributes, 'event.name')
     AND LogAttributes['custom.install_id'] != ''
   GROUP BY install_id
@@ -492,7 +492,7 @@ FROM (
 WHERE first_day <= today() - 8
   AND first_day >= today() - 30
 LIMIT 1
-" -p kimaki
+" -p roadie
 ```
 
 ## Hourly activity (ops / load shape)
@@ -506,12 +506,12 @@ SELECT
   uniqExact(LogAttributes['custom.install_id']) AS installs
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 2 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 GROUP BY hour
 ORDER BY hour DESC
 LIMIT 48
-" -p kimaki
+" -p roadie
 ```
 
 ## Recent raw events (debug)
@@ -530,11 +530,11 @@ SELECT
   LogAttributes['custom.platform'] AS platform
 FROM otel_logs
 WHERE Timestamp >= now() - INTERVAL 1 DAY
-  AND ServiceName = 'kimaki-cli'
+  AND ServiceName = 'roadie-cli'
   AND mapContains(LogAttributes, 'event.name')
 ORDER BY Timestamp DESC
 LIMIT 50
-" -p kimaki
+" -p roadie
 ```
 
 ## SQL rules (Strada / Tinybird)

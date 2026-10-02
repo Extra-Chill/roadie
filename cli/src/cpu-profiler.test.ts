@@ -23,7 +23,7 @@ import {
 const tempDirs: string[] = []
 
 function makeDataDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-cpu-profiler-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-cpu-profiler-'))
   tempDirs.push(dir)
   setDataDir(dir)
   return dir

@@ -234,7 +234,7 @@ export async function handleQueueCommand({
     appId,
   })
 
-  // /queue explicitly uses kimaki local queue mode.
+  // /queue explicitly uses roadie local queue mode.
   const enqueueResult = await runtime.enqueueIncoming({
     prompt: message,
     queuedAction: btw.forceBtw ? 'btw' : undefined,
@@ -416,7 +416,7 @@ export async function handleQueueCommandCommand({
     appId,
   })
 
-  // /queue-command explicitly uses kimaki local queue mode.
+  // /queue-command explicitly uses roadie local queue mode.
   const enqueueResult = await runtime.enqueueIncoming({
     prompt: '',
     userId: command.user.id,

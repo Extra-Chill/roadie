@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
-  ensureKimakiCommandShim,
+  ensureRoadieCommandShim,
   getIncompatibleOpencodeVersionError,
   getSpawnCommandAndArgs,
   INCOMPATIBLE_OPENCODE_MAJOR_VERSION,
@@ -62,7 +62,7 @@ describe('getIncompatibleOpencodeVersionError', () => {
     const error = getIncompatibleOpencodeVersionError('2.0.0')
     expect(error).toBeInstanceOf(OpencodeIncompatibleVersionError)
     expect(error?.message).toMatchInlineSnapshot(
-      `"Kimaki is not compatible with OpenCode version 2.0.0. Install an OpenCode 1.x release."`,
+      `"Roadie is not compatible with OpenCode version 2.0.0. Install an OpenCode 1.x release."`,
     )
   })
 
@@ -256,11 +256,11 @@ describe('sanitizeShimExecArgv', () => {
   })
 })
 
-describe('ensureKimakiCommandShim', () => {
+describe('ensureRoadieCommandShim', () => {
   let tempDir: string
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-shim-test-'))
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-shim-test-'))
   })
 
   afterEach(() => {
@@ -268,7 +268,7 @@ describe('ensureKimakiCommandShim', () => {
   })
 
   test('generated posix shim does not contain a relative --env-file flag', () => {
-    const result = ensureKimakiCommandShim({
+    const result = ensureRoadieCommandShim({
       dataDir: tempDir,
       execPath: '/usr/bin/node',
       execArgv: [
@@ -282,7 +282,7 @@ describe('ensureKimakiCommandShim', () => {
       platform: 'linux',
     })
     expect(result).not.toBeInstanceOf(Error)
-    const shimContent = fs.readFileSync(path.join(tempDir, 'bin', 'kimaki'), 'utf8')
+    const shimContent = fs.readFileSync(path.join(tempDir, 'bin', 'roadie'), 'utf8')
     expect(shimContent).not.toContain('--env-file')
     expect(shimContent).toContain('/abs/tsx/preflight.cjs')
     expect(shimContent).toContain('/abs/cli/src/cli')

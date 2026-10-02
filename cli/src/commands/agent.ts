@@ -33,7 +33,7 @@ import {
   resolveTextChannel,
   resolveWorkingDirectory,
   resolveProjectDirectoryFromAutocomplete,
-  getKimakiMetadata,
+  getRoadieMetadata,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import {
@@ -738,7 +738,7 @@ async function handleQuickAgentWithPrompt({
     })
   } else if (channel.type === ChannelType.GuildText) {
     // In a channel: create a new thread and enqueue with the requested agent.
-    const metadata = await getKimakiMetadata(channel)
+    const metadata = await getRoadieMetadata(channel)
     const projectDirectory = metadata.projectDirectory
 
     if (!projectDirectory) {

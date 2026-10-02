@@ -2,7 +2,7 @@
 title: discord-slack-bridge Spec
 description: |
   Full specification for a discord.js-to-Slack adapter that lets any discord.js
-  bot (like kimaki) control a Slack workspace without code changes. The adapter
+  bot (like roadie) control a Slack workspace without code changes. The adapter
   translates Discord REST calls to Slack Web API calls and Slack webhook events
   to Discord Gateway dispatches.
 prompt: |
@@ -36,7 +36,7 @@ Slack webhook events to Discord Gateway dispatches.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  discord.js Client (kimaki, any bot)                     │
+│  discord.js Client (roadie, any bot)                     │
 │  rest.api = http://localhost:PORT/api/v10                │
 │  gateway  = ws://localhost:PORT/gateway                  │
 └──────────┬───────────────────────────┬───────────────────┘

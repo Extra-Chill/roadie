@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getDefaultKimakiDirectory } from '../channel-management.js'
+import { getDefaultRoadieDirectory } from '../channel-management.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, findRegisteredTextChannelForDirectory, formatProjectAlreadyRegisteredError, listGuildCategoryIds } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -99,7 +99,7 @@ cli
 
       if (!appId) {
         cliLogger.error(
-          'App ID is required to create channels. Use --app-id or run `kimaki` first.',
+          'App ID is required to create channels. Use --app-id or run `roadie` first.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -152,7 +152,7 @@ cli
     'List all registered projects with their Discord channels',
   )
   .option('--json', 'Output as JSON')
-  .option('--all', 'Include remote projects from other machines (scans Kimaki groups in Discord)')
+  .option('--all', 'Include remote projects from other machines (scans Roadie groups in Discord)')
   .option('-g, --guild <guildId>', 'Discord guild/server ID to scan (used with --all when no local projects exist)')
   .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
   .action(async (options) => {
@@ -221,14 +221,14 @@ cli
       )
     }
 
-    // When --all is passed, scan each guild's channels to find Kimaki category
+    // When --all is passed, scan each guild's channels to find Roadie category
     // text channels not in our local DB (projects from other machines).
     // Fail explicitly when prerequisites are missing so the user doesn't
     // confuse "scan never ran" with "no remote projects found".
     let remoteEntries: typeof enriched = []
     if (options.all) {
       if (!rest) {
-        cliLogger.error('Discord credentials are required to scan remote projects. Run `kimaki` first.')
+        cliLogger.error('Discord credentials are required to scan remote projects. Run `roadie` first.')
         process.exit(EXIT_NO_RESTART)
       }
       if (uniqueGuildIds.length === 0) {
@@ -249,23 +249,23 @@ cli
             parent_id: string | null
           }>
 
-          // Kimaki groups: name still starts with Kimaki, or this machine stored the id
+          // Roadie groups: name still starts with Roadie, or this machine stored the id
           // after a rename. Other machines' renamed groups cannot be found by name.
-          const kimakiCategoryIds = new Set(
+          const roadieCategoryIds = new Set(
             guildChannels
               .filter((ch) =>
                 ch.type === 4 &&
-                (/^kimaki(\s|$)/i.test(ch.name) || storedCategoryIds.has(ch.id)),
+                (/^roadie(\s|$)/i.test(ch.name) || storedCategoryIds.has(ch.id)),
               )
               .map((ch) => ch.id),
           )
 
-          // Find text channels (type 0) in Kimaki categories that are not in our local DB
+          // Find text channels (type 0) in Roadie categories that are not in our local DB
           for (const ch of guildChannels) {
             if (
               ch.type === 0 &&
               ch.parent_id &&
-              kimakiCategoryIds.has(ch.parent_id) &&
+              roadieCategoryIds.has(ch.parent_id) &&
               !localChannelIds.has(ch.id)
             ) {
               remoteEntries.push({
@@ -319,9 +319,9 @@ cli
     // Prune stale entries if requested
     let finalEntries = enrichedWithGuild
     if (options.prune) {
-      // Skip default kimaki directory tombstones — those are preserved
+      // Skip default roadie directory tombstones — those are preserved
       // intentionally so the tutorial channel isn't recreated after deletion.
-      const defaultDir = getDefaultKimakiDirectory()
+      const defaultDir = getDefaultRoadieDirectory()
       const stale = finalEntries.filter((ch) => ch.deleted && ch.isLocal && ch.directory !== defaultDir)
       if (stale.length === 0) {
         cliLogger.log('No stale channels to prune')
@@ -422,7 +422,7 @@ cli
 
     const botRow = await getBotTokenWithMode()
     if (!botRow) {
-      cliLogger.error('No bot configured. Run `kimaki` first.')
+      cliLogger.error('No bot configured. Run `roadie` first.')
       process.exit(EXIT_NO_RESTART)
     }
 
@@ -520,7 +520,7 @@ cli
 
     const botRow = await getBotTokenWithMode()
     if (!botRow) {
-      cliLogger.error('No bot configured. Run `kimaki` first.')
+      cliLogger.error('No bot configured. Run `roadie` first.')
       process.exit(EXIT_NO_RESTART)
     }
 

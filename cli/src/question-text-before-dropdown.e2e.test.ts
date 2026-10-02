@@ -1,5 +1,5 @@
 // E2e: text that precedes a question tool must post before the dropdown.
-// OpenCode can emit question.asked before the text part's time.end; Kimaki
+// OpenCode can emit question.asked before the text part's time.end; Roadie
 // must wait so the plan is not hidden under the question UI.
 
 import { describe, test, expect } from 'vitest'

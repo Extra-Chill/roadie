@@ -42,7 +42,7 @@ export type QueuedMessage = {
   command?: { name: string; arguments: string }
   // First-dispatch-only overrides — used when creating a new session.
   // Subsequent queue drains ignore these since the session already exists.
-  // Set by --agent/--model/--permission flags on kimaki send or slash commands.
+  // Set by --agent/--model/--permission flags on roadie send or slash commands.
   agent?: string
   model?: string
   // Thinking-level variant from `/xxx-agent variant:`.
@@ -54,7 +54,7 @@ export type QueuedMessage = {
   // Written to a temp config file after session creation so the plugin
   // can check per-session whether to scan tool outputs.
   injectionGuardPatterns?: string[]
-  // Parent OpenCode session ID from `kimaki send --parent-session`.
+  // Parent OpenCode session ID from `roadie send --parent-session`.
   // Applied once on first session create so the child system message can
   // expose how to message the parent when the user asks.
   parentSessionId?: string
@@ -91,17 +91,17 @@ export type ThreadRunState = {
   sessionId: string | undefined
 
   // Stable first author for this thread runtime. Used for session-stable
-  // system prompt examples like `kimaki send --user ...` so notifications keep
+  // system prompt examples like `roadie send --user ...` so notifications keep
   // working without changing the cached system prompt on every follow-up.
   sessionUsername: string | undefined
   sessionUserId: string | undefined
 
   // Parent OpenCode session that spawned this thread via
-  // `kimaki send --parent-session`. Set once on first ingress and reused for
+  // `roadie send --parent-session`. Set once on first ingress and reused for
   // the session-stable system prompt.
   parentSessionId: string | undefined
 
-  // FIFO queue of pending inputs waiting for kimaki-local dispatch.
+  // FIFO queue of pending inputs waiting for roadie-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
   // for explicit local-queue flows (for example /queue).
   // Changes: enqueueItem (append), dequeueItem (head removal),

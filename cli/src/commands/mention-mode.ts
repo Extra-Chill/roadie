@@ -10,7 +10,7 @@ import {
   type TextChannel,
 } from 'discord.js'
 import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
-import { getKimakiMetadata } from '../discord-utils.js'
+import { getRoadieMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const mentionModeLogger = createLogger(LogPrefix.CLI)
@@ -37,7 +37,7 @@ export async function handleToggleMentionModeCommand({
     return
   }
 
-  const metadata = await getKimakiMetadata(channel)
+  const metadata = await getRoadieMetadata(channel)
 
   if (!metadata.projectDirectory) {
     await command.reply({

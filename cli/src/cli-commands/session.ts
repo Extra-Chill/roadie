@@ -81,7 +81,7 @@ async function resolveSessionDirectoryFromDatabase({
   }
 
   return new Error(
-    `Session is not linked to a Kimaki thread in the local database: ${sessionId}`,
+    `Session is not linked to a Roadie thread in the local database: ${sessionId}`,
   )
 }
 
@@ -115,7 +115,7 @@ function formatTokenCount(count: number): string {
 cli
   .command(
     'session list',
-    'List all OpenCode sessions, marking which were started via Kimaki',
+    'List all OpenCode sessions, marking which were started via Roadie',
   )
   .option(
     '--project <path>',
@@ -146,7 +146,7 @@ cli
 
       if (projectDirectories.length === 0) {
         cliLogger.error(
-          'No registered project directories found. Add a project with `kimaki project add`.',
+          'No registered project directories found. Add a project with `roadie project add`.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -227,7 +227,7 @@ cli
         process.exit(options.active ? 1 : 0)
       }
 
-      // Look up which sessions were started via kimaki (have a thread mapping)
+      // Look up which sessions were started via roadie (have a thread mapping)
       const db = await getDb()
       const threadSessions = await db.query.thread_sessions.findMany({
         columns: { thread_id: true, session_id: true },
@@ -274,7 +274,7 @@ cli
             title: session.title || 'Untitled Session',
             directory: session.directory,
             updated: new Date(session.time.updated).toISOString(),
-            source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
+            source: sessionToThread.has(session.id) ? 'roadie' : 'opencode',
             threadId: sessionToThread.get(session.id) || null,
             status: entry.status,
             model: session.model?.id || null,
@@ -291,7 +291,7 @@ cli
         const session = entry.session
         const threadId = sessionToThread.get(session.id)
         const startSource = sessionStartSources.get(session.id)
-        const source = threadId ? '(kimaki)' : '(opencode)'
+        const source = threadId ? '(roadie)' : '(opencode)'
         const startedBy = startSource
           ? ` | started-by: ${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}${startSource.scheduled_task_id ? ` (#${startSource.scheduled_task_id})` : ''}`
           : ''
@@ -335,8 +335,8 @@ cli
     '--limit <n>',
     z.number().default(20).describe('Max sessions to show'),
   )
-  .example('kimaki session editors src/cli.ts')
-  .example('kimaki session editors src/cli.ts --json')
+  .example('roadie session editors src/cli.ts')
+  .example('roadie session editors src/cli.ts --json')
   .action(async (file, options, { console, process }) => {
     try {
       const cwd = process.cwd
@@ -420,8 +420,8 @@ cli
     '--tool-input-max-chars <n>',
     z.number().default(80).describe('Max characters for compact tool input'),
   )
-  .example('kimaki session read ses_xxx > ./tmp/session.md')
-  .example('kimaki session read ses_xxx --thinking --verbose')
+  .example('roadie session read ses_xxx > ./tmp/session.md')
+  .example('roadie session read ses_xxx --thinking --verbose')
   .action(async (sessionId, options) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
@@ -544,9 +544,9 @@ cli
   )
   .option('--limit <n>', 'Maximum matched sessions to return (default: 20)')
   .option('--json', 'Output as JSON')
-  .example('kimaki session search "auth timeout"')
-  .example('kimaki session search "auth timeout" --days 0')
-  .example('kimaki session search "auth timeout" --all')
+  .example('roadie session search "auth timeout"')
+  .example('roadie session search "auth timeout" --days 0')
+  .example('roadie session search "auth timeout" --all')
   .action(async (query, options) => {
     try {
       await initDatabase()
@@ -640,7 +640,7 @@ cli
       }
       if (existingDirectories.length === 0) {
         cliLogger.error(
-          'No searchable project directories found. Add a project with `kimaki project add`, or pass --project.',
+          'No searchable project directories found. Add a project with `roadie project add`, or pass --project.',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -808,7 +808,7 @@ cli
 cli
   .command(
     'session export-events-jsonl',
-    'Export persisted session events from SQLite to JSONL for debugging Kimaki runtime bugs',
+    'Export persisted session events from SQLite to JSONL for debugging Roadie runtime bugs',
   )
   .option(
     '--session <sessionId>',
@@ -816,7 +816,7 @@ cli
   )
   .option(
     '--out <file>',
-    'Output .jsonl path (useful for reproducing Kimaki issues in event-stream-state tests)',
+    'Output .jsonl path (useful for reproducing Roadie issues in event-stream-state tests)',
   )
   .action(async (options) => {
     const sessionId =
@@ -1066,7 +1066,7 @@ cli
   )
   .option('--session <sessionId>', 'OpenCode session ID')
   .option('--thread <threadId>', 'Discord thread ID')
-  .example("kimaki session title 'Fix queue draining' --session ses_xxx")
+  .example("roadie session title 'Fix queue draining' --session ses_xxx")
   .action(async (title, options) => {
     try {
       await initDatabase()

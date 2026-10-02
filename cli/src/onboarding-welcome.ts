@@ -1,5 +1,5 @@
-// Onboarding welcome message for the default kimaki channel.
-// Sends a message explaining what Kimaki is, then creates a thread from it
+// Onboarding welcome message for the default roadie channel.
+// Sends a message explaining what Roadie is, then creates a thread from it
 // so the user can respond there to start a tutorial session.
 // Sends a smaller follow-up message inside the thread with the installer
 // mention so the notification is less noisy.
@@ -12,7 +12,7 @@ import { TUTORIAL_WELCOME_TEXT } from './onboarding-tutorial.js'
 const logger = createLogger(LogPrefix.CHANNEL)
 
 function buildWelcomeText(): string {
-  return `**Kimaki** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
+  return `**Roadie** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
 **What you can do:**
 - Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
 - Collaborate with teammates in the same session
@@ -35,7 +35,7 @@ export async function sendWelcomeMessage({
   try {
     const message = await channel.send(buildWelcomeText())
     const thread = await message.startThread({
-      name: 'Kimaki tutorial',
+      name: 'Roadie tutorial',
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: 'Onboarding tutorial thread',
     })

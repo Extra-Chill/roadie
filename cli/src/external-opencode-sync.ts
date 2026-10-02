@@ -232,7 +232,7 @@ function getExternalUserMirrorText({
 // Pure derivation: is the latest user turn from Discord?
 // Checks the newest user message with renderable text for a <discord-user />
 // synthetic part. If present, the session is currently driven from Discord
-// (kimaki manages it) and external sync should skip it. If absent (CLI/TUI),
+// (roadie manages it) and external sync should skip it. If absent (CLI/TUI),
 // external sync should mirror it — this naturally handles the "reclaim" case
 // (external → discord → external) without any DB source toggling.
 export function isLatestUserTurnFromDiscord({
@@ -361,10 +361,10 @@ async function ensureExternalSessionThread({
   const existingThreadId = await getThreadIdBySessionId(sessionId)
   if (existingThreadId) {
     // Caller already verified via isLatestUserTurnFromDiscord that this
-    // session should be synced. If the thread was kimaki-owned, flip it
+    // session should be synced. If the thread was roadie-owned, flip it
     // to external_poll so typing and future polls work naturally.
     const existingSource = await getThreadSessionSource(existingThreadId)
-    if (existingSource === 'kimaki') {
+    if (existingSource === 'roadie') {
       await upsertThreadSession({
         threadId: existingThreadId,
         sessionId,
@@ -549,7 +549,7 @@ async function syncSessionToThread({
   const messages = messagesResponse.data || []
 
   // Pure derivation from opencode events: if the latest user turn has
-  // <discord-user /> metadata, kimaki's thread runtime owns this session.
+  // <discord-user /> metadata, roadie's thread runtime owns this session.
   // Skip external sync entirely. When the user resumes from CLI/TUI the
   // latest user turn will lack the tag, so sync picks it up naturally.
   if (isLatestUserTurnFromDiscord({ messages })) {
@@ -622,7 +622,7 @@ async function pulseTypingForBusySessions({
     if (!threadId) {
       continue
     }
-    // Skip sessions already managed by the runtime (source='kimaki')
+    // Skip sessions already managed by the runtime (source='roadie')
     const source = await getThreadSessionSource(threadId)
     if (source && source !== 'external_poll') {
       continue
@@ -811,8 +811,8 @@ export function startExternalOpencodeSessionSync({
   discordClient: Client
 }): void {
   if (
-    process.env.KIMAKI_VITEST &&
-    process.env.KIMAKI_ENABLE_EXTERNAL_OPENCODE_SYNC !== '1'
+    process.env.ROADIE_VITEST &&
+    process.env.ROADIE_ENABLE_EXTERNAL_OPENCODE_SYNC !== '1'
   ) {
     return
   }

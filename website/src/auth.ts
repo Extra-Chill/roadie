@@ -72,7 +72,7 @@ function getGuildIdFromRequestUrl({
 // extracts guild_id from the Discord callback URL before better-auth
 // processes it, and injects it as a header so hooks.after has a
 // synchronous, in-request fallback (no KV eventual consistency risk).
-export const GUILD_ID_HEADER = 'x-kimaki-discord-guild-id'
+export const GUILD_ID_HEADER = 'x-roadie-discord-guild-id'
 
 // KV key for storing onboarding errors so the CLI can show them
 // instead of polling forever.
@@ -172,16 +172,16 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
         }
 
         const state = await getOAuthState()
-        const kimakiClientId = state?.clientId as string | undefined
-        const kimakiClientSecret = state?.clientSecret as string | undefined
-        if (!kimakiClientId || !kimakiClientSecret) {
+        const roadieClientId = state?.clientId as string | undefined
+        const roadieClientSecret = state?.clientSecret as string | undefined
+        if (!roadieClientId || !roadieClientSecret) {
           // Not a gateway onboarding flow (regular login), skip silently.
           return
         }
 
         if (!guildId) {
           return failOnboarding(
-            kimakiClientId,
+            roadieClientId,
             'Discord did not return guild_id in the callback. Try authorizing again and make sure to select a server.',
           )
         }
@@ -191,15 +191,15 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
         const userId = ctx.context.newSession?.user?.id
         if (!userId) {
           return failOnboarding(
-            kimakiClientId,
+            roadieClientId,
             'User session was not created during authorization. Try again.',
           )
         }
 
         const upsertResult = await upsertGatewayClientAndRefreshKv({
           env,
-          clientId: kimakiClientId,
-          secret: kimakiClientSecret,
+          clientId: roadieClientId,
+          secret: roadieClientSecret,
           guildId,
           platform: 'discord',
           userId,
@@ -211,14 +211,14 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
             route: 'discord-oauth-upsert',
           })
           return failOnboarding(
-            kimakiClientId,
-            'Kimaki could not save the bot installation. Please try again.',
+            roadieClientId,
+            'Roadie could not save the bot installation. Please try again.',
           )
         }
 
         // If the CLI passed a custom callback URL (--gateway-callback-url),
         // redirect there with ?guild_id instead of showing /install-success.
-        // The kimakiCallbackUrl was stored in additionalData during /discord-install.
+        // The roadieCallbackUrl was stored in additionalData during /discord-install.
         // Only https: (and http: for localhost dev) are allowed to prevent
         // open redirect / javascript: URI attacks. Invalid URLs fall through
         // to the default /install-success page.
@@ -228,10 +228,10 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
         // { headers, response: <return> }. If we returned { response: Response },
         // it would become { response: { response: Response } } and toResponse()
         // would serialize it as JSON instead of issuing a redirect.
-        const parsedCallback = parseAllowedCallbackUrl(state?.kimakiCallbackUrl as string | undefined)
+        const parsedCallback = parseAllowedCallbackUrl(state?.roadieCallbackUrl as string | undefined)
         if (parsedCallback) {
           parsedCallback.searchParams.set('guild_id', guildId)
-          parsedCallback.searchParams.set('client_id', kimakiClientId)
+          parsedCallback.searchParams.set('client_id', roadieClientId)
           // Use new Response() instead of Response.redirect() because redirect()
           // creates an immutable response. better-call's toResponse() calls
           // data.headers.set() to merge headers, which throws on immutable

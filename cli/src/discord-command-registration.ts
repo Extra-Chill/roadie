@@ -241,13 +241,13 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
-        truncateCommandDescription('Create Discord channels for a project. Use `npx kimaki project add` for unlisted projects'),
+        truncateCommandDescription('Create Discord channels for a project. Use `npx roadie project add` for unlisted projects'),
       )
       .addStringOption((option) => {
         option
           .setName('project')
           .setDescription(
-            truncateCommandDescription('Recent OpenCode projects. Use `npx kimaki project add` if not listed'),
+            truncateCommandDescription('Recent OpenCode projects. Use `npx roadie project add` if not listed'),
           )
           .setRequired(true)
           .setAutocomplete(true)
@@ -468,7 +468,7 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription(
-        truncateCommandDescription('Upgrade kimaki to the latest version and restart the bot'),
+        truncateCommandDescription('Upgrade roadie to the latest version and restart the bot'),
       )
       .setDMPermission(false)
       .toJSON(),

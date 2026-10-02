@@ -2,7 +2,7 @@
 
 TypeScript SDK for Fly Machines REST and GraphQL APIs.
 
-This package is maintained in the `fly-admin` folder of the kimaki monorepo:
+This package is maintained in the `fly-admin` folder of the roadie monorepo:
 https://github.com/remorses/kimaki/tree/main/fly-admin
 
 ## Install

@@ -8,10 +8,10 @@ import { tryWorkspaceCreate } from './commands/new-worktree.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { chooseLockPort } from './test-utils.js'
 import { execAsync, getManagedWorktreeDirectory } from './worktrees.js'
-import { KIMAKI_WORKTREE_ADAPTER_TYPE } from './git-worktree-core.js'
+import { ROADIE_WORKTREE_ADAPTER_TYPE } from './git-worktree-core.js'
 
-const WORKTREE_BRANCH = 'opencode/kimaki-clone-isolation'
-const REJECTED_WORKTREE_BRANCH = 'opencode/kimaki-rejected-clone-isolation'
+const WORKTREE_BRANCH = 'opencode/roadie-clone-isolation'
+const REJECTED_WORKTREE_BRANCH = 'opencode/roadie-rejected-clone-isolation'
 
 async function git({ cwd, args }: { cwd: string; args: string[] }) {
   const result = await execAsync(`git ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
@@ -33,16 +33,16 @@ beforeAll(async () => {
   requestedClone = path.join(sandbox, 'holocron')
   otherClone = path.join(sandbox, 'fumabase')
 
-  process.env['KIMAKI_LOCK_PORT'] = String(chooseLockPort({ key: 'worktree-clone-isolation' }))
+  process.env['ROADIE_LOCK_PORT'] = String(chooseLockPort({ key: 'worktree-clone-isolation' }))
   setDataDir(path.join(sandbox, 'data'))
 
   await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', remote] })
   await git({ cwd: sandbox, args: ['clone', remote, otherClone] })
   await git({
     cwd: otherClone,
-    args: ['config', 'user.email', 'kimaki-tests@example.com'],
+    args: ['config', 'user.email', 'roadie-tests@example.com'],
   })
-  await git({ cwd: otherClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+  await git({ cwd: otherClone, args: ['config', 'user.name', 'Roadie Tests'] })
   fs.writeFileSync(path.join(otherClone, 'preview.txt'), 'old preview\n')
   await git({ cwd: otherClone, args: ['add', 'preview.txt'] })
   await git({ cwd: otherClone, args: ['commit', '-m', 'old preview'] })
@@ -52,9 +52,9 @@ beforeAll(async () => {
   await git({ cwd: sandbox, args: ['clone', remote, requestedClone] })
   await git({
     cwd: requestedClone,
-    args: ['config', 'user.email', 'kimaki-tests@example.com'],
+    args: ['config', 'user.email', 'roadie-tests@example.com'],
   })
-  await git({ cwd: requestedClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+  await git({ cwd: requestedClone, args: ['config', 'user.name', 'Roadie Tests'] })
   fs.mkdirSync(path.join(requestedClone, 'vite'))
   fs.writeFileSync(path.join(requestedClone, 'vite', 'README.md'), 'new layout\n')
   await git({ cwd: requestedClone, args: ['add', 'vite/README.md'] })
@@ -63,7 +63,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopOpencodeServer()
-  delete process.env['KIMAKI_LOCK_PORT']
+  delete process.env['ROADIE_LOCK_PORT']
   if (sandbox) fs.rmSync(sandbox, { recursive: true, force: true })
 })
 
@@ -94,7 +94,7 @@ test('creates a workspace from the exact requested clone and commit', async () =
 
   const response = await requestedClient.experimental.workspace.create({
     directory: requestedClone,
-    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
+    type: ROADIE_WORKTREE_ADAPTER_TYPE,
     branch: WORKTREE_BRANCH,
     extra: {
       projectDirectory: requestedClone,

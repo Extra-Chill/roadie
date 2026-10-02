@@ -159,7 +159,7 @@ const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
 
 /**
  * Shared ingress step for every Discord message that becomes a prompt: user
- * messages, `kimaki send --thread` injections and `kimaki send --channel`
+ * messages, `roadie send --thread` injections and `roadie send --channel`
  * starter messages. Strips the queue suffix, appends embeds and text
  * attachments, and picks the ingress mode.
  *
@@ -395,7 +395,7 @@ export async function preprocessExistingThreadMessage({
     message,
     text: messageContent,
     forceQueue: voiceResult?.queueMessage,
-    // The kimaki marker embed of CLI injections is metadata, not prompt text.
+    // The roadie marker embed of CLI injections is metadata, not prompt text.
     includeExtras: !isCliInjected,
   })
   if (shouldSkipEmptyPrompt({ message, ...resolved, hasVoiceAttachment })) {

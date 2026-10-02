@@ -104,7 +104,7 @@ describe('worktrees', () => {
     const submoduleRemote = path.join(sandbox, 'errore-remote.git')
     const submoduleLocal = path.join(sandbox, 'errore-local')
     const parentRepo = path.join(sandbox, 'parent')
-    const worktreeName = `opencode/kimaki-local-submodule-${Date.now()}`
+    const worktreeName = `opencode/roadie-local-submodule-${Date.now()}`
 
     let createdWorktreeDirectory = ''
 
@@ -116,11 +116,11 @@ describe('worktrees', () => {
 
       await git({
         cwd: submoduleLocal,
-        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+        args: ['config', 'user.email', 'roadie-tests@example.com'],
       })
       await git({
         cwd: submoduleLocal,
-        args: ['config', 'user.name', 'Kimaki Tests'],
+        args: ['config', 'user.name', 'Roadie Tests'],
       })
 
       fs.writeFileSync(path.join(submoduleLocal, 'README.md'), 'v1\n', 'utf-8')
@@ -131,11 +131,11 @@ describe('worktrees', () => {
       await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
       await git({
         cwd: parentRepo,
-        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+        args: ['config', 'user.email', 'roadie-tests@example.com'],
       })
       await git({
         cwd: parentRepo,
-        args: ['config', 'user.name', 'Kimaki Tests'],
+        args: ['config', 'user.name', 'Roadie Tests'],
       })
       await git({
         cwd: parentRepo,
@@ -242,7 +242,7 @@ describe('worktrees', () => {
     const sandbox = createTestRoot()
     const parentRemote = path.join(sandbox, 'parent-remote.git')
     const parentLocal = path.join(sandbox, 'parent-local')
-    const worktreeName = `opencode/kimaki-local-head-${Date.now()}`
+    const worktreeName = `opencode/roadie-local-head-${Date.now()}`
 
     let createdWorktreeDirectory = ''
 
@@ -252,11 +252,11 @@ describe('worktrees', () => {
 
       await git({
         cwd: parentLocal,
-        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+        args: ['config', 'user.email', 'roadie-tests@example.com'],
       })
       await git({
         cwd: parentLocal,
-        args: ['config', 'user.name', 'Kimaki Tests'],
+        args: ['config', 'user.name', 'Roadie Tests'],
       })
 
       fs.writeFileSync(path.join(parentLocal, 'README.md'), 'v1\n', 'utf-8')
@@ -324,21 +324,21 @@ describe('worktrees', () => {
     const submoduleRemote = path.join(sandbox, 'missing-remote.git')
     const submoduleSource = path.join(sandbox, 'submodule-source')
     const parentRepo = path.join(sandbox, 'parent')
-    const worktreeName = `opencode/kimaki-missing-submodule-${Date.now()}`
+    const worktreeName = `opencode/roadie-missing-submodule-${Date.now()}`
 
     try {
       await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', submoduleRemote] })
       await git({ cwd: sandbox, args: ['clone', submoduleRemote, submoduleSource] })
-      await git({ cwd: submoduleSource, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: submoduleSource, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(submoduleSource, 'README.md'), 'submodule\n')
       await git({ cwd: submoduleSource, args: ['add', 'README.md'] })
       await git({ cwd: submoduleSource, args: ['commit', '-m', 'submodule'] })
       await git({ cwd: submoduleSource, args: ['push', 'origin', 'HEAD:main'] })
 
       await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
       await git({ cwd: parentRepo, args: ['add', 'README.md'] })
       await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
@@ -395,12 +395,12 @@ describe('worktrees', () => {
     const sandbox = createTestRoot()
     const parentRepo = path.join(sandbox, 'parent')
     const worktreeDirectory = path.join(sandbox, 'worktree')
-    const branchName = 'opencode/kimaki-removed-branch'
+    const branchName = 'opencode/roadie-removed-branch'
 
     try {
       await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
       await git({ cwd: parentRepo, args: ['add', 'README.md'] })
       await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
@@ -430,21 +430,21 @@ describe('worktrees', () => {
     const requestedClone = path.join(sandbox, 'requested')
     const otherClone = path.join(sandbox, 'other')
     const worktreeDirectory = path.join(sandbox, 'wrong-worktree')
-    const branchName = 'opencode/kimaki-wrong-clone'
+    const branchName = 'opencode/roadie-wrong-clone'
 
     try {
       await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', remote] })
       await git({ cwd: sandbox, args: ['clone', remote, otherClone] })
-      await git({ cwd: otherClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: otherClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: otherClone, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: otherClone, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(otherClone, 'README.md'), 'old\n')
       await git({ cwd: otherClone, args: ['add', 'README.md'] })
       await git({ cwd: otherClone, args: ['commit', '-m', 'old'] })
       await git({ cwd: otherClone, args: ['push', 'origin', 'HEAD:main'] })
 
       await git({ cwd: sandbox, args: ['clone', remote, requestedClone] })
-      await git({ cwd: requestedClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: requestedClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: requestedClone, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: requestedClone, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(requestedClone, 'requested.txt'), 'new\n')
       await git({ cwd: requestedClone, args: ['add', 'requested.txt'] })
       await git({ cwd: requestedClone, args: ['commit', '-m', 'requested'] })
@@ -505,8 +505,8 @@ describe('worktrees', () => {
     try {
       fs.mkdirSync(parentRepo, { recursive: true })
       await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
 
       fs.writeFileSync(path.join(parentRepo, 'README.md'), 'v1\n', 'utf-8')
       await git({ cwd: parentRepo, args: ['add', 'README.md'] })
@@ -608,8 +608,8 @@ describe('worktrees', () => {
     try {
       fs.mkdirSync(parentRepo, { recursive: true })
       await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
       await git({
         cwd: parentRepo,
         args: ['config', 'core.hooksPath', path.join(parentRepo, '.git', 'hooks')],
@@ -659,8 +659,8 @@ describe('worktrees', () => {
     try {
       fs.mkdirSync(parentRepo, { recursive: true })
       await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
 
       fs.writeFileSync(path.join(parentRepo, 'README.md'), 'base\n', 'utf-8')
       await git({ cwd: parentRepo, args: ['add', 'README.md'] })
@@ -740,8 +740,8 @@ describe('worktrees', () => {
     try {
       fs.mkdirSync(parentRepo, { recursive: true })
       await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
-      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'roadie-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Roadie Tests'] })
       fs.writeFileSync(path.join(parentRepo, 'conflict.txt'), 'base\n', 'utf-8')
       await git({ cwd: parentRepo, args: ['add', 'conflict.txt'] })
       await git({ cwd: parentRepo, args: ['commit', '-m', 'init'] })
@@ -830,24 +830,24 @@ describe('worktrees', () => {
   test('formatWorktreeName keeps user-provided slugs verbatim', () => {
     expect(
       formatWorktreeName('Configurable sidebar width by component'),
-    ).toMatchInlineSnapshot(`"opencode/kimaki-configurable-sidebar-width-by-component"`)
-    expect(formatWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
+    ).toMatchInlineSnapshot(`"opencode/roadie-configurable-sidebar-width-by-component"`)
+    expect(formatWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/roadie-my-feature"`)
   })
 
   test('formatAutoWorktreeName compresses long auto-derived slugs', () => {
     expect(
       formatAutoWorktreeName('Configurable sidebar width by component'),
-    ).toMatchInlineSnapshot(`"opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt"`)
-    expect(formatAutoWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/kimaki-my-feature"`)
+    ).toMatchInlineSnapshot(`"opencode/roadie-cnfgrbl-sdbr-wdth-by-cmpnnt"`)
+    expect(formatAutoWorktreeName('my-feature')).toMatchInlineSnapshot(`"opencode/roadie-my-feature"`)
   })
 
-  test('getManagedWorktreeDirectory writes under kimaki data dir and strips prefix', () => {
+  test('getManagedWorktreeDirectory writes under roadie data dir and strips prefix', () => {
     const sandbox = createTestRoot()
     try {
       setDataDir(sandbox)
       const dir = getManagedWorktreeDirectory({
         directory: '/Users/test/projects/my-app',
-        name: 'opencode/kimaki-cnfgrbl-sdbr-wdth-by-cmpnnt',
+        name: 'opencode/roadie-cnfgrbl-sdbr-wdth-by-cmpnnt',
       })
       // Must sit inside <dataDir>/worktrees/<8hash>/<basename>
       const rel = path.relative(sandbox, dir)
@@ -937,11 +937,11 @@ describe('worktrees', () => {
       await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
       await git({
         cwd: projectDirectory,
-        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+        args: ['config', 'user.email', 'roadie-tests@example.com'],
       })
       await git({
         cwd: projectDirectory,
-        args: ['config', 'user.name', 'Kimaki Tests'],
+        args: ['config', 'user.name', 'Roadie Tests'],
       })
       fs.writeFileSync(
         path.join(projectDirectory, 'README.md'),
@@ -1013,9 +1013,9 @@ describe('parseGitWorktreeListPorcelain', () => {
       'HEAD abc123',
       'branch refs/heads/main',
       '',
-      'worktree /Users/me/.local/share/opencode/worktree/hash/opencode-kimaki-feature',
+      'worktree /Users/me/.local/share/opencode/worktree/hash/opencode-roadie-feature',
       'HEAD def456',
-      'branch refs/heads/opencode/kimaki-feature',
+      'branch refs/heads/opencode/roadie-feature',
       '',
       'worktree /Users/me/project-manual-wt',
       'HEAD 789abc',
@@ -1026,9 +1026,9 @@ describe('parseGitWorktreeListPorcelain', () => {
     expect(parseGitWorktreeListPorcelain(output)).toMatchInlineSnapshot(`
       [
         {
-          "branch": "opencode/kimaki-feature",
+          "branch": "opencode/roadie-feature",
           "detached": false,
-          "directory": "/Users/me/.local/share/opencode/worktree/hash/opencode-kimaki-feature",
+          "directory": "/Users/me/.local/share/opencode/worktree/hash/opencode-roadie-feature",
           "head": "def456",
           "locked": false,
           "prunable": false,

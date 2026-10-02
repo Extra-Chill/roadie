@@ -17,8 +17,8 @@ read the matching doc **before** starting these tasks. they hold the full proced
 | task                                                                               | read first                                |
 | ---------------------------------------------------------------------------------- | ----------------------------------------- |
 | gateway-proxy, website onboarding, `gateway_clients`, `--gateway`, bot credentials  | `docs/gateway-architecture.md`            |
-| publish, release notes, #changelog post, website deploy, kimaki-demo deploy         | `docs/release-process.md`                 |
-| logs, session event jsonl, jq, heap snapshots, cpu profiling, `~/.kimaki/bin` shim  | `docs/debugging-kimaki.md`                |
+| publish, release notes, #changelog post, website deploy, roadie-demo deploy         | `docs/release-process.md`                 |
+| logs, session event jsonl, jq, heap snapshots, cpu profiling, `~/.roadie/bin` shim  | `docs/debugging-roadie.md`                |
 | editing `discord-slack-bridge/` (Slack API links, ID encoding, KV auth cache)       | `discord-slack-bridge/AGENTS.md`          |
 | Strada events, DAU/WAU/MAU, funnels, retention SQL                                  | `docs/strada-product-analytics.md`        |
 | event sourcing patterns and examples                                                | `docs/event-sourcing-for-application-state.md` |
@@ -31,7 +31,7 @@ cli/ (bot + CLI, local SQLite) ──REST+WS (clientId:secret)──▶ gateway-
    └─ polls /api/onboarding/status ──▶ website/ (CF Worker) ──▶ shared Postgres (db/, gateway_clients)
 ```
 
-- `cli/`: TypeScript CLI + Discord bot. `src/cli.ts` main CLI and onboarding, `src/discord-bot.ts` event loop and session routing, SQLite at `~/.kimaki/discord-sessions.db`.
+- `cli/`: TypeScript CLI + Discord bot. `src/cli.ts` main CLI and onboarding, `src/discord-bot.ts` event loop and session routing, SQLite at `~/.roadie/discord-sessions.db`.
 - `gateway-proxy/`: multi-tenant Discord Gateway + REST proxy. one shared bot for all users.
 - `website/`: https://kimaki.dev, OAuth callback and onboarding status routes.
 - `db/`: shared Postgres schema (`db/schema.prisma`).
@@ -74,21 +74,21 @@ if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 
 # restarting the discord bot
 
-ONLY restart the discord bot if the user explicitly asks for it. to restart it with new code, find the PID (for example `ps aux | grep kimaki`) and run `kill -SIGUSR2 <PID>`. the bot waits 1000ms and restarts itself with the same arguments. `SIGUSR1` writes a heap snapshot instead (see `docs/debugging-kimaki.md`).
+ONLY restart the discord bot if the user explicitly asks for it. to restart it with new code, find the PID (for example `ps aux | grep roadie`) and run `kill -SIGUSR2 <PID>`. the bot waits 1000ms and restarts itself with the same arguments. `SIGUSR1` writes a heap snapshot instead (see `docs/debugging-roadie.md`).
 
-## running parallel kimaki processes
+## running parallel roadie processes
 
-if you need to run another kimaki process while one is already running (for example testing the npm-installed kimaki), ALWAYS set a different `KIMAKI_LOCK_PORT` for the extra process. otherwise the new process can take over the lock port, stop the main kimaki process, and kill active sessions. use a free port and a separate data dir:
+if you need to run another roadie process while one is already running (for example testing the npm-installed roadie), ALWAYS set a different `ROADIE_LOCK_PORT` for the extra process. otherwise the new process can take over the lock port, stop the main roadie process, and kill active sessions. use a free port and a separate data dir:
 
 ```bash
-KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/.kimaki-test
+ROADIE_LOCK_PORT=31001 npx -y roadie@latest --data-dir ~/.roadie-test
 ```
 
-KIMAKI_LOCK_PORT is required only for the root kimaki command, which starts the bot. subcommands don't need it.
+ROADIE_LOCK_PORT is required only for the root roadie command, which starts the bot. subcommands don't need it.
 
 ## sqlite
 
-sqlite preserves state between runs. the database must never have breaking changes: new kimaki versions must keep working with sqlite databases created by older versions. if a change would break this, ask the user whether it is ok to add a startup migration so users with existing dbs are not broken.
+sqlite preserves state between runs. the database must never have breaking changes: new roadie versions must keep working with sqlite databases created by older versions. if a change would break this, ask the user whether it is ok to add a startup migration so users with existing dbs are not broken.
 
 prefer never deleting or adding fields. `cli/src/schema.sql` (generated) initializes and updates the schema for users.
 
@@ -129,11 +129,11 @@ Prisma still belongs to the separate `db/` Postgres package and some test-suppor
 
 ## publishing
 
-before any publish, read `docs/release-process.md`. it covers `pnpm sync-skills` first, the #changelog notification via sigillo with the demo bot token, the website production deploy, and kimaki-demo deploys.
+before any publish, read `docs/release-process.md`. it covers `pnpm sync-skills` first, the #changelog notification via sigillo with the demo bot token, the website production deploy, and roadie-demo deploys.
 
 ## github issues
 
-never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
+never suggest installing roadie from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
 the user-facing bug report workflow (export jsonl, share evidence in a gist, issue vs PR) lives in `website/src/docs/docs/guides/report-bugs.mdx` and at https://kimaki.dev/docs/guides/report-bugs. keep that page in sync when these debug commands change.
 
@@ -141,17 +141,17 @@ the user-facing bug report workflow (export jsonl, share evidence in a gist, iss
 
 submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
 
-**never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
+**never rewrite or force-push a submodule branch in a way that drops commits roadie still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
 
 workflow when changing a submodule:
 
 1. commit and **push** the submodule branch first so GitHub has the objects
-2. only then bump the gitlink in kimaki (`git add gateway-proxy` etc.) and commit that pointer update
+2. only then bump the gitlink in roadie (`git add gateway-proxy` etc.) and commit that pointer update
 3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/remorses/gateway-proxy/commits/<sha> --jq .sha` (must not 422)
 
 when pulling submodules and they jump to a new commit, commit that pointer update right away before other work. otherwise critique diffs later include the noisy submodule jump along with the real changes.
 
-if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" kimaki by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
+if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" roadie by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
 
 ## errore
 
@@ -163,41 +163,41 @@ this project uses goke (not cac) for CLI parsing. goke auto-infers option types 
 
 ## logging
 
-always use logger instead of console so cli logs look uniform, with short log prefixes. logs go to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`), reset on every bot startup. event jsonl env vars, jq recipes, and profiling: `docs/debugging-kimaki.md`.
+always use logger instead of console so cli logs look uniform, with short log prefixes. logs go to `<dataDir>/roadie.log` (default `~/.roadie/roadie.log`), reset on every bot startup. event jsonl env vars, jq recipes, and profiling: `docs/debugging-roadie.md`.
 
 ## product analytics (Strada)
 
-anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Kimaki token usage can be summed.
+anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Roadie token usage can be summed.
 
-- prod project slug: `kimaki`
-- local/dev bot (this repo `cli/.env`): `kimaki-local`
-- disable: `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`
+- prod project slug: `roadie`
+- local/dev bot (this repo `cli/.env`): `roadie-local`
+- disable: `roadie --no-analytics` or `ROADIE_STRADA_ENABLED=0`
 - query with `strada` CLI; login as the org owner (t.de Google account)
 
 full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: `docs/strada-product-analytics.md`.
 
 ## opencode plugin and env vars
 
-the opencode plugin (`cli/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. `config.ts` state (like `getDataDir()`) is not available there.
+the opencode plugin (`cli/src/roadie-opencode-plugin.ts`) runs inside the **opencode server process**, not the roadie bot process. `config.ts` state (like `getDataDir()`) is not available there.
 
-**CRITICAL: never export utility functions from `kimaki-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. an exported helper like `condenseMemoryMd(content: string)` gets called with a PluginInput object instead of a string and crashes. only export plugin entrypoints; move utilities to separate files (e.g. `condense-memory.ts`) and import them. structure plugins as many separate small plugins; every export is a different plugin.
+**CRITICAL: never export utility functions from `roadie-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. an exported helper like `condenseMemoryMd(content: string)` gets called with a PluginInput object instead of a string and crashes. only export plugin entrypoints; move utilities to separate files (e.g. `condense-memory.ts`) and import them. structure plugins as many separate small plugins; every export is a different plugin.
 
-to pass bot-process state to the plugin, set `KIMAKI_*` env vars in `opencode.ts` when spawning the server and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin. current env vars:
+to pass bot-process state to the plugin, set `ROADIE_*` env vars in `opencode.ts` when spawning the server and read `process.env.ROADIE_*` in the plugin. never import config.ts getters in the plugin. current env vars:
 
-- `KIMAKI_DATA_DIR`: data directory path
-- `KIMAKI_LOCK_PORT`: lock server port for bot communication
+- `ROADIE_DATA_DIR`: data directory path
+- `ROADIE_LOCK_PORT`: lock server port for bot communication
 
-the plugin does NOT receive `KIMAKI_BOT_TOKEN`. discord REST operations (user listing, thread archiving) are handled by CLI commands (`kimaki user list`, `kimaki session archive`) that resolve credentials from the database via `resolveBotCredentials()`. this avoids leaking gateway credentials into child process environments.
+the plugin does NOT receive `ROADIE_BOT_TOKEN`. discord REST operations (user listing, thread archiving) are handled by CLI commands (`roadie user list`, `roadie session archive`) that resolve credentials from the database via `resolveBotCredentials()`. this avoids leaking gateway credentials into child process environments.
 
 **NEVER use `console.*` in plugin code.** opencode captures plugin stdout/stderr and it breaks structured server logging. plugins must be silent: fail gracefully and return null/undefined on errors.
 
-plugin files must also not import `cli/src/logger.ts`. it pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. use a separate plugin-safe logger that only appends to the kimaki log file.
+plugin files must also not import `cli/src/logger.ts`. it pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. use a separate plugin-safe logger that only appends to the roadie log file.
 
-agent sessions call `kimaki` through the `~/.kimaki/bin/kimaki` shim that is prepended to the opencode server `PATH` (details in `docs/debugging-kimaki.md`).
+agent sessions call `roadie` through the `~/.roadie/bin/roadie` shim that is prepended to the opencode server `PATH` (details in `docs/debugging-roadie.md`).
 
 ## skills folder
 
-skills live at the repository root in `skills/`. build and publish scripts copy them into `cli/skills/` so the npm package ships the bundled skills. some skills are synced from github repos (see `cli/scripts/sync-skills.ts`). never manually update synced copies; start kimaki threads on their source projects instead (find them via `kimaki project list`).
+skills live at the repository root in `skills/`. build and publish scripts copy them into `cli/skills/` so the npm package ships the bundled skills. some skills are synced from github repos (see `cli/scripts/sync-skills.ts`). never manually update synced copies; start roadie threads on their source projects instead (find them via `roadie project list`).
 
 # discord
 
@@ -230,7 +230,7 @@ use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get direct
 - `workingDirectory`: worktree dir if thread has an active worktree, otherwise same as `projectDirectory`. use this for `cwd` in shell commands and for SDK `directory` params
 - `channelAppId`: optional app ID from channel metadata
 
-never call `getKimakiMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
+never call `getRoadieMetadata` + manual `getThreadWorktree` check in commands. the util handles both. if you need to encode a directory in a discord customId for later use with `initializeOpencodeForDirectory`, always use `projectDirectory` not `workingDirectory`.
 
 ## discord component custom ids
 
@@ -263,13 +263,13 @@ limits and rules:
 - `Action Row` can contain up to **5 buttons** or a single select menu
 - `Container` can hold `Action Row`, `Text Display`, `Section`, `Media Gallery`, `Separator`, and `File`
 
-for kimaki table rendering: plain rows stay a single `TextDisplay`; rows with actions usually render as `TextDisplay` + `ActionRow` inside the `Container` instead of a `Section` for the whole row.
+for roadie table rendering: plain rows stay a single `TextDisplay`; rows with actions usually render as `TextDisplay` + `ActionRow` inside the `Container` instead of a `Section` for the whole row.
 
-## how kimaki messages look like in Discord
+## how roadie messages look like in Discord
 
 use this to write tests that find messages matching specific patterns.
 
-- Kimaki creates a thread on the first user message and replies in it. new sessions start with a silent banner like `-# *using anthropic/claude-sonnet-4 ⋅ plan*`.
+- Roadie creates a thread on the first user message and replies in it. new sessions start with a silent banner like `-# *using anthropic/claude-sonnet-4 ⋅ plan*`.
 - text parts have no prefix and use classic Discord content so they stay full width. short text in a turn (at most two lines, no callout) is quoted as soon as it completes. when the turn ends, the last text part is edited back to full width. longer text, callouts, and text flushed because of a question, sleep, or action-button tool stay full width.
 - tool parts use classic Discord content too, prefixed with ┣ (or ◼︎ for file edits or writes). when the displayed part kind changes between text and tool, the next part starts with a blank line; consecutive same-kind parts have no extra blank line.
 - the verbosity setting decides which tool parts show. the default skips `thinking` (┣), file reads, and bash parts without `sideEffect` (a param passed by the model).
@@ -296,7 +296,7 @@ prefer event sourcing over mirrored mutable run state. always read the `event-so
 - easier testing: derivation logic is pure and deterministic with fixture inputs.
 - fewer race bugs: state is derived from observed events, not guessed from local transitions.
 
-when the user mentions a specific kimaki session while reporting a bug, always export its jsonl first with `kimaki session export-events-jsonl --session <id> --out ./tmp/<id>.jsonl` and inspect that stream before guessing about runtime state.
+when the user mentions a specific roadie session while reporting a bug, always export its jsonl first with `roadie session export-events-jsonl --session <id> --out ./tmp/<id>.jsonl` and inspect that stream before guessing about runtime state.
 
 write derivation as pure functions that accept events and return computed state. prefer existing helpers from `event-stream-state.ts` (for example `wasRecentlyAborted`) over new mirrored flags:
 
@@ -340,14 +340,14 @@ to interrupt and restart a session (for example the /model command):
 
 ## discord-digital-twin e2e style
 
-prefer adding reusable automation methods to `DigitalDiscord` over per-test helper functions in kimaki. always import from `discord-digital-twin/src` so that package does not need to be compiled first.
+prefer adding reusable automation methods to `DigitalDiscord` over per-test helper functions in roadie. always import from `discord-digital-twin/src` so that package does not need to be compiled first.
 
 aim for a playwright-like style:
 
 - actor methods for actions: `discord.user(userId).sendMessage(...)`, `runSlashCommand(...)`, `clickButton(...)`, etc
 - separate wait methods for assertions: `discord.waitForThread(...)`, `discord.waitForBotReply(...)`, `discord.waitForInteractionAck(...)`
 
-if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*`.
+if a roadie test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*`.
 
 always add `expect(await th.text()).toMatchInlineSnapshot()` (or `discord.channel(id).text()` / `discord.thread(id).text()`) in every test that creates or modifies messages. place it **before** other expects so it updates even when a test fails. use deterministic message content (no `Date.now()` or random values) so snapshots stay stable. tests that don't create messages (metadata, typing, guild routes) can skip it.
 
@@ -357,14 +357,14 @@ these points are current. `docs/e2e-testing-learnings.md` has older background (
 
 - **always assert on Discord messages (what the user sees), not internal state or logs.** use `th.getMessages()`, `waitForBotReply`, `waitForBotReplyAfterUserMessage`, `waitForBotMessageContaining`. never use `getLogEntriesSince` + string matching for expectations; logs are brittle and bleed across sequential tests. use `getLogEntriesSince` only in `onTestFailed` for diagnostics.
 - e2e tests use `opencode-deterministic-provider`, which returns canned responses instantly (no real LLM). write poll timeouts as **4s** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
-- the wait helpers in `test-utils.ts` clamp every timeout into **8s..10s** under vitest. the first turn against a fresh opencode server costs 2-4s (session create, config and agent discovery, provider load, kimaki plugin load), so a literal 4s budget failed randomly. the floor costs nothing on green runs. tests asserting something never appears must use their own polling loop instead of these helpers.
+- the wait helpers in `test-utils.ts` clamp every timeout into **8s..10s** under vitest. the first turn against a fresh opencode server costs 2-4s (session create, config and agent discovery, provider load, roadie plugin load), so a literal 4s budget failed randomly. the floor costs nothing on green runs. tests asserting something never appears must use their own polling loop instead of these helpers.
 - to assert something doesn't appear (e.g. no footer after abort), poll `th.getMessages()`: sleep 20ms, max 10 iterations (200ms total is enough, everything is deterministic). fail immediately if the unwanted message appears.
 - matchers that emit `tool-call` parts run **real tools** (for example `bash` + `sleep`). do not use long sleeps (`sleep 500` means 500 seconds). prefer `partDelaysMs` for timing windows.
 - avoid broad matchers like only `lastMessageRole: 'tool'` in shared matcher lists. always scope with an explicit marker or they cascade across unrelated turns.
 - prefer `latestUserTextIncludes` over `rawPromptIncludes` for markers that should trigger once. `rawPromptIncludes` scans full history, so after abort+retry in the same session the old marker re-fires and causes deadlocks or timeouts.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over `waitForBotMessageCount`. error messages from interrupted runs satisfy counts early.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
-- test logs are suppressed by default (`KIMAKI_VITEST=1` in vitest.config.ts). rerun one test with `KIMAKI_TEST_LOGS=1` to see kimaki logger output, e.g. `KIMAKI_TEST_LOGS=1 pnpm run test --run src/thread-message-queue.e2e.test.ts`.
+- test logs are suppressed by default (`ROADIE_VITEST=1` in vitest.config.ts). rerun one test with `ROADIE_TEST_LOGS=1` to see roadie logger output, e.g. `ROADIE_TEST_LOGS=1 pnpm run test --run src/thread-message-queue.e2e.test.ts`.
 - if an e2e test file takes more than **~10 seconds**, split it so vitest parallelizes across files.
 - `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()`.
 

@@ -55,20 +55,20 @@ export async function buildThreadStartEmbeds(marker: ThreadStartMarker) {
 }
 
 /**
- * Centralized permission check for Kimaki bot access.
+ * Centralized permission check for Roadie bot access.
  * Returns true if the member has permission to use the bot:
- * - Server owner, Administrator, Manage Server, or "Kimaki" role (case-insensitive).
- * Returns false if member is null or has the "no-kimaki" role (overrides all).
+ * - Server owner, Administrator, Manage Server, or "Roadie" role (case-insensitive).
+ * Returns false if member is null or has the "no-roadie" role (overrides all).
  */
-export function hasKimakiBotPermission(
+export function hasRoadieBotPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
     return false
   }
-  const hasNoKimakiRole = hasRoleByName(member, 'no-kimaki', guild)
-  if (hasNoKimakiRole) {
+  const hasNoRoadieRole = hasRoleByName(member, 'no-roadie', guild)
+  if (hasNoRoadieRole) {
     return false
   }
   if (store.getState().allowAllUsers) {
@@ -83,25 +83,25 @@ export function hasKimakiBotPermission(
   const isOwner = ownerId ? memberId === ownerId : false
   const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
   const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
-  return isOwner || isAdmin || canManageServer || hasKimakiRole
+  const hasRoadieRole = hasRoleByName(member, 'roadie', guild)
+  return isOwner || isAdmin || canManageServer || hasRoadieRole
 }
 
 /**
  * Stricter permission check that ignores allowAllUsers.
  * Use for admin-only commands like /login and /transcription-key that
  * configure shared credentials. Always requires owner, admin, manage
- * server, or Kimaki role regardless of --allow-all-users flag.
+ * server, or Roadie role regardless of --allow-all-users flag.
  */
-export function hasKimakiAdminPermission(
+export function hasRoadieAdminPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
     return false
   }
-  const hasNoKimaki = hasRoleByName(member, 'no-kimaki', guild)
-  if (hasNoKimaki) {
+  const hasNoRoadie = hasRoleByName(member, 'no-roadie', guild)
+  if (hasNoRoadie) {
     return false
   }
   const memberPermissions =
@@ -113,8 +113,8 @@ export function hasKimakiAdminPermission(
   const isOwner = ownerId ? memberId === ownerId : false
   const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
   const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
-  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
-  return isOwner || isAdmin || canManageServer || hasKimakiRole
+  const hasRoadieRole = hasRoleByName(member, 'roadie', guild)
+  return isOwner || isAdmin || canManageServer || hasRoadieRole
 }
 
 export async function resolveGuildMessageMember(
@@ -141,10 +141,14 @@ function hasRoleByName(
   roleName: string,
   guild?: Guild | null,
 ): boolean {
-  const target = roleName.toLowerCase()
+  const names = roleName.toLowerCase() === 'roadie'
+    ? new Set(['roadie', 'kimaki'])
+    : roleName.toLowerCase() === 'no-roadie'
+      ? new Set(['no-roadie', 'no-kimaki'])
+      : new Set([roleName.toLowerCase()])
 
   if (member instanceof GuildMember) {
-    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
+    return member.roles.cache.some((role) => names.has(role.name.toLowerCase()))
   }
 
   if (!guild) {
@@ -154,7 +158,7 @@ function hasRoleByName(
   const roleIds = Array.isArray(member.roles) ? member.roles : []
   for (const roleId of roleIds) {
     const role = guild.roles.cache.get(roleId)
-    if (role?.name.toLowerCase() === target) {
+    if (role && names.has(role.name.toLowerCase())) {
       return true
     }
   }
@@ -162,15 +166,15 @@ function hasRoleByName(
 }
 
 /**
- * Check if the member has the "no-kimaki" role that blocks bot access.
- * Separate from hasKimakiBotPermission so callers can show a specific error message.
+ * Check if the member has the "no-roadie" role that blocks bot access.
+ * Separate from hasRoadieBotPermission so callers can show a specific error message.
  */
-export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
+export function hasNoRoadieRole(member: GuildMemberType | null): boolean {
   if (!member?.roles?.cache) {
     return false
   }
   return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
+    (role) => ['no-roadie', 'no-kimaki'].includes(role.name.toLowerCase()),
   )
 }
 
@@ -882,7 +886,7 @@ export function escapeDiscordFormatting(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`').replace(/````/g, '\\`\\`\\`\\`')
 }
 
-export async function getKimakiMetadata(
+export async function getRoadieMetadata(
   textChannel: TextChannel | null,
 ): Promise<{
   projectDirectory?: string
@@ -980,7 +984,7 @@ export async function resolveWorkingDirectory({
     ? await resolveTextChannel(channel as ThreadChannel)
     : (channel as TextChannel)
 
-  const metadata = await getKimakiMetadata(textChannel)
+  const metadata = await getRoadieMetadata(textChannel)
   if (!metadata.projectDirectory) {
     return undefined
   }

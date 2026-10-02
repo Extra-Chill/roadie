@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
   extendBashToolDefinition,
-  injectKimakiSessionEnv,
-  KIMAKI_SESSION_ID_ENV,
+  injectRoadieSessionEnv,
+  ROADIE_SESSION_ID_ENV,
   resolveUploadToDiscordSessionId,
   type ToolDefinitionOutput,
 } from './bash-tool-schema-plugin.js'
@@ -60,12 +60,15 @@ describe('extendBashToolDefinition', () => {
 describe('upload-to-discord session targeting', () => {
   test('bash env uses the live OpenCode session, not a copied --session flag', () => {
     const env: Record<string, string> = {}
-    injectKimakiSessionEnv({ sessionID: 'ses_child', env })
-    expect(env).toEqual({ [KIMAKI_SESSION_ID_ENV]: 'ses_child' })
+    injectRoadieSessionEnv({ sessionID: 'ses_child', env })
+    expect(env).toEqual({
+      [ROADIE_SESSION_ID_ENV]: 'ses_child',
+      KIMAKI_SESSION_ID: 'ses_child',
+    })
     expect(
       resolveUploadToDiscordSessionId({
         flagSessionId: 'ses_parent',
-        envSessionId: env[KIMAKI_SESSION_ID_ENV],
+        envSessionId: env[ROADIE_SESSION_ID_ENV],
       }),
     ).toBe('ses_child')
   })

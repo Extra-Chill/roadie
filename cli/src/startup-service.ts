@@ -1,11 +1,11 @@
-// Cross-platform startup service registration for kimaki daemon.
+// Cross-platform startup service registration for roadie daemon.
 // Vendored from startup-run (MIT, github.com/vilicvane/startup-run) with
 // significant simplifications: no abstract classes, no fs-extra, no winreg
-// npm dep, no separate daemon process (kimaki's bin.ts already handles
+// npm dep, no separate daemon process (roadie's bin.ts already handles
 // respawn/crash-loop). Just writes/deletes the platform service file.
 //
-// macOS:   ~/Library/LaunchAgents/xyz.kimaki.plist  (launchd)
-// Linux:   ~/.config/autostart/kimaki.desktop       (XDG autostart)
+// macOS:   ~/Library/LaunchAgents/xyz.roadie.plist  (launchd)
+// Linux:   ~/.config/autostart/roadie.desktop       (XDG autostart)
 // Windows: HKCU\Software\Microsoft\Windows\CurrentVersion\Run  (registry)
 
 import fs from 'node:fs'
@@ -13,7 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execAsync } from './worktrees.js'
 
-const SERVICE_NAME = 'xyz.kimaki'
+const SERVICE_NAME = 'xyz.roadie'
 
 function getServiceFilePath(): string {
   switch (process.platform) {
@@ -29,11 +29,11 @@ function getServiceFilePath(): string {
         os.homedir(),
         '.config',
         'autostart',
-        'kimaki.desktop',
+        'roadie.desktop',
       )
     case 'win32':
       // No file — registry key, return a descriptive string for status display
-      return 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\kimaki'
+      return 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\roadie'
     default:
       throw new Error(`Unsupported platform: ${process.platform}`)
   }
@@ -93,8 +93,8 @@ function buildLinuxDesktop({
   return `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=Kimaki
-Comment=Kimaki Discord Bot Daemon
+Name=Roadie
+Comment=Roadie Discord Bot Daemon
 Exec=${execLine}
 StartupNotify=false
 Terminal=false
@@ -107,7 +107,7 @@ export type StartupServiceOptions = {
 }
 
 /**
- * Register kimaki to start on user login.
+ * Register roadie to start on user login.
  * Writes the appropriate service file for the current platform.
  */
 export async function enableStartupService({
@@ -131,7 +131,7 @@ export async function enableStartupService({
       })
       .join(' ')
     await execAsync(
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v kimaki /t REG_SZ /d "${execLine}" /f`,
+      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v roadie /t REG_SZ /d "${execLine}" /f`,
     )
   } else {
     throw new Error(`Unsupported platform: ${platform}`)
@@ -139,7 +139,7 @@ export async function enableStartupService({
 }
 
 /**
- * Unregister kimaki from user login startup.
+ * Unregister roadie from user login startup.
  */
 export async function disableStartupService(): Promise<void> {
   const platform = process.platform
@@ -151,7 +151,7 @@ export async function disableStartupService(): Promise<void> {
     }
   } else if (platform === 'win32') {
     await execAsync(
-      `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v kimaki /f`,
+      `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v roadie /f`,
     ).catch(() => {
       // Key may not exist, ignore
     })
@@ -161,7 +161,7 @@ export async function disableStartupService(): Promise<void> {
 }
 
 /**
- * Check if kimaki is registered as a startup service.
+ * Check if roadie is registered as a startup service.
  */
 export async function isStartupServiceEnabled(): Promise<boolean> {
   const platform = process.platform
@@ -172,7 +172,7 @@ export async function isStartupServiceEnabled(): Promise<boolean> {
 
   if (platform === 'win32') {
     const result = await execAsync(
-      `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v kimaki`,
+      `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v roadie`,
     ).catch(() => {
       return null
     })

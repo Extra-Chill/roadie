@@ -4,7 +4,7 @@
 // their PluginInput, but that plugin-provided client (v1 SDK) does not reliably
 // make REST calls from inside the plugin process: calls like session.abort /
 // session.status silently no-op. Constructing a fresh @opencode-ai/sdk/v2
-// client pointed at the same server URL (the same client the rest of kimaki
+// client pointed at the same server URL (the same client the rest of roadie
 // uses) makes all REST + log calls work.
 //
 // Use createPluginClient({ serverUrl, directory }) in any plugin that performs

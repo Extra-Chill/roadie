@@ -184,7 +184,7 @@ async function renderTasksReply({
   const tasks = allTasks.slice(0, MAX_TASK_ROWS)
   const truncatedNotice =
     allTasks.length > MAX_TASK_ROWS
-      ? `Showing ${MAX_TASK_ROWS}/${allTasks.length} tasks. Use \`kimaki task list\` for full list.`
+      ? `Showing ${MAX_TASK_ROWS}/${allTasks.length} tasks. Use \`roadie task list\` for full list.`
       : undefined
   const combinedNotice = [notice, truncatedNotice].filter(Boolean).join('\n')
 

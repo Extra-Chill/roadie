@@ -1,5 +1,5 @@
 // Wait utilities for polling session completion.
-// Used by `kimaki send --wait` and `kimaki session wait` to block until a
+// Used by `roadie send --wait` and `roadie session wait` to block until a
 // session completes (idle, latest turn finished naturally, no pending
 // permission) OR pauses for a user question. A session parked on a `question`
 // tool never completes on its own, so it is treated as done for automation.
@@ -19,7 +19,7 @@ import {
 const waitLogger = createLogger(LogPrefix.SESSION)
 
 /**
- * Poll the kimaki database until a session ID appears for the given thread.
+ * Poll the roadie database until a session ID appears for the given thread.
  * The bot writes this mapping in session-handler.ts:551 when it picks up
  * the thread and creates/reuses a session.
  */
@@ -50,7 +50,7 @@ export async function waitForSessionId({
 }
 
 /**
- * Poll the OpenCode SDK and persisted Kimaki events until the session is idle,
+ * Poll the OpenCode SDK and persisted Roadie events until the session is idle,
  * its latest user turn completed naturally, and no permission prompt is pending
  * -- or until the session pauses on a user question (which never completes on
  * its own and is treated as done for automation).

@@ -28,7 +28,7 @@ const oneServerTree: GraphTree = {
   content: (
     <NodeCard
       kind="Gateway"
-      title="kimaki-gateway"
+      title="roadie-gateway"
       meta="wss://gateway.kimaki.dev"
     />
   ),
@@ -38,7 +38,7 @@ const oneServerTree: GraphTree = {
       width: 220,
       height: 132,
       content: (
-        <NodeCard kind="Kimaki server" title="studio.local" meta="1 guild" />
+        <NodeCard kind="Roadie server" title="studio.local" meta="1 guild" />
       ),
     },
   ],
@@ -51,7 +51,7 @@ const threeServerTree: GraphTree = {
   content: (
     <NodeCard
       kind="Gateway"
-      title="kimaki-gateway"
+      title="roadie-gateway"
       meta="wss://gateway.kimaki.dev"
     />
   ),
@@ -61,7 +61,7 @@ const threeServerTree: GraphTree = {
       width: 220,
       height: 132,
       content: (
-        <NodeCard kind="Kimaki server" title="studio.local" meta="2 guilds" />
+        <NodeCard kind="Roadie server" title="studio.local" meta="2 guilds" />
       ),
     },
     {
@@ -69,7 +69,7 @@ const threeServerTree: GraphTree = {
       width: 220,
       height: 132,
       content: (
-        <NodeCard kind="Kimaki server" title="office-mac" meta="1 guild" />
+        <NodeCard kind="Roadie server" title="office-mac" meta="1 guild" />
       ),
     },
     {
@@ -78,7 +78,7 @@ const threeServerTree: GraphTree = {
       height: 132,
       content: (
         <NodeCard
-          kind="Kimaki server"
+          kind="Roadie server"
           title="ci-box"
           meta="unreachable"
           status="offline"
@@ -97,7 +97,7 @@ export function Demo() {
       </header>
       <section>
         <p className="node-kind" style={{ marginBottom: 12 }}>
-          1 gateway, 1 kimaki server
+          1 gateway, 1 roadie server
         </p>
         <div data-testid="graph-one">
           <NodeGraph tree={oneServerTree} className="demo-stage" />
@@ -105,7 +105,7 @@ export function Demo() {
       </section>
       <section>
         <p className="node-kind" style={{ marginBottom: 12 }}>
-          1 gateway, 3 kimaki servers
+          1 gateway, 3 roadie servers
         </p>
         <div data-testid="graph-three">
           <NodeGraph tree={threeServerTree} className="demo-stage" />

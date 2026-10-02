@@ -15,10 +15,10 @@ TMP_DIR="$SCRIPT_DIR/tmp"
 SERVER_LOG="$TMP_DIR/opencode-serve.log"
 RUN1_JSONL="$TMP_DIR/run-1.jsonl"
 RUN2_OUTPUT="$TMP_DIR/run-2-output.txt"
-KIMAKI_DATA_DIR="$TMP_DIR/kimaki-data"
+ROADIE_DATA_DIR="$TMP_DIR/roadie-data"
 
 rm -rf "$TMP_DIR"
-mkdir -p "$TMP_DIR" "$KIMAKI_DATA_DIR"
+mkdir -p "$TMP_DIR" "$ROADIE_DATA_DIR"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git init >/dev/null 2>&1
@@ -36,10 +36,10 @@ trap cleanup EXIT
 echo "Starting opencode serve on port $PORT"
 echo "Model: $MODEL"
 echo "Working directory: $SCRIPT_DIR"
-echo "Kimaki data dir: $KIMAKI_DATA_DIR"
+echo "Roadie data dir: $ROADIE_DATA_DIR"
 echo ""
 
-KIMAKI_DATA_DIR="$KIMAKI_DATA_DIR" \
+ROADIE_DATA_DIR="$ROADIE_DATA_DIR" \
   opencode serve --port "$PORT" --print-logs >"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 
@@ -98,4 +98,4 @@ rg 'tui.toast.show|show-toast|System prompt changed|context cache' "$RUN2_OUTPUT
 echo ""
 echo "Server log: $SERVER_LOG"
 echo "Diff files:"
-find "$KIMAKI_DATA_DIR/system-prompt-diffs" -type f 2>/dev/null || true
+find "$ROADIE_DATA_DIR/system-prompt-diffs" -type f 2>/dev/null || true

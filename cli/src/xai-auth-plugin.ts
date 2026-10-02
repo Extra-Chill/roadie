@@ -19,7 +19,7 @@
  * not as session.status retry events. The plugin must handle both
  * terminal errors and (less likely) retry events.
  *
- * Account management is done via `kimaki multioauth xai` CLI commands.
+ * Account management is done via `roadie multioauth xai` CLI commands.
  */
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
@@ -34,7 +34,7 @@ import {
 } from './xai-auth-state.js'
 
 const log = createPluginLogger('xai-rotation')
-const TOAST_SESSION_HEADER = 'x-kimaki-session-id'
+const TOAST_SESSION_HEADER = 'x-roadie-session-id'
 
 // xAI-specific error patterns that indicate usage exhaustion.
 // These appear in response bodies and error messages.

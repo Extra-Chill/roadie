@@ -1,14 +1,14 @@
 ---
 title: Remote OpenCode Servers
 description: |
-  Architecture plan for supporting remote OpenCode servers in Kimaki.
+  Architecture plan for supporting remote OpenCode servers in Roadie.
   Allows projects on different machines (dev servers, VPS, Vercel sandbox,
   CI runners) to be controlled from the same Discord server.
   Updated: thread-per-machine model (not channel-per-machine), hrana
   server already built, OpenCode server auth with OPENCODE_SERVER_PASSWORD.
 prompt: |
   Based on deep analysis of all communication paths between database,
-  OpenCode servers, OpenCode plugin, and kimaki process. Key files read:
+  OpenCode servers, OpenCode plugin, and roadie process. Key files read:
   opencode.ts, opencode-plugin.ts, db.ts, database.ts, session-handler.ts,
   discord-bot.ts, system-message.ts, commands/permissions.ts,
   commands/ask-question.ts, commands/file-upload.ts, discord-utils.ts,
@@ -22,7 +22,7 @@ prompt: |
 
 ## Problem
 
-Today, Kimaki runs entirely on one machine. The Discord bot, SQLite
+Today, Roadie runs entirely on one machine. The Discord bot, SQLite
 database, and all OpenCode server processes share a single host. Every
 Discord channel maps to a local directory path.
 
@@ -38,7 +38,7 @@ Users want to:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                  Kimaki Host (single machine)        │
+│                  Roadie Host (single machine)        │
 │                                                      │
 │  ┌──────────────┐     ┌──────────────────────────┐  │
 │  │ Discord Bot   │────>│ SQLite DB (Prisma)        │  │
@@ -84,7 +84,7 @@ targets a remote machine. This is simpler than one channel per machine:
 - No channel sprawl - one channel per project, threads per machine
 - Threads inherit the project context from the parent channel
 - Multiple remote machines can coexist under the same project
-- Follows the existing kimaki pattern (worktree threads, session threads)
+- Follows the existing roadie pattern (worktree threads, session threads)
 
 ```
 Discord server:
@@ -104,13 +104,13 @@ remote OpenCode processes can access the same database over the network.
 
 **Status:** Phase 1 from the original plan is done. `hrana-server.ts`
 is the single owner of the `.db` file. Local OpenCode child processes
-already connect via `KIMAKI_DB_URL=http://127.0.0.1:<lockPort>`.
+already connect via `ROADIE_DB_URL=http://127.0.0.1:<lockPort>`.
 What remains is adding tunnel exposure + auth for remote connections.
 
 ### OpenCode server auth
 
 OpenCode `serve` has built-in HTTP basic auth. Remote OpenCode servers
-must be protected so only kimaki can talk to them:
+must be protected so only roadie can talk to them:
 
 ```bash
 OPENCODE_SERVER_PASSWORD=<secret> opencode serve --port 7777
@@ -121,7 +121,7 @@ OPENCODE_SERVER_PASSWORD=<secret> opencode serve --port 7777
 | `OPENCODE_SERVER_PASSWORD` | Enables basic auth on OpenCode server | *(none)* |
 | `OPENCODE_SERVER_USERNAME` | Sets the username | `opencode` |
 
-Kimaki generates a random password per machine and stores it in the DB.
+Roadie generates a random password per machine and stores it in the DB.
 The SDK client passes basic auth credentials when connecting to remote
 OpenCode servers. This means two layers of auth for remote:
 
@@ -130,7 +130,7 @@ OpenCode servers. This means two layers of auth for remote:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                  Kimaki Host                              │
+│                  Roadie Host                              │
 │                                                           │
 │  ┌──────────────┐                                        │
 │  │ Discord Bot   │──┐  http://127.0.0.1:<lockPort>       │
@@ -159,10 +159,10 @@ OpenCode servers. This means two layers of auth for remote:
                    │  │                               │  │
                    │  │ env:                          │  │
                    │  │  OPENCODE_SERVER_PASSWORD=<x> │  │
-                   │  │  KIMAKI_DB_URL=http://        │  │
-                   │  │    kimaki-db.traforo.dev      │  │
-                   │  │  KIMAKI_DB_TOKEN=<bot_tk>     │  │
-                   │  │  KIMAKI_BOT_TOKEN=<bot_tk>    │  │
+                   │  │  ROADIE_DB_URL=http://        │  │
+                   │  │    roadie-db.traforo.dev      │  │
+                   │  │  ROADIE_DB_TOKEN=<bot_tk>     │  │
+                   │  │  ROADIE_BOT_TOKEN=<bot_tk>    │  │
                    │  └──────────────────────────────┘  │
                    │         │                           │
                    │         v                           │
@@ -184,16 +184,16 @@ OpenCode servers. This means two layers of auth for remote:
   owner of the `.db` file. All local processes already connect
   through it. Only tunnel exposure is needed for remote.
 - **OpenCode server basic auth.** Remote OpenCode servers are
-  protected with `OPENCODE_SERVER_PASSWORD`. Kimaki generates
+  protected with `OPENCODE_SERVER_PASSWORD`. Roadie generates
   a random password per machine and passes it via the SDK client's
   basic auth header.
 - **Bot token = DB auth token.** Remote clients pass
-  `KIMAKI_BOT_TOKEN` as their hrana `authToken`. No separate
+  `ROADIE_BOT_TOKEN` as their hrana `authToken`. No separate
   JWT key management. Reusing the bot token is fine because
   remotes already need the bot token for Discord REST calls -
   it's the same trust level.
 - **Built-in sandbox integrations.** Users don't manually copy
-  env vars. Kimaki provides `/new-machine` commands that provision
+  env vars. Roadie provides `/new-machine` commands that provision
   environments automatically (see end-user flows below).
 
 ## What changes
@@ -201,7 +201,7 @@ OpenCode servers. This means two layers of auth for remote:
 ### 1. `db.ts` + `hrana-server.ts` - already done (Phase 1 complete)
 
 The hrana server is already built and running in-process. All local
-OpenCode child processes connect via `KIMAKI_DB_URL=http://127.0.0.1:<lockPort>`.
+OpenCode child processes connect via `ROADIE_DB_URL=http://127.0.0.1:<lockPort>`.
 The bot process uses direct file access via Prisma.
 
 **What remains for remote:**
@@ -226,7 +226,7 @@ continue to be unauthenticated.
 The bot token is reused as the auth token because:
 
 - Remote machines already need the bot token for Discord REST
-- It's the same trust level (full access to kimaki state)
+- It's the same trust level (full access to roadie state)
 - No separate JWT key management needed
 - Revoking the bot token (regenerating in Discord dev portal)
   invalidates all remote access simultaneously
@@ -236,31 +236,31 @@ The bot token is reused as the auth token because:
 **Problem:** remote needs DB URL + token + OpenCode auth before it
 can connect. Where do these come from?
 
-**Answer:** kimaki generates them locally and provisions them
+**Answer:** roadie generates them locally and provisions them
 automatically via built-in integrations. The user never manually
 copies env vars.
 
 **Bootstrap flow:**
 
 ```
-1. Kimaki bot starts
+1. Roadie bot starts
 2. Hrana server already running on 127.0.0.1:<lockPort>
 3. Starts traforo tunnel for hrana port
-   - Tunnel ID persisted in ~/.kimaki/tunnel-id
-   - Deterministic URL like kimaki-db-<hash>.traforo.dev
+   - Tunnel ID persisted in ~/.roadie/tunnel-id
+   - Deterministic URL like roadie-db-<hash>.traforo.dev
 4. Stores tunnel URL in memory for machine provisioning
 
 When user runs /new-machine:
-5. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+5. Roadie generates a random OPENCODE_SERVER_PASSWORD
 6. Reads bot token + tunnel URL from memory
 7. Provisions the remote environment via provider API
    (Vercel API, SSH, etc.) with env vars:
-   - KIMAKI_DB_URL=http://kimaki-db-xxx.traforo.dev
-   - KIMAKI_DB_TOKEN=<bot-token>
-   - KIMAKI_BOT_TOKEN=<bot-token>
+   - ROADIE_DB_URL=http://roadie-db-xxx.traforo.dev
+   - ROADIE_DB_TOKEN=<bot-token>
+   - ROADIE_BOT_TOKEN=<bot-token>
    - OPENCODE_SERVER_PASSWORD=<random-password>
 8. Remote OpenCode starts with basic auth enabled
-9. Kimaki stores remote URL + password in DB (machines table)
+9. Roadie stores remote URL + password in DB (machines table)
 10. Creates a Discord thread for the machine
 11. Done. User did nothing except run /new-machine.
 ```
@@ -307,64 +307,64 @@ type ServerEntry = {
 
 ### 3. Hrana tunnel for remote DB access (new)
 
-The hrana server already runs as part of the kimaki boot sequence.
+The hrana server already runs as part of the roadie boot sequence.
 For remote support, add a traforo tunnel to expose it:
 
 ```ts
 // In cli.ts, after hrana server is started
 // Tunnel it for remote access (only if remote features enabled)
 const tunnelId = await getOrCreateTunnelId(dataDir)
-const tunnelProcess = spawn('kimaki', [
+const tunnelProcess = spawn('roadie', [
   'tunnel', '-p', String(lockPort), '-t', tunnelId,
 ])
 const tunnelUrl = await waitForTunnelUrl(tunnelProcess)
-// tunnelUrl = "https://kimaki-db-xxx.traforo.dev"
+// tunnelUrl = "https://roadie-db-xxx.traforo.dev"
 // stored in memory for machine provisioning
 ```
 
-**Lifecycle:** the tunnel is supervised by the kimaki process.
-If kimaki exits, the tunnel child process is killed.
+**Lifecycle:** the tunnel is supervised by the roadie process.
+If roadie exits, the tunnel child process is killed.
 The hrana server itself is already in-process and follows
 the bot lifecycle.
 
 ### 4. OpenCode plugin - no changes needed
 
-The plugin already calls `getPrisma()` which reads `KIMAKI_DB_URL`
-from env. It already uses `KIMAKI_BOT_TOKEN` for Discord REST.
-The only breaking tool is `kimaki_file_upload` (see section below).
+The plugin already calls `getPrisma()` which reads `ROADIE_DB_URL`
+from env. It already uses `ROADIE_BOT_TOKEN` for Discord REST.
+The only breaking tool is `roadie_file_upload` (see section below).
 
 ### 5. CLI commands - no changes needed
 
-All CLI commands (`kimaki send`, `upload-to-discord`, `session list`,
-etc.) call `getPrisma()` internally. With `KIMAKI_DB_URL` in env,
+All CLI commands (`roadie send`, `upload-to-discord`, `session list`,
+etc.) call `getPrisma()` internally. With `ROADIE_DB_URL` in env,
 they connect to sqld over the tunnel. Bot token comes from
-`KIMAKI_BOT_TOKEN` env. Everything works.
+`ROADIE_BOT_TOKEN` env. Everything works.
 
 ### 6. Env vars injected into remote OpenCode
 
-These env vars are provisioned automatically by kimaki when
+These env vars are provisioned automatically by roadie when
 creating a machine thread. The user never sets them manually.
 
 ```bash
-# Set by kimaki on remote machines:
-KIMAKI_DB_URL=http://kimaki-db-xxx.traforo.dev
-KIMAKI_DB_TOKEN=<bot-token>   # same as bot token
-KIMAKI_BOT_TOKEN=<bot-token>  # for Discord REST in plugin/CLI
-KIMAKI_DATA_DIR=/tmp/kimaki   # remote-local temp dir
+# Set by roadie on remote machines:
+ROADIE_DB_URL=http://roadie-db-xxx.traforo.dev
+ROADIE_DB_TOKEN=<bot-token>   # same as bot token
+ROADIE_BOT_TOKEN=<bot-token>  # for Discord REST in plugin/CLI
+ROADIE_DATA_DIR=/tmp/roadie   # remote-local temp dir
 OPENCODE_SERVER_PASSWORD=<random-per-machine>  # basic auth
 # OPENCODE_SERVER_USERNAME defaults to "opencode"
-# KIMAKI_LOCK_PORT is NOT set (file upload bridge unavailable)
+# ROADIE_LOCK_PORT is NOT set (file upload bridge unavailable)
 ```
 
-For **local** OpenCode servers (today's behavior), kimaki passes:
+For **local** OpenCode servers (today's behavior), roadie passes:
 
 ```bash
-# Set by kimaki on local child processes:
-KIMAKI_DB_URL=http://localhost:<lockPort>  # hrana server
-# No KIMAKI_DB_TOKEN needed (localhost = no auth)
-KIMAKI_BOT_TOKEN=<bot-token>
-KIMAKI_DATA_DIR=~/.kimaki
-KIMAKI_LOCK_PORT=<port>
+# Set by roadie on local child processes:
+ROADIE_DB_URL=http://localhost:<lockPort>  # hrana server
+# No ROADIE_DB_TOKEN needed (localhost = no auth)
+ROADIE_BOT_TOKEN=<bot-token>
+ROADIE_DATA_DIR=~/.roadie
+ROADIE_LOCK_PORT=<port>
 # No OPENCODE_SERVER_PASSWORD (local, same machine)
 ```
 
@@ -428,19 +428,19 @@ User wants a cloud sandbox for a task. Zero manual setup.
 **What happens behind the scenes:**
 
 ```
-1. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+1. Roadie generates a random OPENCODE_SERVER_PASSWORD
 2. Calls Vercel Sandbox API to create environment
    - Clones the repo into the sandbox
    - Injects env vars via Vercel API:
-     KIMAKI_DB_URL, KIMAKI_DB_TOKEN, KIMAKI_BOT_TOKEN,
+     ROADIE_DB_URL, ROADIE_DB_TOKEN, ROADIE_BOT_TOKEN,
      OPENCODE_SERVER_PASSWORD
    - Starts opencode serve inside the sandbox (basic auth enabled)
    - Returns sandbox URL (e.g. sandbox-abc.vercel.dev:7777)
-3. Kimaki creates a Discord thread "sandbox-fix-auth" in #myapp
+3. Roadie creates a Discord thread "sandbox-fix-auth" in #myapp
 4. Stores machine record in DB (thread_id, remote_url, password)
 5. Creates SDK clients with basic auth against the sandbox URL
 6. User types in the thread, sessions route to remote OpenCode
-7. Plugin/CLI in sandbox connect to kimaki's hrana via tunnel
+7. Plugin/CLI in sandbox connect to roadie's hrana via tunnel
 8. When done, machine can be destroyed or kept
 ```
 
@@ -461,7 +461,7 @@ User has a VPS with code at `/home/user/myapp`.
 **What happens:**
 
 ```
-1. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+1. Roadie generates a random OPENCODE_SERVER_PASSWORD
 2. SSHs into the VPS (using configured SSH key)
 3. Installs opencode if not present
 4. Writes env vars to the remote environment
@@ -474,7 +474,7 @@ User has a VPS with code at `/home/user/myapp`.
 User can also do this from CLI:
 
 ```bash
-kimaki machine add ssh://root@my-vps.example.com:/home/user/myapp
+roadie machine add ssh://root@my-vps.example.com:/home/user/myapp
 ```
 
 ### Flow 3: Machine providers (extensible)
@@ -524,7 +524,7 @@ Discord server:
     └── (regular session threads, local)
 ```
 
-The kimaki bot runs on the Mac. Messages in `#myapp` (and regular
+The roadie bot runs on the Mac. Messages in `#myapp` (and regular
 threads) spawn local OpenCode. Messages in machine threads route
 to remote OpenCode servers. All share the same hrana DB via
 localhost (local) and traforo tunnel (remote).
@@ -548,7 +548,7 @@ Meanwhile on the remote machine:
 8. OpenCode runs the AI agent, edits files, runs bash commands
 9. Plugin calls getPrisma() -> connects to hrana via tunnel
 10. Plugin resolves sessionID -> threadID from DB
-11. CLI commands (kimaki send, upload-to-discord) also use tunnel DB
+11. CLI commands (roadie send, upload-to-discord) also use tunnel DB
 12. Bot token from env lets CLI post to Discord directly
 ```
 
@@ -556,7 +556,7 @@ Everything works because the DB is the shared coordination layer.
 
 ### Flow 6: Ephemeral machine lifecycle
 
-Sandbox machines are temporary. Kimaki tracks their lifecycle:
+Sandbox machines are temporary. Roadie tracks their lifecycle:
 
 ```
 /new-machine provider:vercel repo:user/app label:fix-bug
@@ -565,7 +565,7 @@ Sandbox machines are temporary. Kimaki tracks their lifecycle:
   -> user says "commit and push"
   -> AI pushes to GitHub
   -> user runs /destroy-machine (or sandbox auto-expires)
-  -> Kimaki calls provider.destroy()
+  -> Roadie calls provider.destroy()
   -> thread archived, machine record cleaned up
 ```
 
@@ -575,15 +575,15 @@ re-provision with `/new-machine` again.
 
 ## What doesn't work remotely (and workarounds)
 
-### `kimaki_file_upload` tool
+### `roadie_file_upload` tool
 
-User uploads a file in Discord -> bot downloads to kimaki host ->
+User uploads a file in Discord -> bot downloads to roadie host ->
 returns local path. Remote OpenCode can't read that path.
 
 **Workaround options (pick one for v1):**
 
 1. **Disable for remote** - return "file upload not available for
-   remote machines" if `KIMAKI_LOCK_PORT` is not set (already
+   remote machines" if `ROADIE_LOCK_PORT` is not set (already
    gracefully handled in plugin code)
 2. **Return Discord CDN URL** - instead of downloading to disk,
    return the Discord attachment URL. OpenCode can fetch it
@@ -612,7 +612,7 @@ the remote machine). Or disable auto-worktrees for machine threads.
 
 ### `/run-shell-command` and `!` prefix
 
-These run `execAsync()` with `cwd: directory` on the kimaki host.
+These run `execAsync()` with `cwd: directory` on the roadie host.
 For machine threads, the directory doesn't exist locally.
 
 **Fix:** Route shell commands through the remote OpenCode server's
@@ -634,7 +634,7 @@ Two secrets protect remote access:
 
 1. **Bot token** - serves as DB auth token (hrana tunnel) and
    Discord REST authentication. One token to revoke.
-2. **Per-machine password** - random string generated by kimaki,
+2. **Per-machine password** - random string generated by roadie,
    stored in the `machines` table, used as `OPENCODE_SERVER_PASSWORD`.
    Each machine has its own password. Revoking one machine doesn't
    affect others.
@@ -652,14 +652,14 @@ The database contains bot tokens and API keys. Mitigations:
 - **traforo tunnel URL** is not publicly discoverable (random
   subdomain, no DNS record)
 - **Localhost is unauthenticated** but only reachable from the
-  kimaki host itself
-- **Machine providers are trusted** - kimaki provisions env vars
+  roadie host itself
+- **Machine providers are trusted** - roadie provisions env vars
   into them via authenticated provider APIs (Vercel API, SSH)
 
 ### OpenCode server exposure
 
 Remote OpenCode servers listen on public ports but are protected
-by `OPENCODE_SERVER_PASSWORD` (HTTP basic auth). Only kimaki
+by `OPENCODE_SERVER_PASSWORD` (HTTP basic auth). Only roadie
 knows the password (stored in DB). The password is randomly
 generated per machine and never shown to the user.
 
@@ -667,9 +667,9 @@ generated per machine and never shown to the user.
 
 ```
 Trusted:
-- Kimaki host (runs bot, hrana server, local OpenCode)
+- Roadie host (runs bot, hrana server, local OpenCode)
 - Remote machines explicitly added by user via /new-machine
-- Sandbox environments provisioned by kimaki
+- Sandbox environments provisioned by roadie
 
 Untrusted:
 - Everything else (internet, other Discord users without role)
@@ -683,11 +683,11 @@ This is the same trust level as running OpenCode locally.
 
 ### Phase 1: hrana tunnel + auth (DONE partially, ~1 day remaining)
 
-- ~~Start hrana server alongside kimaki bot~~ (**done**: `hrana-server.ts`)
-- ~~All local processes connect via http URL~~ (**done**: `KIMAKI_DB_URL`)
+- ~~Start hrana server alongside roadie bot~~ (**done**: `hrana-server.ts`)
+- ~~All local processes connect via http URL~~ (**done**: `ROADIE_DB_URL`)
 - Add auth token checking to hrana handler for non-localhost requests
 - Start traforo tunnel for hrana port in cli.ts
-- Persist tunnel ID in `~/.kimaki/tunnel-id`
+- Persist tunnel ID in `~/.roadie/tunnel-id`
 - Test: remote process connects to hrana via tunnel with bot token
 
 ### Phase 2: `/new-machine` command + machines table (2-3 days)
@@ -713,11 +713,11 @@ This is the same trust level as running OpenCode locally.
 
 ### Phase 4: CLI + plugin verification (1 day)
 
-- Verify `kimaki send`, `upload-to-discord`, `session list` work
-  with `KIMAKI_DB_URL` set to tunnel URL
+- Verify `roadie send`, `upload-to-discord`, `session list` work
+  with `ROADIE_DB_URL` set to tunnel URL
 - Verify plugin tools work (mark thread, archive, list users)
-- Disable `kimaki_file_upload` for remote (graceful error message)
-- Test: AI agent in remote session uses kimaki CLI successfully
+- Disable `roadie_file_upload` for remote (graceful error message)
+- Test: AI agent in remote session uses roadie CLI successfully
 
 ### Phase 5: machine providers (3-5 days)
 

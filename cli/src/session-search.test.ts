@@ -69,10 +69,10 @@ describe('session search helpers', () => {
   test('resolves --all to every registered project directory', () => {
     const resolved = resolveSessionSearchDirectories({
       all: true,
-      registeredDirectories: ['/tmp/kimaki', '/tmp/website', '/tmp/kimaki'],
+      registeredDirectories: ['/tmp/roadie', '/tmp/website', '/tmp/roadie'],
       cwd: '/tmp/current',
     })
-    expect(resolved).toEqual(['/tmp/kimaki', '/tmp/website'])
+    expect(resolved).toEqual(['/tmp/roadie', '/tmp/website'])
   })
 
   test('returns error when --all has no registered projects', () => {
@@ -89,7 +89,7 @@ describe('session search helpers', () => {
       resolveSessionSearchDirectories({
         all: false,
         cwd: '/tmp/current',
-        registeredDirectories: ['/tmp/kimaki'],
+        registeredDirectories: ['/tmp/roadie'],
       }),
     ).toEqual(['/tmp/current'])
     expect(
@@ -97,7 +97,7 @@ describe('session search helpers', () => {
         all: false,
         explicitDirectory: '/tmp/website',
         cwd: '/tmp/current',
-        registeredDirectories: ['/tmp/kimaki'],
+        registeredDirectories: ['/tmp/roadie'],
       }),
     ).toEqual(['/tmp/website'])
   })
@@ -128,7 +128,7 @@ describe('session search helpers', () => {
         {
           id: 'ses_new',
           title: 'new hit',
-          directory: '/tmp/kimaki',
+          directory: '/tmp/roadie',
           updated: now,
         },
         {
@@ -206,7 +206,7 @@ describe('session search helpers', () => {
         {
           id: 'ses_new',
           title: 'new hit',
-          directory: '/tmp/kimaki',
+          directory: '/tmp/roadie',
           updated: 3,
         },
         {
@@ -275,8 +275,8 @@ describe('session search helpers', () => {
         },
         {
           id: 'ses_new',
-          title: 'new kimaki hit',
-          directory: '/tmp/kimaki',
+          title: 'new roadie hit',
+          directory: '/tmp/roadie',
           updated: 3,
           messages: [
             {
@@ -324,8 +324,8 @@ describe('session search helpers', () => {
       'ses_new',
       'ses_mid',
     ])
-    expect(result.matches[0]?.directory).toBe('/tmp/kimaki')
-    expect(result.matches[0]?.source).toBe('kimaki')
+    expect(result.matches[0]?.directory).toBe('/tmp/roadie')
+    expect(result.matches[0]?.source).toBe('roadie')
     expect(result.matches[1]?.directory).toBe('/tmp/cli')
   })
 })

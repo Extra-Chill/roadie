@@ -27,7 +27,7 @@ export class ServerNotReadyError extends errore.createTaggedError({
 export class OpencodeIncompatibleVersionError extends errore.createTaggedError({
   name: 'OpencodeIncompatibleVersionError',
   message:
-    'Kimaki is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
+    'Roadie is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
 }) {}
 
 export class ApiKeyMissingError extends errore.createTaggedError({

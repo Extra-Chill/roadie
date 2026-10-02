@@ -171,7 +171,7 @@ export function resolveContentMentions(message: Message): string {
 // - punctuation + queue: ". queue", "! queue", ". queue.", "!queue."
 // - queue as its own final line: "text\nqueue" or just "queue"
 // When present the suffix is stripped and the message is routed through
-// kimaki's local queue (same as /queue command).
+// roadie's local queue (same as /queue command).
 const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
 
 /**
@@ -294,8 +294,8 @@ export function shouldQuoteIntermediateTextPart({
   if (!quotedTextFitsOneDiscordMessage(text)) return false
   if (
     nextToolName === 'question'
-    || nextToolName?.endsWith('kimaki_sleep')
-    || nextToolName?.endsWith('kimaki_action_buttons')
+    || nextToolName?.endsWith('roadie_sleep')
+    || nextToolName?.endsWith('roadie_action_buttons')
   ) {
     return false
   }
@@ -499,7 +499,7 @@ export function isTextMimeType(contentType: string | null): boolean {
 
 // Small Discord "send as file" prompts stay inlined. Bigger dumps only get a URL.
 export const TEXT_ATTACHMENT_INLINE_LIMIT_BYTES = 64 * 1024
-const KIMAKI_SEND_PROMPT_ATTACHMENT_NAME = 'prompt.md'
+const ROADIE_SEND_PROMPT_ATTACHMENT_NAME = 'prompt.md'
 
 function formatAttachmentSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -515,7 +515,7 @@ function shouldInlineTextAttachment(attachment: {
   name: string
   size: number
 }): boolean {
-  if (attachment.name === KIMAKI_SEND_PROMPT_ATTACHMENT_NAME) return true
+  if (attachment.name === ROADIE_SEND_PROMPT_ATTACHMENT_NAME) return true
   return attachment.size <= TEXT_ATTACHMENT_INLINE_LIMIT_BYTES
 }
 
@@ -786,7 +786,7 @@ export function getToolSummaryText(part: Part): string {
   }
 
   // File upload tool - show the prompt
-  if (part.tool.endsWith('kimaki_file_upload')) {
+  if (part.tool.endsWith('roadie_file_upload')) {
     const prompt = (part.state.input?.prompt as string) || ''
     return prompt ? `*${escapeInlineMarkdown(prompt.slice(0, 60))}*` : ''
   }
@@ -796,7 +796,7 @@ export function getToolSummaryText(part: Part): string {
   // result is never rendered here. Everything shown must come from state.input.
   // `until` is already absolute; `duration` is relative, so say "for 2h" —
   // never "until 2h".
-  if (part.tool.endsWith('kimaki_sleep')) {
+  if (part.tool.endsWith('roadie_sleep')) {
     const until = (part.state.input?.until as string) || ''
     const duration = (part.state.input?.duration as string) || ''
     const reason = (part.state.input?.reason as string) || ''
@@ -922,12 +922,12 @@ function formatPartBody(part: Part, prefix?: string): string {
     }
 
     // File upload tool is handled via Discord button + modal, not text
-    if (part.tool.endsWith('kimaki_file_upload')) {
+    if (part.tool.endsWith('roadie_file_upload')) {
       return ''
     }
 
     // Action buttons tool is handled via Discord buttons, not text
-    if (part.tool.endsWith('kimaki_action_buttons')) {
+    if (part.tool.endsWith('roadie_action_buttons')) {
       return ''
     }
 

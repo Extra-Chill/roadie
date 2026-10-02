@@ -1,5 +1,5 @@
 // Worktree management command: /new-worktree
-// Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
+// Uses OpenCode SDK v2 to create worktrees with roadie- prefix
 // Creates thread immediately, then worktree in background so user can type
 
 import {
@@ -38,7 +38,7 @@ import {
   validateBranchRef,
 } from '../worktrees.js'
 import {
-  KIMAKI_WORKTREE_ADAPTER_TYPE,
+  ROADIE_WORKTREE_ADAPTER_TYPE,
   removeWorktreeFromOwnRepository,
   resolveGitCommit,
   validateWorktreeIdentity,
@@ -99,7 +99,7 @@ class WorktreeError extends Error {
 
 /**
  * Lowercase, collapse whitespace to dashes, drop non-[a-z0-9-] chars.
- * Does NOT add the `opencode/kimaki-` prefix — callers do that so they can
+ * Does NOT add the `opencode/roadie-` prefix — callers do that so they can
  * optionally compress the slug first for auto-derived names.
  */
 export function slugifyWorktreeName(name: string): string {
@@ -141,20 +141,20 @@ export function shortenWorktreeSlug(slug: string): string {
 }
 
 /**
- * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/kimaki- prefix.
- * "My Feature" → "opencode/kimaki-my-feature"
+ * Format worktree name: lowercase, spaces to dashes, remove special chars, add opencode/roadie- prefix.
+ * "My Feature" → "opencode/roadie-my-feature"
  * Returns empty string if no valid name can be extracted.
  *
  * This is the "explicit" path used when the user provides a specific name.
  * The slug is NOT compressed — if you ask for `my-long-explicit-branch-name`
- * you get `opencode/kimaki-my-long-explicit-branch-name` verbatim.
+ * you get `opencode/roadie-my-long-explicit-branch-name` verbatim.
  */
 export function formatWorktreeName(name: string): string {
   const slug = slugifyWorktreeName(name)
   if (!slug) {
     return ''
   }
-  return `opencode/kimaki-${slug}`
+  return `opencode/roadie-${slug}`
 }
 
 /**
@@ -167,21 +167,21 @@ export function formatAutoWorktreeName(name: string): string {
   if (!slug) {
     return ''
   }
-  return `opencode/kimaki-${shortenWorktreeSlug(slug)}`
+  return `opencode/roadie-${shortenWorktreeSlug(slug)}`
 }
 
 /**
  * Derive worktree name from thread name.
- * Handles existing "⬦ worktree: opencode/kimaki-name" format or uses thread name directly.
+ * Handles existing "⬦ worktree: opencode/roadie-name" format or uses thread name directly.
  * Uses formatAutoWorktreeName so long thread titles get vowel-compressed.
  */
 function deriveWorktreeNameFromThread(threadName: string): string {
-  // Handle existing "⬦ worktree: opencode/kimaki-name" format
+  // Handle existing "⬦ worktree: opencode/roadie-name" format
   const worktreeMatch = threadName.match(/worktree:\s*(.+)$/i)
   const extractedName = worktreeMatch?.[1]?.trim()
   if (extractedName) {
-    // If already has opencode/kimaki- prefix, return as is
-    if (extractedName.startsWith('opencode/kimaki-')) {
+    // If already has opencode/roadie- prefix, return as is
+    if (extractedName.startsWith('opencode/roadie-')) {
       return extractedName
     }
     return formatAutoWorktreeName(extractedName)
@@ -260,7 +260,7 @@ export async function tryWorkspaceCreate({
   const response = await client.experimental.workspace.create({
     id: workspaceId,
     directory: projectDirectory,
-    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
+    type: ROADIE_WORKTREE_ADAPTER_TYPE,
     branch: worktreeName,
     extra: {
       projectDirectory,
@@ -360,7 +360,7 @@ export async function createWorktreeInBackground({
       // messages can see the in-progress state.
       await createPendingWorkspace({
         threadId: thread.id,
-        workspaceType: 'kimaki-worktree',
+        workspaceType: 'roadie-worktree',
         workspaceName: worktreeName,
         projectDirectory,
       })
@@ -745,7 +745,7 @@ async function handleWorktreeInThread({
         return
       }
 
-      // No system prompt copy: OpenCode's env block (cwd) precedes the kimaki
+      // No system prompt copy: OpenCode's env block (cwd) precedes the roadie
       // system prompt, so a fork into another directory never shares the
       // source cache prefix. The fork pins its own prompt on its first turn.
       await copySessionPreferences({

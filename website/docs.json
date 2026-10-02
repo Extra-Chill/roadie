@@ -1,6 +1,6 @@
 {
   "$schema": "https://holocron.so/docs.json",
-  "name": "Kimaki",
+  "name": "Roadie",
   "description": "Iron Man's Jarvis for coding agents, inside Discord",
   "favicon": "/logo.jpeg",
   "colors": {

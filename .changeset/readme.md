@@ -1,6 +1,6 @@
 # Changesets
 
-This folder contains **pending release notes** for Kimaki packages. Each `.md` file describes one user-facing fix or feature that should appear in the next generated changelog.
+This folder contains **pending release notes** for Roadie packages. Each `.md` file describes one user-facing fix or feature that should appear in the next generated changelog.
 
 ## What to put here
 

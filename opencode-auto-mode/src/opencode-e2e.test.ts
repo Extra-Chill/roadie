@@ -216,7 +216,7 @@ beforeAll(async () => {
     ...xdg,
     OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
   }
-  delete env.KIMAKI
+  delete env.ROADIE
   serverProcess = spawn(opencode, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {
     cwd: projectDir,
     stdio: 'pipe',

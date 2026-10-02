@@ -1,5 +1,5 @@
 {
-  "name": "kimaki-website",
+  "name": "roadie-website",
   "main": "spiceflow/cloudflare-entrypoint",
   "compatibility_flags": [
     "nodejs_compat",
@@ -68,7 +68,7 @@
   ],
   "env": {
     "preview": {
-      "name": "kimaki-website-preview",
+      "name": "roadie-website-preview",
       "durable_objects": {
         "bindings": [
           {

@@ -100,7 +100,7 @@ async function executeThreadScheduledTask({
   const embed = await buildThreadStartEmbeds(marker)
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
-  const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
+  const prefixedPrompt = `${QUEUE_PREFIX}**roadie-cli:**\n${prompt}`
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;

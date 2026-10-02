@@ -16,7 +16,7 @@
  * 3. Multi-account OAuth rotation after Anthropic rate-limit/auth failures.
  *
  * Login mode is chosen from environment:
- * - `KIMAKI` set: remote-first pasted callback URL/raw code flow
+ * - `ROADIE` set: remote-first pasted callback URL/raw code flow
  * - otherwise: standard localhost auto-complete flow
  *
  * Source references:
@@ -107,7 +107,7 @@ const OAUTH_BETA = "oauth-2025-04-20";
 const FINE_GRAINED_TOOL_STREAMING_BETA =
   "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
-const TOAST_SESSION_HEADER = "x-kimaki-session-id";
+const TOAST_SESSION_HEADER = "x-roadie-session-id";
 
 const ANTHROPIC_HOSTS = new Set([
   "api.anthropic.com",
@@ -522,7 +522,7 @@ function parseManualInput(input: string): CallbackResult {
 function buildAuthorizeHandler(mode: "oauth" | "apikey") {
   return async () => {
     const auth = await beginAuthorizationFlow();
-    const isRemote = Boolean(process.env.KIMAKI);
+    const isRemote = Boolean(process.env.ROADIE);
     let pendingAuthResult: Promise<AuthResult> | undefined;
 
     const finalize = async (result: CallbackResult): Promise<AuthResult> => {

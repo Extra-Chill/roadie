@@ -1,6 +1,6 @@
-// Vitest configuration for the kimaki discord package.
-// Injects KIMAKI_VITEST=1 so config.ts and db.ts auto-isolate from the real
-// ~/.kimaki/ database and the running bot's Hrana server.
+// Vitest configuration for the roadie discord package.
+// Injects ROADIE_VITEST=1 so config.ts and db.ts auto-isolate from the real
+// ~/.roadie/ database and the running bot's Hrana server.
 //
 // CPU profiling: set VITEST_CPU_PROF=1 to generate .cpuprofile files in
 // ./tmp/cpu-profiles/. Analyze with: node ../profano/dist/cli.js tmp/cpu-profiles/CPU.*.cpuprofile
@@ -16,10 +16,10 @@ export default defineConfig({
     testTimeout: 8_000,
     hookTimeout: 5_000,
     env: {
-      KIMAKI_VITEST: '1',
+      ROADIE_VITEST: '1',
     },
-    // Use forked workers so e2e suites that mutate process.env (KIMAKI_DB_URL,
-    // KIMAKI_LOCK_PORT, etc.) do not race across files. Thread workers share
+    // Use forked workers so e2e suites that mutate process.env (ROADIE_DB_URL,
+    // ROADIE_LOCK_PORT, etc.) do not race across files. Thread workers share
     // process-wide env state and caused flaky cross-suite failures.
     // Cap workers to avoid CPU contention during TypeScript compilation.
     pool: 'forks',

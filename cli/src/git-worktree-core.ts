@@ -1,8 +1,8 @@
 // Plugin-safe Git worktree creation, identity validation, and removal primitives.
 // This module must NOT import config.ts, logger.ts, or any module that
 // transitively pulls them in. It is used by both:
-//   - worktrees.ts (bot process — wraps with kimaki logger + config)
-//   - kimaki-workspace-adaptor.ts (opencode server process — silent callbacks)
+//   - worktrees.ts (bot process — wraps with roadie logger + config)
+//   - roadie-workspace-adaptor.ts (opencode server process — silent callbacks)
 //
 // All logging goes through an optional `log` callback so callers control output.
 
@@ -28,7 +28,7 @@ export type WorktreeLog = {
   error(message: string): void
 }
 
-export const KIMAKI_WORKTREE_ADAPTER_TYPE = 'kimaki-worktree'
+export const ROADIE_WORKTREE_ADAPTER_TYPE = 'roadie-worktree'
 
 export class WorktreeIdentityError extends errore.createTaggedError({
   name: 'WorktreeIdentityError',

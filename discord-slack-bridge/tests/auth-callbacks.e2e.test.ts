@@ -120,7 +120,7 @@ describe('authorization callbacks', () => {
         ...webhookConfig,
         workspaceId: 'T_UNAUTHORIZED',
       },
-      command: '/kimaki',
+      command: '/roadie',
       text: 'hello',
       userId: ctx.twin.resolveUserId('alice'),
       userName: 'alice',

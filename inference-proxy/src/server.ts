@@ -1,4 +1,4 @@
-// OpenAI-compatible inference proxy for Kimaki Pro.
+// OpenAI-compatible inference proxy for Roadie Pro.
 // Proxies /v1/chat/completions and /v1/models to Fireworks AI,
 // rewriting model IDs and injecting the Fireworks API key.
 // Deployed at openai.kimaki.dev.
@@ -17,10 +17,10 @@ export { UsageCounter } from './usage-counter'
 
 const FIREWORKS_BASE_URL = 'https://api.fireworks.ai/inference/v1'
 
-// Maps Kimaki model names to their current backing model on Fireworks.
+// Maps Roadie model names to their current backing model on Fireworks.
 // This is the single place to update when swapping to a better model.
 const MODEL_MAP: Record<string, string> = {
-  kimaki: 'accounts/fireworks/models/glm-5p2',
+  roadie: 'accounts/fireworks/models/glm-5p2',
 }
 
 // Fireworks pricing per million tokens (USD)
@@ -30,10 +30,10 @@ const PRICING = {
 }
 
 const MODEL_INFO = {
-  id: 'kimaki',
+  id: 'roadie',
   object: 'model' as const,
   created: Math.floor(Date.now() / 1000),
-  owned_by: 'kimaki',
+  owned_by: 'roadie',
 }
 
 function extractBearerToken(request: Request): string | null {
@@ -127,7 +127,7 @@ async function handleChatCompletions(
       { status: 400 },
     )
   }
-  const requestedModel = body.model ?? 'kimaki'
+  const requestedModel = body.model ?? 'roadie'
   const fireworksModel = MODEL_MAP[requestedModel]
 
   if (!fireworksModel) {
@@ -146,7 +146,7 @@ async function handleChatCompletions(
   body.user = orgId
   body.metadata = {
     ...(body.metadata as Record<string, string> | undefined),
-    kimaki_org: orgId,
+    roadie_org: orgId,
   }
   const isStreaming = body.stream === true
 
@@ -244,7 +244,7 @@ function handleStreamingResponse(
           outputTokens = parsed.usage.completion_tokens ?? outputTokens
         }
 
-        // Rewrite model name so clients see "kimaki" instead of the backing model
+        // Rewrite model name so clients see "roadie" instead of the backing model
         if (parsed.model) {
           parsed.model = requestedModel
         }
@@ -378,7 +378,7 @@ export default {
 
     if (url.pathname === '/' || url.pathname === '') {
       return Response.json({
-        name: 'Kimaki Pro Inference API',
+        name: 'Roadie Pro Inference API',
         docs: 'https://kimaki.dev/docs/pro',
       })
     }

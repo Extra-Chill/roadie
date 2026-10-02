@@ -46,7 +46,7 @@ cli
   .command('discord-install-url', 'Print the bot install URL and exit')
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .option(
     '--gateway',
@@ -101,7 +101,7 @@ cli
   )
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .option(
     '--gateway',
@@ -181,7 +181,7 @@ cli
   .command('bot status set <text>', 'Set the bot presence/status in Discord')
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .option(
     '--type <activityType>',
@@ -209,7 +209,7 @@ cli
 
         const botRow = await getBotTokenWithMode()
         if (!botRow) {
-          cliLogger.error('No bot configured. Run `kimaki` first.')
+          cliLogger.error('No bot configured. Run `roadie` first.')
           process.exit(EXIT_NO_RESTART)
         }
         if (botRow.mode === 'gateway') {
@@ -284,10 +284,10 @@ cli
   )
 
 cli
-  .command('bot token', 'Print the bot token for use in CI and automation (KIMAKI_BOT_TOKEN)')
+  .command('bot token', 'Print the bot token for use in CI and automation (ROADIE_BOT_TOKEN)')
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .action(async (options) => {
     try {
@@ -299,7 +299,7 @@ cli
 
       const botRow = await getBotTokenWithMode()
       if (!botRow) {
-        cliLogger.error('No bot configured. Run `kimaki` first.')
+        cliLogger.error('No bot configured. Run `roadie` first.')
         process.exit(EXIT_NO_RESTART)
       }
 
@@ -321,7 +321,7 @@ cli
   .command('bot status clear', 'Clear the bot presence/status')
   .option(
     '--data-dir <path>',
-    'Data directory for config and database (default: ~/.kimaki)',
+    'Data directory for config and database (default: ~/.roadie)',
   )
   .action(async (options: { dataDir?: string }) => {
     try {
@@ -333,7 +333,7 @@ cli
 
       const botRow = await getBotTokenWithMode()
       if (!botRow) {
-        cliLogger.error('No bot configured. Run `kimaki` first.')
+        cliLogger.error('No bot configured. Run `roadie` first.')
         process.exit(EXIT_NO_RESTART)
       }
       if (botRow.mode === 'gateway') {

@@ -80,9 +80,9 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
-export const KIMAKI_GATEWAY_APP_ID =
-  process.env.KIMAKI_GATEWAY_APP_ID || '1477605701202481173'
-export const KIMAKI_WEBSITE_URL = process.env.KIMAKI_WEBSITE_URL || 'https://kimaki.dev'
+export const ROADIE_GATEWAY_APP_ID =
+  process.env.ROADIE_GATEWAY_APP_ID || '1477605701202481173'
+export const ROADIE_WEBSITE_URL = process.env.ROADIE_WEBSITE_URL || 'https://kimaki.dev'
 
 export function generateDiscordInstallUrlForBot({
   appId,
@@ -99,7 +99,7 @@ export function generateDiscordInstallUrlForBot({
   /** Optional external URL to redirect to after OAuth completes instead of the
    *  default success page. The website appends ?guild_id=<id> before redirecting. */
   gatewayCallbackUrl?: string
-  /** When set (KIMAKI_INTERNET_REACHABLE_URL), the website stores this URL in
+  /** When set (ROADIE_INTERNET_REACHABLE_URL), the website stores this URL in
    *  gateway_clients.reachable_url so the gateway-proxy connects outbound. */
   reachableUrl?: string
 }): Error | string {
@@ -115,13 +115,13 @@ export function generateDiscordInstallUrlForBot({
   // This initiates the better-auth OAuth flow with clientId/clientSecret
   // as additionalData, which better-auth stores in its verification table
   // and recovers after Discord redirects back to the callback.
-  // Use a kimaki-specific callback field name to avoid ambiguity with
+  // Use a roadie-specific callback field name to avoid ambiguity with
   // better-auth's own callbackURL state field.
-  const url = new URL(`${KIMAKI_WEBSITE_URL}/discord-install`)
+  const url = new URL(`${ROADIE_WEBSITE_URL}/discord-install`)
   url.searchParams.set('clientId', clientId)
   url.searchParams.set('clientSecret', clientSecret)
   if (gatewayCallbackUrl) {
-    url.searchParams.set('kimakiCallbackUrl', gatewayCallbackUrl)
+    url.searchParams.set('roadieCallbackUrl', gatewayCallbackUrl)
   }
   if (reachableUrl) {
     url.searchParams.set('reachableUrl', reachableUrl)

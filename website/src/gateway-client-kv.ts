@@ -17,9 +17,9 @@ export type GatewayClientCacheRecord = {
 export type GatewayClientPlatform = 'discord' | 'slack'
 
 export type SlackInstallStateRecord = {
-  kimaki_client_id: string
-  kimaki_client_secret: string
-  kimaki_callback_url: string | null
+  roadie_client_id: string
+  roadie_client_secret: string
+  roadie_callback_url: string | null
 }
 
 const GATEWAY_CLIENT_KV_TTL_SECONDS = 60
@@ -366,9 +366,9 @@ function isSlackInstallStateRecord(
   }
 
   return (
-    typeof value.kimaki_client_id === 'string'
-    && typeof value.kimaki_client_secret === 'string'
-    && (typeof value.kimaki_callback_url === 'string' || value.kimaki_callback_url === null)
+    typeof value.roadie_client_id === 'string'
+    && typeof value.roadie_client_secret === 'string'
+    && (typeof value.roadie_callback_url === 'string' || value.roadie_callback_url === null)
   )
 }
 

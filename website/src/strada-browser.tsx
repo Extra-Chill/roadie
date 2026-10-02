@@ -13,7 +13,7 @@ const STRADA_PROJECT_ID = '01KYX3X6FEBBV5JV6Q8M97988C'
 if (typeof window !== 'undefined' && STRADA_PROJECT_ID) {
   initStrada({
     projectId: STRADA_PROJECT_ID,
-    service: 'kimaki-website-browser',
+    service: 'roadie-website-browser',
     environment: import.meta.env.MODE || 'production',
     enabled: !import.meta.hot,
   })

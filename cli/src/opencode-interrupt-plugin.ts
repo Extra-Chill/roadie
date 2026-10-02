@@ -20,7 +20,7 @@
 // not always reach the plugin's event hook, so abort silently no-opped.
 //
 // Logging goes through client.app.log (OpenCode's structured logger) via
-// createPluginAppLogger. Plugins must not use console.* or import the kimaki
+// createPluginAppLogger. Plugins must not use console.* or import the roadie
 // logger.
 
 import type { Plugin } from '@opencode-ai/plugin'
@@ -46,7 +46,7 @@ type PendingMessage = {
   model: { providerID: string; modelID: string } | undefined
 }
 
-const LOG_SERVICE = 'kimaki-interrupt'
+const LOG_SERVICE = 'roadie-interrupt'
 const DEFAULT_INTERRUPT_STEP_TIMEOUT_MS = 3_000
 
 // Poll session.status after abort until the session reports idle. cancel() sets
@@ -55,7 +55,7 @@ const ABORT_IDLE_POLL_INTERVAL_MS = 100
 const ABORT_IDLE_POLL_TIMEOUT_MS = 3_000
 
 function getInterruptStepTimeoutMs(): number {
-  const raw = process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS']
+  const raw = process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS']
   if (!raw) return DEFAULT_INTERRUPT_STEP_TIMEOUT_MS
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INTERRUPT_STEP_TIMEOUT_MS

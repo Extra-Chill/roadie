@@ -2,14 +2,14 @@
 title: Platform Abstraction Plan — Discord + Slack
 description: |
   Plan for abstracting Discord-specific APIs into a platform-independent
-  KimakiAdapter interface that supports both Discord and Slack.
+  RoadieAdapter interface that supports both Discord and Slack.
 prompt: |
   Explored all 48 files with discord.js imports across cli/src/.
   Read the chat SDK source (opensrc/repos/github.com/vercel/chat/packages/chat)
   including types.ts, chat.ts, thread.ts, channel.ts, and index.ts.
-  Compared chat SDK's Adapter interface with Kimaki's needs.
-  Designed KimakiAdapter interface modeled after chat SDK patterns
-  but extended for Kimaki's Gateway-first, long-running CLI architecture.
+  Compared chat SDK's Adapter interface with Roadie's needs.
+  Designed RoadieAdapter interface modeled after chat SDK patterns
+  but extended for Roadie's Gateway-first, long-running CLI architecture.
   Files referenced:
     - cli/src/**/*.ts (all 48 files with discord.js imports)
     - opensrc/repos/github.com/vercel/chat/packages/chat/src/types.ts
@@ -45,24 +45,24 @@ Chat (event routing, dedup, locking, state)
 The chat SDK (vercel/chat) is a multi-platform chat abstraction with adapters for
 Slack, Teams, and GChat. It uses a webhook-first, serverless architecture.
 
-Kimaki's Discord adapter uses a Gateway WebSocket (persistent connection), not
+Roadie's Discord adapter uses a Gateway WebSocket (persistent connection), not
 webhooks, and needs capabilities chat doesn't provide (thread creation, channel
 management, voice, permissions, command registration). So for **Discord**, we write
 our own adapter implementation directly with discord.js.
 
 For **Slack**, we plan to use chat SDK as a dependency. The `SlackAdapter`
 implementation will wrap chat's Slack adapter internally, translating between
-Kimaki's `KimakiAdapter` interface and chat's `Adapter` interface. This gives us
+Roadie's `RoadieAdapter` interface and chat's `Adapter` interface. This gives us
 battle-tested Slack support (Block Kit rendering, event parsing, OAuth) without
 reimplementing it.
 
 ```
-KimakiAdapter interface
+RoadieAdapter interface
   ├── DiscordAdapter  → discord.js directly (Gateway + REST)
   └── SlackAdapter    → chat SDK's Slack adapter under the hood (webhooks)
 ```
 
-**Decision:** Our own `KimakiAdapter` interface as the abstraction layer. Discord
+**Decision:** Our own `RoadieAdapter` interface as the abstraction layer. Discord
 adapter is standalone. Slack adapter wraps chat SDK. Method naming follows chat's
 conventions where they overlap for consistency.
 
@@ -91,7 +91,7 @@ Slack limitations:
 - Slash commands can't be invoked in threads
 - 40,000 char limit vs Discord's 2,000
 
-## 5. What Kimaki Actually Uses (audit results)
+## 5. What Roadie Actually Uses (audit results)
 
 Before designing the interface, here's exactly what the codebase uses today.
 This informed every decision about what to include and what to drop.
@@ -159,7 +159,7 @@ The caller sets `ephemeral: true`. The adapter handles it:
 - Discord: `MessageFlags.Ephemeral` on interaction reply
 - Slack: `response_type: "ephemeral"` in webhook response
 
-## 7. KimakiAdapter Interface (simplified)
+## 7. RoadieAdapter Interface (simplified)
 
 Removed from chat SDK patterns: `{ raw: string }` format, `{ ast: Root }`,
 cards/JSX, streaming-through-messages, StateAdapter, dedup/locking,
@@ -197,7 +197,7 @@ interface PlatformMessage {
 
 // ─── The Adapter ──────────────────────────────────────────
 
-interface KimakiAdapter {
+interface RoadieAdapter {
   readonly name: string         // 'discord' | 'slack'
   readonly botUserId: string
   readonly botUsername: string   // for channel naming, mention detection
@@ -743,7 +743,7 @@ Current:
                  ──→ commands/* (discord.js types)
 
 Target:
-  discord-bot.ts ──→ KimakiAdapter interface
+  discord-bot.ts ──→ RoadieAdapter interface
                       ├── discord-adapter.ts (wraps discord.js)
                       └── slack-adapter.ts (wraps @slack/web-api)
 ```
@@ -760,7 +760,7 @@ The `discord-adapter.ts` wraps all discord.js code currently scattered across
 |---|---|---|
 | `discord-bot.ts` | `Client`, `Events.*`, `GatewayIntentBits`, `Partials`, `Message`, `ThreadChannel`, `TextChannel` | Replace with `adapter.onMessage()`, `.onReady()`, `.createThread()`, `.postMessage()`. Main event loop. |
 | `discord-urls.ts` | `REST` factory, base URL config | Moves inside `DiscordAdapter` |
-| `discord-utils.ts` | `sendThreadMessage`, `archiveThread`, `reactToThread`, `hasKimakiBotPermission`, `uploadFilesToDiscord`, `splitMarkdownForDiscord`, `resolveTextChannel`, `resolveWorkingDirectory`, `getKimakiMetadata` | Split: platform-agnostic utils stay, Discord-specific ops move into `DiscordAdapter` |
+| `discord-utils.ts` | `sendThreadMessage`, `archiveThread`, `reactToThread`, `hasRoadieBotPermission`, `uploadFilesToDiscord`, `splitMarkdownForDiscord`, `resolveTextChannel`, `resolveWorkingDirectory`, `getRoadieMetadata` | Split: platform-agnostic utils stay, Discord-specific ops move into `DiscordAdapter` |
 | `interaction-handler.ts` | `Events.InteractionCreate`, `Interaction`, `MessageFlags` | Replace with `adapter.onCommand()`, `.onButton()`, `.onSelectMenu()`, `.onModalSubmit()` dispatchers |
 | `commands/types.ts` | `ChatInputCommandInteraction`, `AutocompleteInteraction`, `StringSelectMenuInteraction` | Replace with `CommandEvent`, `AutocompleteEvent`, `SelectMenuEvent` |
 | `format-tables.ts` | `APIContainerComponent`, `APITextDisplayComponent`, `APISeparatorComponent`, `SeparatorSpacingSize` | Move to Discord adapter; Slack renders tables as mrkdwn |
@@ -837,7 +837,7 @@ Every command file uses Discord interaction types. They all switch from
 | `task-runner.ts` | `REST`, `Routes.channelMessages`, `Routes.threads` | Replace with `adapter.postMessage()`, `adapter.createThread()` |
 | `message-formatting.ts` | `Message` type, `TextChannel` | Replace with `PlatformMessage` |
 | `utils.ts` | `PermissionsBitField` | Move to Discord adapter |
-| `ipc-polling.ts` | `Client` | Replace with `KimakiAdapter` |
+| `ipc-polling.ts` | `Client` | Replace with `RoadieAdapter` |
 | `test-utils.ts` | `APIMessage` | Replace with `PlatformMessage` |
 
 ### Tier 7: E2E Tests (7 files)
@@ -847,7 +847,7 @@ All test files create discord.js `Client` instances — need a
 
 ## 11. Implementation Order
 
-1. Create `KimakiAdapter` interface in `cli/src/platform/types.ts`
+1. Create `RoadieAdapter` interface in `cli/src/platform/types.ts`
 2. Create `DiscordAdapter` in `cli/src/platform/discord-adapter.ts`
    wrapping existing discord.js code
 3. Update `discord-bot.ts` to use adapter (Tier 1)

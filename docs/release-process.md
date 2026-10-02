@@ -1,10 +1,10 @@
 ---
 title: Release process
 description: >
-  Steps to run before and after publishing the kimaki npm package: sync
+  Steps to run before and after publishing the roadie npm package: sync
   skills, post the release to the #changelog Discord channel with the demo
-  bot token, deploy the website, and redeploy the kimaki-demo Fly.io app.
-  Read before any kimaki publish, release, changelog post, website deploy,
+  bot token, deploy the website, and redeploy the roadie-demo Fly.io app.
+  Read before any roadie publish, release, changelog post, website deploy,
   or demo deploy.
 ---
 
@@ -12,9 +12,9 @@ description: >
 
 ```
 pnpm sync-skills → commit skill changes → publish → gh release create
-  → /tmp/kimaki-release.md → #changelog post → website deploy
+  → /tmp/roadie-release.md → #changelog post → website deploy
 
-kimaki-demo deploy (separate, when asked): bump Dockerfile version → pnpm fly deploy
+roadie-demo deploy (separate, when asked): bump Dockerfile version → pnpm fly deploy
 ```
 
 ## 1. pre-publish: sync skills
@@ -31,16 +31,16 @@ This makes the npm package ship the latest synced skills from their source repos
 
 After every publish, once the `gh release create` step is done:
 
-1. write the gh release body to `/tmp/kimaki-release.md` so it can be reused without regenerating it
-2. send a notification to the **#changelog** channel (`1514563453493313548`) in the Kimaki Discord Server with a markdown summary of the release
+1. write the gh release body to `/tmp/roadie-release.md` so it can be reused without regenerating it
+2. send a notification to the **#changelog** channel (`1514563453493313548`) in the Roadie Discord Server with a markdown summary of the release
 
-The #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. The kimaki sigillo project (org: npm) has a `KIMAKI_BOT_TOKEN` secret in the `dev` environment with the demo bot's `clientId:clientSecret`.
+The #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. The roadie sigillo project (org: npm) has a `ROADIE_BOT_TOKEN` secret in the `dev` environment with the demo bot's `clientId:clientSecret`.
 
 ```bash
-sigillo run -c dev -- kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
+sigillo run -c dev -- roadie send --channel 1514563453493313548 --prompt "$(cat /tmp/roadie-release.md)" --notify-only --user '535922349652836367'
 ```
 
-Run this from the kimakivoice repo root (where sigillo is set up). `KIMAKI_BOT_TOKEN` takes priority over local DB credentials when set, so `kimaki send` authenticates as the demo bot through the gateway proxy.
+Run this from the kimakivoice repo root (where sigillo is set up). `ROADIE_BOT_TOKEN` takes priority over local DB credentials when set, so `roadie send` authenticates as the demo bot through the gateway proxy.
 
 The notification uses the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons. Keep it detailed and user-facing, identical in quality to the gh release body.
 
@@ -48,7 +48,7 @@ When `--notify-only` targets a non-project channel, the message is posted direct
 
 ## 3. deploy the website
 
-After every kimaki publish, once the changelog is generated and the gh release exists, deploy the website to production:
+After every roadie publish, once the changelog is generated and the gh release exists, deploy the website to production:
 
 ```bash
 cd website && pnpm deployment:production
@@ -56,16 +56,16 @@ cd website && pnpm deployment:production
 
 The website shows the changelog and install instructions, so it must be updated right after each release.
 
-## 4. official Discord demo (kimaki-demo)
+## 4. official Discord demo (roadie-demo)
 
-`kimaki-demo/` is the Fly.io app for the public try-Kimaki bot in the official Kimaki Discord. People use it to try Kimaki without a local install.
+`roadie-demo/` is the Fly.io app for the public try-Roadie bot in the official Roadie Discord. People use it to try Roadie without a local install.
 
-Always bump `kimaki-demo/Dockerfile` (`kimaki@x.y.z`) to `npm view kimaki version` before deploy.
+Always bump `roadie-demo/Dockerfile` (`roadie@x.y.z`) to `npm view roadie version` before deploy.
 
 ```bash
-cd kimaki-demo
+cd roadie-demo
 pnpm fly logs            # live logs
-pnpm fly ssh console     # inspect /data/kimaki.log
+pnpm fly ssh console     # inspect /data/roadie.log
 pnpm fly deploy          # rebuild + deploy
 ```
 

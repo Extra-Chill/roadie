@@ -65,7 +65,7 @@ function normalizeWorktreeLifecycleText(text: string): string {
     .replaceAll(AUTO_WORKTREE_SUFFIX, 'AUTO_WORKTREE_NAME')
     .replaceAll(WORKTREE_NAME, 'WORKTREE_NAME')
     .replace(
-      /opencode\/kimaki-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
+      /opencode\/roadie-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
       'AUTO_WORKTREE_BRANCH',
     )
     .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
@@ -162,7 +162,7 @@ describe('worktree lifecycle', () => {
     directories = createRunDirectories()
     const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools_and_text' })
@@ -248,7 +248,7 @@ describe('worktree lifecycle', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
 
@@ -305,16 +305,16 @@ describe('worktree lifecycle', () => {
       stopHranaServer().catch(() => { return }),
       discord?.stop().catch(() => { return }),
     ])
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     // Clean up the git worktrees created during the tests
     if (directories) {
       const branchesToClean = [
-        `opencode/kimaki-${WORKTREE_NAME}`,
-        `opencode/kimaki-${CHANNEL_WORKTREE_NAME}`,
+        `opencode/roadie-${WORKTREE_NAME}`,
+        `opencode/roadie-${CHANNEL_WORKTREE_NAME}`,
       ]
       await execAsync(
         `git worktree list --porcelain`,
@@ -338,7 +338,7 @@ describe('worktree lifecycle', () => {
           }
         }
       }).catch(() => { return })
-      // Also clean up auto-worktree branches (pattern: opencode/kimaki-<suffix>)
+      // Also clean up auto-worktree branches (pattern: opencode/roadie-<suffix>)
       await execAsync(
         'git worktree prune',
         { cwd: directories.projectDirectory },
@@ -351,7 +351,7 @@ describe('worktree lifecycle', () => {
       }
       // Clean auto-worktree branches (auto-derived names contain the suffix)
       await execAsync(
-        `git branch --list 'opencode/kimaki-*${WORKTREE_SUFFIX}*'`,
+        `git branch --list 'opencode/roadie-*${WORKTREE_SUFFIX}*'`,
         { cwd: directories.projectDirectory },
       ).then(async ({ stdout }) => {
         for (const branch of stdout.trim().split('\n').filter(Boolean)) {
@@ -430,7 +430,7 @@ describe('worktree lifecycle', () => {
             return false
           }
           return t.id !== thread.id
-            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.startsWith('⬦ worktree: opencode/roadie-')
             && t.name.includes(WORKTREE_NAME)
         },
       })
@@ -563,15 +563,15 @@ describe('worktree lifecycle', () => {
       const worktreeText = await worktreeTh.text()
       expect(normalizeWorktreeLifecycleText(worktreeText)).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        🌳 **Worktree: opencode/kimaki-WORKTREE_NAME**
+        🌳 **Worktree: opencode/roadie-WORKTREE_NAME**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
-        🌿 Branch: \`opencode/kimaki-WORKTREE_NAME\`
+        🌿 Branch: \`opencode/roadie-WORKTREE_NAME\`
         Reusing context from <#THREAD_ID> in worktree session \`ses_TEST\`.
         --- from: user (worktree-tester)
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
         ok
-        -# *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2*"
+        -# *WORKTREE_NAME ⋅ opencode/roadie-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2*"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
@@ -604,7 +604,7 @@ describe('worktree lifecycle', () => {
         predicate: (t) => {
           return Boolean(
             t.name
-            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.startsWith('⬦ worktree: opencode/roadie-')
             && t.name.includes(CHANNEL_WORKTREE_NAME),
           )
         },
@@ -660,9 +660,9 @@ describe('worktree lifecycle', () => {
       const worktreeText = await wt.text()
       expect(normalizeWorktreeLifecycleText(worktreeText)).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        🌳 **Worktree: opencode/kimaki-CHANNEL_WORKTREE_NAME**
+        🌳 **Worktree: opencode/roadie-CHANNEL_WORKTREE_NAME**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
-        🌿 Branch: \`opencode/kimaki-CHANNEL_WORKTREE_NAME\`
+        🌿 Branch: \`opencode/roadie-CHANNEL_WORKTREE_NAME\`
         --- from: user (worktree-tester)
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
@@ -815,9 +815,9 @@ describe('worktree lifecycle', () => {
   )
 
   test(
-    'kimaki send --channel auto-creates worktree when channel toggle is enabled',
+    'roadie send --channel auto-creates worktree when channel toggle is enabled',
     async () => {
-      // Simulate `kimaki send --channel AUTO_WORKTREE_CHANNEL_ID --prompt '...'`
+      // Simulate `roadie send --channel AUTO_WORKTREE_CHANNEL_ID --prompt '...'`
       // WITHOUT --worktree flag. The bot-side ThreadCreate handler should detect
       // the channel toggle and auto-create a worktree.
       const prompt = `Reply with exactly: send-auto-wt-${WORKTREE_SUFFIX}`
@@ -827,18 +827,18 @@ describe('worktree lifecycle', () => {
         userId: TEST_USER_ID,
       }
 
-      // Post starter message (what `kimaki send` does)
+      // Post starter message (what `roadie send` does)
       const starterMessage = await discord
         .channel(AUTO_WORKTREE_CHANNEL_ID)
         .bot()
         .sendMessage({
-          content: `» **kimaki-cli:**\n${prompt}`,
+          content: `» **roadie-cli:**\n${prompt}`,
           embeds: [
             { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
           ],
         })
 
-      // Create thread on that message (what `kimaki send` does via REST)
+      // Create thread on that message (what `roadie send` does via REST)
       const threadData = (await botClient.rest.post(
         Routes.threads(AUTO_WORKTREE_CHANNEL_ID, starterMessage.id),
         {
@@ -859,7 +859,7 @@ describe('worktree lifecycle', () => {
       })
 
       // Wait for the bot reply to the prompt. The starter message is from
-      // the bot (kimaki-cli), not a user, so just wait for the text to appear.
+      // the bot (roadie-cli), not a user, so just wait for the text to appear.
       await waitForBotMessageContaining({
         discord,
         threadId: threadData.id,
@@ -874,7 +874,7 @@ describe('worktree lifecycle', () => {
         normalizeWorktreeLifecycleText(await th.text()),
       ).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        » **kimaki-cli:**
+        » **roadie-cli:**
         Reply with exactly: send-auto-wt-SUFFIX
         [embed]
         🌳 **Worktree: AUTO_WORKTREE_BRANCH**

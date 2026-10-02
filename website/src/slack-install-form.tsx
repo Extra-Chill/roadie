@@ -5,11 +5,11 @@ import { useState } from 'react'
 export function SlackInstallForm({
   clientId,
   clientSecret,
-  kimakiCallbackUrl,
+  roadieCallbackUrl,
 }: {
   clientId: string
   clientSecret: string
-  kimakiCallbackUrl: string | null
+  roadieCallbackUrl: string | null
 }) {
   const [domain, setDomain] = useState('')
   const [error, setError] = useState('')
@@ -48,8 +48,8 @@ export function SlackInstallForm({
       params.set('clientId', clientId)
       params.set('clientSecret', clientSecret)
       params.set('team', data.teamId || '')
-      if (kimakiCallbackUrl) {
-        params.set('kimakiCallbackUrl', kimakiCallbackUrl)
+      if (roadieCallbackUrl) {
+        params.set('roadieCallbackUrl', roadieCallbackUrl)
       }
 
       window.location.href = `/slack-install/start?${params.toString()}`

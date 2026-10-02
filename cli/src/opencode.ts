@@ -12,7 +12,7 @@
 //
 //   opencode built-in defaults
 //     ▼
-//   merged config files  ── kimaki's generated config, THEN the user's
+//   merged config files  ── roadie's generated config, THEN the user's
 //     ▼                     project opencode.json (deep-merged on top)
 //   config.agent.<name>.permission
 //     ▼
@@ -27,7 +27,7 @@
 // is `ask`, which meant the agent had to interrupt the user for ordinary reads
 // outside the project, and an unanswered prompt was auto-rejected on TTL. Users
 // who want stricter behaviour add `deny`/`ask` rules to their own
-// opencode.json, or start kimaki with --restrict-directories.
+// opencode.json, or start roadie with --restrict-directories.
 //
 // session.permission carries exactly one thing: the worktree original-checkout
 // deny, which must beat user config on purpose.
@@ -58,6 +58,7 @@ import {
 } from './session-handler/global-event-listener.js'
 import {
   getDataDir,
+  withKimakiEnvAliases,
   getLockPort,
   getRestrictExternalDirectories,
   getOpencodeHostname,
@@ -103,7 +104,7 @@ import {
   type OpenCodeErrors,
 } from './errors.js'
 import {
-  ensureKimakiCommandShim,
+  ensureRoadieCommandShim,
   getIncompatibleOpencodeVersionError,
   getPathEnvKey,
   getSpawnCommandAndArgs,
@@ -516,7 +517,7 @@ function ensureProcessCleanupHandlersRegistered(): void {
 // 2. `which opencode` / `where opencode` (system PATH)
 // 3. Fall back to bare "opencode" (spawn will fail with a clear error)
 //
-// OpenCode must be installed globally before running kimaki. The bot startup
+// OpenCode must be installed globally before running roadie. The bot startup
 // checks for it via ensureCommandAvailable and prompts to install if missing.
 
 let resolvedOpencodeCommand: string | null = null
@@ -687,7 +688,7 @@ async function discoverExistingServer(): Promise<SingleServer | null> {
   const lockPort = getLockPort()
   try {
     const portResponse = await requestHealthcheck({
-      url: `http://127.0.0.1:${lockPort}/kimaki/opencode-port`,
+      url: `http://127.0.0.1:${lockPort}/roadie/opencode-port`,
       timeoutMs: 2000,
     })
     if (portResponse.status !== 200) {
@@ -742,8 +743,8 @@ async function ensureSingleServer({
   // don't each run discoverExistingServer() and then each spawn a server.
   startingServer = (async () => {
     // Try to discover an already-running server from the bot process via
-    // the hrana server's /kimaki/opencode-port endpoint. This lets CLI
-    // subcommands (kimaki session list, archive, wait, etc.) reuse the
+    // the hrana server's /roadie/opencode-port endpoint. This lets CLI
+    // subcommands (roadie session list, archive, wait, etc.) reuse the
     // bot's OpenCode server instead of spawning a redundant one.
     const discovered = await discoverExistingServer()
     if (discovered) {
@@ -805,31 +806,31 @@ async function startSingleServer({
   // of known-safe paths is pre-allowed and everything else falls through to the
   // user's opencode.json default (which is 'ask' unless they changed it).
   const externalDirectoryPermissions = buildServerExternalDirectoryPermissions()
-  const kimakiShimDirectory = ensureKimakiCommandShim({
+  const roadieShimDirectory = ensureRoadieCommandShim({
     dataDir: getDataDir(),
     execPath: process.execPath,
     execArgv: process.execArgv,
     entryScript: process.argv[1] || fileURLToPath(new URL('../bin.js', import.meta.url)),
   })
   const pathEnvKey = getPathEnvKey(process.env)
-  const pathEnv = kimakiShimDirectory instanceof Error
+  const pathEnv = roadieShimDirectory instanceof Error
     ? process.env[pathEnvKey]
     : prependPathEntry({
-        entry: kimakiShimDirectory,
+        entry: roadieShimDirectory,
         existingPath: process.env[pathEnvKey],
       })
-  if (kimakiShimDirectory instanceof Error) {
-    opencodeLogger.warn(kimakiShimDirectory.message)
+  if (roadieShimDirectory instanceof Error) {
+    opencodeLogger.warn(roadieShimDirectory.message)
   }
   const gatewayToken = store.getState().gatewayToken
   const vitestOpencodeEnv = (() => {
-    if (process.env.KIMAKI_VITEST !== '1') {
+    if (process.env.ROADIE_VITEST !== '1') {
       return {}
     }
     const root = path.join(getDataDir(), 'opencode-vitest-home')
     const directories = {
       OPENCODE_TEST_HOME: root,
-      OPENCODE_CONFIG_DIR: path.join(root, '.opencode-kimaki'),
+      OPENCODE_CONFIG_DIR: path.join(root, '.opencode-roadie'),
       XDG_CONFIG_HOME: path.join(root, '.config'),
       XDG_DATA_HOME: path.join(root, '.local', 'share'),
       XDG_CACHE_HOME: path.join(root, '.cache'),
@@ -846,7 +847,7 @@ async function startSingleServer({
 
   // Write config to a file instead of passing via OPENCODE_CONFIG_CONTENT env var.
   // OPENCODE_CONFIG (file path) is loaded before project config in opencode's
-  // priority chain, so project-level opencode.json can override kimaki defaults.
+  // priority chain, so project-level opencode.json can override roadie defaults.
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
   const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx')
@@ -863,7 +864,7 @@ async function startSingleServer({
     formatter: false,
     plugin: [
       new URL(
-        isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
+        isDev ? './roadie-opencode-plugin.ts' : './roadie-opencode-plugin.js',
         import.meta.url,
       ).href,
       // npm identity lets opencode dedupe a user-installed copy by package
@@ -954,29 +955,29 @@ async function startSingleServer({
       // No project-specific cwd — the server handles all directories via
       // x-opencode-directory header. Use home dir as a neutral working dir.
       cwd: os.homedir(),
-      env: {
+      env: withKimakiEnvAliases({
         ...process.env,
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
-        KIMAKI: '1',
+        ROADIE: '1',
         // The browser is not on this machine, so no localhost callback fires.
         SUBROUTER_MANUAL_OAUTH: '1',
         OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         OPENCODE_ENABLE_EXA: '1',
-        KIMAKI_DATA_DIR: getDataDir(),
-        KIMAKI_LOCK_PORT: getLockPort().toString(),
-        KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
-        ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
-        // Guard: prevents agents from running `kimaki` root command inside
+        ROADIE_DATA_DIR: getDataDir(),
+        ROADIE_LOCK_PORT: getLockPort().toString(),
+        ROADIE_PARENT_LOCK_PORT: getLockPort().toString(),
+        ...(gatewayToken && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
+        // Guard: prevents agents from running `roadie` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
-        KIMAKI_OPENCODE_PROCESS: '1',
-        ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
-        ...(process.env.KIMAKI_SENTRY_DSN && {
-          KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
+        ROADIE_OPENCODE_PROCESS: '1',
+        ...(getHranaUrl() && { ROADIE_DB_URL: getHranaUrl()! }),
+        ...(process.env.ROADIE_SENTRY_DSN && {
+          ROADIE_SENTRY_DSN: process.env.ROADIE_SENTRY_DSN,
         }),
         ...vitestOpencodeEnv,
         ...(pathEnv && { [pathEnvKey]: pathEnv }),
-      },
+      }),
     },
   )
 
@@ -1099,7 +1100,7 @@ async function startSingleServer({
   opencodeLogger.log(`Server ready on port ${port}`)
 
   // Always dump startup logs so plugin loading errors and other startup output
-  // are visible in kimaki.log.
+  // are visible in roadie.log.
   for (const line of logBuffer) {
     opencodeLogger.log(line)
   }
@@ -1213,8 +1214,8 @@ function knownSafeExternalDirectories(): string[] {
     homeDirectory({ relativePath: '.config/openc0de' }),
     // Cached opensrc checkouts.
     homeDirectory({ relativePath: '.opensrc' }),
-    // Kimaki data dir (logs, db, etc).
-    homeDirectory({ relativePath: '.kimaki' }),
+    // Roadie data dir (logs, db, etc).
+    homeDirectory({ relativePath: '.roadie' }),
     // Prior opencode tool outputs.
     homeDirectory({ relativePath: '.local/share/opencode/tool-output' }),
     // Language toolchain caches, so builds can inspect downloaded modules.
@@ -1382,7 +1383,7 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
 // ── Injection guard per-session config ───────────────────────────
 // Per-session injection guard patterns are written as JSON files to
 // <dataDir>/injection-guard/<sessionId>.json. The injection guard plugin
-// (running inside the opencode server process) reads KIMAKI_DATA_DIR env
+// (running inside the opencode server process) reads ROADIE_DATA_DIR env
 // var to find these files in tool.execute.after.
 // This avoids needing env vars (which are per-process, not per-session).
 
@@ -1428,7 +1429,7 @@ export function removeInjectionGuardConfig({ sessionId }: { sessionId: string })
 }
 
 /**
- * Read per-session injection guard config. Used by the kimaki plugin
+ * Read per-session injection guard config. Used by the roadie plugin
  * inside the opencode server process.
  */
 export function readInjectionGuardConfig({ sessionId }: { sessionId: string }): { scanPatterns: string[] } | null {

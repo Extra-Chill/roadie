@@ -68,7 +68,7 @@ async function freezeMemoryOverview({
 const memoryOverviewPlugin: Plugin = async ({ directory }) => {
   initSentry()
 
-  const dataDir = process.env.KIMAKI_DATA_DIR
+  const dataDir = process.env.ROADIE_DATA_DIR
   if (dataDir) {
     setPluginLogFilePath(dataDir)
   }

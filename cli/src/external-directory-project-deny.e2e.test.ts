@@ -1,5 +1,5 @@
 // Regression test: a `deny` rule in the project's own opencode.json must still
-// win over kimaki's allow-all default.
+// win over roadie's allow-all default.
 //
 // This guards a real bug. opencode evaluates permissions with findLast() over
 // merge(agent.permission, session.permission), so session rules are evaluated
@@ -27,7 +27,7 @@ describe('external directory project deny', () => {
     dirName: 'qa-external-directory-deny-e2e',
     username: 'external-directory-deny-tester',
     // Exactly what a user would write in their own opencode.json to protect a
-    // folder. Kimaki's generated config allows '*', this must still beat it.
+    // folder. Roadie's generated config allows '*', this must still beat it.
     projectPermission: {
       external_directory: {
         [EXTERNAL_DIRECTORY_PROBE_DIR]: 'deny',

@@ -57,15 +57,15 @@ export function createDiscordRest(token: string): REST {
 }
 
 /**
- * Returns the internet-reachable base URL for this kimaki instance.
- * When KIMAKI_INTERNET_REACHABLE_URL is set (e.g. "https://my-kimaki.fly.dev"),
- * kimaki binds the hrana server to 0.0.0.0 and exposes a /kimaki/wake endpoint
+ * Returns the internet-reachable base URL for this roadie instance.
+ * When ROADIE_INTERNET_REACHABLE_URL is set (e.g. "https://my-roadie.fly.dev"),
+ * roadie binds the hrana server to 0.0.0.0 and exposes a /roadie/wake endpoint
  * so the gateway-proxy can wake this instance. Discord traffic still flows
  * through the normal path (gateway-proxy in gateway mode, direct in self-hosted).
- * Returns null when not set (kimaki only reachable on localhost).
+ * Returns null when not set (roadie only reachable on localhost).
  */
 export function getInternetReachableBaseUrl(): string | null {
-  return process.env['KIMAKI_INTERNET_REACHABLE_URL'] || null
+  return process.env['ROADIE_INTERNET_REACHABLE_URL'] || null
 }
 
 /**

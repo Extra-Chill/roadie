@@ -137,7 +137,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  // session.command has no system field. Match an operational kimaki system
+  // session.command has no system field. Match an operational roadie system
   // instruction (upload helper) so we know the real session system prompt was
   // injected — not just any string that happens to mention kimaki.dev.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
@@ -147,7 +147,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: COMMAND_SYSTEM_CHECK_TEMPLATE,
-      promptTextIncludes: 'kimaki upload-to-discord --session',
+      promptTextIncludes: 'roadie upload-to-discord --session',
     },
     then: {
       parts: [
@@ -269,7 +269,7 @@ describe('agent model resolution', () => {
     directories = createRunDirectories()
     const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
-    process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
+    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools_and_text' })
@@ -326,10 +326,10 @@ describe('agent model resolution', () => {
           matchers: createDeterministicMatchers(),
         },
       }),
-      // OpenCode command used to verify session.command still gets kimaki system
+      // OpenCode command used to verify session.command still gets roadie system
       command: {
         [COMMAND_SYSTEM_CHECK_NAME]: {
-          description: 'Test command for kimaki system prompt injection',
+          description: 'Test command for roadie system prompt injection',
           template: COMMAND_SYSTEM_CHECK_TEMPLATE,
         },
       },
@@ -358,7 +358,7 @@ describe('agent model resolution', () => {
         {
           name: COMMAND_SYSTEM_CHECK_NAME,
           discordCommandName: `${COMMAND_SYSTEM_CHECK_NAME}-cmd`,
-          description: 'Test command for kimaki system prompt injection',
+          description: 'Test command for roadie system prompt injection',
           source: 'command',
         },
       ],
@@ -385,7 +385,7 @@ describe('agent model resolution', () => {
     if (hranaResult instanceof Error) {
       throw hranaResult
     }
-    process.env['KIMAKI_DB_URL'] = hranaResult
+    process.env['ROADIE_DB_URL'] = hranaResult
     await initDatabase()
     await setBotToken(discord.botUserId, discord.botToken)
 
@@ -453,8 +453,8 @@ describe('agent model resolution', () => {
         return
       }),
     ])
-    delete process.env['KIMAKI_LOCK_PORT']
-    delete process.env['KIMAKI_DB_URL']
+    delete process.env['ROADIE_LOCK_PORT']
+    delete process.env['ROADIE_DB_URL']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
@@ -571,10 +571,10 @@ describe('agent model resolution', () => {
   )
 
   test(
-    'session.command path includes kimaki system prompt on first message',
+    'session.command path includes roadie system prompt on first message',
     async () => {
       // Leading /command is rewritten to session.command. Without system
-      // injection the matcher requiring "kimaki upload-to-discord --session"
+      // injection the matcher requiring "roadie upload-to-discord --session"
       // never matches and the bot falls through to the generic "ok" reply.
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: `/${COMMAND_SYSTEM_CHECK_NAME}`,

@@ -10,18 +10,18 @@ centralized injection point for any cross-cutting prompt transformation
 1. Discord chat messages → `discord-bot.ts` MessageCreate → `preprocess*Message` → `enqueueWithPreprocess`
 2. `/new-session` slash → `commands/session.ts` → `enqueueIncoming` directly
 3. `/queue` slash → posts Discord message with `» **user:** ...` prefix → path #1
-4. `kimaki send --thread` (existing thread) → posts `» **kimaki-cli:** <prompt>` → path #1
-5. `kimaki send --channel` (new thread) → raw starter message → bot `ThreadCreate` handler → `enqueueIncoming` with preprocess callback
+4. `roadie send --thread` (existing thread) → posts `» **roadie-cli:** <prompt>` → path #1
+5. `roadie send --channel` (new thread) → raw starter message → bot `ThreadCreate` handler → `enqueueIncoming` with preprocess callback
 6. Scheduled tasks (`task-runner.ts`) → posts Discord messages like #4/#5
 
 Prefix conventions: `» **<username>:** ` is used for queued reposts and
 CLI-injected messages in existing threads. New-thread flows (channel-level
-`kimaki send` and channel scheduled tasks) post the raw prompt without
+`roadie send` and channel scheduled tasks) post the raw prompt without
 prefix and rely on an embed marker (`ThreadStartMarker` YAML) for metadata.
 
 ## Queue suffix lives in resolveMessagePrompt
 
-Every Discord-message ingress (user messages, `kimaki send --thread/--channel`,
+Every Discord-message ingress (user messages, `roadie send --thread/--channel`,
 message edits) builds prompt + mode via `resolveMessagePrompt()` in
 `message-preprocessing.ts`. Pass content-only text (`resolveContentMentions`),
 never `resolveMentions`: its appended embeds hide the `. queue` suffix.
@@ -51,7 +51,7 @@ skip the wrapping when detection succeeds.
 ## Prefer line-based detection over prefix stripping
 
 When adding a transformation that needs to match a user-intent pattern in
-prompts that sometimes carry programmatic prefixes (`» **kimaki-cli:** ...`,
+prompts that sometimes carry programmatic prefixes (`» **roadie-cli:** ...`,
 `» **user:** ...`, `Context from thread: ...`), do NOT try to regex-strip
 every possible prefix before matching. That creates maintenance burden
 (new prefix formats silently break detection) and gets the semantics
@@ -139,12 +139,12 @@ is misleading for the test file which needs the explicit dependency.
 
 ## Worktree folder name ≠ branch name
 
-`getManagedWorktreeDirectory` strips the `opencode/kimaki-` prefix from the
+`getManagedWorktreeDirectory` strips the `opencode/roadie-` prefix from the
 on-disk folder basename but the git branch name still keeps it. Two format
 helpers exist: `formatWorktreeName` (verbatim, for user-provided names) and
 `formatAutoWorktreeName` (vowel-compressed if >20 chars, for auto-derived
 names from thread titles/prompts). Worktrees now live under
-`<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`.
+`<roadieDataDir>/worktrees/<8charProjectHash>/<basename>`.
 
 ## v1 SDK plugin Event types are stale
 
@@ -154,7 +154,7 @@ The v1 SDK `Event` union has `permission.updated` but the bus actually emits `pe
 
 opencode evaluates `merge(agent.permission, session.permission)` with
 `findLast()`, so **anything in `session.create({ permission })` beats the user's
-own config**. Never put allow rules there. Kimaki's `external_directory` allow
+own config**. Never put allow rules there. Roadie's `external_directory` allow
 lives in the generated server config (as `{ '*': 'allow' }`, an object so a
 project opencode.json deep-merges on top instead of replacing a plain string).
 `buildSessionPermissions()` returns only the worktree original-checkout deny,
