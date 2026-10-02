@@ -12,6 +12,7 @@ import {
   personHas,
   type Capability,
 } from './identity.js'
+import { channelAllowsCapability } from './channel-policy.js'
 import type {
   APIInteractionGuildMember,
   AutocompleteInteraction,
@@ -138,10 +139,12 @@ export function hasRoadieBotPermission(
 export function hasRoadieAdminPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,
   guild?: Guild | null,
+  channelId?: string | null,
 ): boolean {
   if (!member) {
     return false
   }
+  if (channelId && !channelAllowsCapability(channelId, 'admin')) return false
   const hooked = hookCapability(member, 'admin')
   if (hooked !== undefined) return hooked
   const hasNoRoadie = hasRoleByName(member, 'no-roadie', guild)

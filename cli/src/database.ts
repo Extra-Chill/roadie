@@ -22,6 +22,7 @@ import type {
   WorktreeStatus,
 } from './schema.js'
 import { store } from './store.js'
+import { channelPolicyOverrides } from './channel-policy.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
 
@@ -570,6 +571,8 @@ export async function getSessionStartSource({ sessionId }: { sessionId: string }
 }
 
 export async function getChannelModel(channelId: string) {
+  const fromPolicy = channelPolicyOverrides(channelId).model
+  if (fromPolicy) return { modelId: fromPolicy, variant: null }
   const db = await getDb()
   const row = await db.query.channel_models.findFirst({ where: { channel_id: channelId } })
   return row ? { modelId: row.model_id, variant: row.variant } : undefined
@@ -639,6 +642,8 @@ export async function getVariantCascade({ sessionId, channelId, appId }: { sessi
 }
 
 export async function getChannelAgent(channelId: string) {
+  const fromPolicy = channelPolicyOverrides(channelId).agent
+  if (fromPolicy) return fromPolicy
   const db = await getDb()
   return (await db.query.channel_agents.findFirst({ where: { channel_id: channelId } }))?.agent_name
 }
@@ -787,6 +792,8 @@ export async function deleteThreadWorkspace(threadId: string) {
 export const getThreadWorktreeOrWorkspace = getThreadWorkspace
 
 export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
+  const fromPolicy = channelPolicyOverrides(channelId).verbosity
+  if (fromPolicy) return fromPolicy
   const db = await getDb()
   const row = await db.query.channel_verbosity.findFirst({ where: { channel_id: channelId } })
   return row?.verbosity ?? store.getState().defaultVerbosity
@@ -825,6 +832,8 @@ export async function setChannelWorktreesEnabled(channelId: string, enabled: boo
 }
 
 export async function getChannelDirectory(channelId: string): Promise<{ directory: string } | undefined> {
+  const fromPolicy = channelPolicyOverrides(channelId).directory
+  if (fromPolicy) return { directory: fromPolicy }
   const db = await getDb()
   const row = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } })
   return row ? { directory: row.directory } : undefined

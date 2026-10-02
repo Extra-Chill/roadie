@@ -45,7 +45,7 @@ beforeAll(() => {
 echo x >> ${countFile}
 case "$input" in
   *'"id":"owner"'*) echo '{"allowed":true,"person_id":"wp:1","capabilities":["sessions","shell","admin"]}' ;;
-  *'"id":"team"'*) echo '{"allowed":true,"person_id":"wp:38","capabilities":["sessions"],"agent":"team-bot","model":"anthropic/claude-sonnet-5-5","permissions":["bash:deny"]}' ;;
+  *'"id":"team"'*) echo '{"allowed":true,"person_id":"host:38","capabilities":["sessions"],"agent":"team-bot","model":"anthropic/claude-sonnet-5-5","permissions":["bash:deny"]}' ;;
   *) echo '{"allowed":false}' ;;
 esac`,
   )
@@ -83,7 +83,7 @@ describe('identity hook', () => {
     expect(owner && personHas(owner, 'admin')).toBe(true)
     expect(team).toMatchObject({
       allowed: true,
-      personId: 'wp:38',
+      personId: 'host:38',
       agent: 'team-bot',
       model: 'anthropic/claude-sonnet-5-5',
       permissions: ['bash:deny'],
@@ -189,7 +189,7 @@ describe('applyPersonToIngress', () => {
     setIdentityHookCommand(mappingHook)
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     expect(applyPersonToIngress({ ...base, permissions: ['edit:deny'] })).toMatchObject({
-      personId: 'wp:38',
+      personId: 'host:38',
       agent: 'team-bot',
       model: 'anthropic/claude-sonnet-5-5',
       permissions: ['edit:deny', 'bash:deny'],

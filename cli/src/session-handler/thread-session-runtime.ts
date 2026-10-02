@@ -24,6 +24,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
+import { channelPolicyOverrides } from '../channel-policy.js'
 import {
   buildSessionPermissions,
   parsePermissionRules,
@@ -725,6 +726,23 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
       ? { permissions: [...(input.permissions ?? []), ...person.permissions] }
       : {}),
   }
+}
+
+/**
+ * Add the channel policy's session permission rules to a turn. Agent, model,
+ * directory and verbosity come from the channel getters, which already read
+ * the policy.
+ */
+export function applyChannelPolicyToIngress({
+  input,
+  channelId,
+}: {
+  input: IngressInput
+  channelId: string
+}): IngressInput {
+  const { permissions } = channelPolicyOverrides(channelId)
+  if (!permissions || permissions.length === 0) return input
+  return { ...input, permissions: [...(input.permissions ?? []), ...permissions] }
 }
 
 export type IngressInput = {
@@ -3767,6 +3785,7 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
     input = applyPersonToIngress(input)
+    input = applyChannelPolicyToIngress({ input, channelId: this.channelId || this.thread.parentId || this.threadId })
     threadState.setSessionUsername(this.threadId, input.username)
     const botUserId = this.thread.client.user?.id
     if (input.userId && input.userId !== botUserId) {

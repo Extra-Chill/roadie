@@ -113,7 +113,12 @@ import {
   hasRoadieBotPermission,
   hasRoadieShellPermission,
 } from './discord-utils.js'
-import { resolvePerson } from './identity.js'
+import { getCachedPerson, resolvePerson } from './identity.js'
+import {
+  channelAllowsCapability,
+  channelAllowsSpeaker,
+  decideRespond,
+} from './channel-policy.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory } from './database.js'
@@ -235,6 +240,41 @@ export function registerInteractionHandler({
               ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
             },
           })
+        }
+
+        // Channel policy: interactions in channels the bot does not answer, or
+        // from users outside the channel's audience, are ignored. Consuming
+        // the token here is fine: this machine owns the channel.
+        if (interaction.guild && interaction.channelId) {
+          const member = interaction.member
+          const roleIds = member
+            ? Array.isArray(member.roles)
+              ? member.roles
+              : [...member.roles.cache.keys()]
+            : []
+          const roleNames = roleIds
+            .map((id) => interaction.guild?.roles.cache.get(id)?.name)
+            .filter((name): name is string => Boolean(name))
+          const blocked =
+            decideRespond(interaction.channelId) === 'ignore' ||
+            !channelAllowsSpeaker(interaction.channelId, {
+              userId: interaction.user.id,
+              isGuildOwner: interaction.guild.ownerId === interaction.user.id,
+              roleNames,
+              roleIds,
+              personId: getCachedPerson({ platform: 'discord', id: interaction.user.id })?.personId,
+            })
+          if (blocked) {
+            if (interaction.isAutocomplete()) {
+              await interaction.respond([])
+            } else if (interaction.isRepliable()) {
+              await interaction.reply({
+                content: 'Roadie is not available to you in this channel.',
+                flags: MessageFlags.Ephemeral,
+              })
+            }
+            return
+          }
         }
 
         if (interaction.isAutocomplete()) {
@@ -385,7 +425,7 @@ export function registerInteractionHandler({
               return
 
             case 'login':
-              if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+              if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
                 await interaction.reply({
                   content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                   flags: MessageFlags.Ephemeral,
@@ -431,7 +471,10 @@ export function registerInteractionHandler({
               return
 
             case 'run-shell-command':
-              if (!hasRoadieShellPermission(interaction.member, interaction.guild)) {
+              if (
+                !channelAllowsCapability(interaction.channelId, 'shell') ||
+                !hasRoadieShellPermission(interaction.member, interaction.guild)
+              ) {
                 await interaction.reply({
                   content: "You don't have permission to run shell commands.",
                   flags: MessageFlags.Ephemeral,
@@ -518,7 +561,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_text_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -530,7 +573,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_apikey_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -542,7 +585,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_oauth_code_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -643,7 +686,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_select:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -668,7 +711,7 @@ export function registerInteractionHandler({
           const customId = interaction.customId
 
           if (customId.startsWith('login_apikey:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -680,7 +723,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_text:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
@@ -692,7 +735,7 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_oauth_code:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
+            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure credentials.`,
                 flags: MessageFlags.Ephemeral,
