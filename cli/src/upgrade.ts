@@ -1,7 +1,8 @@
-// Kimaki self-upgrade utilities.
-// Detects the package manager used to install kimaki, checks npm for newer versions,
-// and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
+// Roadie self-upgrade utilities.
+// Detects the package manager used to install roadie, checks npm for newer versions,
+// and runs the global upgrade command. Used by both CLI `roadie upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
+// The package name comes from package.json, so the running package is what gets upgraded.
 
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
@@ -12,8 +13,8 @@ const logger = createLogger(LogPrefix.CLI)
 
 type Pm = 'bun' | 'pnpm' | 'npm'
 
-// Detects which package manager globally installed kimaki, used to run the
-// correct `<pm> i -g kimaki@latest` upgrade command.
+// Detects which package manager globally installed roadie, used to run the
+// correct `<pm> i -g <package>@latest` upgrade command.
 //
 // Detection order:
 // 1. npm_config_user_agent — set by npx/bunx/pnpm dlx, reliable for those cases
@@ -45,7 +46,7 @@ export function detectPm(): Pm {
     if (p.includes('/pnpm/')) {
       return 'pnpm'
     }
-    // npm global installs typically live under lib/node_modules/kimaki without
+    // npm global installs typically live under lib/node_modules/<package> without
     // any pnpm or bun path segments, so if we reach here it's likely npm
   }
 
@@ -68,15 +69,23 @@ function resolveScriptRealpath(): string | null {
   }
 }
 
-export function getCurrentVersion(): string {
+function readPackageJson(): { name: string; version: string } {
   const require = createRequire(import.meta.url)
-  const pkg = require('../package.json') as { version: string }
-  return pkg.version
+  return require('../package.json') as { name: string; version: string }
+}
+
+export function getPackageName(): string {
+  return readPackageJson().name
+}
+
+export function getCurrentVersion(): string {
+  return readPackageJson().version
 }
 
 export async function getLatestNpmVersion(): Promise<string | null> {
   try {
-    const res = await fetch('https://registry.npmjs.org/kimaki/latest', {
+    const name = getPackageName()
+    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, {
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
@@ -101,15 +110,16 @@ export async function upgrade(): Promise<string | null> {
   }
 
   const pm = detectPm()
-  logger.log(`Upgrading kimaki from v${current} to v${latest} using ${pm}...`)
-  await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
+  const name = getPackageName()
+  logger.log(`Upgrading ${name} from v${current} to v${latest} using ${pm}...`)
+  await execAsync(`${pm} i -g ${name}@latest`, { timeout: 120_000 })
 
   return latest
 }
 
 // Fire-and-forget background upgrade check on bot startup.
 // Only upgrades if a newer version is available. Errors are silently ignored.
-export async function backgroundUpgradeKimaki(): Promise<void> {
+export async function backgroundUpgradeRoadie(): Promise<void> {
   try {
     const current = getCurrentVersion()
     const latest = await getLatestNpmVersion()
@@ -118,9 +128,10 @@ export async function backgroundUpgradeKimaki(): Promise<void> {
     }
 
     const pm = detectPm()
-    logger.debug(`Background kimaki upgrade started: v${current} -> v${latest}`)
-    await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
-    logger.debug(`Background kimaki upgrade completed: v${latest}`)
+    const name = getPackageName()
+    logger.debug(`Background ${name} upgrade started: v${current} -> v${latest}`)
+    await execAsync(`${pm} i -g ${name}@latest`, { timeout: 120_000 })
+    logger.debug(`Background ${name} upgrade completed: v${latest}`)
   } catch {
     // silently ignored, non-critical
   }

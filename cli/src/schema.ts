@@ -27,7 +27,8 @@ const datetime = sqliteCore.customType<{
 export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   thread_id: sqliteCore.text('thread_id').primaryKey().notNull(),
   session_id: sqliteCore.text('session_id').notNull(),
-  source: sqliteCore.text('source', { enum: ['roadie', 'kimaki', 'external_poll'] }).notNull().default('kimaki'),
+  // 'kimaki' is a legacy value kept for existing rows.
+  source: sqliteCore.text('source', { enum: ['roadie', 'kimaki', 'external_poll'] }).notNull().default('roadie'),
   last_synced_name: sqliteCore.text('last_synced_name'),
   // Parent OpenCode session that spawned this thread via roadie send --parent-session.
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.

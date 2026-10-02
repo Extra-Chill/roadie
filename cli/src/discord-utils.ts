@@ -188,11 +188,7 @@ function hasRoleByName(
   roleName: string,
   guild?: Guild | null,
 ): boolean {
-  const names = roleName.toLowerCase() === 'roadie'
-    ? new Set(['roadie', 'kimaki'])
-    : roleName.toLowerCase() === 'no-roadie'
-      ? new Set(['no-roadie', 'no-kimaki'])
-      : new Set([roleName.toLowerCase()])
+  const names = new Set([roleName.toLowerCase()])
 
   if (member instanceof GuildMember) {
     return member.roles.cache.some((role) => names.has(role.name.toLowerCase()))
@@ -221,7 +217,7 @@ export function hasNoRoadieRole(member: GuildMemberType | null): boolean {
     return false
   }
   return member.roles.cache.some(
-    (role) => ['no-roadie', 'no-kimaki'].includes(role.name.toLowerCase()),
+    (role) => role.name.toLowerCase() === 'no-roadie',
   )
 }
 

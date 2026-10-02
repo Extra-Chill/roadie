@@ -14,7 +14,6 @@
 //   ROADIE_ACTOR_VIA       "chat" = authenticated by the chat platform;
 //                          "cli" = asserted by a local `roadie send --user`
 //   ROADIE_PERSON_ID       opaque host person id from the identity hook
-// Each is also exported under its KIMAKI_* name for existing consumers.
 //
 // Attribution only. The actor is not authority: hosts that grant permissions
 // per person must map it through their own identity hook.
@@ -36,7 +35,7 @@ export const TURN_ATTRIBUTION_ENV_NAMES = [
 ] as const
 
 /**
- * Write attribution into `env` under ROADIE_* and KIMAKI_* names. Every
+ * Write attribution into `env` as ROADIE_* variables. Every
  * attribution variable is first removed, so a value from a previous turn (or
  * inherited from the parent process) can never leak into this one.
  */
@@ -49,7 +48,6 @@ export function applyTurnAttributionEnv({
 }) {
   for (const name of TURN_ATTRIBUTION_ENV_NAMES) {
     delete env[`ROADIE_${name}`]
-    delete env[`KIMAKI_${name}`]
   }
   if (!attribution) return
 
@@ -65,7 +63,6 @@ export function applyTurnAttributionEnv({
   for (const [name, value] of Object.entries(values)) {
     if (!value) continue
     env[`ROADIE_${name}`] = value
-    env[`KIMAKI_${name}`] = value
   }
 }
 

@@ -63,7 +63,6 @@ describe('upload-to-discord session targeting', () => {
     injectRoadieSessionEnv({ sessionID: 'ses_child', env })
     expect(env).toEqual({
       [ROADIE_SESSION_ID_ENV]: 'ses_child',
-      KIMAKI_SESSION_ID: 'ses_child',
     })
     expect(
       resolveUploadToDiscordSessionId({

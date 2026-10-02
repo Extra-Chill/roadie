@@ -10,38 +10,14 @@ import path from 'node:path'
 import { store } from './store.js'
 
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.roadie')
-const LEGACY_DATA_DIR = path.join(os.homedir(), '.kimaki')
-
-// Existing integrations still set KIMAKI_* variables. Make them available to
-// every existing ROADIE_* read, while never overriding an explicit new value.
-for (const name of Object.keys(process.env)) {
-  if (name.startsWith('KIMAKI_')) {
-    const roadieName = `ROADIE_${name.slice('KIMAKI_'.length)}`
-    process.env[roadieName] ??= process.env[name]
-  }
-}
-
-/** Resolve renamed environment variables while preserving explicit ROADIE precedence. */
+/** Read a ROADIE_* environment variable. */
 export function getRoadieEnv(name: string): string | undefined {
-  const roadieName = name.startsWith('KIMAKI_')
-    ? `ROADIE_${name.slice('KIMAKI_'.length)}`
-    : name
-  return process.env[roadieName] ?? process.env[`KIMAKI_${roadieName.slice('ROADIE_'.length)}`]
-}
-
-export function withKimakiEnvAliases(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result = { ...env }
-  for (const [name, value] of Object.entries(result)) {
-    if (name.startsWith('ROADIE_')) {
-      result[`KIMAKI_${name.slice('ROADIE_'.length)}`] ??= value
-    }
-  }
-  return result
+  return process.env[name]
 }
 
 /**
  * Get the data directory path.
- * Order: store value, vitest temp dir, ROADIE_DATA_DIR, existing ~/.kimaki, then ~/.roadie.
+ * Order: store value, vitest temp dir, ROADIE_DATA_DIR, then ~/.roadie.
  * Under vitest (ROADIE_VITEST env var), auto-creates an isolated temp dir so
  * tests never touch the real ~/.roadie/ database. Tests that need a specific
  * dir can still call setDataDir() before any DB access to override this.
@@ -71,9 +47,7 @@ export function getDataDir(): string {
 }
 
 export function resolveDefaultDataDir(homeDir: string): string {
-  const roadieDir = path.join(homeDir, '.roadie')
-  const kimakiDir = path.join(homeDir, '.kimaki')
-  return !fs.existsSync(roadieDir) && fs.existsSync(kimakiDir) ? kimakiDir : roadieDir
+  return path.join(homeDir, '.roadie')
 }
 
 /**

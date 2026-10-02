@@ -76,7 +76,7 @@ describe('identity hook', () => {
   test('maps actors to people with capabilities and overrides', async () => {
     setIdentityHookCommand(mappingHook)
     const owner = await resolvePerson({ actor: { platform: 'discord', id: 'owner' } })
-    const team = await resolvePerson({ actor: { platform: 'discord', id: 'team', name: 'Chris G' } })
+    const team = await resolvePerson({ actor: { platform: 'discord', id: 'team', name: 'Team Member' } })
     const stranger = await resolvePerson({ actor: { platform: 'discord', id: 'nobody' } })
 
     expect(owner && personHas(owner, 'shell')).toBe(true)
@@ -181,7 +181,7 @@ describe('applyPersonToIngress', () => {
   const base: IngressInput = {
     prompt: 'hi',
     userId: 'team',
-    username: 'Chris G',
+    username: 'Team Member',
     mode: 'opencode',
   }
 

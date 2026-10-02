@@ -21,7 +21,7 @@ afterAll(async () => {
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
 describe('applyTurnAttributionEnv', () => {
-  test('exports thread, channel and actor under ROADIE_ and KIMAKI_ names', () => {
+  test('exports thread, channel and actor as ROADIE_ variables', () => {
     const env: Record<string, string> = {}
     applyTurnAttributionEnv({
       env,
@@ -29,22 +29,16 @@ describe('applyTurnAttributionEnv', () => {
         sessionId: 'ses_1',
         threadId: 'thread-1',
         channelId: 'channel-1',
-        actor: { platform: 'discord', id: '38', name: 'Chris G', via: 'chat' },
+        actor: { platform: 'discord', id: '38', name: 'Team Member', via: 'chat' },
       },
     })
     expect(env).toEqual({
       ROADIE_THREAD_ID: 'thread-1',
-      KIMAKI_THREAD_ID: 'thread-1',
       ROADIE_CHANNEL_ID: 'channel-1',
-      KIMAKI_CHANNEL_ID: 'channel-1',
       ROADIE_ACTOR_PLATFORM: 'discord',
-      KIMAKI_ACTOR_PLATFORM: 'discord',
       ROADIE_ACTOR_ID: '38',
-      KIMAKI_ACTOR_ID: '38',
-      ROADIE_ACTOR_NAME: 'Chris G',
-      KIMAKI_ACTOR_NAME: 'Chris G',
+      ROADIE_ACTOR_NAME: 'Team Member',
       ROADIE_ACTOR_VIA: 'chat',
-      KIMAKI_ACTOR_VIA: 'chat',
     })
   })
 
@@ -52,8 +46,6 @@ describe('applyTurnAttributionEnv', () => {
     const env: Record<string, string> = {
       PATH: '/usr/bin',
       ROADIE_ACTOR_ID: 'stale',
-      KIMAKI_ACTOR_ID: 'stale',
-      KIMAKI_THREAD_ID: 'stale-thread',
       ROADIE_SESSION_ID: 'ses_keep',
     }
     applyTurnAttributionEnv({
@@ -64,7 +56,6 @@ describe('applyTurnAttributionEnv', () => {
       PATH: '/usr/bin',
       ROADIE_SESSION_ID: 'ses_keep',
       ROADIE_THREAD_ID: 'thread-2',
-      KIMAKI_THREAD_ID: 'thread-2',
     })
 
     applyTurnAttributionEnv({ env, attribution: undefined })
@@ -85,13 +76,13 @@ describe('session turn attribution', () => {
       sessionId,
       threadId: 'thread-a',
       channelId: 'channel-a',
-      actor: { platform: 'discord', id: 'user-2', name: 'Chris G', via: 'chat' },
+      actor: { platform: 'discord', id: 'user-2', name: 'Team Member', via: 'chat' },
     })
     expect(await getSessionTurnAttribution(sessionId)).toEqual({
       sessionId,
       threadId: 'thread-a',
       channelId: 'channel-a',
-      actor: { platform: 'discord', id: 'user-2', name: 'Chris G', via: 'chat' },
+      actor: { platform: 'discord', id: 'user-2', name: 'Team Member', via: 'chat' },
     })
 
     // e.g. an automatic retry with no human speaker
@@ -143,7 +134,6 @@ describe('session turn attribution', () => {
     const env: Record<string, string> = {}
     applyTurnAttributionEnv({ env, attribution: recorded })
     expect(env.ROADIE_PERSON_ID).toBe('host:38')
-    expect(env.KIMAKI_PERSON_ID).toBe('host:38')
 
     await setSessionTurnAttribution({ sessionId, threadId: 'thread-p', personId: 'host:38' })
     expect((await getSessionTurnAttribution(sessionId))?.personId).toBeUndefined()
