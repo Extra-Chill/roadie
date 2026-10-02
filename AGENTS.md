@@ -28,7 +28,8 @@ Roadie is a chat-to-agent bridge: a chat adapter (Discord today) on one side, an
 - `discord-digital-twin/`, `opencode-deterministic-provider/`, `opencode-cached-provider/`: test harness for the e2e suite.
 - `discord-slack-bridge/`, `slack-digital-twin/`: Slack support via Discord emulation, until the native Slack adapter replaces it.
 - `libsqlproxy/`: Hrana protocol used by the bot's local SQLite server.
-- `errore/`, `opencode-injection-guard/`, `subrouter/`: submodule dependencies.
+- `errore/`, `opencode-injection-guard/`: submodule dependencies.
+- Account rotation comes from `@subrouter/cli` and `@subrouter/opencode` (pinned npm packages). The OpenCode backend loads the subrouter plugin unless `--no-subrouter` / `ROADIE_SUBROUTER=0`; models are `subrouter/<preset>`.
 - `slop/`: upstream design notes (Slack adapter, platform abstraction).
 
 # restarting the discord bot
@@ -98,7 +99,7 @@ the bug report workflow (export jsonl, share evidence in a gist) is in `docs/deb
 
 ## git submodules
 
-submodules: `errore`, `opencode-injection-guard`, `subrouter`. their configured branches are in `.gitmodules`.
+submodules: `errore`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
 
 **never rewrite or force-push a submodule branch in a way that drops commits roadie still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
 

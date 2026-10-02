@@ -17,7 +17,6 @@ import {
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import { publicOpencodeBindRequiresPassword } from './opencode.js'
-import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
 import miscCommands from './cli-commands/misc.js'
@@ -41,7 +40,6 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke('roadie')
-cli.use(multioauthCommands)
 
 process.title = 'roadie'
 
@@ -114,6 +112,10 @@ cli
     'Disable background sync of external OpenCode sessions into Discord',
   )
   .option(
+    '--no-subrouter',
+    'Do not load subrouter account rotation into the OpenCode backend. Same as ROADIE_SUBROUTER=0',
+  )
+  .option(
     '--no-analytics',
     'Deprecated no-op: Roadie no longer sends product analytics',
   )
@@ -176,6 +178,7 @@ cli
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
+      subrouter?: boolean
       autoRestart?: boolean
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
@@ -331,6 +334,7 @@ cli
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
+          ...(options.subrouter === false && { subrouterEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),

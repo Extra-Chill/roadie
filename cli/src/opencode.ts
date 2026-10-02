@@ -79,6 +79,27 @@ export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
   return `@subrouter/opencode@${version}`
 }
 
+/**
+ * Plugins the OpenCode server loads: Roadie's own plugin, plus subrouter for
+ * subscription rotation (subrouter/<preset> models) unless disabled. npm
+ * identity for subrouter lets opencode dedupe a user-installed copy.
+ */
+export function buildServerPluginList({
+  isDev,
+  subrouterEnabled,
+}: {
+  isDev: boolean
+  subrouterEnabled: boolean
+}): string[] {
+  return [
+    new URL(
+      isDev ? './roadie-opencode-plugin.ts' : './roadie-opencode-plugin.js',
+      import.meta.url,
+    ).href,
+    ...(subrouterEnabled ? [resolveSubrouterPluginSpec({ isDev })] : []),
+  ]
+}
+
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
 type PermissionRule = PermissionAction | Record<string, PermissionAction>
@@ -861,15 +882,10 @@ async function startSingleServer({
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
-    plugin: [
-      new URL(
-        isDev ? './roadie-opencode-plugin.ts' : './roadie-opencode-plugin.js',
-        import.meta.url,
-      ).href,
-      // npm identity lets opencode dedupe a user-installed copy by package
-      // name. Development still loads this workspace's built package directly.
-      resolveSubrouterPluginSpec({ isDev }),
-    ],
+    plugin: buildServerPluginList({
+      isDev,
+      subrouterEnabled: store.getState().subrouterEnabled,
+    }),
     permission: {
       edit: 'allow',
       bash: 'allow',
