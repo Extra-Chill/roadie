@@ -78,7 +78,6 @@ export async function createNewProject({
       guild,
       projectDirectory,
       botName,
-      analyticsSource: 'discord_command',
     })
 
   return {

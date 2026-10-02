@@ -16,11 +16,6 @@ import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getChannelWorktreesEnabled } from '../database.js'
-import {
-  flushAnalytics,
-  initAnalytics,
-  setAnalyticsBotMode,
-} from '../analytics.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -310,11 +305,6 @@ cli
         const { token: botToken, appId } = await resolveBotCredentials({
           appIdOverride: optionAppId,
         })
-        const botRowForAnalytics = await getBotTokenWithMode()
-        setAnalyticsBotMode(
-          botRowForAnalytics?.mode === 'gateway' ? 'gateway' : 'self_hosted',
-        )
-        initAnalytics()
 
         // If --project provided (or defaulting to cwd), resolve to channel ID
         if (resolvedProjectPath) {
@@ -428,14 +418,12 @@ cli
                 guild,
                 projectDirectory: absolutePath,
                 botName: client.user?.username,
-                analyticsSource: 'send_auto_create',
               })
 
               channelId = textChannelId
               cliLogger.log(`Created channel: ${channelId}`)
 
               void client.destroy()
-              await flushAnalytics()
             }
           } catch (e) {
             cliLogger.log('Failed to resolve project')

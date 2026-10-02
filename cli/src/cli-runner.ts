@@ -71,7 +71,6 @@ import {
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeKimaki } from './upgrade.js'
-import { initAnalytics, setAnalyticsBotMode } from './analytics.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
@@ -1668,8 +1667,6 @@ export async function run({
     gatewayCallbackUrl,
   })
 
-  setAnalyticsBotMode(isGatewayMode ? 'gateway' : 'self_hosted')
-  initAnalytics()
 
   const gatewayToken = await ensureServiceAuthToken({
     appId,
@@ -2066,7 +2063,6 @@ export async function run({
               projectDirectory: project.worktree,
               botName: discordClient.user?.username,
               enableVoiceChannels,
-              analyticsSource: 'onboarding',
             })
 
             createdChannels.push({

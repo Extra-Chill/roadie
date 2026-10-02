@@ -39,11 +39,6 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
-import {
-  flushAnalytics,
-  initAnalytics,
-  setAnalyticsBotMode,
-} from '../analytics.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -93,9 +88,6 @@ cli
       const { token: botToken, appId } = await resolveBotCredentials({
         appIdOverride: options.appId,
       })
-      const botRow = await getBotTokenWithMode()
-      setAnalyticsBotMode(botRow?.mode === 'gateway' ? 'gateway' : 'self_hosted')
-      initAnalytics()
 
       if (!appId) {
         cliLogger.error(
@@ -124,7 +116,6 @@ cli
           guild,
           projectDirectory: absolutePath,
           botName: client.user?.username,
-          analyticsSource: 'cli',
         })
 
       void client.destroy()
@@ -141,8 +132,7 @@ cli
       )
 
       cliLogger.log(channelUrl)
-      await flushAnalytics()
-      process.exit(0)
+        process.exit(0)
     },
   )
 
@@ -525,8 +515,6 @@ cli
     }
 
     const { token: botToken } = botRow
-    setAnalyticsBotMode(botRow.mode === 'gateway' ? 'gateway' : 'self_hosted')
-    initAnalytics()
 
     const projectsDir = getProjectsDir()
     const projectDirectory = path.join(projectsDir, sanitizedName)
@@ -563,7 +551,6 @@ cli
       guild,
       projectDirectory,
       botName: client.user?.username,
-      analyticsSource: 'cli',
     })
 
     void client.destroy()
@@ -576,7 +563,6 @@ cli
     )
 
     cliLogger.log(channelUrl)
-    await flushAnalytics()
     process.exit(0)
   })
 

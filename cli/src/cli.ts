@@ -106,7 +106,7 @@ cli
   )
   .option(
     '--no-analytics',
-    'Disable anonymous product analytics (Strada). Same as ROADIE_STRADA_ENABLED=0',
+    'Deprecated no-op: Roadie no longer sends product analytics',
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
@@ -396,10 +396,7 @@ cli
           )
         }
         if (options.noAnalytics) {
-          process.env.ROADIE_STRADA_ENABLED = '0'
-          cliLogger.log(
-            'Anonymous product analytics disabled (--no-analytics)',
-          )
+          cliLogger.log('--no-analytics is a no-op: Roadie no longer sends product analytics')
         }
         if (opencodeHostname) {
           cliLogger.log(`OpenCode server hostname: ${opencodeHostname}`)
