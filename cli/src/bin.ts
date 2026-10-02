@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { withKimakiEnvAliases } from './config.js'
 
 const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.roadie', 'heap-snapshots')
 
@@ -106,7 +107,10 @@ if (process.env.__ROADIE_CHILD || isSubcommand || isHelpFlag) {
       args,
       {
         stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-        env: { ...process.env, __ROADIE_CHILD: '1' },
+        env: {
+          ...withKimakiEnvAliases({ ...process.env, __ROADIE_CHILD: '1' }),
+          __KIMAKI_CHILD: '1',
+        },
       },
     )
     child = currentChild

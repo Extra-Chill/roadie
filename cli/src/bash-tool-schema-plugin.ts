@@ -22,6 +22,7 @@ export function injectRoadieSessionEnv({
 }) {
   if (!sessionID) return
   env[ROADIE_SESSION_ID_ENV] = sessionID
+  env.KIMAKI_SESSION_ID = sessionID
 }
 
 export function resolveUploadToDiscordSessionId({

@@ -10,10 +10,38 @@ import path from 'node:path'
 import { store } from './store.js'
 
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.roadie')
+const LEGACY_DATA_DIR = path.join(os.homedir(), '.kimaki')
+
+// Existing integrations still set KIMAKI_* variables. Make them available to
+// every existing ROADIE_* read, while never overriding an explicit new value.
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith('KIMAKI_')) {
+    const roadieName = `ROADIE_${name.slice('KIMAKI_'.length)}`
+    process.env[roadieName] ??= process.env[name]
+  }
+}
+
+/** Resolve renamed environment variables while preserving explicit ROADIE precedence. */
+export function getRoadieEnv(name: string): string | undefined {
+  const roadieName = name.startsWith('KIMAKI_')
+    ? `ROADIE_${name.slice('KIMAKI_'.length)}`
+    : name
+  return process.env[roadieName] ?? process.env[`KIMAKI_${roadieName.slice('ROADIE_'.length)}`]
+}
+
+export function withKimakiEnvAliases(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result = { ...env }
+  for (const [name, value] of Object.entries(result)) {
+    if (name.startsWith('ROADIE_')) {
+      result[`KIMAKI_${name.slice('ROADIE_'.length)}`] ??= value
+    }
+  }
+  return result
+}
 
 /**
  * Get the data directory path.
- * Order: store value, vitest temp dir, ROADIE_DATA_DIR, then ~/.roadie.
+ * Order: store value, vitest temp dir, ROADIE_DATA_DIR, existing ~/.kimaki, then ~/.roadie.
  * Under vitest (ROADIE_VITEST env var), auto-creates an isolated temp dir so
  * tests never touch the real ~/.roadie/ database. Tests that need a specific
  * dir can still call setDataDir() before any DB access to override this.
@@ -31,14 +59,21 @@ export function getDataDir(): string {
   }
   // Child processes (OpenCode server, roadie shim commands) inherit this from
   // opencode.ts. Without it they would silently use ~/.roadie.
-  const fromEnv = process.env.ROADIE_DATA_DIR
+  const fromEnv = getRoadieEnv('ROADIE_DATA_DIR')
   if (fromEnv) {
     const resolved = path.resolve(fromEnv)
     store.setState({ dataDir: resolved })
     return resolved
   }
-  store.setState({ dataDir: DEFAULT_DATA_DIR })
-  return DEFAULT_DATA_DIR
+  const defaultDir = resolveDefaultDataDir(os.homedir())
+  store.setState({ dataDir: defaultDir })
+  return defaultDir
+}
+
+export function resolveDefaultDataDir(homeDir: string): string {
+  const roadieDir = path.join(homeDir, '.roadie')
+  const kimakiDir = path.join(homeDir, '.kimaki')
+  return !fs.existsSync(roadieDir) && fs.existsSync(kimakiDir) ? kimakiDir : roadieDir
 }
 
 /**
@@ -120,7 +155,7 @@ const DEFAULT_LOCK_PORT = 29988
  * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
  */
 export function getLockPort(): number {
-  const envPortRaw = process.env['ROADIE_LOCK_PORT']
+  const envPortRaw = getRoadieEnv('ROADIE_LOCK_PORT')
   if (envPortRaw) {
     const envPort = Number.parseInt(envPortRaw, 10)
     if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {

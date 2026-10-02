@@ -163,7 +163,7 @@ const SESSION_ID_LINE_PREFIX = 'Your current OpenCode session ID is: '
 const PARENT_SESSION_ID_LINE_PREFIX = 'Your parent OpenCode session ID is: '
 
 function getParentSessionInstructions(parentSessionId: string) {
-  return `${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}\nYou can send a message back to the parent session with:\nkimaki send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.`
+  return `${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}\nYou can send a message back to the parent session with:\nroadie send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.`
 }
 
 /** True when the pinned system prompt already names this parent session. */

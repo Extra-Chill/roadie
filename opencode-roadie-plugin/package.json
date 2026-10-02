@@ -46,7 +46,7 @@
     "roadie"
   ],
   "dependencies": {
-    "roadie": "workspace:^"
+    "@extrachill/roadie": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^24.3.0"
