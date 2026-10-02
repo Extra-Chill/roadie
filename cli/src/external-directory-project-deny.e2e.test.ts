@@ -16,7 +16,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { waitForBotMessageContaining } from './test-utils.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001023'
 
@@ -36,7 +36,7 @@ describe('external directory project deny', () => {
     },
   })
 
-  test('project opencode.json deny beats the allow-all default', async () => {
+  test('project opencode.json deny beats the allow-all default', { timeout: 20_000 }, async () => {
     fs.mkdirSync(EXTERNAL_DIRECTORY_PROBE_DIR, { recursive: true })
     fs.writeFileSync(EXTERNAL_DIRECTORY_PROBE_FILE, 'protected file')
 
@@ -61,6 +61,14 @@ describe('external directory project deny', () => {
       text: 'external-directory-probe-denied',
       timeout: 8_000,
     })
+    // The final text part is edited from quoted to full width right before
+    // the footer is sent, so snapshot only after the footer.
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 8_000,
+      afterMessageIncludes: 'external-directory-probe-denied',
+    })
 
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
@@ -72,7 +80,8 @@ describe('external directory project deny', () => {
 
       -# ┣ read *probe.txt*
 
-      external-directory-probe-denied"
+      external-directory-probe-denied
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
 
     // A deny is silent: it must not fall back to asking the user.

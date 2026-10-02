@@ -27,6 +27,29 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+
+/**
+ * OpenCode bootstraps a directory's instance (config, plugins, skills, file
+ * watcher) lazily on the first session.create for that directory, which takes
+ * several seconds on a fresh server. Pay that once in beforeAll by creating
+ * and deleting a throwaway session, so the first test's turn is not measured
+ * against its per-test timeout.
+ */
+export async function warmOpencodeInstance({
+  getClient,
+  directory,
+}: {
+  getClient: () => OpencodeClient
+  directory: string
+}): Promise<void> {
+  const created = await getClient().session.create({ directory, title: 'warmup' })
+  const sessionId = created.data?.id
+  if (!sessionId) {
+    throw new Error('OpenCode warmup could not create a session')
+  }
+  await getClient().session.delete({ sessionID: sessionId, directory }).catch(() => {})
+}
 import {
   cleanupTestSessions,
 } from './test-utils.js'
@@ -1110,7 +1133,11 @@ export function setupQueueAdvancedSuite({
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 20_000)
+    await warmOpencodeInstance({
+      getClient: warmup,
+      directory: ctx.directories.projectDirectory,
+    })
+  }, 30_000)
 
   afterAll(async () => {
     if (ctx.directories) {
