@@ -15,10 +15,6 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
     "cli.command('task edit <id>', 'Edit task').option('-u, --user <user>', 'Discord user')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth anthropic remove <indexOrEmail>', 'Remove stored Anthropic account')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
-    "cli.command('multioauth openai remove <indexOrEmail>', 'Remove stored OpenAI account')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -39,9 +35,6 @@ async function getHelpOutput() {
     'const stdout = { text: \'\', write(data) { this.text += String(data) } }',
     "const cli = goke('roadie', { stdout })",
     "cli.command('send', 'Send a message')",
-    "cli.command('multioauth list', 'List all OAuth accounts')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
     'cli.help()',
     "cli.parse(['node', 'roadie', '--help'], { run: false })",
     'process.stdout.write(stdout.text)',
@@ -227,28 +220,6 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.args[0]).toBe('11')
     expect(result.options.user).toBe('')
-  })
-
-  test('multioauth account remove parses index and email as strings', async () => {
-    const indexResult = await parseWithGoke(
-      ['node', 'roadie', 'multioauth', 'anthropic', 'remove', '2'],
-    )
-
-    const emailResult = await parseWithGoke(
-      ['node', 'roadie', 'multioauth', 'openai', 'remove', 'user@example.com'],
-    )
-
-    expect(indexResult.args[0]).toBe('2')
-    expect(typeof indexResult.args[0]).toBe('string')
-    expect(emailResult.args[0]).toBe('user@example.com')
-    expect(typeof emailResult.args[0]).toBe('string')
-  })
-
-  test('multioauth commands are included in help output', async () => {
-    const stdout = await getHelpOutput()
-
-    expect(stdout).toContain('send')
-    expect(stdout).toContain('multioauth')
   })
 
   test('parses root bot boolean flags', async () => {

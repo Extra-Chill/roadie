@@ -142,7 +142,7 @@ describe('published runtime artifacts', () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(import.meta.dirname, '../package.json'), 'utf8'),
     ) as { dependencies?: Record<string, string> }
-    expect(pkg.dependencies?.['@subrouter/opencode']).toMatch(/^(workspace:\^|\^)/)
+    expect(pkg.dependencies?.['@subrouter/opencode']).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })
 
@@ -157,11 +157,23 @@ describe('resolveSubrouterPluginSpec', () => {
     )
   })
 
-  test('loads workspace source directly in development', async () => {
+  test('loads the installed package directly in development', async () => {
     const { resolveSubrouterPluginSpec } = await import('./opencode.js')
     expect(resolveSubrouterPluginSpec({ isDev: true })).toMatch(
-      /^file:.*\/subrouter\/opencode\/dist\/index\.js$/,
+      /^file:.*\/@subrouter\/opencode\/dist\/index\.js$/,
     )
+  })
+})
+
+describe('buildServerPluginList', () => {
+  test('loads subrouter by default and omits it when disabled', async () => {
+    const { buildServerPluginList } = await import('./opencode.js')
+    const enabled = buildServerPluginList({ isDev: false, subrouterEnabled: true })
+    const disabled = buildServerPluginList({ isDev: false, subrouterEnabled: false })
+    expect(enabled).toHaveLength(2)
+    expect(enabled[1]).toMatch(/^@subrouter\/opencode@\d+\.\d+\.\d+$/)
+    expect(disabled).toHaveLength(1)
+    expect(disabled[0]).toMatch(/roadie-opencode-plugin\.js$/)
   })
 })
 

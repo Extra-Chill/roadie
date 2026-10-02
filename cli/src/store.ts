@@ -127,6 +127,14 @@ export type RoadieState = {
   // Read by: external-opencode-sync.ts startExternalOpencodeSessionSync().
   syncEnabled: boolean
 
+  // Whether the OpenCode backend loads @subrouter/opencode, which provides
+  // account rotation across subscriptions (subrouter/<preset> models).
+  // Disable with --no-subrouter or ROADIE_SUBROUTER=0 when the host supplies
+  // its own provider auth/rotation.
+  // Changes: set once at startup.
+  // Read by: opencode.ts when building the server plugin list.
+  subrouterEnabled: boolean
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -176,6 +184,7 @@ export const store = createStore<RoadieState>(() => ({
   permissionTimeoutMs: 10 * 60 * 1000,
   autoUpgradeEnabled: true,
   syncEnabled: true,
+  subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
