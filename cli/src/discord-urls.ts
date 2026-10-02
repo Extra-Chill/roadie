@@ -55,34 +55,3 @@ export function discordApiUrl(path: string): string {
 export function createDiscordRest(token: string): REST {
   return new REST({ api: getDiscordRestApiUrl() }).setToken(token)
 }
-
-/**
- * Returns the internet-reachable base URL for this roadie instance.
- * When ROADIE_INTERNET_REACHABLE_URL is set (e.g. "https://my-roadie.fly.dev"),
- * roadie binds the hrana server to 0.0.0.0 and exposes a /roadie/wake endpoint
- * so the gateway-proxy can wake this instance. Discord traffic still flows
- * through the normal path (gateway-proxy in gateway mode, direct in self-hosted).
- * Returns null when not set (roadie only reachable on localhost).
- */
-export function getInternetReachableBaseUrl(): string | null {
-  return process.env['ROADIE_INTERNET_REACHABLE_URL'] || null
-}
-
-/**
- * Derive an HTTPS REST base URL from a WebSocket gateway URL.
- * Swaps wss→https and ws→http. Used for gateway mode where the
- * gateway proxy URL doubles as the REST proxy base.
- */
-export function getGatewayProxyRestBaseUrl({ gatewayUrl }: { gatewayUrl: string }): string {
-  try {
-    const parsedUrl = new URL(gatewayUrl)
-    if (parsedUrl.protocol === 'wss:') {
-      parsedUrl.protocol = 'https:'
-    } else if (parsedUrl.protocol === 'ws:') {
-      parsedUrl.protocol = 'http:'
-    }
-    return parsedUrl.toString()
-  } catch {
-    return gatewayUrl
-  }
-}

@@ -162,7 +162,6 @@ test('a second machine gets its own default roadie channel', async () => {
   const first = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
-    isGatewayMode: true,
   })
   expect(first).toBeTruthy()
   await closeDb()
@@ -171,7 +170,6 @@ test('a second machine gets its own default roadie channel', async () => {
   const second = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
-    isGatewayMode: true,
   })
   expect(second).toBeTruthy()
   expect(second!.textChannelId).not.toBe(first!.textChannelId)
@@ -220,7 +218,6 @@ test('a roadie-prefixed project channel does not block the default channel', asy
   const created = await createDefaultRoadieChannel({
     guild: guild(),
     appId: discord.botUserId,
-    isGatewayMode: true,
   })
   expect(created).toBeTruthy()
   expect(created!.channelName).toBe('roadie')

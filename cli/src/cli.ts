@@ -119,11 +119,7 @@ cli
   )
   .option(
     '--gateway',
-    'Force gateway mode (use the gateway Roadie bot instead of a self-hosted bot)',
-  )
-  .option(
-    '--gateway-callback-url <url>',
-    'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
+    'Removed: Roadie only runs your own Discord bot (hosted gateway mode is not supported)',
   )
   .option(
     '--allow-mention <type>',
@@ -174,7 +170,6 @@ cli
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
       gateway?: boolean
-      gatewayCallbackUrl?: string
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
@@ -402,11 +397,15 @@ cli
           cliLogger.log(`OpenCode server port: ${opencodePort}`)
         }
 
+        if (options.gateway) {
+          cliLogger.error(
+            '--gateway is not supported: Roadie runs your own Discord bot. Remove the flag and set ROADIE_BOT_TOKEN or run the setup wizard.',
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
         if (options.installUrl) {
-          await printDiscordInstallUrlAndExit({
-            gateway: options.gateway,
-            gatewayCallbackUrl: options.gatewayCallbackUrl,
-          })
+          await printDiscordInstallUrlAndExit()
         }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.
@@ -417,8 +416,6 @@ cli
           dataDir: options.dataDir,
           useWorktrees: options.useWorktrees,
           enableVoiceChannels: options.enableVoiceChannels,
-          gateway: options.gateway,
-          gatewayCallbackUrl: options.gatewayCallbackUrl,
         })
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))

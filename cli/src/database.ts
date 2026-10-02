@@ -1184,16 +1184,6 @@ export async function setBotToken(appId: string, token: string) {
   await ensureServiceAuthToken({ appId })
 }
 
-export async function setBotMode({ appId, mode, clientId, clientSecret, proxyUrl }: { appId: string; mode: BotMode; clientId?: string | null; clientSecret?: string | null; proxyUrl?: string | null }) {
-  const db = await getDb()
-  const token = clientId && clientSecret ? `${clientId}:${clientSecret}` : ''
-  const data = { bot_mode: mode, client_id: clientId ?? null, client_secret: clientSecret ?? null, proxy_url: proxyUrl ?? null }
-  await db.insert(schema.bot_tokens)
-    .values({ app_id: appId, token, ...data })
-    .onConflictDoUpdate({ target: schema.bot_tokens.app_id, set: data })
-  await ensureServiceAuthToken({ appId, preferredGatewayToken: token || undefined })
-}
-
 export async function getGeminiApiKey(appId: string) {
   const db = await getDb()
   return (await db.query.bot_api_keys.findFirst({ where: { app_id: appId } }))?.gemini_api_key ?? null

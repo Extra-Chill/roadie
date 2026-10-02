@@ -80,55 +80,6 @@ export function generateBotInstallUrl({
   return url.toString()
 }
 
-export const ROADIE_GATEWAY_APP_ID =
-  process.env.ROADIE_GATEWAY_APP_ID || '1477605701202481173'
-export const ROADIE_WEBSITE_URL = process.env.ROADIE_WEBSITE_URL || 'https://kimaki.dev'
-
-export function generateDiscordInstallUrlForBot({
-  appId,
-  mode,
-  clientId,
-  clientSecret,
-  gatewayCallbackUrl,
-  reachableUrl,
-}: {
-  appId: string
-  mode: BotMode
-  clientId: string | null
-  clientSecret: string | null
-  /** Optional external URL to redirect to after OAuth completes instead of the
-   *  default success page. The website appends ?guild_id=<id> before redirecting. */
-  gatewayCallbackUrl?: string
-  /** When set (ROADIE_INTERNET_REACHABLE_URL), the website stores this URL in
-   *  gateway_clients.reachable_url so the gateway-proxy connects outbound. */
-  reachableUrl?: string
-}): Error | string {
-  if (mode !== 'gateway') {
-    return generateBotInstallUrl({ clientId: appId })
-  }
-
-  if (!clientId || !clientSecret) {
-    return new Error('Gateway credentials are missing from local database')
-  }
-
-  // In gateway mode, redirect to the website's /discord-install route.
-  // This initiates the better-auth OAuth flow with clientId/clientSecret
-  // as additionalData, which better-auth stores in its verification table
-  // and recovers after Discord redirects back to the callback.
-  // Use a roadie-specific callback field name to avoid ambiguity with
-  // better-auth's own callbackURL state field.
-  const url = new URL(`${ROADIE_WEBSITE_URL}/discord-install`)
-  url.searchParams.set('clientId', clientId)
-  url.searchParams.set('clientSecret', clientSecret)
-  if (gatewayCallbackUrl) {
-    url.searchParams.set('roadieCallbackUrl', gatewayCallbackUrl)
-  }
-  if (reachableUrl) {
-    url.searchParams.set('reachableUrl', reachableUrl)
-  }
-  return url.toString()
-}
-
 export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   const seen = new Set<K>()
   return arr.filter((item) => {

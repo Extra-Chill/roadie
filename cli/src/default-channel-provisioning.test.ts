@@ -64,7 +64,7 @@ test('self-hosted startup does not configure any guild without a live local mapp
   const before = await findChannelsByDirectory({})
   const created = await ensureDefaultChannelsWithWelcome({
     guilds: [...client.guilds.cache.values()], discordClient: client,
-    appId: discord.botUserId, isGatewayMode: false,
+    appId: discord.botUserId,
   })
   expect(created).toEqual([])
   expect(await findChannelsByDirectory({})).toEqual(before)
@@ -113,7 +113,7 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
     guild.channels.cache.clear()
     const created = await ensureDefaultChannelsWithWelcome({
       guilds: [...client.guilds.cache.values()], discordClient: client,
-      appId: discord.botUserId, isGatewayMode: false,
+      appId: discord.botUserId,
     })
     for (const channel of created) {
       expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
@@ -130,27 +130,8 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
     expect((await client.guilds.cache.get(otherGuildId)!.channels.fetch()).size).toBe(1)
     expect(await ensureDefaultChannelsWithWelcome({
       guilds: [...client.guilds.cache.values()], discordClient: client,
-      appId: discord.botUserId, isGatewayMode: false,
+      appId: discord.botUserId,
     })).toEqual([])
   })
 }
 
-test('gateway startup provisions every proxy-authorized guild without local mappings', async () => {
-  const created = await ensureDefaultChannelsWithWelcome({
-    guilds: [...client.guilds.cache.values()], discordClient: client,
-    appId: discord.botUserId, isGatewayMode: true,
-  })
-  for (const channel of created) {
-    expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
-      "--- from: assistant (TestBot)
-      **Roadie** lets you code from Discord. Send a message in any project channel and an AI agent edits code, runs commands, and searches your codebase — all on your machine.
-      **What you can do:**
-      - Use \`/add-project\` to create a Discord channel linked to one OpenCode project (git repo)
-      - Collaborate with teammates in the same session
-      - Upload images and files, the bot can share screenshots back
-      Want to build an example browser game? Respond in this thread."
-    `)
-  }
-  expect(created.map((channel) => channel.guildId).sort()).toEqual([trustedGuildId, otherGuildId])
-  expect(await findChannelsByDirectory({})).toHaveLength(2)
-})

@@ -4,7 +4,7 @@
 //
 // Protocol logic is implemented in the `libsqlproxy` package.
 // This file handles: server lifecycle, single-instance enforcement,
-// auth, and roadie-specific endpoints (/roadie/wake, /health).
+// auth, and roadie-specific endpoints (/health, /roadie/opencode-port).
 //
 // Hrana v2 protocol spec ("Hrana over HTTP"):
 //   https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
@@ -36,34 +36,14 @@ let db: Database.Database | null = null
 let server: http.Server | null = null
 let hranaUrl: string | null = null
 let discordGatewayReady = false
-let readyWaiters: Array<() => void> = []
 
+/** Record that the Discord connection is up (reported by /health consumers and tests). */
 export function markDiscordGatewayReady(): void {
-  if (discordGatewayReady) {
-    return
-  }
   discordGatewayReady = true
-  for (const resolve of readyWaiters) {
-    resolve()
-  }
-  readyWaiters = []
 }
 
-async function waitForDiscordGatewayReady({ timeoutMs }: { timeoutMs: number }): Promise<boolean> {
-  if (discordGatewayReady) {
-    return true
-  }
-  const readyPromise = new Promise<boolean>((resolve) => {
-    readyWaiters.push(() => {
-      resolve(true)
-    })
-  })
-  const timeoutPromise = new Promise<boolean>((resolve) => {
-    setTimeout(() => {
-      resolve(false)
-    }, timeoutMs)
-  })
-  return Promise.race([readyPromise, timeoutPromise])
+export function isDiscordGatewayReady(): boolean {
+  return discordGatewayReady
 }
 
 function getRequestAuthToken(req: http.IncomingMessage): string | null {
@@ -75,8 +55,7 @@ function getRequestAuthToken(req: http.IncomingMessage): string | null {
   return null
 }
 
-// Timing-safe comparison to prevent timing attacks when the hrana server
-// is internet-facing (bindAll=true / ROADIE_INTERNET_REACHABLE_URL set).
+// Timing-safe comparison of the service auth token.
 function isAuthorizedRequest(req: http.IncomingMessage): boolean {
   const expectedToken = store.getState().gatewayToken
   if (!expectedToken) {
@@ -121,16 +100,13 @@ export function getHranaUrl(): string | null {
  */
 export async function startHranaServer({
   dbPath,
-  bindAll = false,
 }: {
   dbPath: string
-  /** Bind to 0.0.0.0 instead of 127.0.0.1. Set when ROADIE_INTERNET_REACHABLE_URL is defined. */
-  bindAll?: boolean
 }) {
   if (server && db && hranaUrl) return hranaUrl
 
   const port = getLockPort()
-  const bindHost = bindAll ? '0.0.0.0' : '127.0.0.1'
+  const bindHost = '127.0.0.1'
   const serviceAuthToken = ensureServiceAuthTokenInStore()
   process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
 
@@ -153,27 +129,6 @@ export async function startHranaServer({
   // Combined handler: roadie-specific endpoints + hrana protocol
   const handler: http.RequestListener = async (req, res) => {
     const pathname = new URL(req.url || '/', 'http://localhost').pathname
-    if (pathname === '/roadie/wake') {
-      if (req.method !== 'POST') {
-        res.writeHead(405, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'method_not_allowed' }))
-        return
-      }
-      if (!isAuthorizedRequest(req)) {
-        res.writeHead(401, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'unauthorized' }))
-        return
-      }
-      const isReady = await waitForDiscordGatewayReady({ timeoutMs: 30_000 })
-      if (!isReady) {
-        res.writeHead(504, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ready: false, error: 'timeout_waiting_for_discord_ready' }))
-        return
-      }
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ready: true }))
-      return
-    }
     // Health check — no auth required
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -258,7 +213,6 @@ export async function stopHranaServer() {
   }
   hranaUrl = null
   discordGatewayReady = false
-  readyWaiters = []
   hranaLogger.log('Hrana server stopped')
 }
 
