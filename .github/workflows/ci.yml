@@ -43,7 +43,6 @@ jobs:
       - name: Build workspace packages with dist/ exports
         run: |
           pnpm --filter errore run build
-          pnpm --filter traforo run build
           pnpm --filter opencode-injection-guard run build
           pnpm --filter libsqlproxy run build
 

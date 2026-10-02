@@ -1,4 +1,4 @@
-// Utility terminal commands for Discord users, tunnels, screenshares, and database paths.
+// Utility terminal commands for Discord users.
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -114,80 +114,5 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
   })
-
-cli
-  .command('tunnel', 'Expose a local port via tunnel')
-  .option('-p, --port <port>', 'Local port to expose (optional when command output reveals one)')
-  .option(
-    '-t, --tunnel-id [id]',
-    'Custom tunnel ID (only for services safe to expose publicly; prefer random default)',
-  )
-  .option('-h, --host [host]', 'Local host (default: localhost)')
-  .option('-s, --server [url]', 'Tunnel server URL')
-  .option('-k, --kill', 'Kill any existing process on the port before starting')
-  .action(async (options) => {
-      const { runTunnel, parseCommandFromArgv } = await import(
-        'traforo/run-tunnel'
-      )
-      const { command } = parseCommandFromArgv(process.argv)
-
-      if (!options.port && command.length === 0) {
-        cliLogger.error('Error: --port is required unless a command is provided after --')
-        cliLogger.error(`\nUsage: roadie tunnel [-- command]`)
-        cliLogger.error(`   or: roadie tunnel --port <port>`)
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      const port = options.port ? parseInt(options.port, 10) : undefined
-      if (options.port && (!port || port < 1 || port > 65535)) {
-        cliLogger.error(`Error: Invalid port number: ${options.port}`)
-        process.exit(EXIT_NO_RESTART)
-      }
-
-      await runTunnel({
-        port,
-        tunnelId: options.tunnelId || undefined,
-        localHost: options.host || undefined,
-        baseDomain: 'kimaki.dev',
-        serverUrl: options.server || undefined,
-        command: command.length > 0 ? command : undefined,
-        kill: options.kill,
-      })
-    },
-  )
-
-cli
-  .command(
-    'screenshare',
-    'Share your screen via VNC tunnel. Auto-stops after 30 minutes. Runs until Ctrl+C. For background usage, start with bunx tuistory --help, then run it in a tuistory session.',
-  )
-  .action(async () => {
-    const { startScreenshare } = await import(
-      '../commands/screenshare.js'
-    )
-    try {
-      const session = await startScreenshare({
-        sessionKey: 'cli',
-        startedBy: 'cli',
-      })
-      cliLogger.log(`Screen sharing started: ${session.noVncUrl}`)
-      cliLogger.log('Press Ctrl+C to stop')
-    } catch (err) {
-      cliLogger.error(
-        'Failed to start screen share:',
-        err instanceof Error ? err.message : String(err),
-      )
-      process.exit(EXIT_NO_RESTART)
-    }
-  })
-
-cli
-  .command('sqlitedb', 'Show the location of the SQLite database file')
-  .action(() => {
-    const dataDir = getDataDir()
-    const dbPath = path.join(dataDir, 'discord-sessions.db')
-    cliLogger.log(dbPath)
-  })
-
 
 export default cli

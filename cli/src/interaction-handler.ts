@@ -31,7 +31,6 @@ import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
-import { handleShareCommand } from './commands/share.js'
 import {
   handleForkCommand,
   handleForkSelectMenu,
@@ -91,8 +90,6 @@ import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
-import { handleScreenshareCommand } from './commands/screenshare.js'
-import { handleVscodeCommand } from './commands/vscode.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -340,7 +337,6 @@ export function registerInteractionHandler({
               })
               return
 
-
             case 'resume':
               await handleResumeCommand({ command: interaction, appId })
               return
@@ -366,10 +362,6 @@ export function registerInteractionHandler({
 
             case 'compact':
               await handleCompactCommand({ command: interaction, appId })
-              return
-
-            case 'share':
-              await handleShareCommand({ command: interaction, appId })
               return
 
             case 'fork':
@@ -460,8 +452,6 @@ export function registerInteractionHandler({
               await handleSessionIdCommand({ command: interaction, appId })
               return
 
-
-
             case 'upgrade-and-restart':
               await handleUpgradeAndRestartCommand({
                 command: interaction,
@@ -473,13 +463,6 @@ export function registerInteractionHandler({
               await handleMcpCommand({ command: interaction, appId })
               return
 
-            case 'screenshare':
-              await handleScreenshareCommand({ command: interaction, appId })
-              return
-
-            case 'vscode':
-              await handleVscodeCommand({ command: interaction, appId })
-              return
           }
 
           // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
