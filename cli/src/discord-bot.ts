@@ -60,7 +60,6 @@ import {
 import YAML from 'yaml'
 import { getFileAttachments, getTextAttachments, resolveContentMentions } from './message-formatting.js'
 import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
-import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
   preprocessExistingThreadMessage,
@@ -74,16 +73,10 @@ import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
 import {
   ensureRoadieCategory,
-  ensureRoadieAudioCategory,
   createProjectChannels,
   getChannelsWithDescriptions,
   type ChannelWithTags,
 } from './channel-management.js'
-import {
-  voiceConnections,
-  cleanupVoiceConnection,
-  registerVoiceStateHandler,
-} from './voice-handler.js'
 import {
   type SessionStartSourceContext,
 } from './session-handler/model-utils.js'
@@ -125,7 +118,6 @@ export {
 export { getOpencodeSystemMessage } from './system-message.js'
 export {
   ensureRoadieCategory,
-  ensureRoadieAudioCategory,
   createProjectChannels,
   createDefaultRoadieChannel,
   getChannelsWithDescriptions,
@@ -413,7 +405,6 @@ export async function startDiscordBot({
     markDiscordGatewayReady()
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
-    registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
     await reconcileDeletedDiscordChannels(c)
     startExternalOpencodeSessionSync({ discordClient: c })
     await restorePersistedLocalQueues({
@@ -906,10 +897,6 @@ export async function startDiscordBot({
           return
         }
 
-        const hasVoiceAttachment = message.attachments.some((attachment) => {
-          return isVoiceAttachment(attachment)
-        })
-
         if (!projectDirectory) {
           discordLogger.log(
             `Cannot process message: no project directory for thread ${thread.id}`,
@@ -963,7 +950,7 @@ export async function startDiscordBot({
           }
           void cancelPendingFileUpload(thread.id)
         }
-        if (!hasVoiceAttachment && !suffix.forceQueue) {
+        if (!suffix.forceQueue) {
           await dismissSourceUi()
         }
 
@@ -1016,25 +1003,15 @@ export async function startDiscordBot({
               }
             : undefined,
           preprocess: async () => {
-            const result = await preprocessExistingThreadMessage({
+            return preprocessExistingThreadMessage({
               message,
               thread,
-              projectDirectory: resolvedProjectDir,
-              channelId: parent?.id || undefined,
               isCliInjected: isCliInjectedPrompt,
-              hasVoiceAttachment,
-              appId: currentAppId,
             })
-            // Routing must finish before touching source UI. This chain is separate
-            // from dispatchAction, so abort waiting does not block session events.
-            if (hasVoiceAttachment && !result.skip && result.mode !== 'local-queue') {
-              await dismissSourceUi()
-            }
-            return result
           },
         })
 
-        // Notify when a voice message was queued instead of sent immediately
+        // Notify when the message was queued instead of sent immediately
         if (enqueueResult.queued && enqueueResult.position) {
           await sendThreadMessage(
             thread,
@@ -1125,15 +1102,10 @@ export async function startDiscordBot({
           }
         }
 
-        const hasVoice = message.attachments.some((attachment) => {
-          return isVoiceAttachment(attachment)
-        })
-
-        const baseThreadName = hasVoice
-          ? 'Voice Message'
-          : stripMentions(message.content || '')
-              .replace(/\s+/g, ' ')
-              .trim() || 'roadie thread'
+        const baseThreadName =
+          stripMentions(message.content || '')
+            .replace(/\s+/g, ' ')
+            .trim() || 'roadie thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting).
         // Only create worktrees from the configured project directory when that
@@ -1176,7 +1148,7 @@ export async function startDiscordBot({
           // Auto-derived from thread name -- compress long slugs so the
           // folder path stays short and the agent doesn't reuse old worktrees.
           const worktreeName = formatAutoWorktreeName(
-            hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
+            threadName.slice(0, 50),
           )
           discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
 
@@ -1218,13 +1190,7 @@ export async function startDiscordBot({
           sourceChannelId: message.channelId,
           appId: currentAppId,
           preprocess: async () => {
-            return preprocessNewThreadMessage({
-              message,
-              thread,
-              projectDirectory: sessionDirectory,
-              hasVoiceAttachment: hasVoice,
-              appId: currentAppId,
-            })
+            return preprocessNewThreadMessage({ message, thread })
           },
         })
       } else {
@@ -1755,22 +1721,6 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
         (e as Error).message,
       )
     })
-
-    const cleanupPromises: Promise<void>[] = []
-    for (const [guildId] of voiceConnections) {
-      voiceLogger.log(
-        `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
-      )
-      cleanupPromises.push(cleanupVoiceConnection(guildId))
-    }
-
-    if (cleanupPromises.length > 0) {
-      voiceLogger.log(
-        `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
-      )
-      await Promise.allSettled(cleanupPromises)
-      discordLogger.log(`All voice connections cleaned up`)
-    }
 
     voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
     stopExternalOpencodeSessionSync()
