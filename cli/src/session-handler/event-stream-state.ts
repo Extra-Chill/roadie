@@ -1605,7 +1605,7 @@ function getParentIdFromSessionEvent(event: EventBufferEvent): {
 }
 
 // Global SSE is broadcast to every thread. Buffer only this thread's session
-// plus its task/subagent children. /btw fork clones history onto a new
+// plus its task/subagent children. /fork clones history onto a new
 // sessionId; those events must not evict the parent's latest-turn buffer.
 export function shouldBufferSessionEvent({
   event,
@@ -1627,7 +1627,7 @@ export function shouldBufferSessionEvent({
   if (!eventSessionId) {
     return true
   }
-  // A new /btw thread registers the SSE listener before ensureSession.
+  // A new fork thread registers the SSE listener before ensureSession.
   // Until the child session id is bound, drop every scoped event so the
   // parent clone flood cannot fill this buffer first.
   if (!mainSessionId) {

@@ -6,37 +6,24 @@ import {
   isTransientNetworkError,
   resolveDiscordUserOption,
 } from './cli-runner.js'
-import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
+import { extractQueueSuffix } from './message-formatting.js'
 
-// Regression: a long `. btw` prompt lost its suffix and interrupted the source session.
-test('long prompts keep queue and btw suffixes in the visible message', () => {
+// Regression: a long queued prompt lost its suffix and interrupted the source session.
+test('long prompts keep the queue suffix in the visible message', () => {
   const body = 'x'.repeat(2100)
   expect(
-    ['queue', 'btw', 'btw queue', ''].map((suffix) => {
+    ['queue', ''].map((suffix) => {
       const { content, fileText } = buildLongPromptMessage(suffix ? `${body}. ${suffix}` : body)
-      const parsed = extractBtwQueueSuffix(content)
-      return { fileText: fileText === body, forceQueue: parsed.forceQueue, forceBtw: parsed.forceBtw }
+      return { fileText: fileText === body, forceQueue: extractQueueSuffix(content).forceQueue }
     }),
   ).toMatchInlineSnapshot(`
     [
       {
         "fileText": true,
-        "forceBtw": false,
         "forceQueue": true,
       },
       {
         "fileText": true,
-        "forceBtw": true,
-        "forceQueue": false,
-      },
-      {
-        "fileText": true,
-        "forceBtw": true,
-        "forceQueue": true,
-      },
-      {
-        "fileText": true,
-        "forceBtw": false,
         "forceQueue": false,
       },
     ]

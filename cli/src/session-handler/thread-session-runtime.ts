@@ -723,6 +723,7 @@ export function isEssentialToolPart(part: AgentPart): boolean {
 const DISCORD_THREAD_NAME_MAX = 100
 const PRESERVED_THREAD_PREFIXES: string[] = [
   STATUS_PREFIX,
+  // Legacy prefix from the removed /btw command; existing threads keep it.
   'btw: ',
   'Fork: ',
 ]
@@ -800,7 +801,6 @@ export type EnqueueResult = {
  */
 export type PreprocessResult = {
   prompt: string
-  queuedAction?: 'btw'
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
   /** Resolved ingress mode (queue suffix or forced queue). */
@@ -852,7 +852,6 @@ export function applyChannelPolicyToIngress({
 
 export type IngressInput = {
   prompt: string
-  queuedAction?: 'btw'
   userId: string
   username: string
   // How userId was established: 'chat' (platform-authenticated author,
@@ -901,7 +900,7 @@ export type IngressInput = {
   /**
    * Parent OpenCode session ID from explicit `roadie send --parent-session` only.
    * Stored once on first ingress and injected into the child system message.
-   * Never set for /btw, /fork, or task/subagent children (keeps system prompt cache).
+   * Never set for /fork or task/subagent children (keeps system prompt cache).
    */
   parentSessionId?: string
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number; scheduledTaskRunId?: number }
@@ -3129,8 +3128,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Only a prompt can answer a pending question; a fork must wait for idle.
-    if (this.state?.queueItems[0]?.queuedAction === 'btw') return
     const next = threadState.dequeueItem(this.threadId)
     if (!next) {
       return
@@ -3641,7 +3638,6 @@ export class ThreadSessionRuntime {
     const queuedMessage: QueuedMessage = {
       queueId,
       prompt: input.prompt,
-      queuedAction: input.queuedAction,
       userId: input.userId,
       username: input.username,
       images: input.images,
@@ -3824,7 +3820,6 @@ export class ThreadSessionRuntime {
         const resolvedInput: IngressInput = maybeConvertLeadingCommand({
           ...input,
           prompt: result.prompt,
-          queuedAction: result.queuedAction,
           images: result.images,
           mode: result.mode,
           // Preprocessing may request an agent — apply it only if no
@@ -4096,12 +4091,10 @@ export class ThreadSessionRuntime {
   async updateQueuedMessage({
     sourceMessageId,
     newPrompt,
-    queuedAction,
   }: {
     sourceMessageId: string
     newPrompt: string
-    queuedAction?: 'btw'
-  }): Promise<{ found: boolean; removed: boolean }> {
+    }): Promise<{ found: boolean; removed: boolean }> {
     let result: { found: boolean; removed: boolean } = { found: false, removed: false }
     await this.dispatchAction(async () => {
       const trimmed = newPrompt.trim()
@@ -4117,7 +4110,7 @@ export class ThreadSessionRuntime {
         const persistResult = trimmed
           ? await updateThreadQueueItemPayload({
             queueId,
-            payloadJson: JSON.stringify({ ...original, prompt: trimmed, queuedAction }),
+            payloadJson: JSON.stringify({ ...original, prompt: trimmed }),
           }).catch((error) => {
             return new Error('Failed to update persisted queue item', { cause: error })
           })
@@ -4137,7 +4130,7 @@ export class ThreadSessionRuntime {
         sourceMessageId,
         (item) => {
           if (!trimmed) return null
-          return { ...item, prompt: trimmed, queuedAction }
+          return { ...item, prompt: trimmed }
         },
       )
       result = trimmed
@@ -4317,7 +4310,7 @@ export class ThreadSessionRuntime {
     // gating prevents concurrent local-queue dispatches. Mark busy now to
     // close the tiny window before the first session.status busy arrives.
     const dispatchSessionId = thread.sessionId
-    if (dispatchSessionId && next.queuedAction !== 'btw') {
+    if (dispatchSessionId) {
       this.markQueueDispatchBusy(dispatchSessionId)
     }
     let accepted = false
@@ -4349,27 +4342,6 @@ export class ThreadSessionRuntime {
   // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
-    if (input.queuedAction === 'btw') {
-      const { forkSessionToBtwThread } = await import('../commands/btw.js')
-      const result = await forkSessionToBtwThread({
-        sourceThread: this.thread,
-        projectDirectory: this.projectDirectory,
-        sdkDirectory: this.sdkDirectory,
-        prompt: input.prompt,
-        userId: input.userId,
-        username: input.username,
-        appId: input.appId,
-        images: input.images,
-        agent: input.agent,
-      })
-      if (result instanceof Error) {
-        logger.error('[QUEUE] Could not fork queued btw:', result)
-        await this.chat.sendMessage(`Could not fork queued btw: ${result.message}`)
-        return true
-      }
-      await this.chat.sendMessage(`Session forked! Continue in ${result.thread.toString()}`)
-      return true
-    }
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
     this.lastSentPartKind = undefined

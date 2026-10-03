@@ -35,7 +35,7 @@ import {
   stopOpencodeServer,
 } from './opencode.js'
 import { resolveSessionWorkingDirectory, git } from './git-utils.js'
-import { asSubtext } from './message-formatting.js'
+import { asSubtext, extractQueueSuffix } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -56,8 +56,6 @@ import {
 } from './system-message.js'
 import YAML from 'yaml'
 import { getFileAttachments, getTextAttachments, resolveContentMentions } from './message-formatting.js'
-import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
-import { forkSessionToBtwThread } from './commands/btw.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -847,58 +845,7 @@ export async function startDiscordBot({
           }
         }
 
-        // `. btw` suffix mirrors /btw for fast side-question forks.
-        // Works like queue: just the word "btw" at the end after punctuation
-        // or newline. The whole message (minus the suffix) becomes the fork prompt.
-        const suffix = extractBtwQueueSuffix(message.content || '')
-        if (suffix.forceBtw && !suffix.forceQueue && projectDirectory && !isLeadingMentionToOtherUser) {
-          threadIngressSlot?.release()
-          const btwSdkDir = threadDir?.workingDirectory ?? projectDirectory
-          // Ack right away: fork + thread creation can take seconds. Runs in
-          // parallel with the fork and is edited with the result at the end.
-          const ackPromise = message.reply({
-            content: asSubtext('Forking session to answer this side question...'),
-            flags: SILENT_MESSAGE_FLAGS,
-          }).catch((error: unknown) => {
-            discordLogger.warn('Could not send btw ack:', error)
-            return undefined
-          })
-          // Long `roadie send` prompts arrive as prompt.md, so the fork needs attachments too.
-          const [btwImages, btwTextAttachments] = await Promise.all([
-            getFileAttachments(message),
-            getTextAttachments(message),
-          ])
-          const result = await forkSessionToBtwThread({
-            sourceThread: thread,
-            projectDirectory,
-            sdkDirectory: btwSdkDir,
-            prompt: suffix.prompt,
-            modelPrompt: [suffix.prompt, btwTextAttachments].filter(Boolean).join('\n\n'),
-            images: btwImages.length > 0 ? btwImages : undefined,
-            userId: cliInjectedUserId || message.author.id,
-            actorVia: cliInjectedUserId ? 'cli' : 'chat',
-            username:
-              cliInjectedUsername ||
-              message.member?.displayName ||
-              message.author.displayName,
-            appId: currentAppId,
-          })
-
-          const resultContent = result instanceof Error
-            ? result.message
-            : `Session forked! Continue in ${result.thread.toString()}`
-          const ack = await ackPromise
-          const edited = ack
-            ? await ack.edit({ content: resultContent }).catch((error: unknown) => {
-              discordLogger.warn('Could not edit btw ack:', error)
-              return undefined
-            })
-            : undefined
-          if (!edited) {
-            await message.reply({ content: resultContent, flags: SILENT_MESSAGE_FLAGS })
-          }
-          return
-        }
+        const suffix = extractQueueSuffix(message.content || '')
 
         if (!projectDirectory) {
           discordLogger.log(
@@ -1206,7 +1153,7 @@ export async function startDiscordBot({
       if (!runtime) return
 
       // Same resolution as initial ingress, so the edited prompt matches.
-      const { prompt, mode, queuedAction } = await resolveMessagePrompt({
+      const { prompt, mode } = await resolveMessagePrompt({
         message,
         text: resolveContentMentions(message),
       })
@@ -1216,7 +1163,6 @@ export async function startDiscordBot({
       const result = await runtime.updateQueuedMessage({
         sourceMessageId: message.id,
         newPrompt: mode === 'local-queue' ? prompt : '',
-        queuedAction,
       })
 
       if (result.found && channel.isThread()) {

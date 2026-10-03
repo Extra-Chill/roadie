@@ -22,8 +22,7 @@ import {
   type IngressInput,
 } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { asSubtext, QUEUE_PREFIX } from '../message-formatting.js'
-import { extractBtwQueueSuffix } from '../btw-prefix-detection.js'
+import { asSubtext, extractQueueSuffix, QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
@@ -170,8 +169,7 @@ export async function handleQueueCommand({
 }: CommandContext): Promise<void> {
   // /queue always queues; a typed suffix is redundant, so only strip it.
   const rawMessage = command.options.getString('message', true)
-  const btw = extractBtwQueueSuffix(rawMessage)
-  const message = btw.prompt
+  const message = extractQueueSuffix(rawMessage).prompt
   const channel = command.channel
 
   if (!message.trim()) {
@@ -237,7 +235,6 @@ export async function handleQueueCommand({
   // /queue explicitly uses roadie local queue mode.
   const enqueueResult = await runtime.enqueueIncoming({
     prompt: message,
-    queuedAction: btw.forceBtw ? 'btw' : undefined,
     userId: command.user.id,
     username: command.user.displayName,
     appId,

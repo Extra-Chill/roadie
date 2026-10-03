@@ -232,24 +232,27 @@ export async function registerCommands({
 
     new SlashCommandBuilder()
       .setName('fork')
-      .setDescription(truncateCommandDescription('Fork the session from a past user message'))
+      .setDescription(truncateCommandDescription('Branch this session into a new thread; the original keeps running'))
+      .addStringOption((option) => {
+        option
+          .setName('prompt')
+          .setDescription(truncateCommandDescription('Start the fork on this right away'))
+          .setRequired(false)
+        return option
+      })
+      .addStringOption((option) => {
+        option
+          .setName('from')
+          .setDescription(truncateCommandDescription('Fork from before an earlier message instead of the latest point'))
+          .setAutocomplete(true)
+          .setRequired(false)
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('fork-subagent')
       .setDescription(truncateCommandDescription('Fork a subagent task session into a new thread'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('btw')
-      .setDescription(truncateCommandDescription('Ask something without polluting or blocking the current session'))
-      .addStringOption((option) => {
-        option
-          .setName('prompt')
-          .setDescription(truncateCommandDescription('The message to send in the forked session'))
-          .setRequired(true)
-        return option
-      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
