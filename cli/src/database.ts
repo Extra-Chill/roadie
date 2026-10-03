@@ -1156,8 +1156,7 @@ export async function findChannelsByDirectory({ directory, channelType }: { dire
 function canonicalizeDirectory(directory: string) {
   const resolved = path.resolve(directory)
   const real = errore.try(
-    () => fs.realpathSync(resolved),
-    (e) => new Error('realpath failed', { cause: e }),
+    { try: () => fs.realpathSync(resolved), catch: (e) => new Error('realpath failed', { cause: e }) },
   )
   if (real instanceof Error) return resolved
   return real

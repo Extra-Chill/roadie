@@ -647,12 +647,11 @@ function delay(ms: number): Promise<void> {
 function getTimestampFromSnowflake(snowflake: string): number | undefined {
   const discordEpochMs = 1_420_070_400_000n
   const snowflakeIdResult = errore.try(
-    () => {
+    { try: () => {
       return BigInt(snowflake)
-    },
-    () => {
+    }, catch: () => {
       return new Error('Invalid Discord snowflake')
-    },
+    } },
   )
   if (snowflakeIdResult instanceof Error) return undefined
   const timestampBigInt = (snowflakeIdResult >> 22n) + discordEpochMs
@@ -946,7 +945,7 @@ function parseQueuedMessagePayload({
   payloadJson: string
 }): QueuedMessage | Error {
   return errore.try(
-    () => {
+    { try: () => {
       const parsed = JSON.parse(payloadJson) as QueuedMessage
       if (!parsed || typeof parsed !== 'object') {
         return new Error('Queued message payload is not an object')
@@ -961,10 +960,9 @@ function parseQueuedMessagePayload({
         return new Error('Queued message payload is missing username')
       }
       return { ...parsed, queueId }
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error('Failed to parse queued message payload', { cause: error })
-    },
+    } },
   )
 }
 

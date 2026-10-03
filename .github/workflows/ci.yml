@@ -14,8 +14,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: pnpm/action-setup@v4
         with:
@@ -38,14 +36,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Submodules have dist/ gitignored so they need to be built after checkout.
-      # libsqlproxy is a workspace package that also needs building (exports from dist/).
-      - name: Build workspace packages with dist/ exports
-        run: |
-          pnpm --filter errore run build
-          pnpm --filter opencode-injection-guard run build
-          pnpm --filter libsqlproxy run build
-
       - name: Generate Prisma + SQL (discord-digital-twin)
         run: pnpm generate
         working-directory: discord-digital-twin
@@ -61,7 +51,7 @@ jobs:
       # --retry 3: some e2e tests have timing sensitivity on CI hardware
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
-        run: pnpm test -- --run --retry 3
+        run: pnpm test:all -- --run --retry 3
         working-directory: cli
         env:
           NODE_ENV: test

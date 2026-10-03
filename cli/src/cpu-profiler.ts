@@ -90,14 +90,13 @@ async function startUnlocked({
 
   const next = new inspector.Session()
   const connected = errore.try(
-    () => {
+    { try: () => {
       next.connect()
-    },
-    (e) =>
+    }, catch: (e) =>
       new CpuProfilerError({
         reason: 'Failed to connect inspector. Type cpuprof again after a few seconds.',
         cause: e,
-      }),
+      }) },
   )
   if (connected instanceof Error) return connected
 
@@ -169,14 +168,13 @@ async function stopUnlocked(): Promise<CpuProfileStop | CpuProfilerError | Files
 
   const dir = getCpuProfileDir()
   const created = errore.try(
-    () => {
+    { try: () => {
       fs.mkdirSync(dir, { recursive: true })
-    },
-    (e) =>
+    }, catch: (e) =>
       new FilesystemOperationError({
         operation: `mkdir ${dir}`,
         cause: e,
-      }),
+      }) },
   )
   if (created instanceof Error) return created
 

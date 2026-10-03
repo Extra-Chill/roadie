@@ -291,27 +291,25 @@ export function getNextCronRun({
   from: Date
 }): Date | Error {
   const parsed = errore.try(
-    () => {
+    { try: () => {
       return CronExpressionParser.parse(cronExpr, {
         currentDate: from,
         tz: timezone,
       })
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error(`Invalid cron expression: ${cronExpr}`, { cause: error })
-    },
+    } },
   )
   if (parsed instanceof Error) return parsed
 
   const next = errore.try(
-    () => {
+    { try: () => {
       return parsed.next().toDate()
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error(`Could not compute next run for cron: ${cronExpr}`, {
         cause: error,
       })
-    },
+    } },
   )
   if (next instanceof Error) return next
 
@@ -384,12 +382,11 @@ export function parseScheduledTaskPayload(
   payloadJson: string,
 ): ScheduledTaskPayload | Error {
   const parsed = errore.try(
-    () => {
+    { try: () => {
       return JSON.parse(payloadJson) as unknown
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error('Task payload is not valid JSON', { cause: error })
-    },
+    } },
   )
   if (parsed instanceof Error) return parsed
   if (!isRecord(parsed)) {

@@ -5,11 +5,12 @@
   "files": [],
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "prepare": "pnpm -r --filter errore --filter libsqlproxy --filter opencode-injection-guard --filter discord-slack-bridge run build",
-    "test": "NODE_ENV=test pnpm --filter @extrachill/roadie run vitest",
+    "prepare": "pnpm -r --filter discord-slack-bridge run build",
+    "test": "NODE_ENV=test pnpm --filter @extrachill/roadie exec vitest run --exclude '**/*.e2e.test.ts'",
     "dev": "pnpm --filter @extrachill/roadie dev",
     "roadie": "pnpm --filter @extrachill/roadie play",
-    "release:package": "bash scripts/release-package.sh"
+    "release:package": "bash scripts/release-package.sh",
+    "test:all": "NODE_ENV=test pnpm --filter @extrachill/roadie run vitest"
   },
   "devDependencies": {
     "oxfmt": "^0.24.0",

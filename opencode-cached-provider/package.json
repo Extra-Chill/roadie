@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
-    "errore": "workspace:^",
+    "errore": "^0.14.1",
     "eventsource-parser": "^3.0.6",
     "spiceflow": "1.26.0-rsc.3"
   },
