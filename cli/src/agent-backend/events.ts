@@ -79,6 +79,8 @@ export type AgentMessage = {
   finish?: string
   /** Per-message system prompt, user messages only. */
   system?: string
+  /** Ids and types of the message's parts, when the backend reports them inline. */
+  partsSummary?: Array<{ id: string; type: string }>
 }
 
 export type AgentToolStatus = 'pending' | 'running' | 'completed' | 'error'
@@ -97,6 +99,7 @@ export type AgentPart = PartBase & (
       synthetic?: boolean
       /** Kept in history but not sent to the model. */
       ignored?: boolean
+      metadata?: Record<string, unknown>
       startedAt?: number
       endedAt?: number
     }
@@ -113,6 +116,8 @@ export type AgentPart = PartBase & (
       metadata?: Record<string, unknown>
       startedAt?: number
       endedAt?: number
+      /** When the backend pruned this tool's output from the model context. */
+      compactedAt?: number
     }
   | { kind: 'step-start' }
   | { kind: 'step-finish'; reason: string; cost: number; usage: AgentUsage }

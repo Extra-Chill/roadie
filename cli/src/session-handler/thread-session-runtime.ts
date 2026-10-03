@@ -6,6 +6,8 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
+import { toAgentEvent, toAgentMessage } from '../agent-backend/opencode-events.js'
+import { parsePersistedEvent } from './persisted-events.js'
 import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -172,6 +174,7 @@ import {
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  getEventBufferSessionId,
   shouldBufferSessionEvent,
   shouldRetainSessionEvent,
   trimEventBuffer,
@@ -1232,20 +1235,14 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = errore.try(
-        () => {
-          return JSON.parse(row.event_json) as EventBufferEvent
-        },
-        (error) => {
-          return new Error('Failed to parse persisted session event JSON', {
-            cause: error,
-          })
-        },
-      )
+      const eventResult = parsePersistedEvent(row.event_json)
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
         )
+        return []
+      }
+      if (!eventResult) {
         return []
       }
       return [
@@ -1285,9 +1282,7 @@ export class ThreadSessionRuntime {
     }
 
     const events = this.eventBuffer.flatMap((entry) => {
-      const eventSessionId = entry.event.type === 'queue.question-handoff-started'
-        ? entry.event.properties.sessionID
-        : getOpencodeEventSessionId(entry.event)
+      const eventSessionId = getEventBufferSessionId(entry.event)
       if (eventSessionId !== sessionId) {
         return []
       }
@@ -1539,110 +1534,53 @@ export class ThreadSessionRuntime {
   private compactEventForEventBuffer(
     event: EventBufferEvent,
   ): EventBufferEvent | undefined {
-    if (event.type === 'queue.question-handoff-started') {
-      return this.finalizeCompactedEventForEventBuffer(structuredClone(event))
-    }
-
     if (event.type === 'session.diff') {
       return undefined
     }
 
     const compacted = structuredClone(event)
 
-    if (compacted.type === 'message.updated') {
-      // Strip heavy fields from ALL roles. Derivation only needs lightweight
-      // metadata (id, role, sessionID, parentID, time, finish, error, modelID,
-      // providerID, mode, tokens). The parts array on assistant messages grows
-      // with every tool call and was the primary OOM vector — 1000 buffer entries
-      // each carrying the full cumulative parts array reached 4GB+.
-      const info = compacted.properties.info as Record<string, unknown>
-      const partsSummary = Array.isArray(info.parts)
-        ? info.parts.flatMap((part) => {
-            if (!part || typeof part !== 'object') {
-              return [] as Array<{ id: string; type: string }>
-            }
-            const candidate = part as { id?: unknown; type?: unknown }
-            if (
-              typeof candidate.id !== 'string'
-              || typeof candidate.type !== 'string'
-            ) {
-              return [] as Array<{ id: string; type: string }>
-            }
-            return [{ id: candidate.id, type: candidate.type }]
-          })
-        : []
-      if (info.role === 'user' && typeof info.id === 'string' && typeof info.system === 'string') {
+    if (compacted.type === 'message') {
+      // Strip heavy fields. Derivation only needs lightweight metadata (ids,
+      // role, parent, time, finish, error, model, usage, partsSummary). The
+      // per-message system prompt is kept aside for prompt-cache diffs.
+      const info = compacted.message
+      if (info.role === 'user' && info.system) {
         this.userSystemByMessageId.set(info.id, info.system)
       }
       delete info.system
-      delete info.tools
-      delete info.parts
-      if (partsSummary.length > 0) {
-        info.partsSummary = partsSummary
-      }
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    if (compacted.type !== 'message.part.updated') {
+    if (compacted.type !== 'part') {
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    const part = compacted.properties.part
+    const part = compacted.part
 
-    if (part.type === 'text') {
+    if (part.kind === 'text' || part.kind === 'reasoning') {
       part.text = this.compactTextForEventBuffer(part.text)
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    if (part.type === 'reasoning') {
-      part.text = this.compactTextForEventBuffer(part.text)
+    if (part.kind !== 'tool') {
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    if (part.type === 'snapshot') {
-      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type === 'step-start' && part.snapshot) {
-      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type !== 'tool') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    const state = part.state
     // Preserve subagent_type for task tools so derivation can build labels
     // like "explore-1" instead of generic "task-1" after compaction strips input
     const taskSubagentType =
-      part.tool === 'task' ? state.input?.subagent_type : undefined
-    state.input = {}
+      part.tool === 'task' ? part.input?.subagent_type : undefined
+    part.input = {}
     if (typeof taskSubagentType === 'string') {
-      state.input.subagent_type = taskSubagentType
+      part.input.subagent_type = taskSubagentType
     }
-
-    if (state.status === 'pending') {
-      state.raw = this.compactTextForEventBuffer(state.raw)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
+    if (part.output !== undefined) {
+      part.output = this.compactTextForEventBuffer(part.output)
     }
-
-    if (state.status === 'running') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
+    if (part.error !== undefined) {
+      part.error = this.compactTextForEventBuffer(part.error)
     }
-
-    if (state.status === 'completed') {
-      state.output = this.compactTextForEventBuffer(state.output)
-      delete state.attachments
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (state.status === 'error') {
-      state.error = this.compactTextForEventBuffer(state.error)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
     return this.finalizeCompactedEventForEventBuffer(compacted)
   }
 
@@ -1682,44 +1620,22 @@ export class ThreadSessionRuntime {
 
   seedForkPromptCacheBaseline(message: Extract<OpenCodeMessage, { role: 'assistant' }>): void {
     if (message.sessionID !== this.state?.sessionId || this.eventBuffer.length > 0) return
-    this.appendEventToBuffer({
-      id: `fork-cache-baseline-${message.id}`,
-      type: 'message.updated',
-      properties: { sessionID: message.sessionID, info: message },
-    })
+    this.appendEventToBuffer({ type: 'message', message: toAgentMessage(message) })
   }
 
   // Queue-dispatch lifecycle markers are synthetic buffer-only events.
   // They are not fed into handleEvent(), so they do not emit Discord messages;
   // they only stabilize event-derived busy/idle gating for local queue drains.
   private markQueueDispatchBusy(sessionId: string): void {
-    this.appendEventToBuffer({
-      id: `synthetic-${crypto.randomUUID()}`,
-      type: 'session.status',
-      properties: {
-        sessionID: sessionId,
-        status: { type: 'busy' },
-      },
-    })
+    this.appendEventToBuffer({ type: 'status', sessionId, status: { state: 'busy' } })
   }
 
   private markQueueDispatchIdle(sessionId: string): void {
-    this.appendEventToBuffer({
-      id: `synthetic-${crypto.randomUUID()}`,
-      type: 'session.idle',
-      properties: {
-        sessionID: sessionId,
-      },
-    })
+    this.appendEventToBuffer({ type: 'idle', sessionId })
   }
 
   private markQuestionQueueHandoffStarted(sessionId: string): void {
-    this.appendEventToBuffer({
-      type: 'queue.question-handoff-started',
-      properties: {
-        sessionID: sessionId,
-      },
-    })
+    this.appendEventToBuffer({ type: 'queue.question-handoff-started', sessionId })
   }
 
   /**
@@ -1781,8 +1697,11 @@ export class ThreadSessionRuntime {
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (!shouldBufferSessionEvent({
-      event,
+    // The buffer and its derivations speak Roadie agent events. Handlers below
+    // still take the backend event until they move over too (#55).
+    const agentEvent = toAgentEvent(event)
+    if (agentEvent && !shouldBufferSessionEvent({
+      event: agentEvent,
       mainSessionId: sessionId,
       isKnownChildSession: (candidateSessionId) => {
         return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
@@ -1799,8 +1718,8 @@ export class ThreadSessionRuntime {
     // actually still busy. This was the root cause of "? queue" messages
     // interrupting instead of queuing.
     // Child task part floods are also dropped at retain time for the same reason.
-    if (event.type !== 'message.part.delta') {
-      this.appendEventToBuffer(event)
+    if (agentEvent && agentEvent.type !== 'part.delta') {
+      this.appendEventToBuffer(agentEvent)
     }
 
     const eventSessionId = getOpencodeEventSessionId(event)
@@ -2460,7 +2379,7 @@ export class ThreadSessionRuntime {
     })
     const completedAt = msg.time.completed
     if (!wasAlreadyCompleted && typeof completedAt === 'number') {
-      if (isAssistantMessageNaturalCompletion({ message: msg })) {
+      if (isAssistantMessageNaturalCompletion({ message: toAgentMessage(msg) })) {
         await this.handleNaturalAssistantCompletion({
           completedMessageId: msg.id,
           completedAt,
@@ -4126,8 +4045,7 @@ export class ThreadSessionRuntime {
     }
     await this.waitForEvent({
       predicate: (event) => {
-        return event.type === 'session.idle'
-          && (event.properties as { sessionID?: string }).sessionID === sessionId
+        return event.type === 'idle' && event.sessionId === sessionId
       },
       sinceTimestamp: waitSinceTimestamp,
       timeoutMs,
@@ -5490,14 +5408,14 @@ export class ThreadSessionRuntime {
   }): string | undefined {
     for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
       const event = this.eventBuffer[i]?.event
-      if (event?.type !== 'message.updated') {
+      if (event?.type !== 'message') {
         continue
       }
-      const info = event.properties.info
-      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+      const info = event.message
+      if (info.sessionId !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
         continue
       }
-      return info.parentID
+      return info.parentId
     }
     return undefined
   }
@@ -5540,8 +5458,7 @@ export class ThreadSessionRuntime {
     if (needsIdleWait) {
       await this.waitForEvent({
         predicate: (event) => {
-          return event.type === 'session.idle'
-            && (event.properties as { sessionID?: string }).sessionID === sessionId
+          return event.type === 'idle' && event.sessionId === sessionId
         },
         sinceTimestamp: waitSinceTimestamp,
         timeoutMs: 2000,

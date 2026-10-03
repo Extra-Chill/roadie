@@ -6,37 +6,101 @@ import path from 'node:path'
 import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
 import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
-import {
-  derivePendingPermissionRequests,
-  getAssistantMessageIdsForLatestUserTurn,
-  getDerivedSubagentSessions,
-  getEventBufferSessionId,
-  getCurrentTurnStartTime,
-  getDerivedSubtaskIndex,
-  getDerivedSubtaskLabel,
-  getLatestAssistantMessageIdForLatestUserTurn,
-  getLatestRunInfo,
-  getLatestTurnTokenUsage,
-  getPromptCacheClear,
-  formatPromptCacheClearMessage,
-  getIdleTokenUsageDelta,
-  getTokenUsageSessionIdsForIdle,
-  isDerivedChildSession,
-  hasAssistantMessageCompletedBefore,
-  doesLatestUserTurnHaveNaturalCompletion,
-  isAssistantMessageInLatestUserTurn,
-  isAssistantMessageNaturalCompletion,
-  getAssistantMessageKind,
-  getLatestUserMessage,
-  isSummaryAssistantMessage,
-  isSessionBusy,
-  isAssistantTextReadyForQuestion,
-  deriveLatestUnansweredQuestion,
-  shouldBufferSessionEvent,
-  shouldRetainSessionEvent,
-  trimEventBuffer,
-  type EventBufferEntry,
-} from './event-stream-state.js'
+import * as state from './event-stream-state.js'
+import { formatPromptCacheClearMessage } from './event-stream-state.js'
+import { toBufferEvent } from './persisted-events.js'
+import { toAgentMessage } from '../agent-backend/opencode-events.js'
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
+
+// These tests describe derivation in terms of what OpenCode actually sends.
+// The derivations consume Roadie agent events, so every call goes through the
+// real OpenCode translator first: the assertions cover translator + derivation
+// end to end, exactly as the runtime runs them.
+type EventBufferEntry = {
+  event: OpenCodeEvent | { type: 'queue.question-handoff-started'; properties: { sessionID: string } }
+  timestamp: number
+  eventIndex?: number
+}
+
+// Events Roadie does not consume translate to nothing. A session-less delta
+// keeps indices aligned for upToIndex arguments and is never buffered.
+const INERT_EVENT: state.EventBufferEvent = {
+  type: 'part.delta', sessionId: '', messageId: '', partId: '', field: 'text', delta: '',
+}
+
+function translateEvent(event: EventBufferEntry['event']): state.EventBufferEvent {
+  return toBufferEvent(event) ?? INERT_EVENT
+}
+
+function translateEntries(entries: EventBufferEntry[]): {
+  translated: state.EventBufferEntry[]
+  original: Map<state.EventBufferEntry, EventBufferEntry>
+} {
+  const original = new Map<state.EventBufferEntry, EventBufferEntry>()
+  const translated = entries.map((entry) => {
+    const next = { ...entry, event: translateEvent(entry.event) }
+    original.set(next, entry)
+    return next
+  })
+  return { translated, original }
+}
+
+function adaptArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args }
+  if (Array.isArray(args.events)) out.events = translateEntries(args.events as EventBufferEntry[]).translated
+  if (args.event) out.event = translateEvent(args.event as EventBufferEntry['event'])
+  if (args.message) out.message = toAgentMessage(args.message as AssistantMessage)
+  return out
+}
+
+type OpenCodeArgs<A> = {
+  [K in keyof A]: K extends 'events'
+    ? EventBufferEntry[]
+    : K extends 'event'
+      ? EventBufferEntry['event']
+      : K extends 'message'
+        ? AssistantMessage
+        : A[K]
+}
+
+function adapt<A, R>(fn: (args: A) => R): (args: OpenCodeArgs<A>) => R {
+  return (args) => fn(adaptArgs(args as Record<string, unknown>) as A)
+}
+
+function getEventBufferSessionId(event: EventBufferEntry['event']): string | undefined {
+  return state.getEventBufferSessionId(translateEvent(event))
+}
+
+function trimEventBuffer(args: Omit<Parameters<typeof state.trimEventBuffer>[0], 'events'> & { events: EventBufferEntry[] }): EventBufferEntry[] {
+  const { translated, original } = translateEntries(args.events)
+  return state.trimEventBuffer({ ...args, events: translated }).map((entry) => original.get(entry)!)
+}
+
+const derivePendingPermissionRequests = adapt(state.derivePendingPermissionRequests)
+const getAssistantMessageIdsForLatestUserTurn = adapt(state.getAssistantMessageIdsForLatestUserTurn)
+const getDerivedSubagentSessions = adapt(state.getDerivedSubagentSessions)
+const getCurrentTurnStartTime = adapt(state.getCurrentTurnStartTime)
+const getDerivedSubtaskIndex = adapt(state.getDerivedSubtaskIndex)
+const getDerivedSubtaskLabel = adapt(state.getDerivedSubtaskLabel)
+const getLatestAssistantMessageIdForLatestUserTurn = adapt(state.getLatestAssistantMessageIdForLatestUserTurn)
+const getLatestRunInfo = adapt(state.getLatestRunInfo)
+const getLatestTurnTokenUsage = adapt(state.getLatestTurnTokenUsage)
+const getPromptCacheClear = adapt(state.getPromptCacheClear)
+const getIdleTokenUsageDelta = adapt(state.getIdleTokenUsageDelta)
+const getTokenUsageSessionIdsForIdle = adapt(state.getTokenUsageSessionIdsForIdle)
+const isDerivedChildSession = adapt(state.isDerivedChildSession)
+const hasAssistantMessageCompletedBefore = adapt(state.hasAssistantMessageCompletedBefore)
+const doesLatestUserTurnHaveNaturalCompletion = adapt(state.doesLatestUserTurnHaveNaturalCompletion)
+const isAssistantMessageInLatestUserTurn = adapt(state.isAssistantMessageInLatestUserTurn)
+const isAssistantMessageNaturalCompletion = adapt(state.isAssistantMessageNaturalCompletion)
+const getAssistantMessageKind = adapt(state.getAssistantMessageKind)
+const getLatestUserMessage = adapt(state.getLatestUserMessage)
+const isSummaryAssistantMessage = adapt(state.isSummaryAssistantMessage)
+const isSessionBusy = adapt(state.isSessionBusy)
+const isAssistantTextReadyForQuestion = adapt(state.isAssistantTextReadyForQuestion)
+const deriveLatestUnansweredQuestion = adapt(state.deriveLatestUnansweredQuestion)
+const shouldBufferSessionEvent = adapt(state.shouldBufferSessionEvent)
+const shouldRetainSessionEvent = adapt(state.shouldRetainSessionEvent)
 
 const fixturesDir = path.join(import.meta.dirname, 'event-stream-fixtures')
 type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
@@ -3199,7 +3263,7 @@ describe('shouldBufferSessionEvent', () => {
     })).toBe(false)
   })
 
-  test('drops unrelated session.next text deltas that lack a typed session helper', () => {
+  test('drops session.next text deltas, which Roadie does not consume', () => {
     const btwDelta = eventEntry({
       type: 'session.next.text.delta',
       properties: {
@@ -3221,7 +3285,6 @@ describe('shouldBufferSessionEvent', () => {
       },
     }).event
 
-    expect(getEventBufferSessionId(btwDelta)).toBe(btwSessionId)
     expect(shouldBufferSessionEvent({
       event: btwDelta,
       mainSessionId,

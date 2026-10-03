@@ -77,7 +77,7 @@ describe('toAgentEvent over recorded sessions', () => {
       const message = translated.message
       expect(message.parentId).toBe(info.parentID)
       expect(message.model?.modelId).toBe(info.modelID)
-      expect(message.usage?.output).toBe(info.tokens?.output ?? 0)
+      if (info.tokens) expect(message.usage?.output).toBe(info.tokens.output)
       if (info.error) {
         sawError = true
         expect(message.error?.name).toBe(info.error.name)

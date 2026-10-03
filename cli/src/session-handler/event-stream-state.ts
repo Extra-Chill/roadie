@@ -1,23 +1,24 @@
 // Pure event-stream derivation functions for session lifecycle state.
-// These functions derive lifecycle decisions from an event buffer array.
+// These functions derive lifecycle decisions from an event buffer array of
+// Roadie agent events (../agent-backend/events.ts), independent of which
+// agent backend produced them.
 // Zero imports from thread-session-runtime.ts, store.ts, or state.ts.
-// Only types from @opencode-ai/sdk/v2 and the getOpencodeEventSessionId helper.
 
-import type {
-  Event as OpenCodeEvent,
-  Message as OpenCodeMessage,
-  Part,
-} from '@opencode-ai/sdk/v2'
-import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
+import {
+  agentEventSessionId,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentPart,
+  type AgentUsage,
+} from '../agent-backend/events.js'
 
-type QueueQuestionHandoffStartedEvent = {
+/** Buffer-only marker: a queued prompt was handed to a pending question. */
+export type QueueQuestionHandoffStartedEvent = {
   type: 'queue.question-handoff-started'
-  properties: {
-    sessionID: string
-  }
+  sessionId: string
 }
 
-export type EventBufferEvent = OpenCodeEvent | QueueQuestionHandoffStartedEvent
+export type EventBufferEvent = AgentEvent | QueueQuestionHandoffStartedEvent
 
 export type EventBufferEntry = {
   event: EventBufferEvent
@@ -27,16 +28,16 @@ export type EventBufferEntry = {
 
 export function getEventBufferSessionId(event: EventBufferEvent): string | undefined {
   if (event.type === 'queue.question-handoff-started') {
-    return event.properties.sessionID
+    return event.sessionId
   }
-  return getOpencodeEventSessionId(event)
+  return agentEventSessionId(event)
 }
 
-type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
-type UserMessage = Extract<OpenCodeMessage, { role: 'user' }>
+type AssistantMessage = AgentMessage & { role: 'assistant' }
+type UserMessage = AgentMessage & { role: 'user' }
 
-function isCompactionContinuePart(part: Part): boolean {
-  if (part.type !== 'text') {
+function isCompactionContinuePart(part: AgentPart): boolean {
+  if (part.kind !== 'text') {
     return false
   }
   return part.synthetic === true && part.metadata?.compaction_continue === true
@@ -59,21 +60,21 @@ function isInternalOpenCodeUserMessageId({
   let hasIgnoredNotice = false
   for (let i = 0; i <= end; i++) {
     const event = events[i]?.event
-    if (event?.type !== 'message.part.updated') {
+    if (event?.type !== 'part') {
       continue
     }
-    const part = event.properties.part
-    if (part.sessionID !== sessionId || part.messageID !== messageId) {
+    const part = event.part
+    if (part.sessionId !== sessionId || part.messageId !== messageId) {
       continue
     }
     sawPart = true
-    if (part.type === 'compaction') {
+    if (part.kind === 'other' && part.type === 'compaction') {
       return true
     }
     if (isCompactionContinuePart(part)) {
       return true
     }
-    if (part.type === 'text') {
+    if (part.kind === 'text') {
       if (part.synthetic === true) {
         continue
       }
@@ -91,7 +92,7 @@ function isInternalOpenCodeUserMessageId({
   return sawPart && hasIgnoredNotice && !hasUserTurnInput
 }
 
-function isUserFacingAssistantMessage(message: AssistantMessage): boolean {
+function isUserFacingAssistantMessage(message: AgentMessage): boolean {
   return message.summary !== true
 }
 
@@ -111,11 +112,11 @@ export function getAssistantMessageKind({
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
       continue
     }
     return info.summary === true ? 'summary' : 'user-facing'
@@ -126,7 +127,7 @@ export function getAssistantMessageKind({
 function getTaskChildSessionId({
   part,
 }: {
-  part: Extract<Part, { type: 'tool' }>
+  part: Extract<AgentPart, { kind: 'tool' }>
 }): string | undefined {
   // Event-shape reference:
   // - cli/src/session-handler/event-stream-fixtures/real-session-task-three-parallel-sleeps.jsonl
@@ -134,7 +135,7 @@ function getTaskChildSessionId({
   //   tool updates and is the canonical child-session identifier.
   // We intentionally do not parse state.output because it is user-facing text
   // and can change format across providers/versions.
-  const metadataValue = (part.state as { metadata?: unknown }).metadata
+  const metadataValue = part.metadata
   const metadataSessionId =
     metadataValue && typeof metadataValue === 'object'
       ? (metadataValue as { sessionId?: unknown }).sessionId
@@ -157,15 +158,15 @@ function getTaskCandidateFromEvent({
   subagentType?: string
   description?: string
 } | undefined {
-  if (event.type !== 'message.part.updated') {
+  if (event.type !== 'part') {
     return undefined
   }
 
-  const part = event.properties.part
-  if (part.sessionID !== mainSessionId) {
+  const part = event.part
+  if (part.sessionId !== mainSessionId) {
     return undefined
   }
-  if (part.type !== 'tool' || part.tool !== 'task' || part.state.status === 'pending') {
+  if (part.kind !== 'tool' || part.tool !== 'task' || part.status === 'pending') {
     return undefined
   }
 
@@ -174,10 +175,10 @@ function getTaskCandidateFromEvent({
     return undefined
   }
 
-  const subagentType = part.state.input?.subagent_type
-  const description = part.state.input?.description
+  const subagentType = part.input?.subagent_type
+  const description = part.input?.description
   return {
-    assistantMessageId: part.messageID,
+    assistantMessageId: part.messageId,
     childSessionId,
     subagentType: typeof subagentType === 'string' ? subagentType : undefined,
     description: typeof description === 'string' ? description : undefined,
@@ -195,18 +196,18 @@ function getTaskPartStatus(
   event: EventBufferEvent,
   sessionId: string,
 ): { callID: string; status: string } | undefined {
-  if (event.type !== 'message.part.updated') {
+  if (event.type !== 'part') {
     return undefined
   }
-  const part = event.properties.part
-  if (part.sessionID !== sessionId || part.type !== 'tool' || part.tool !== 'task') {
+  const part = event.part
+  if (part.sessionId !== sessionId || part.kind !== 'tool' || part.tool !== 'task') {
     return undefined
   }
-  const callID = part.callID || part.id
+  const callID = part.callId || part.id
   if (!callID) {
     return undefined
   }
-  return { callID, status: part.state.status }
+  return { callID, status: part.status }
 }
 
 // Scans backward for most recent session-scoped lifecycle event.
@@ -235,11 +236,11 @@ export function isSessionBusy({
     if (eid !== sessionId) {
       continue
     }
-    if (e.type === 'session.idle') {
+    if (e.type === 'idle') {
       return false
     }
-    if (e.type === 'session.status') {
-      return e.properties.status.type === 'busy'
+    if (e.type === 'status') {
+      return e.status.state === 'busy'
     }
     const taskPart = getTaskPartStatus(e, sessionId)
     if (taskPart && !latestTaskStatusByCallId.has(taskPart.callID)) {
@@ -315,20 +316,20 @@ export function isAssistantTextReadyForQuestion({
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (!event || event.type !== 'message.part.updated') {
+    if (!event || event.type !== 'part') {
       continue
     }
-    const part = event.properties.part
-    if (part.sessionID !== sessionId) {
+    const part = event.part
+    if (part.sessionId !== sessionId) {
       continue
     }
-    if (part.messageID !== messageId) {
+    if (part.messageId !== messageId) {
       continue
     }
-    if (part.type !== 'text') {
+    if (part.kind !== 'text') {
       continue
     }
-    return Boolean(part.time?.end)
+    return Boolean(part.endedAt)
   }
   return true
 }
@@ -355,18 +356,18 @@ export function deriveLatestUnansweredQuestion({
     if (event.type === 'question.replied' || event.type === 'question.rejected') {
       return undefined
     }
-    if (event.type === 'message.part.updated') {
-      const part = event.properties.part
+    if (event.type === 'part') {
+      const part = event.part
       if (
-        part.type === 'tool'
+        part.kind === 'tool'
         && part.tool === 'question'
-        && (part.state.status === 'error' || part.state.status === 'completed')
+        && (part.status === 'error' || part.status === 'completed')
       ) {
         return undefined
       }
     }
     if (event.type === 'question.asked') {
-      const messageId = event.properties.tool?.messageID
+      const messageId = event.request.toolCall?.messageId
       const latestUserMessage = getLatestUserMessage({
         events,
         sessionId,
@@ -384,10 +385,13 @@ export function deriveLatestUnansweredQuestion({
       ) {
         return undefined
       }
+      const { request } = event
       return {
-        id: event.properties.id,
-        questions: event.properties.questions,
-        tool: event.properties.tool,
+        id: request.id,
+        questions: request.questions,
+        ...(request.toolCall && {
+          tool: { messageID: request.toolCall.messageId, callID: request.toolCall.callId },
+        }),
       }
     }
   }
@@ -411,12 +415,12 @@ export function derivePendingPermissionRequests({
     }
 
     if (event.type === 'permission.asked') {
-      permissions.add(event.properties.id)
+      permissions.add(event.request.id)
       continue
     }
 
     if (event.type === 'permission.replied') {
-      permissions.delete(event.properties.requestID)
+      permissions.delete(event.requestId)
     }
   }
 
@@ -426,12 +430,12 @@ export function derivePendingPermissionRequests({
 export function isAssistantMessageNaturalCompletion({
   message,
 }: {
-  message: AssistantMessage
+  message: AgentMessage
 }): boolean {
   if (!isUserFacingAssistantMessage(message)) {
     return false
   }
-  if (typeof message.time.completed !== 'number') {
+  if (typeof message.completedAt !== 'number') {
     return false
   }
   if (message.error) {
@@ -463,14 +467,14 @@ export function hasAssistantMessageCompletedBefore({
       continue
     }
     const event = entry.event
-    if (event.type !== 'message.updated') {
+    if (event.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
       continue
     }
-    if (typeof info.time.completed === 'number') {
+    if (typeof info.completedAt === 'number') {
       return true
     }
   }
@@ -494,11 +498,11 @@ export function getLatestUserMessage({
       continue
     }
     const event = entry.event
-    if (event.type !== 'message.updated') {
+    if (event.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'user') {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'user') {
       continue
     }
     if (isInternalOpenCodeUserMessageId({
@@ -510,11 +514,11 @@ export function getLatestUserMessage({
       continue
     }
     if (!latestUserMessage) {
-      latestUserMessage = info
+      latestUserMessage = info as UserMessage
       continue
     }
-    if (info.time.created > latestUserMessage.time.created) {
-      latestUserMessage = info
+    if (info.createdAt > latestUserMessage.createdAt) {
+      latestUserMessage = info as UserMessage
     }
   }
   return latestUserMessage
@@ -534,17 +538,12 @@ export function getCurrentTurnStartTime({
     sessionId,
     upToIndex,
   })
-  return latestUserMessage?.time.created
+  return latestUserMessage?.createdAt
 }
 
-// Token total helper — sum of input + output + reasoning + cache.read + cache.write
-function getTokenTotal(tokens: {
-  input: number
-  output: number
-  reasoning: number
-  cache: { read: number; write: number }
-}): number {
-  return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+// Token total helper — sum of input + output + reasoning + cache read + cache write
+function getTokenTotal(usage: AgentUsage): number {
+  return usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
 }
 
 export type TurnTokenUsage = {
@@ -584,17 +583,17 @@ function addAssistantTokens({
   usage: TurnTokenUsage
   message: AssistantMessage
 }): void {
-  if (message.tokens) {
-    usage.input += message.tokens.input
-    usage.output += message.tokens.output
-    usage.reasoning += message.tokens.reasoning
-    usage.cacheRead += message.tokens.cache.read
-    usage.cacheWrite += message.tokens.cache.write
-    usage.total += message.tokens.total ?? getTokenTotal(message.tokens)
+  if (message.usage) {
+    usage.input += message.usage.input
+    usage.output += message.usage.output
+    usage.reasoning += message.usage.reasoning
+    usage.cacheRead += message.usage.cacheRead
+    usage.cacheWrite += message.usage.cacheWrite
+    usage.total += message.usage.total ?? getTokenTotal(message.usage)
   }
-  usage.cost += message.cost
-  usage.model = message.modelID
-  usage.providerID = message.providerID
+  usage.cost += message.cost ?? 0
+  usage.model = message.model?.modelId
+  usage.providerID = message.model?.providerId
 }
 
 function sumAssistantMessages({
@@ -633,17 +632,17 @@ function collectAssistantMessages({
   const latestByMessageId = new Map<string, AssistantMessage>()
   for (let i = 0; i <= upToIndex; i++) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant') {
       continue
     }
-    if (parentID && info.parentID !== parentID) {
+    if (parentID && info.parentId !== parentID) {
       continue
     }
-    latestByMessageId.set(info.id, info)
+    latestByMessageId.set(info.id, info as AssistantMessage)
   }
   return latestByMessageId
 }
@@ -662,23 +661,23 @@ function getSessionInfoTokenUsage({
     if (event?.type !== 'session.updated' && event?.type !== 'session.created') {
       continue
     }
-    const info = event.properties.info
+    const info = event.session
     if (info.id !== sessionId) {
       continue
     }
-    if (!info.tokens) {
+    if (!info.usage) {
       continue
     }
     const usage = emptyTurnTokenUsage()
-    usage.input = info.tokens.input
-    usage.output = info.tokens.output
-    usage.reasoning = info.tokens.reasoning
-    usage.cacheRead = info.tokens.cache.read
-    usage.cacheWrite = info.tokens.cache.write
-    usage.total = getTokenTotal(info.tokens)
+    usage.input = info.usage.input
+    usage.output = info.usage.output
+    usage.reasoning = info.usage.reasoning
+    usage.cacheRead = info.usage.cacheRead
+    usage.cacheWrite = info.usage.cacheWrite
+    usage.total = getTokenTotal(info.usage)
     usage.cost = info.cost ?? 0
-    usage.model = info.model?.id
-    usage.providerID = info.model?.providerID
+    usage.model = info.model?.modelId
+    usage.providerID = info.model?.providerId
     return usage.total > 0 || usage.cost > 0 ? usage : undefined
   }
   return undefined
@@ -746,10 +745,10 @@ function findFirstUserMessageIndex({
 }): number | undefined {
   for (let i = 0; i <= upToIndex; i++) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    if (event.properties.info.id === userMessageId) {
+    if (event.message.id === userMessageId) {
       return i
     }
   }
@@ -769,7 +768,7 @@ function findPreviousIdleIndexInTurn({
 }): number | undefined {
   for (let i = beforeIndex - 1; i > firstUserMessageIndex; i--) {
     const event = events[i]?.event
-    if (event?.type === 'session.idle' && event.properties.sessionID === sessionId) {
+    if (event?.type === 'idle' && event.sessionId === sessionId) {
       return i
     }
   }
@@ -900,17 +899,17 @@ function hasPruneBetween({
 }): boolean {
   for (let i = fromIndex + 1; i <= toIndex; i++) {
     const event = events[i]?.event
-    if (event?.type !== 'message.part.updated') {
+    if (event?.type !== 'part') {
       continue
     }
-    const part = event.properties.part
-    if (part.sessionID !== sessionId || part.type !== 'tool') {
+    const part = event.part
+    if (part.sessionId !== sessionId || part.kind !== 'tool') {
       continue
     }
-    if (part.state.status !== 'completed') {
+    if (part.status !== 'completed') {
       continue
     }
-    if (typeof part.state.time.compacted === 'number') {
+    if (typeof part.compactedAt === 'number') {
       return true
     }
   }
@@ -930,17 +929,17 @@ function getCompletedAssistantAt({
 }): AssistantMessage | undefined {
   for (let i = upToIndex; i >= 0; i--) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
       continue
     }
-    if (typeof info.time.completed !== 'number') {
+    if (typeof info.completedAt !== 'number') {
       return undefined
     }
-    return info
+    return info as AssistantMessage
   }
   return undefined
 }
@@ -952,7 +951,7 @@ function isComparableCacheAssistant(message: AssistantMessage): boolean {
   if (message.error) {
     return false
   }
-  if (!message.tokens || !message.modelID || !message.providerID) {
+  if (!message.usage || !message.model?.modelId || !message.model.providerId) {
     return false
   }
   return true
@@ -978,34 +977,35 @@ export function getPromptCacheClear({
     messageId: currentMessageId,
     upToIndex: end,
   })
-  if (!current || !isComparableCacheAssistant(current) || !current.tokens) {
+  if (!current || !isComparableCacheAssistant(current) || !current.usage) {
     return undefined
   }
+  const currentUsage = current.usage
 
   const seen = new Set<string>([currentMessageId])
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant') {
       continue
     }
-    if (seen.has(info.id) || info.parentID === current.parentID) {
+    if (seen.has(info.id) || info.parentId === current.parentId) {
       continue
     }
-    if (typeof info.time.completed !== 'number') {
+    if (typeof info.completedAt !== 'number') {
       continue
     }
     seen.add(info.id)
-    if (!isUserFacingAssistantMessage(info)) {
+    if (!isUserFacingAssistantMessage(info as AssistantMessage)) {
       return undefined
     }
-    if (!isComparableCacheAssistant(info) || !info.tokens) {
+    if (!isComparableCacheAssistant(info as AssistantMessage) || !info.usage) {
       continue
     }
-    if (info.modelID !== current.modelID || info.providerID !== current.providerID) {
+    if (info.model?.modelId !== current.model?.modelId || info.model?.providerId !== current.model?.providerId) {
       return undefined
     }
     if (hasPruneBetween({
@@ -1017,23 +1017,23 @@ export function getPromptCacheClear({
       return undefined
     }
     // Anthropic reports a fresh cache as write only, so read alone misses the turn after a miss.
-    const previousCached = info.tokens.cache.read + info.tokens.cache.write
-    const currentPrompt = current.tokens.input + current.tokens.cache.read + current.tokens.cache.write
+    const previousCached = info.usage.cacheRead + info.usage.cacheWrite
+    const currentPrompt = currentUsage.input + currentUsage.cacheRead + currentUsage.cacheWrite
     // A reverted (shorter) prompt can only reuse its own length from cache.
     const expectedCacheRead = Math.min(previousCached, currentPrompt)
     if (expectedCacheRead < MIN_PROMPT_CACHE_READ_TO_TRACK) {
       return undefined
     }
-    if (current.tokens.cache.read > expectedCacheRead * PROMPT_CACHE_DROP_RATIO) {
+    if (currentUsage.cacheRead > expectedCacheRead * PROMPT_CACHE_DROP_RATIO) {
       return undefined
     }
     return {
       expectedCacheRead,
-      currentCacheRead: current.tokens.cache.read,
+      currentCacheRead: currentUsage.cacheRead,
       previousMessageId: info.id,
       currentMessageId: current.id,
       minutesSincePreviousMessage: Math.max(0, Math.round(
-        (current.time.created - info.time.completed) / 60_000,
+        (current.createdAt - info.completedAt) / 60_000,
       )),
     }
   }
@@ -1089,22 +1089,22 @@ export function getLatestRunInfo({
       continue
     }
     const e = entry.event
-    if (e.type !== 'message.updated') {
+    if (e.type !== 'message') {
       continue
     }
-    const msg = e.properties.info
-    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
+    const msg = e.message
+    if (msg.sessionId !== sessionId || msg.role !== 'assistant') {
       continue
     }
-    if (!isUserFacingAssistantMessage(msg)) {
+    if (!isUserFacingAssistantMessage(msg as AssistantMessage)) {
       continue
     }
     return {
-      model: msg.modelID,
-      providerID: msg.providerID,
-      agent: msg.mode,
-      tokensUsed: msg.tokens
-        ? getTokenTotal(msg.tokens)
+      model: msg.model?.modelId,
+      providerID: msg.model?.providerId,
+      agent: msg.agent,
+      tokensUsed: msg.usage
+        ? getTokenTotal(msg.usage)
         : 0,
     }
   }
@@ -1132,12 +1132,12 @@ export function getAssistantMessageIdsForLatestUserTurn({
   const firstUserMessageIndexes = new Map<string, number>()
   for (let i = 0; i < end; i++) {
     const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
+    if (event?.type !== 'message') {
       continue
     }
-    const message = event.properties.info
+    const message = event.message
     if (
-      message.sessionID === sessionId
+      message.sessionId === sessionId
       && message.role === 'user'
       && !firstUserMessageIndexes.has(message.id)
     ) {
@@ -1170,17 +1170,17 @@ export function getAssistantMessageIdsForLatestUserTurn({
       continue
     }
     const e = entry.event
-    if (e.type !== 'message.updated') {
+    if (e.type !== 'message') {
       continue
     }
-    const msg = e.properties.info
-    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
+    const msg = e.message
+    if (msg.sessionId !== sessionId || msg.role !== 'assistant') {
       continue
     }
-    if (!isUserFacingAssistantMessage(msg)) {
+    if (!isUserFacingAssistantMessage(msg as AssistantMessage)) {
       continue
     }
-    if (turnParentMessageIds.has(msg.parentID)) {
+    if (msg.parentId && turnParentMessageIds.has(msg.parentId)) {
       assistantMessageIds.add(msg.id)
     }
   }
@@ -1204,10 +1204,10 @@ export function didLatestUserTurnUseSleepTool({
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (event?.type !== 'message.part.updated') continue
-    const part = event.properties.part
-    if (part.sessionID !== sessionId || part.type !== 'tool') continue
-    if (part.tool === 'roadie_sleep' && assistantMessageIds.has(part.messageID)) {
+    if (event?.type !== 'part') continue
+    const part = event.part
+    if (part.sessionId !== sessionId || part.kind !== 'tool') continue
+    if (part.tool === 'roadie_sleep' && assistantMessageIds.has(part.messageId)) {
       return true
     }
   }
@@ -1232,23 +1232,21 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
     return undefined
   }
   const end = upToIndex ?? events.length - 1
-  let latestAssistantMessage:
-    | Extract<OpenCodeMessage, { role: 'assistant' }>
-    | undefined
+  let latestAssistantMessage: AgentMessage | undefined
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
       continue
     }
     const event = entry.event
-    if (event.type !== 'message.updated') {
+    if (event.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant') {
       continue
     }
-    if (!isUserFacingAssistantMessage(info)) {
+    if (!isUserFacingAssistantMessage(info as AssistantMessage)) {
       continue
     }
     if (!assistantMessageIds.has(info.id)) {
@@ -1258,19 +1256,15 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
       latestAssistantMessage = info
       continue
     }
-    if (info.time.created > latestAssistantMessage.time.created) {
+    if (info.createdAt > latestAssistantMessage.createdAt) {
       latestAssistantMessage = info
     }
   }
   return latestAssistantMessage?.id
 }
 
-type EventBufferedAssistantMessage = AssistantMessage & {
-  partsSummary?: Array<{ id: string; type: string }>
-}
-
-function hasRenderablePartSummary(message: EventBufferedAssistantMessage): boolean {
-  if (!('partsSummary' in message) || !Array.isArray(message.partsSummary)) {
+function hasRenderablePartSummary(message: AgentMessage): boolean {
+  if (!Array.isArray(message.partsSummary)) {
     return false
   }
   return message.partsSummary.some((part) => {
@@ -1296,9 +1290,9 @@ function hasAssistantPartEvidence({
       continue
     }
     const event = entry.event
-    if (event.type === 'message.updated') {
-      const info = event.properties.info as EventBufferedAssistantMessage
-      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+    if (event.type === 'message') {
+      const info = event.message
+      if (info.sessionId !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
         continue
       }
       if (hasRenderablePartSummary(info)) {
@@ -1306,14 +1300,14 @@ function hasAssistantPartEvidence({
       }
       continue
     }
-    if (event.type !== 'message.part.updated') {
+    if (event.type !== 'part') {
       continue
     }
-    const { part } = event.properties
-    if (part.messageID !== messageId) {
+    const { part } = event
+    if (part.messageId !== messageId) {
       continue
     }
-    if (part.type === 'text' || part.type === 'tool') {
+    if (part.kind === 'text' || part.kind === 'tool') {
       return true
     }
   }
@@ -1332,14 +1326,14 @@ function hasAssistantStepFinished({
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
-    if (!entry || entry.event.type !== 'message.part.updated') {
+    if (!entry || entry.event.type !== 'part') {
       continue
     }
-    const { part } = entry.event.properties
-    if (part.messageID !== messageId) {
+    const { part } = entry.event
+    if (part.messageId !== messageId) {
       continue
     }
-    if (part.type === 'step-finish') {
+    if (part.kind === 'step-finish') {
       return true
     }
   }
@@ -1365,25 +1359,25 @@ export function doesLatestUserTurnHaveNaturalCompletion({
   }
 
   const end = upToIndex ?? events.length - 1
-  let latestAssistantMessage: EventBufferedAssistantMessage | undefined
+  let latestAssistantMessage: AssistantMessage | undefined
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
       continue
     }
     const event = entry.event
-    if (event.type !== 'message.updated') {
+    if (event.type !== 'message') {
       continue
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+    const info = event.message
+    if (info.sessionId !== sessionId || info.role !== 'assistant') {
       continue
     }
     if (info.id !== latestAssistantMessageId) {
       continue
     }
-    latestAssistantMessage = info as EventBufferedAssistantMessage
-    if (isAssistantMessageNaturalCompletion({ message: info })) {
+    latestAssistantMessage = info as AssistantMessage
+    if (isAssistantMessageNaturalCompletion({ message: latestAssistantMessage })) {
       return true
     }
     break
@@ -1600,12 +1594,12 @@ function getParentIdFromSessionEvent(event: EventBufferEvent): {
   if (event.type !== 'session.created' && event.type !== 'session.updated') {
     return undefined
   }
-  const parentID = event.properties.info.parentID
+  const parentID = event.session.parentId
   if (typeof parentID !== 'string' || parentID.length === 0) {
     return undefined
   }
   return {
-    sessionId: event.properties.info.id,
+    sessionId: event.session.id,
     parentID,
   }
 }
@@ -1622,10 +1616,10 @@ export function shouldBufferSessionEvent({
   mainSessionId?: string
   isKnownChildSession: (sessionId: string) => boolean
 }): boolean {
-  if (event.type === 'session.diff' || event.type.endsWith('.delta')) {
+  if (event.type === 'session.diff' || event.type === 'part.delta') {
     return false
   }
-  if (event.type === 'tui.toast.show') {
+  if (event.type === 'notice') {
     return true
   }
 
@@ -1676,7 +1670,7 @@ export function shouldRetainSessionEvent({
   if (!eventSessionId || eventSessionId === mainSessionId) {
     return true
   }
-  return event.type !== 'message.part.updated'
+  return event.type !== 'part'
 }
 
 export function trimEventBuffer({

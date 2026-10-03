@@ -1,5 +1,7 @@
 // /fork command - Fork the session from a past user message.
 
+import { parsePersistedEvent } from '../session-handler/persisted-events.js'
+import type { EventBufferEntry } from '../session-handler/event-stream-state.js'
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -66,27 +68,20 @@ function parsePersistedEventRows({
   rows,
 }: {
   rows: Array<{ event_json: string; timestamp: number; event_index: number; id: number }>
-}) {
+}): EventBufferEntry[] {
   return rows.flatMap((row) => {
-    const parsed = errore.try(
-      () => {
-        return JSON.parse(row.event_json)
-      },
-      (error) => {
-        return new Error('Failed to parse persisted event JSON', {
-          cause: error,
-        })
-      },
-    )
-    if (parsed instanceof Error) {
+    const event = parsePersistedEvent(row.event_json)
+    if (event instanceof Error) {
       forkLogger.warn(
-        `[fork] Skipping invalid persisted event row ${row.id}: ${parsed.message}`,
+        `[fork] Skipping invalid persisted event row ${row.id}: ${event.message}`,
       )
       return []
     }
-
+    if (!event) {
+      return []
+    }
     return [{
-      event: parsed,
+      event,
       timestamp: Number(row.timestamp),
       eventIndex: Number(row.event_index),
     }]

@@ -71,7 +71,21 @@ export function toAgentSession(info: OpenCodeSession): AgentSession {
   }
 }
 
+// Some OpenCode versions inline a message's parts on message.updated.
+function partsSummaryOf(info: object): Array<{ id: string; type: string }> | undefined {
+  const parts = (info as { parts?: unknown }).parts
+  if (!Array.isArray(parts)) return undefined
+  const summary = parts.flatMap((part) => {
+    const candidate = part as { id?: unknown; type?: unknown } | null
+    return candidate && typeof candidate.id === 'string' && typeof candidate.type === 'string'
+      ? [{ id: candidate.id, type: candidate.type }]
+      : []
+  })
+  return summary.length > 0 ? summary : undefined
+}
+
 export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessage {
+  const partsSummary = partsSummaryOf(info)
   if (info.role === 'user') {
     return {
       id: info.id,
@@ -85,6 +99,7 @@ export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessa
         ...(info.model.variant && { variant: info.model.variant }),
       },
       ...(info.system && { system: info.system }),
+      ...(partsSummary && { partsSummary }),
     }
   }
   const error = toAgentError(info.error)
@@ -95,17 +110,19 @@ export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessa
     createdAt: info.time.created,
     ...(info.time.completed !== undefined && { completedAt: info.time.completed }),
     parentId: info.parentID,
-    agent: info.agent,
+    // `mode` is the older name for the agent; prefer `agent` when both exist.
+    agent: info.agent || info.mode,
     model: {
       providerId: info.providerID,
       modelId: info.modelID,
       ...(info.variant && { variant: info.variant }),
     },
     cost: info.cost ?? 0,
-    usage: toUsage(info.tokens),
+    ...(info.tokens && { usage: toUsage(info.tokens) }),
     ...(error && { error }),
     ...(info.summary && { summary: true }),
     ...(info.finish && { finish: info.finish }),
+    ...(partsSummary && { partsSummary }),
   }
 }
 
@@ -119,6 +136,7 @@ export function toAgentPart(part: OpenCodePart): AgentPart {
         text: part.text,
         ...(part.synthetic && { synthetic: true }),
         ...(part.ignored && { ignored: true }),
+        ...(part.metadata && { metadata: part.metadata }),
         ...(part.time?.start !== undefined && { startedAt: part.time.start }),
         ...(part.time?.end !== undefined && { endedAt: part.time.end }),
       }
@@ -145,6 +163,9 @@ export function toAgentPart(part: OpenCodePart): AgentPart {
         ...('metadata' in state && state.metadata && { metadata: state.metadata }),
         ...('time' in state && { startedAt: state.time.start }),
         ...('time' in state && 'end' in state.time && { endedAt: state.time.end }),
+        ...('time' in state && 'compacted' in state.time && typeof state.time.compacted === 'number' && {
+          compactedAt: state.time.compacted,
+        }),
       }
     }
     case 'step-start':
