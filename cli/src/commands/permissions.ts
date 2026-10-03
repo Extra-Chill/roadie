@@ -16,7 +16,8 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { OpencodeClient, PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { AgentPermissionRequest } from '../agent-backend/events.js'
 import { getOpencodeClient } from '../opencode.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -105,7 +106,7 @@ export function compactPermissionPatterns(patterns: string[]): string[] {
 }
 
 type PendingPermissionContext = {
-  permission: PermissionRequest
+  permission: AgentPermissionRequest
   requestIds: string[]
   directory: string
   thread: ThreadChannel
@@ -144,7 +145,7 @@ export async function showPermissionButtons({
   subtaskLabel,
 }: {
   thread: ThreadChannel
-  permission: PermissionRequest
+  permission: AgentPermissionRequest
   directory: string
   subtaskLabel?: string
 }): Promise<{ messageId: string; contextHash: string }> {
@@ -396,7 +397,7 @@ export async function handlePermissionButton(
     if (response !== 'reject') {
       const resumed = await resumeSessionIfIdleAfterPermission({
         client: permClient,
-        sessionId: context.permission.sessionID,
+        sessionId: context.permission.sessionId,
         directory: context.directory,
       })
       if (resumed instanceof Error) {

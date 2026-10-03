@@ -1,8 +1,11 @@
-// OpenCode message part formatting for Discord.
-// Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
+// Agent message part formatting for Discord.
+// Converts Roadie agent parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
+import type { FilePartInput } from '@opencode-ai/sdk/v2'
+import type { Part as OpenCodePart } from '@opencode-ai/sdk/v2'
+import type { AgentPart } from './agent-backend/events.js'
+import { toAgentPart } from './agent-backend/opencode-events.js'
 import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
@@ -18,11 +21,18 @@ import { processImage } from './image-utils.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
 
-// Generic message type compatible with both v1 and v2 SDK
+// A session message as rendered from history (/resume, /fork). Parts may come
+// straight from the backend's history API; they are translated before rendering.
 type GenericSessionMessage = {
-  info: { role: string; id?: string; parentID?: string }
-  parts: Part[]
+  info: { role: string; id?: string }
+  parts: Array<AgentPart | OpenCodePart>
 }
+
+function asAgentPart(part: AgentPart | OpenCodePart): AgentPart {
+  return 'kind' in part ? part : toAgentPart(part)
+}
+
+type ToolPart = Extract<AgentPart, { kind: 'tool' }>
 
 const logger = createLogger(LogPrefix.FORMATTING)
 
@@ -214,8 +224,8 @@ function normalizeWhitespace(text: string): string {
 
 export type SessionPartKind = 'text' | 'tool'
 
-export function sessionPartKind(part: { type: string }): SessionPartKind {
-  return part.type === 'text' ? 'text' : 'tool'
+export function sessionPartKind(part: { kind: string }): SessionPartKind {
+  return part.kind === 'text' ? 'text' : 'tool'
 }
 
 export function shouldLeadWithBlankLine({
@@ -256,24 +266,27 @@ export function quotedTextFitsOneDiscordMessage(text: string): boolean {
   return asDiscordQuote(text).length < DISCORD_MESSAGE_MAX_LENGTH
 }
 
-function isNonEmptyTextPart(part: { type: string; text?: string }): boolean {
-  return part.type === 'text' && Boolean(part.text?.trim())
+// Structural view of a part for turn planning; AgentPart satisfies it.
+type PlannablePart = { id: string; kind: string; text?: string; tool?: string; endedAt?: number }
+
+function isNonEmptyTextPart(part: { kind: string; text?: string }): boolean {
+  return part.kind === 'text' && Boolean(part.text?.trim())
 }
 
-function isRenderableTurnPart(part: { type: string; text?: string }): boolean {
-  return isNonEmptyTextPart(part) || part.type === 'tool'
+function isRenderableTurnPart(part: { kind: string; text?: string }): boolean {
+  return isNonEmptyTextPart(part) || part.kind === 'tool'
 }
 
 function nextToolNameAfter({
   parts,
   fromIndex,
 }: {
-  parts: Array<{ type: string; tool?: string; text?: string }>
+  parts: ReadonlyArray<{ kind: string; tool?: string; text?: string }>
   fromIndex: number
 }): string | undefined {
   for (const part of parts.slice(fromIndex + 1)) {
     if (isNonEmptyTextPart(part)) return undefined
-    if (part.type === 'tool' && part.tool) return part.tool
+    if (part.kind === 'tool' && part.tool) return part.tool
   }
 }
 
@@ -282,7 +295,7 @@ export function shouldQuoteIntermediateTextPart({
   isLastInTurn,
   nextToolName,
 }: {
-  part: { type: string; text?: string }
+  part: { kind: string; text?: string }
   isLastInTurn: boolean
   nextToolName?: string
 }): boolean {
@@ -303,18 +316,12 @@ export function shouldQuoteIntermediateTextPart({
 
 export type AssistantTurnFlushMode = 'progress' | 'interactive' | 'final'
 
-export type PlannedAssistantTurnPart<T extends { id: string; type: string; text?: string }> = {
+export type PlannedAssistantTurnPart<T extends PlannablePart> = {
   part: T
   quoteText: boolean
 }
 
-export function planAssistantTurnFlush<T extends {
-  id: string
-  type: string
-  text?: string
-  tool?: string
-  time?: { end?: number; created?: number }
-}>({
+export function planAssistantTurnFlush<T extends PlannablePart>({
   parts,
   mode,
   throughPartId,
@@ -340,7 +347,7 @@ export function planAssistantTurnFlush<T extends {
   const holdParts: T[] = []
   for (const [index, part] of parts.entries()) {
     // Live tools must not wait for the current text part to end.
-    if (mode === 'progress' && part.type === 'text' && !part.time?.end) {
+    if (mode === 'progress' && part.kind === 'text' && !part.endedAt) {
       holdParts.push(part)
       continue
     }
@@ -396,7 +403,8 @@ export function collectSessionChunks({
     if (message.info.role !== 'assistant') {
       continue
     }
-    for (const part of message.parts) {
+    const parts = message.parts.map(asAgentPart)
+    for (const part of parts) {
       const content = formatPart(part)
       if (!content.trim()) {
         continue
@@ -405,8 +413,8 @@ export function collectSessionChunks({
         part,
         isLastInTurn: false,
         nextToolName: nextToolNameAfter({
-          parts: message.parts,
-          fromIndex: message.parts.indexOf(part),
+          parts,
+          fromIndex: parts.indexOf(part),
         }),
       })
       allChunks.push({
@@ -687,13 +695,13 @@ export function formatBashToolTitle({
   return ''
 }
 
-export function getToolSummaryText(part: Part): string {
-  if (part.type !== 'tool') return ''
+export function getToolSummaryText(part: AgentPart): string {
+  if (part.kind !== 'tool') return ''
 
   if (part.tool === 'edit') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const newString = (part.state.input?.newString as string) || ''
-    const oldString = (part.state.input?.oldString as string) || ''
+    const filePath = (part.input?.filePath as string) || ''
+    const newString = (part.input?.newString as string) || ''
+    const oldString = (part.input?.oldString as string) || ''
     const added = newString.split('\n').length
     const removed = oldString.split('\n').length
     const fileName = filePath.split('/').pop() || ''
@@ -704,7 +712,7 @@ export function getToolSummaryText(part: Part): string {
 
   if (part.tool === 'apply_patch') {
     // Only inputs are available when parts are sent during streaming (output/metadata not yet populated)
-    const patchText = (part.state.input?.patchText as string) || ''
+    const patchText = (part.input?.patchText as string) || ''
     if (!patchText) {
       return ''
     }
@@ -720,8 +728,8 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'write') {
-    const filePath = (part.state.input?.filePath as string) || ''
-    const content = (part.state.input?.content as string) || ''
+    const filePath = (part.input?.filePath as string) || ''
+    const content = (part.input?.content as string) || ''
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
     return fileName
@@ -730,7 +738,7 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'webfetch') {
-    const url = (part.state.input?.url as string) || ''
+    const url = (part.input?.url as string) || ''
     const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
     return urlWithoutProtocol
       ? `*${escapeInlineMarkdown(urlWithoutProtocol)}*`
@@ -738,24 +746,24 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'read') {
-    const filePath = (part.state.input?.filePath as string) || ''
+    const filePath = (part.input?.filePath as string) || ''
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${escapeInlineMarkdown(fileName)}*` : ''
   }
 
   if (part.tool === 'list') {
-    const path = (part.state.input?.path as string) || ''
+    const path = (part.input?.path as string) || ''
     const dirName = path.split('/').pop() || path
     return dirName ? `*${escapeInlineMarkdown(dirName)}*` : ''
   }
 
   if (part.tool === 'glob') {
-    const pattern = (part.state.input?.pattern as string) || ''
+    const pattern = (part.input?.pattern as string) || ''
     return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }
 
   if (part.tool === 'grep') {
-    const pattern = (part.state.input?.pattern as string) || ''
+    const pattern = (part.input?.pattern as string) || ''
     return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }
 
@@ -773,13 +781,13 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'skill') {
-    const name = (part.state.input?.name as string) || ''
+    const name = (part.input?.name as string) || ''
     return name ? `_${escapeInlineMarkdown(name)}_` : ''
   }
 
   // File upload tool - show the prompt
   if (part.tool.endsWith('roadie_file_upload')) {
-    const prompt = (part.state.input?.prompt as string) || ''
+    const prompt = (part.input?.prompt as string) || ''
     return prompt ? `*${escapeInlineMarkdown(prompt.slice(0, 60))}*` : ''
   }
 
@@ -789,9 +797,9 @@ export function getToolSummaryText(part: Part): string {
   // `until` is already absolute; `duration` is relative, so say "for 2h" —
   // never "until 2h".
   if (part.tool.endsWith('roadie_sleep')) {
-    const until = (part.state.input?.until as string) || ''
-    const duration = (part.state.input?.duration as string) || ''
-    const reason = (part.state.input?.reason as string) || ''
+    const until = (part.input?.until as string) || ''
+    const duration = (part.input?.duration as string) || ''
+    const reason = (part.input?.reason as string) || ''
     const when = until ? `until ${until}` : duration ? `for ${duration}` : ''
     const reasonText = reason ? `_${escapeInlineMarkdown(reason)}_` : ''
     return [when && escapeInlineMarkdown(when), reasonText]
@@ -799,9 +807,9 @@ export function getToolSummaryText(part: Part): string {
       .join(' ')
   }
 
-  if (!part.state.input) return ''
+  if (!part.input) return ''
 
-  const inputFields = Object.entries(part.state.input)
+  const inputFields = Object.entries(part.input)
     .map(([key, value]) => {
       if (value === null || value === undefined) return null
       const stringValue =
@@ -818,10 +826,10 @@ export function getToolSummaryText(part: Part): string {
   return `(${inputFields.join(', ')})`
 }
 
-export function formatTodoList(part: Part): string {
-  if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
+export function formatTodoList(part: AgentPart): string {
+  if (part.kind !== 'tool' || part.tool !== 'todowrite') return ''
   const todos =
-    (part.state.input?.todos as {
+    (part.input?.todos as {
       content: string
       status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
     }[]) || []
@@ -836,12 +844,12 @@ export function formatTodoList(part: Part): string {
   return `${todoNumber}.  **${escapeInlineMarkdown(content)}**`
 }
 
-export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
+export function formatTaskToolTitle(part: ToolPart): string {
   // Running only. The child session can be created later when many tasks queue.
-  if (part.tool !== 'task' || part.state.status !== 'running') return ''
+  if (part.tool !== 'task' || part.status !== 'running') return ''
 
-  const description = part.state.input?.description
-  const stateTitle = part.state.title
+  const description = part.input?.description
+  const stateTitle = part.title
   const title = typeof description === 'string' && description
     ? description
     : typeof stateTitle === 'string'
@@ -849,22 +857,22 @@ export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): stri
       : ''
   if (!title) return ''
 
-  const subagentType = part.state.input?.subagent_type
+  const subagentType = part.input?.subagent_type
   const agent = typeof subagentType === 'string' ? subagentType : 'task'
   return asSubtext(`${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`)
 }
 
 // Non-text parts (tools, thinking, files) render as Discord subtext so they look dimmer than text.
-export function formatPart(part: Part, prefix?: string): string {
+export function formatPart(part: AgentPart, prefix?: string): string {
   const formatted = formatPartBody(part, prefix)
-  if (!formatted || part.type === 'text') return formatted
+  if (!formatted || part.kind === 'text') return formatted
   return asSubtext(formatted)
 }
 
-function formatPartBody(part: Part, prefix?: string): string {
+function formatPartBody(part: AgentPart, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
-  if (part.type === 'text') {
+  if (part.kind === 'text') {
     if (part.synthetic === true) return ''
     const text = part.text?.trim()
     if (!text) return ''
@@ -874,35 +882,36 @@ function formatPartBody(part: Part, prefix?: string): string {
     return text
   }
 
-  if (part.type === 'reasoning') {
+  if (part.kind === 'reasoning') {
     if (!part.text?.trim()) return ''
     return `${THINKING_PREFIX}${pfx}thinking`
   }
 
-  if (part.type === 'file') {
+  if (part.kind === 'file') {
     return prefix
       ? `📄 ${pfx}${part.filename || 'File'}`
       : `📄 ${part.filename || 'File'}`
   }
 
-  if (
-    part.type === 'step-start' ||
-    part.type === 'step-finish' ||
-    part.type === 'patch' ||
-    part.type === 'compaction'
-  ) {
+  if (part.kind === 'step-start' || part.kind === 'step-finish') {
     return ''
   }
 
-  if (part.type === 'agent') {
-    return `${TOOL_PREFIX}${pfx}agent ${part.id}`
+  if (part.kind === 'other') {
+    if (part.type === 'agent') {
+      return `${TOOL_PREFIX}${pfx}agent ${part.id}`
+    }
+    if (part.type === 'snapshot') {
+      return `${TOOL_PREFIX}${pfx}snapshot ${part.detail ?? ''}`
+    }
+    if (part.type === 'patch' || part.type === 'compaction') {
+      return ''
+    }
+    logger.warn('Unknown part type:', part)
+    return ''
   }
 
-  if (part.type === 'snapshot') {
-    return `${TOOL_PREFIX}${pfx}snapshot ${part.snapshot}`
-  }
-
-  if (part.type === 'tool') {
+  if (part.kind === 'tool') {
     if (part.tool === 'todowrite') {
       const formatted = formatTodoList(part)
       return prefix && formatted ? `${TOOL_PREFIX}${pfx}${formatted}` : formatted
@@ -928,13 +937,13 @@ function formatPartBody(part: Part, prefix?: string): string {
       return ''
     }
 
-    if (part.state.status === 'pending') {
+    if (part.status === 'pending') {
       if (part.tool !== 'bash') {
         return ''
       }
-      const command = (part.state.input?.command as string) || ''
-      const description = (part.state.input?.description as string) || ''
-      const summary = (part.state.input?.summary as string) || ''
+      const command = (part.input?.command as string) || ''
+      const description = (part.input?.description as string) || ''
+      const summary = (part.input?.summary as string) || ''
       const toolTitle = formatBashToolTitle({
         command,
         description,
@@ -944,15 +953,15 @@ function formatPartBody(part: Part, prefix?: string): string {
     }
 
     const summaryText = getToolSummaryText(part)
-    const stateTitle = 'title' in part.state ? part.state.title : undefined
+    const stateTitle = part.title
 
     let toolTitle = ''
-    if (part.state.status === 'error') {
-      toolTitle = part.state.error || 'error'
+    if (part.status === 'error') {
+      toolTitle = part.error || 'error'
     } else if (part.tool === 'bash') {
-      const command = (part.state.input?.command as string) || ''
-      const description = (part.state.input?.description as string) || ''
-      const summary = (part.state.input?.summary as string) || ''
+      const command = (part.input?.command as string) || ''
+      const description = (part.input?.description as string) || ''
+      const summary = (part.input?.summary as string) || ''
       const formatted = formatBashToolTitle({
         command,
         description,
@@ -965,7 +974,7 @@ function formatPartBody(part: Part, prefix?: string): string {
     }
 
     const icon = (() => {
-      if (part.state.status === 'error') {
+      if (part.status === 'error') {
         return '⨯'
       }
       if (

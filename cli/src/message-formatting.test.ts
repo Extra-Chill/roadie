@@ -1,10 +1,20 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
+import { toAgentPart } from './agent-backend/opencode-events.js'
+
+// Parts are written the way OpenCode sends them and rendered through the real
+// translator, so these cover translator + formatting together.
+const formatPart = (part: Part, prefix?: string) => formatAgentPart(toAgentPart(part), prefix)
+const formatTodoList = (part: Part) => formatAgentTodoList(toAgentPart(part))
+const formatTaskToolTitle = (part: Part) => {
+  const agentPart = toAgentPart(part)
+  return agentPart.kind === 'tool' ? formatAgentTaskToolTitle(agentPart) : ''
+}
 
 describe('formatPart', () => {
   test('callout text is returned without a diamond prefix', () => {
@@ -123,13 +133,13 @@ describe('quotedTextFitsOneDiscordMessage', () => {
 
 describe('planAssistantTurnFlush', () => {
   function text(id: string, body: string, ended = true) {
-    return { id, type: 'text', text: body, time: ended ? { end: 1 } : undefined }
+    return { id, kind: 'text', text: body, endedAt: ended ? 1 : undefined }
   }
   function tool(id: string, name?: string) {
-    return { id, type: 'tool', tool: name }
+    return { id, kind: 'tool', tool: name }
   }
 
-  function plan(parts: Array<{ id: string; type: string; text?: string }>, mode: 'progress' | 'interactive' | 'final', throughPartId?: string) {
+  function plan(parts: Array<{ id: string; kind: string; text?: string }>, mode: 'progress' | 'interactive' | 'final', throughPartId?: string) {
     const result = planAssistantTurnFlush({ parts, mode, throughPartId })
     return { send: result.send, hold: result.hold }
   }
@@ -538,7 +548,7 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [
             textPart({
               id: 'branch',
@@ -558,11 +568,11 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [textPart({ id: 't1', text: 'I will read it', messageID: 'msg_1' })],
         },
         {
-          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_2' },
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
@@ -579,7 +589,7 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [
             textPart({ id: 't1', text: 'I will read it', messageID: 'msg_1' }),
             {
@@ -605,7 +615,7 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [
             textPart({
               id: 't1',
@@ -615,7 +625,7 @@ describe('collectSessionChunks', () => {
           ],
         },
         {
-          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_2' },
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
@@ -630,7 +640,7 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [
             textPart({ id: 't1', text: 'Pick one', messageID: 'msg_1' }),
             {
@@ -654,7 +664,7 @@ describe('collectSessionChunks', () => {
     const { chunks } = collectSessionChunks({
       messages: [
         {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user_1' },
+          info: { role: 'assistant', id: 'msg_1' },
           parts: [textPart({ id: 't1', text: 'first turn', messageID: 'msg_1' })],
         },
         {
@@ -662,11 +672,11 @@ describe('collectSessionChunks', () => {
           parts: [],
         },
         {
-          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user_2' },
+          info: { role: 'assistant', id: 'msg_2' },
           parts: [textPart({ id: 't2', text: 'looking', messageID: 'msg_2' })],
         },
         {
-          info: { role: 'assistant', id: 'msg_3', parentID: 'msg_user_2' },
+          info: { role: 'assistant', id: 'msg_3' },
           parts: [textPart({ id: 't3', text: 'second turn done', messageID: 'msg_3' })],
         },
       ],

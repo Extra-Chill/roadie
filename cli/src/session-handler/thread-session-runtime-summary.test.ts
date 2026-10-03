@@ -6,19 +6,20 @@ import type {
 import { describe, expect, test } from 'vitest'
 import type { EventBufferEntry, EventBufferEvent } from './event-stream-state.js'
 import { ThreadSessionRuntime } from './thread-session-runtime.js'
-import { toAgentEvent } from '../agent-backend/opencode-events.js'
+import { toAgentEvent, toAgentMessage, toAgentPart } from '../agent-backend/opencode-events.js'
+import type { AgentMessage, AgentPart } from '../agent-backend/events.js'
 
 type RuntimeInternals = {
   state?: { sessionId: string }
   eventBuffer: EventBufferEntry[]
-  partBuffer: Map<string, Map<string, Part>>
+  partBuffer: Map<string, Map<string, AgentPart>>
   compactEventForEventBuffer: (event: EventBufferEvent) => EventBufferEvent | undefined
   flushBufferedParts: () => Promise<void>
-  handleMessageUpdated: (message: OpenCodeMessage) => Promise<void>
-  handlePartUpdated: (part: Part) => Promise<void>
+  handleMessageUpdated: (message: AgentMessage) => Promise<void>
+  handlePartUpdated: (part: AgentPart) => Promise<void>
   handleNaturalAssistantCompletion: () => Promise<void>
-  handleMainPart: (part: Part) => Promise<void>
-  handleSubtaskPart: (part: Part) => Promise<void>
+  handleMainPart: (part: AgentPart) => Promise<void>
+  handleSubtaskPart: (part: AgentPart) => Promise<void>
 }
 
 function summaryMessageEvent({
@@ -101,7 +102,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
       throw new Error('Summary message must not complete the Discord turn')
     }
 
-    await runtime.handleMessageUpdated(message)
+    await runtime.handleMessageUpdated(toAgentMessage(message as Extract<OpenCodeMessage, { role: 'assistant' }>))
 
     expect(runtime.partBuffer.size).toBe(0)
   })
@@ -125,7 +126,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     runtime.eventBuffer = [{ event: compacted, timestamp: 1 }]
     runtime.partBuffer = new Map()
 
-    await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
+    await runtime.handlePartUpdated(toAgentPart(summaryTextPart({ sessionId, messageId })))
 
     expect(runtime.partBuffer.size).toBe(0)
   })
@@ -155,7 +156,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
       throw new Error('Summary message must not complete the Discord turn')
     }
 
-    await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
+    await runtime.handlePartUpdated(toAgentPart(summaryTextPart({ sessionId, messageId })))
 
     expect(runtime.partBuffer.get(messageId)?.size).toBe(1)
 
@@ -163,7 +164,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     if (event.type !== 'message.updated') {
       throw new Error('Expected summary message event')
     }
-    await runtime.handleMessageUpdated(event.properties.info)
+    await runtime.handleMessageUpdated(toAgentMessage(event.properties.info))
 
     expect(runtime.partBuffer.size).toBe(0)
   })
