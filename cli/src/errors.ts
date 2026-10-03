@@ -127,7 +127,7 @@ export class OpenCodeApiError extends errore.createTaggedError({
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MERGE/WORKTREE ERRORS
+// GIT ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
 export class GitCommandError extends errore.createTaggedError({

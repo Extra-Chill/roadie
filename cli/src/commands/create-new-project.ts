@@ -4,7 +4,7 @@
 import { ChannelType, type Guild } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { execAsync } from '../worktrees.js'
+import { execAsync } from '../git-utils.js'
 import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'

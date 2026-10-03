@@ -1285,8 +1285,8 @@ function buildServerExternalDirectoryPermissions(): Record<
  * the external_directory gate entirely for paths inside the active instance
  * (`containsPath` in tool/external-directory.ts).
  *
- * That leaves one rule: worktree isolation. Once a thread moves to a managed
- * worktree, deny the original checkout so the agent stops editing the main repo.
+ * That leaves one rule: checkout isolation. A thread bound to a separate git
+ * checkout (`--cwd`) is denied the origin checkout so it does not edit the main repo.
  */
 export function buildSessionPermissions({
   directory,

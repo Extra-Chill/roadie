@@ -14,7 +14,8 @@ import {
   completeIpcRequest,
   createIpcRequest,
   createScheduledTask,
-  createPendingWorkspace,
+  getThreadWorkingDirectory,
+  setThreadWorkingDirectory,
   deleteChannelDirectoryById,
   deleteThreadQueueItem,
   getChannelDirectory,
@@ -682,33 +683,62 @@ describe('getDb', () => {
     }
   })
 
-  test('createPendingWorkspace creates parent and child rows', async () => {
+  test('setThreadWorkingDirectory binds a thread and creates its session row', async () => {
     const db = await getDb()
-    const threadId = `test-workspace-${Date.now()}`
+    const threadId = `test-workdir-${Date.now()}`
 
-    await createPendingWorkspace({
+    await setThreadWorkingDirectory({
       threadId,
-      workspaceType: 'roadie-worktree',
-      workspaceName: 'regression-workspace',
       projectDirectory: '/tmp/regression-project',
+      workingDirectory: '/tmp/regression-project/packages/app',
+      label: 'app',
     })
 
     const session = await db.query.thread_sessions.findFirst({
       where: { thread_id: threadId },
     })
-    expect(session).toBeTruthy()
     expect(session?.session_id).toBe('')
-
-    const workspace = await db.query.thread_workspaces.findFirst({
-      where: { thread_id: threadId },
+    expect(await getThreadWorkingDirectory(threadId)).toEqual({
+      projectDirectory: '/tmp/regression-project',
+      workingDirectory: '/tmp/regression-project/packages/app',
+      label: 'app',
+      kind: 'directory',
     })
-    expect(workspace).toBeTruthy()
-    expect(workspace?.workspace_name).toBe('regression-workspace')
-    expect(workspace?.project_directory).toBe('/tmp/regression-project')
-    expect(workspace?.status).toBe('pending')
+
+    // Rebinding replaces the directory in place.
+    await setThreadWorkingDirectory({
+      threadId,
+      projectDirectory: '/tmp/regression-project',
+      workingDirectory: '/tmp/checkouts/feature',
+      label: 'feature',
+      kind: 'git-worktree',
+    })
+    expect((await getThreadWorkingDirectory(threadId))?.workingDirectory).toBe('/tmp/checkouts/feature')
 
     await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  })
+
+  test('legacy pending rows are ignored and legacy worktree kinds normalize', async () => {
+    const db = await getDb()
+    const pendingThread = `test-workdir-pending-${Date.now()}`
+    const legacyThread = `test-workdir-legacy-${Date.now()}`
+    await db.insert(schema.thread_sessions).values([
+      { thread_id: pendingThread, session_id: '' },
+      { thread_id: legacyThread, session_id: '' },
+    ])
+    await db.insert(schema.thread_workspaces).values([
+      { thread_id: pendingThread, workspace_type: 'roadie-worktree', workspace_name: 'x', project_directory: '/p', status: 'pending' },
+      { thread_id: legacyThread, workspace_type: 'kimaki-worktree', workspace_name: 'b', project_directory: '/p', workspace_directory: '/w', status: 'ready' },
+    ])
+
+    expect(await getThreadWorkingDirectory(pendingThread)).toBeUndefined()
+    expect((await getThreadWorkingDirectory(legacyThread))?.kind).toBe('git-worktree')
+
+    for (const id of [pendingThread, legacyThread]) {
+      await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, id))
+      await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, id))
+    }
   })
 
   // Regression: btw forks lost the agent and ran `build` instead of the source

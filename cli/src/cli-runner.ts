@@ -66,7 +66,7 @@ import {
 } from './discord-utils.js'
 import { setDataDir, getDataDir, readRoadieSecret } from './config.js'
 import { claimDatabaseFile } from './db.js'
-import { execAsync } from './worktrees.js'
+import { execAsync } from './git-utils.js'
 import { backgroundUpgradeRoadie } from './upgrade.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'

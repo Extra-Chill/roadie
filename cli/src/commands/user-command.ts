@@ -14,7 +14,6 @@ import { SILENT_MESSAGE_FLAGS, resolveWorkingDirectory } from '../discord-utils.
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   getChannelDirectory,
-  getChannelWorktreesEnabled,
   getThreadSession,
 } from '../database.js'
 import { store } from '../store.js'

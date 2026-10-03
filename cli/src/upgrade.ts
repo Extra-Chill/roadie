@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
-import { execAsync } from './worktrees.js'
+import { execAsync } from './git-utils.js'
 
 const logger = createLogger(LogPrefix.CLI)
 

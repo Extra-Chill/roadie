@@ -12,9 +12,8 @@ import {
 import {
   getThreadSession,
   setThreadSession,
-  getThreadWorktreeOrWorkspace,
-  createPendingWorkspace,
-  setWorkspaceReady,
+  getThreadWorkingDirectory,
+  setThreadWorkingDirectory,
 } from '../database.js'
 import {
   resolveWorkingDirectory,
@@ -55,7 +54,7 @@ export async function forkSessionToBtwThread({
 }: {
   sourceThread: ThreadChannel
   projectDirectory: string
-  /** Worktree directory when forking from a worktree thread, otherwise same as projectDirectory */
+  /** The source thread's working directory, otherwise same as projectDirectory */
   sdkDirectory: string
   prompt: string
   modelPrompt?: string
@@ -164,21 +163,12 @@ export async function forkSessionToBtwThread({
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
       await setThreadSession(thread.id, forkedSession.id)
-      const sourceWorkspace = await getThreadWorktreeOrWorkspace(sourceThread.id)
-      if (sourceWorkspace?.status !== 'ready' || !sourceWorkspace.workspace_directory) {
+      // The fork works where its source thread works.
+      const source = await getThreadWorkingDirectory(sourceThread.id)
+      if (!source) {
         return
       }
-      await createPendingWorkspace({
-        threadId: thread.id,
-        workspaceType: sourceWorkspace.workspace_type,
-        workspaceName: sourceWorkspace.workspace_name ?? '',
-        projectDirectory,
-      })
-      await setWorkspaceReady({
-        threadId: thread.id,
-        workspaceId: sourceWorkspace.workspace_id ?? undefined,
-        workspaceDirectory: sourceWorkspace.workspace_directory,
-      })
+      await setThreadWorkingDirectory({ ...source, threadId: thread.id, projectDirectory })
     })(),
     thread.members.add(userId).catch((error) => {
       logger.warn('Could not add fork member:', error)

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace, getAllTextChannelDirectories } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorkingDirectory, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
 import { formatTimeAgo } from '../time-format.js'
@@ -24,7 +24,7 @@ import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
+import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
@@ -51,9 +51,9 @@ async function resolveSessionDirectoryFromDatabase({
 }): Promise<Error | string> {
   const threadId = await getThreadIdBySessionId(sessionId)
   if (threadId) {
-    const workspace = await getThreadWorktreeOrWorkspace(threadId)
-    if (workspace?.status === 'ready' && workspace.workspace_directory) {
-      return workspace.workspace_directory
+    const threadDir = await getThreadWorkingDirectory(threadId)
+    if (threadDir) {
+      return threadDir.workingDirectory
     }
 
     const { token: botToken } = await resolveBotCredentials({})

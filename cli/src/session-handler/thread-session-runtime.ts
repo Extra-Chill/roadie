@@ -66,7 +66,6 @@ import {
   shouldLeadWithBlankLine,
   shouldQuoteIntermediateTextPart,
   STATUS_PREFIX,
-  WORKTREE_PREFIX,
   type AssistantTurnFlushMode,
 } from '../message-formatting.js'
 import {
@@ -79,7 +78,7 @@ import {
   setThreadSession,
   getThreadParentSessionId,
   setThreadParentSessionId,
-  getThreadWorktreeOrWorkspace,
+  getThreadWorkingDirectory,
   setSessionAgent,
   setSessionModel,
   clearSessionModel,
@@ -140,7 +139,7 @@ import {
   systemPromptHasParentSession,
   type AgentInfo,
   type RepliedMessageContext,
-  type WorktreeInfo,
+  type WorkingDirectoryInfo,
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
@@ -200,7 +199,7 @@ import {
   getThinkingValuesForModel,
   matchThinkingValue,
 } from '../thinking-utils.js'
-import { execAsync } from '../worktrees.js'
+import { execAsync } from '../git-utils.js'
 import {
   DiscordOperationError,
   OpenCodeSdkError,
@@ -623,7 +622,7 @@ export function isEssentialToolPart(part: Part): boolean {
 
 const DISCORD_THREAD_NAME_MAX = 100
 const PRESERVED_THREAD_PREFIXES: string[] = [
-  WORKTREE_PREFIX,
+  STATUS_PREFIX,
   'btw: ',
   'Fork: ',
 ]
@@ -894,15 +893,11 @@ type AbortRunOutcome = {
   apiAbortPromise: Promise<void> | undefined
 }
 
-function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null {
-  if (!worktree) {
+function getWorkingDirectoryPromptKey(dir: WorkingDirectoryInfo | undefined): string | null {
+  if (!dir) {
     return null
   }
-  return [
-    worktree.worktreeDirectory,
-    worktree.branch,
-    worktree.mainRepoDirectory,
-  ].join('::')
+  return [dir.workingDirectory, dir.label, dir.projectDirectory].join('::')
 }
 
 
@@ -950,7 +945,7 @@ export class ThreadSessionRuntime {
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
-  private lastPromptWorktreeKey: string | null | undefined
+  private lastPromptWorkingDirectoryKey: string | null | undefined
   private lastSentPartKind: SessionPartKind | undefined
 
   // Bounded buffer of recent SSE events with timestamps.
@@ -1037,12 +1032,12 @@ export class ThreadSessionRuntime {
     })
   }
 
-  private consumeWorktreePromptChange(
-    worktree: WorktreeInfo | undefined,
+  private consumeWorkingDirectoryPromptChange(
+    dir: WorkingDirectoryInfo | undefined,
   ): boolean {
-    const nextKey = getWorktreePromptKey(worktree)
-    const changed = this.lastPromptWorktreeKey !== nextKey
-    this.lastPromptWorktreeKey = nextKey
+    const nextKey = getWorkingDirectoryPromptKey(dir)
+    const changed = this.lastPromptWorkingDirectoryKey !== nextKey
+    this.lastPromptWorkingDirectoryKey = nextKey
     return changed
   }
 
@@ -3571,16 +3566,8 @@ export class ThreadSessionRuntime {
         return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
       })()
 
-      // ── Worktree + channel topic for per-turn prompt context ──
-      const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
-      const worktree: WorktreeInfo | undefined =
-        worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
-          ? {
-              worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
-              branch: worktreeInfoForPrompt.workspace_name,
-              mainRepoDirectory: worktreeInfoForPrompt.project_directory,
-            }
-          : undefined
+      // ── Working directory + channel topic for per-turn prompt context ──
+      const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
 
       const channelTopic = await (async () => {
         if (this.thread.parent?.type === ChannelType.GuildText) {
@@ -3609,7 +3596,7 @@ export class ThreadSessionRuntime {
         await cleanupOnError(`✗ Failed to prepare system prompt: ${system.message}`)
         return
       }
-      const worktreeChanged = this.consumeWorktreePromptChange(worktree)
+      const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
       const syntheticContext = getOpencodePromptContext({
         sessionId: session.id,
         threadId: this.thread.id,
@@ -3619,9 +3606,9 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
-        worktree,
+        workingDirectory,
         currentAgent: resolvedAgent,
-        worktreeChanged,
+        workingDirectoryChanged,
         systemPromptFromSourceSession: !isSystemPromptForSession({ system, sessionId: session.id }),
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
@@ -4662,16 +4649,8 @@ export class ThreadSessionRuntime {
       return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
     })()
 
-    // ── Worktree info for per-turn prompt context ─────────────
-    const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
-    const worktree: WorktreeInfo | undefined =
-      worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
-        ? {
-            worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
-            branch: worktreeInfoForPrompt.workspace_name,
-            mainRepoDirectory: worktreeInfoForPrompt.project_directory,
-          }
-        : undefined
+    // ── Working directory for per-turn prompt context ─────────
+    const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
 
     const channelTopic = await (async () => {
       if (this.thread.parent?.type === ChannelType.GuildText) {
@@ -4713,7 +4692,7 @@ export class ThreadSessionRuntime {
       return false
     }
     const systemPromptFromSourceSession = !isSystemPromptForSession({ system, sessionId: session.id })
-    const worktreeChanged = this.consumeWorktreePromptChange(worktree)
+    const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
     const syntheticContext = getOpencodePromptContext({
       sessionId: session.id,
       threadId: this.thread.id,
@@ -4723,9 +4702,9 @@ export class ThreadSessionRuntime {
       sourceThreadId: input.sourceThreadId || this.thread.id,
       threadName: this.thread.name || undefined,
       repliedMessage: input.repliedMessage,
-      worktree,
+      workingDirectory,
       currentAgent: earlyAgentPreference,
-      worktreeChanged,
+      workingDirectoryChanged,
       systemPromptFromSourceSession,
       parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
     })
@@ -5111,14 +5090,11 @@ export class ThreadSessionRuntime {
   > {
     const directory = this.sdkDirectory
 
-    // Resolve worktree info for server initialization
-    const workspaceInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
-    const worktreeDirectory =
-      workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory
-        ? workspaceInfo.workspace_directory
-        : undefined
-    const originalRepoDirectory = worktreeDirectory
-      ? workspaceInfo?.project_directory
+    // A thread in a separate git checkout is kept out of the origin checkout.
+    // A project subfolder is not: its project root contains it.
+    const threadDir = await getThreadWorkingDirectory(this.thread.id)
+    const originalRepoDirectory = threadDir?.kind === 'git-worktree'
+      ? threadDir.projectDirectory
       : undefined
 
     const getClientResult = await getAgentBackendProvider().initializeForDirectory(directory, {

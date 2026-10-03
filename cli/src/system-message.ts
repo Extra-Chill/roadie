@@ -1,6 +1,6 @@
 // OpenCode session prompt helpers.
 // Creates the session-stable system message injected into every OpenCode
-// session, plus per-turn synthetic context for Discord/user/worktree metadata.
+// session, plus per-turn synthetic context for Discord/user/working-directory metadata.
 // Keep per-message data out of the system prompt so prompt caching can reuse
 // the same session prefix across turns.
 //
@@ -110,7 +110,7 @@ export async function deleteSessionSystemPrompt({
  * Return the pinned system prompt for a session. The first turn pins a freshly
  * generated one. The system prompt precedes all history in the provider prompt
  * cache prefix, so it must never change mid-session. Data that changes later
- * (identity after a fork, user, worktree) goes into per-turn synthetic parts.
+ * (identity after a fork, user, working directory) goes into per-turn synthetic parts.
  */
 export async function resolveSessionSystemPrompt({
   sessionId,
@@ -189,17 +189,16 @@ export function isSystemPromptForSession({
   return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
 }
 
-export type WorktreeInfo = {
-  /** The worktree directory path */
-  worktreeDirectory: string
-  /** The branch name (e.g., opencode/roadie-feature) */
-  branch: string
-  /** The main repository directory */
-  mainRepoDirectory: string
-  /** The branch or ref this worktree was created from (e.g. "main", "HEAD") */
-  baseBranch?: string
-  /** The commit SHA the worktree was branched from */
-  baseCommit?: string
+/** A thread bound to a directory other than its project root. */
+export type WorkingDirectoryInfo = {
+  /** Where the session works (cwd). */
+  workingDirectory: string
+  /** The channel's project root. */
+  projectDirectory: string
+  /** Short label, such as the checked-out branch. */
+  label: string
+  /** "git-worktree" for a separate checkout of the project. */
+  kind: string
 }
 
 export type RepliedMessageContext = {
@@ -216,9 +215,9 @@ export type ThreadStartMarker = {
    * @deprecated New injected prompts should use `start: true` instead.
    */
   cliThreadPrompt?: boolean
-  /** Worktree name to create */
+  /** Legacy: worktree creation request from old clients; answered with a notice. */
   worktree?: string
-  /** Existing project subfolder or worktree directory to use as working directory */
+  /** Existing project subfolder or git worktree to bind the thread to */
   cwd?: string
   /** Discord username who initiated the thread */
   username?: string
@@ -324,6 +323,17 @@ function escapePromptText(value: string): string {
     .replaceAll('>', '&gt;')
 }
 
+function formatWorkingDirectoryReminder(dir: WorkingDirectoryInfo): string {
+  const checkout = dir.kind === 'git-worktree'
+  const lines = [
+    `This thread works in ${dir.workingDirectory}, not the project root. The working directory (cwd / pwd) has changed; read, write, edit, and run checks (tests, builds, lint) there from now on.`,
+    checkout
+      ? `- It is a separate git checkout of the project (branch: ${dir.label}). The project root ${dir.projectDirectory} is a different checkout that the user or another agent may be working in. Do not read, write, or edit files there.`
+      : `- It is a folder inside the project root ${dir.projectDirectory}. Stay inside it unless the user asks otherwise.`,
+  ]
+  return `<system-reminder>\n${lines.join('\n')}\n</system-reminder>`
+}
+
 export function getOpencodePromptContext({
   sessionId,
   threadId,
@@ -333,9 +343,9 @@ export function getOpencodePromptContext({
   sourceThreadId,
   threadName,
   repliedMessage,
-  worktree,
+  workingDirectory,
   currentAgent,
-  worktreeChanged,
+  workingDirectoryChanged,
   systemPromptFromSourceSession,
   parentSessionId,
 }: {
@@ -351,9 +361,9 @@ export function getOpencodePromptContext({
   sourceThreadId?: string
   threadName?: string
   repliedMessage?: RepliedMessageContext
-  worktree?: WorktreeInfo
+  workingDirectory?: WorkingDirectoryInfo
   currentAgent?: string
-  worktreeChanged?: boolean
+  workingDirectoryChanged?: boolean
 }): string {
   const userAttrs = [
     ...(username
@@ -403,10 +413,8 @@ ${escapePromptText(repliedMessage.text)}
     ...(currentAgent
       ? [`<system-reminder>\nCurrent agent: ${currentAgent}\n</system-reminder>`]
       : []),
-    ...(worktree && worktreeChanged
-      ? [
-          `<system-reminder>\nThis session is running inside a git worktree. The working directory (cwd / pwd) has changed. The user expects you to edit files in the new cwd. You MUST operate inside the new worktree from now on.\n- New worktree path (new cwd / pwd, edit files here): ${worktree.worktreeDirectory}\n- Branch: ${worktree.branch}\n- Main repo path (previous folder, DO NOT TOUCH): ${worktree.mainRepoDirectory}\n- To find the base branch (the branch this worktree was created from): \`git -C ${worktree.mainRepoDirectory} symbolic-ref --short HEAD\`\n- To find the base commit (the commit this worktree diverged from): \`git merge-base <base-branch> HEAD\`\nYou MUST read, write, and edit files only under the new worktree path ${worktree.worktreeDirectory}. You MUST NOT read, write, or edit any files under the main repo path ${worktree.mainRepoDirectory} — even though it is the same project, that folder is a separate checkout and the user or another agent may be actively working there, so writing to it would override their unrelated changes. Run all checks (tests, builds, lint) inside the new worktree.\n</system-reminder>`,
-        ]
+    ...(workingDirectory && workingDirectoryChanged
+      ? [formatWorkingDirectoryReminder(workingDirectory)]
       : []),
   ]
   if (sections.length === 0) {
