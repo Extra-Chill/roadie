@@ -26,6 +26,12 @@ import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import { channelPolicyOverrides } from '../channel-policy.js'
 import {
+  isContextProviderConfigured,
+  renderContextSections,
+  requestContext,
+  speakerKey,
+} from '../context-provider.js'
+import {
   buildSessionPermissions,
   parsePermissionRules,
   writeInjectionGuardConfig,
@@ -3619,9 +3625,15 @@ export class ThreadSessionRuntime {
         systemPromptFromSourceSession: !isSystemPromptForSession({ system, sessionId: session.id }),
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
+      const turnContext = await this.resolveTurnContext({
+        sessionId: session.id,
+        input,
+        isFirstTurn: createdNewSession,
+      })
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
         { type: 'text' as const, text: syntheticContext, synthetic: true },
+        ...(turnContext ? [{ type: 'text' as const, text: turnContext, synthetic: true }] : []),
         ...images,
       ]
 
@@ -4717,9 +4729,15 @@ export class ThreadSessionRuntime {
       systemPromptFromSourceSession,
       parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
     })
+    const turnContext = await this.resolveTurnContext({
+      sessionId: session.id,
+      input,
+      isFirstTurn: createdNewSession,
+    })
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
       { type: 'text' as const, text: syntheticContext, synthetic: true },
+      ...(turnContext ? [{ type: 'text' as const, text: turnContext, synthetic: true }] : []),
       ...images,
     ]
 
@@ -4932,6 +4950,52 @@ export class ThreadSessionRuntime {
     return context
   }
 
+  // Speaker key of the last turn we fetched per-turn host context for.
+  private lastContextSpeakerKey: string | undefined
+
+  private contextSpeaker(input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli' }) {
+    if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return {}
+    return {
+      actor: {
+        platform: 'discord',
+        id: input.userId,
+        ...(input.username ? { name: input.username } : {}),
+      },
+      ...(input.personId ? { personId: input.personId } : {}),
+    }
+  }
+
+  /**
+   * Per-turn host context, fetched only when the speaker differs from the
+   * previous turn's (the session_start context already covers the first
+   * speaker). Returns '' when there is nothing to add.
+   */
+  private async resolveTurnContext({
+    sessionId,
+    input,
+    isFirstTurn,
+  }: {
+    sessionId: string
+    input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli' }
+    isFirstTurn: boolean
+  }): Promise<string> {
+    if (!isContextProviderConfigured()) return ''
+    const speaker = this.contextSpeaker(input)
+    const key = speakerKey(speaker)
+    const previous = this.lastContextSpeakerKey
+    this.lastContextSpeakerKey = key
+    if (isFirstTurn || previous === undefined || previous === key || key === 'none') return ''
+    const sections = await requestContext({
+      event: 'turn',
+      sessionId,
+      threadId: this.thread.id,
+      channelId: this.channelId,
+      directory: this.sdkDirectory,
+      ...speaker,
+    })
+    return renderContextSections(sections)
+  }
+
   /**
    * Pinned system prompt for this turn. Generated only on the first turn of a
    * session; forks start with the source session's pinned prompt.
@@ -4950,7 +5014,7 @@ export class ThreadSessionRuntime {
     return resolveSessionSystemPrompt({
       sessionId,
       generate: async () => {
-        return getOpencodeSystemMessage({
+        const base = getOpencodeSystemMessage({
           sessionId,
           channelId: this.channelId,
           guildId: this.thread.guildId,
@@ -4962,6 +5026,17 @@ export class ThreadSessionRuntime {
           parentSessionId: this.state?.parentSessionId || input.parentSessionId,
           scheduledTask: await this.resolveScheduledTaskContext(sessionId),
         })
+        // Host context for the whole session, pinned with the prompt so it
+        // stays cache-stable across turns.
+        const sections = await requestContext({
+          event: 'session_start',
+          sessionId,
+          threadId: this.thread.id,
+          channelId: this.channelId,
+          directory: this.sdkDirectory,
+          ...this.contextSpeaker(input),
+        })
+        return base + renderContextSections(sections)
       },
     })
   }
