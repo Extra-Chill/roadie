@@ -64,8 +64,7 @@ export type QueuedMessage = {
   // expose how to message the parent when the user asks.
   parentSessionId?: string
   // Discord message ID and thread ID of the source message. Embedded in
-  // <discord-user> synthetic context so the external sync loop can detect
-  // messages that originated from Discord and skip re-mirroring them.
+  // <discord-user> synthetic context so the model knows which message it answers.
   sourceMessageId?: string
   sourceThreadId?: string
   // Channel holding sourceMessageId. The thread starter lives in the parent.

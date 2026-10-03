@@ -99,10 +99,6 @@ import {
   getDefaultRoadieDirectory,
 } from './channel-management.js'
 import { store } from './store.js'
-import {
-  startExternalOpencodeSessionSync,
-  stopExternalOpencodeSessionSync,
-} from './external-opencode-sync.js'
 
 export {
   initDatabase,
@@ -417,7 +413,6 @@ export async function startDiscordBot({
     })
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     await reconcileDeletedDiscordChannels(c)
-    startExternalOpencodeSessionSync({ discordClient: c })
     await restorePersistedLocalQueues({
       discordClient: c,
       appId: currentAppId,
@@ -1654,7 +1649,6 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
     }
 
     voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
-    stopExternalOpencodeSessionSync()
     await stopOpencodeServer()
 
     discordLogger.log('Closing database...')

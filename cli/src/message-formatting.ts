@@ -380,18 +380,14 @@ export type SessionChunk = {
  * Each non-empty formatted part becomes one chunk. Caller can batch them
  * with batchChunksForDiscord() before sending.
  *
- * - skipPartIds: parts already synced (external sync). Skipped parts are
- *   not included in the result.
  * - limit: max parts to include (from the end). Older parts are counted
  *   in skippedCount.
  */
 export function collectSessionChunks({
   messages,
-  skipPartIds,
   limit,
 }: {
   messages: GenericSessionMessage[]
-  skipPartIds?: Set<string>
   limit?: number
 }): { chunks: SessionChunk[]; skippedCount: number } {
   const allChunks: SessionChunk[] = []
@@ -401,9 +397,6 @@ export function collectSessionChunks({
       continue
     }
     for (const part of message.parts) {
-      if (skipPartIds?.has(part.id)) {
-        continue
-      }
       const content = formatPart(part)
       if (!content.trim()) {
         continue

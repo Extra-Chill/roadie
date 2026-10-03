@@ -182,8 +182,7 @@ export function buildOpencodeServeArgs({
   ]
 }
 
-// Tracks directories that have been initialized, to avoid repeated log spam
-// from the external sync polling loop.
+// Tracks directories that have been initialized, to avoid repeated log spam.
 const initializedDirectories = new Set<string>()
 
 const STARTUP_STDERR_TAIL_LIMIT = 30
