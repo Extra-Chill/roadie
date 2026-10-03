@@ -4,6 +4,8 @@
 // permission) OR pauses for a user question. A session parked on a `question`
 // tool never completes on its own, so it is treated as done for automation.
 
+import { toAgentMessage } from './agent-backend/opencode-events.js'
+import { parsePersistedEvent } from './session-handler/persisted-events.js'
 import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
@@ -13,7 +15,6 @@ import {
   derivePendingPermissionRequests,
   isAssistantMessageNaturalCompletion,
   type EventBufferEntry,
-  type EventBufferEvent,
 } from './session-handler/event-stream-state.js'
 
 const waitLogger = createLogger(LogPrefix.SESSION)
@@ -205,18 +206,19 @@ async function loadPersistedSessionEvents({
 }): Promise<EventBufferEntry[]> {
   const rows = await getSessionEventSnapshot({ sessionId })
   return rows.flatMap((row) => {
-    try {
-      return [{
-        event: JSON.parse(row.event_json) as EventBufferEvent,
-        timestamp: Number(row.timestamp),
-        eventIndex: Number(row.event_index),
-      }]
-    } catch (error) {
-      waitLogger.warn(
-        `Skipping invalid persisted session event for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
+    const event = parsePersistedEvent(row.event_json)
+    if (event instanceof Error) {
+      waitLogger.warn(`Skipping invalid persisted session event for ${sessionId}: ${event.message}`)
       return []
     }
+    if (!event) {
+      return []
+    }
+    return [{
+      event,
+      timestamp: Number(row.timestamp),
+      eventIndex: Number(row.event_index),
+    }]
   })
 }
 
@@ -253,7 +255,7 @@ function hasCompletedUserTurn({
     return false
   }
 
-  return isAssistantMessageNaturalCompletion({ message: latestAssistant })
+  return isAssistantMessageNaturalCompletion({ message: toAgentMessage(latestAssistant) })
 }
 
 /**

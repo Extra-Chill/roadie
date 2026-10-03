@@ -6,6 +6,7 @@ import type {
 import { describe, expect, test } from 'vitest'
 import type { EventBufferEntry, EventBufferEvent } from './event-stream-state.js'
 import { ThreadSessionRuntime } from './thread-session-runtime.js'
+import { toAgentEvent } from '../agent-backend/opencode-events.js'
 
 type RuntimeInternals = {
   state?: { sessionId: string }
@@ -91,7 +92,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
       value: { sessionId },
       configurable: true,
     })
-    runtime.eventBuffer = [{ event, timestamp: 1 }]
+    runtime.eventBuffer = [{ event: toAgentEvent(event)!, timestamp: 1 }]
     runtime.partBuffer = new Map()
     runtime.flushBufferedParts = async () => {
       throw new Error('Summary message must not flush parts')
@@ -112,14 +113,14 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     const messageId = `msg_summary_${sessionId}`
     const runtime = Object.create(ThreadSessionRuntime.prototype) as RuntimeInternals
     const compacted = runtime.compactEventForEventBuffer(
-      summaryMessageEvent({ sessionId, messageId }),
+      toAgentEvent(summaryMessageEvent({ sessionId, messageId }))!,
     )
 
-    expect(compacted?.type).toBe('message.updated')
-    if (!compacted || compacted.type !== 'message.updated') {
+    expect(compacted?.type).toBe('message')
+    if (!compacted || compacted.type !== 'message') {
       throw new Error('Expected compacted summary message event')
     }
-    expect(compacted.properties.info.summary).toBe(true)
+    expect(compacted.message.summary).toBe(true)
 
     runtime.eventBuffer = [{ event: compacted, timestamp: 1 }]
     runtime.partBuffer = new Map()
