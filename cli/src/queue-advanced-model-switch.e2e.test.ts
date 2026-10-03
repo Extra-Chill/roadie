@@ -21,7 +21,7 @@ import { getThreadState } from './session-handler/thread-runtime-state.js'
 import { getSessionModel } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 
-const TEXT_CHANNEL_ID = '200000000000001007'
+const TEXT_CHANNEL_ID = '200000000000001072'
 
 function getCustomIdFromInteractionData({
   serializedComponents,

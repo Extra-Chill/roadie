@@ -16,7 +16,7 @@ import {
 import { getSessionSleep, getThreadSession } from './database.js'
 import { wakeDueSessionSleeps } from './task-runner.js'
 
-const TEXT_CHANNEL_ID = '200000000000001031'
+const TEXT_CHANNEL_ID = '200000000000001073'
 
 // Fixed wake instant so the wake message stays snapshot-stable across runs.
 const SLEEP_UNTIL = '2030-01-01T09:00:00Z'
