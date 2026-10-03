@@ -30,6 +30,7 @@ import {
   isChannelPolicyConfigured,
   setChannelsConfigPath,
 } from './channel-policy.js'
+import { setPromptConfigPath } from './prompt-config.js'
 import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
@@ -88,6 +89,10 @@ cli
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Roadie role or admin permissions (no-roadie role still blocks)',
+  )
+  .option(
+    '--prompt-config <path>',
+    'System prompt overrides (YAML/JSON): disable, replace or append sections. Also ROADIE_PROMPT_CONFIG',
   )
   .option(
     '--channels-config <path>',
@@ -173,6 +178,7 @@ cli
       allowAllUsers?: boolean
       identityHook?: string
       channelsConfig?: string
+      promptConfig?: string
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
@@ -324,6 +330,9 @@ cli
 
         if (options.identityHook) {
           setIdentityHookCommand(options.identityHook)
+        }
+        if (options.promptConfig) {
+          setPromptConfigPath(path.resolve(options.promptConfig))
         }
         if (options.channelsConfig) {
           setChannelsConfigPath(path.resolve(options.channelsConfig))

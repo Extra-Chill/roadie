@@ -420,13 +420,9 @@ describe('system-message', () => {
 
       ## permissions
 
-      Only users with these Discord permissions can send messages to the bot:
-      - Server Owner
-      - Administrator permission
-      - Manage Server permission
-      - "Roadie" role (case-insensitive)
+      Who may talk to the bot is decided by the bot's configuration: Discord roles by default (server owner, Administrator, Manage Server, or the "Roadie" role), or the host's identity hook and per-channel policy when configured. Do not tell users which role to request; if someone lacks access, say they should ask an admin.
 
-      Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), assign it the "Roadie" role.
+      Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), it needs access the same way a user does.
 
       ## upgrading roadie
 
@@ -449,22 +445,6 @@ describe('system-message', () => {
       roadie upload-to-discord --session ses_123 <file1> [file2] ...
 
       NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`roadie upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
-
-      ## generating audio from text
-
-      When the user asks you to generate audio of some text so they can listen instead of reading, use \`roadie tts\` to create a speech file and \`roadie upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio.
-
-      \`\`\`bash
-      # generate audio from inline text
-      roadie tts 'Your summary goes here' -o /tmp/summary.mp3
-      roadie upload-to-discord --session ses_123 /tmp/summary.mp3
-
-      # generate audio from a file (pipe via stdin)
-      cat docs/explanation.md | roadie tts -o /tmp/explanation.mp3
-      roadie upload-to-discord --session ses_123 /tmp/explanation.mp3
-      \`\`\`
-
-      see --help for options like voice, speed, etc.
 
       ## requesting files from the user
 

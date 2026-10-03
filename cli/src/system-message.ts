@@ -15,6 +15,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
+import { applyPromptConfig, getPromptConfig, type PromptSection } from './prompt-config.js'
 import { store } from './store.js'
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
 import { FilesystemOperationError } from './errors.js'
@@ -417,6 +418,8 @@ ${escapePromptText(repliedMessage.text)}
   return `${sections.join('\n\n')}\n`
 }
 
+type SystemPromptSection = PromptSection
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
@@ -474,15 +477,18 @@ export function getOpencodeSystemMessage({
   const parentSessionContext = parentSessionId
     ? `\n${getParentSessionInstructions(parentSessionId)}`
     : ''
-  return `
+  const intro = `
 The user is reading your messages from inside Discord, via Roadie
-
+`
+  const sections: SystemPromptSection[] = [
+    { id: 'discord-output', text: `
 ## Discord output
 
 Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
 Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
 Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_action_buttons\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool.
-
+` },
+    { id: 'bash-tool', text: `
 ## bash tool
 
 When calling the bash tool, always include these extra fields alongside \`command\`:
@@ -505,17 +511,15 @@ interface BashToolInput {
 ${SESSION_ID_LINE_PREFIX}${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}
 
 Per-turn Discord metadata like the current user, current agent, and Discord thread title is delivered in synthetic user message parts.
-
+` },
+    { id: 'permissions', text: `
 ## permissions
 
-Only users with these Discord permissions can send messages to the bot:
-- Server Owner
-- Administrator permission
-- Manage Server permission
-- "Roadie" role (case-insensitive)
+Who may talk to the bot is decided by the bot's configuration: Discord roles by default (server owner, Administrator, Manage Server, or the "Roadie" role), or the host's identity hook and per-channel policy when configured. Do not tell users which role to request; if someone lacks access, say they should ask an admin.
 
-Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), assign it the "Roadie" role.
-
+Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), it needs access the same way a user does.
+` },
+    { id: 'upgrading', text: `
 ## upgrading roadie
 
 Use built-in upgrade commands when the user explicitly asks to update roadie:
@@ -524,12 +528,14 @@ Use built-in upgrade commands when the user explicitly asks to update roadie:
 - CLI command: \`roadie upgrade --skip-restart\` upgrades without restarting
 
 Do not restart the bot unless the user explicitly asks for it.
-
+` },
+    { id: 'debugging', text: `
 ## debugging roadie issues
 
 To report a Roadie bug, export the session event jsonl and the relevant log lines (see \`docs/debugging-roadie.md\` in the Roadie repository) and file an issue there with that evidence.
 If there are internal roadie issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/roadie.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
-
+` },
+    { id: 'file-upload', text: `
 ## uploading files to discord
 
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
@@ -537,28 +543,14 @@ To upload files to the Discord thread (images, screenshots, long files that woul
 roadie upload-to-discord --session ${sessionId} <file1> [file2] ...
 
 NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`roadie upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
-
-## generating audio from text
-
-When the user asks you to generate audio of some text so they can listen instead of reading, use \`roadie tts\` to create a speech file and \`roadie upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio.
-
-\`\`\`bash
-# generate audio from inline text
-roadie tts 'Your summary goes here' -o /tmp/summary.mp3
-roadie upload-to-discord --session ${sessionId} /tmp/summary.mp3
-
-# generate audio from a file (pipe via stdin)
-cat docs/explanation.md | roadie tts -o /tmp/explanation.mp3
-roadie upload-to-discord --session ${sessionId} /tmp/explanation.mp3
-\`\`\`
-
-see --help for options like voice, speed, etc.
-
+` },
+    { id: 'file-request', text: `
 ## requesting files from the user
 
 To ask the user to upload files from their device, use \`roadie_file_upload\`. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
 You MUST call \`roadie_file_upload\` LAST, after ALL text.
-
+` },
+    { id: 'sleep', text: `
 ## sleeping the session
 
 Use \`roadie_sleep\` to pause this session for hours or days, then continue when the time is reached. The sleep is stored in SQLite and survives bot restarts.
@@ -567,7 +559,8 @@ You MUST call \`roadie_sleep\` LAST, after ALL text. Do not call more tools afte
 A new user message cancels the sleep. If you still need to wake later after answering, call \`roadie_sleep\` again with \`until\` set to the original UTC time.
 The tool result is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
 Wake is a later Discord message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
-${scheduledTask ? getScheduledTaskSection(scheduledTask) : ''}
+${scheduledTask ? getScheduledTaskSection(scheduledTask) : ''}` },
+    { id: 'archive', text: `
 ## archiving the current thread
 
 To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
@@ -575,7 +568,8 @@ To archive the current Discord thread (hide it from sidebar) without stopping th
 ${archiveCommand}
 
 Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
-
+` },
+    { id: 'abort', text: `
 ## aborting a session
 
 If you made a mistake with \`roadie send\` (wrong prompt, wrong channel, mangled heredoc), abort the session immediately using the session ID printed in the output:
@@ -584,7 +578,8 @@ roadie session abort <session_id>
 
 This stops the AI from processing but keeps the thread visible in Discord.
 Different from \`roadie session archive\` which hides the thread.
-
+` },
+    { id: 'title', text: `
 ## updating the session title
 
 Skip the first turn. OpenCode already auto-generates the title from the first message.
@@ -595,7 +590,8 @@ roadie session title 'Short title' --session ${sessionId}
 Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the OpenCode title.
 Do not retitle every turn. Discord rate-limits thread renames.
 Keep titles short. No emoji. No ⬦, btw:, or Fork: prefixes.
-
+` },
+    { id: 'mentions', text: `
 ## discord user mentions
 
 Prefer Discord user IDs for mentions. Discord bots cannot ping by @name; use \`<@userId>\` in message text or pass the ID to \`--user\`.
@@ -606,9 +602,10 @@ To search for Discord users in a guild as a best-effort fallback, run:
 roadie user list --guild ${guildId || '<guildId>'} --query "username"
 
 This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
-${
-  channelId
-    ? `
+` },
+    ...(channelId
+      ? [
+        { id: 'send', text: `
 ## starting new sessions from CLI
 
 Start a new thread/session in this channel with:
@@ -695,7 +692,8 @@ roadie send --thread <thread_id> --prompt '/<agentname>-agent' --agent <current_
 When you are approaching the **context window limit**, or the user asks to "handoff", "continue in new thread", or "start fresh session", or a complex task would benefit from a clean slate, start a fresh session with a summary:
 
 roadie send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentSessionArg}${userArg}
-
+` },
+        { id: 'scheduled-sends', text: `
 ## scheduled sends and task management
 
 Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) task. This also suits automation like cron jobs, GitHub webhooks, and n8n:
@@ -764,7 +762,8 @@ Use case patterns:
 - Thread reminders: when the user says "remind me about this in 2 hours", schedule a send to this thread. \`--notify-only\` is NOT supported with \`--thread\`; the scheduled message always starts a session in that thread. \`--user\` re-adds the user when it fires, which pops the thread back into their sidebar. Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp:
 
 ${remindSelfCommand} --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent>${userArg}
-
+` },
+        { id: 'cwd', text: `
 ## sending sessions to existing directories
 
 Use \`--cwd\` to reuse an existing project subfolder or git worktree directory instead of the project root. Roadie does not create worktrees: create the checkout with your project's tooling first, then pass it with \`--cwd\`.
@@ -774,7 +773,8 @@ roadie send --channel ${channelId} --prompt 'Run restricted task X' --cwd /path/
 \`\`\`
 
 The path must be inside the project or be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses that path as its working directory, so subfolder \`opencode.json\` config can apply. Passing the project root itself behaves like the default.
-
+` },
+        { id: 'reading-sessions', text: `
 ## reading other sessions
 
 \`\`\`bash
@@ -818,7 +818,8 @@ roadie session editors src/foo.ts --json
 Output is newest first. Each row has the **session ID** (\`ses_xxx\`), the **title** (Discord thread name, so you can tell what that session was doing), and **time ago** (when it last edited the file).
 
 Use this before committing a file this session did not edit. Put the original session ID as the last line of the commit message: \`Session: ses_xxx\`. If this session edited the file, use this session ID. If files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
-
+` },
+        { id: 'cross-project', text: `
 ## cross-project commands
 
 When the user references another project by name, run \`roadie project list\` to find its directory and channel ID, then read files, search code, or run commands directly in that directory. If the project is not listed, register its root with \`roadie project add /path/to/repo\` (this creates a Discord channel). Never add subfolders of an existing project.
@@ -854,7 +855,8 @@ roadie send --channel <channel_id> --prompt 'Plan how to update the API client t
 roadie send --project /path/to/other-repo --prompt 'Plan how to bump version to 1.2.0' --agent <current_agent>
 roadie send --cwd /path/to/other-repo-worktree --prompt 'Plan how to update this checkout' --agent <current_agent>
 \`\`\`
-
+` },
+        { id: 'waiting', text: `
 ## waiting for a session to finish
 
 \`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`roadie session wait <session_id>\` yourself via Bash and continue from the printed markdown. Do not tell the user to run it.
@@ -871,13 +873,15 @@ while roadie session list --active --exclude ${sessionId}; do sleep 5; done
 \`\`\`
 
 \`session list --active\` exits 0 while it finds active sessions and 1 when none remain. Exclude the current session so the loop does not wait for itself. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
-
+` },
+        { id: 'submodules', text: `
 ## submodules
 
 When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise later diffs will include the noisy submodule jump along with the real changes.
-`
-    : ''
-}
+` },
+        ]
+      : []),
+    { id: 'markdown', text: `
 ## markdown formatting
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:
@@ -894,7 +898,8 @@ Keep paragraphs short. Break up long explanations into digestible chunks with cl
 Discord supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
 
 NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
-
+` },
+    { id: 'callouts', text: `
 ## Callouts in Roadie Discord
 
 Use \`<callout>\` HTML blocks for important notices in Discord. Do **not** use GitHub callout syntax like \`> [!WARNING]\`, because Roadie renders \`<callout>\` natively.
@@ -928,15 +933,18 @@ Use callouts sparingly, only when the content is important enough to skim separa
 - action-required notes, breaking caveats, or important limitations, use **purple** like \`#8b5cf6\`
 
 Do not wrap the whole response in callouts. Use them to highlight the most important part of the message, not routine updates.
-
+` },
+    { id: 'urls', text: `
 ## URLs in search results
 
 When performing web searches, code searches, or any lookup that returns URLs (GitHub repos, docs, Stack Overflow, npm packages, etc.), ALWAYS include the URLs in your response so the user can click them. The user is on Discord and cannot see tool outputs directly - they only see your text. If you found a relevant link, show it. Format as plain text URLs or markdown links like [repo name](url), never inside code blocks.
-
+` },
+    { id: 'diagrams', text: `
 ## diagrams
 
 Make heavy use of diagrams to explain architecture, flows, and relationships. Create diagrams using ASCII art inside code blocks. Prefer diagrams over lengthy text explanations whenever possible. Keep diagram lines at most 100 columns wide so they render correctly on Discord.
-
+` },
+    { id: 'questions', text: `
 ## ending conversations with options
 
 You MUST write ALL user-visible text FIRST.
@@ -951,10 +959,8 @@ ALWAYS use \`question\` when you ask the user a question. Do not write a numbere
 Examples:
 - After completing edits: offer "Commit changes?"
 - If a plan has multiple strategy of implementation show these as options
-- After a genuinely ambiguous request where you cannot infer intent: offer the different approaches
-
-
-
-${topicContext}
-`
+- After a genuinely ambiguous request where you cannot infer intent: offer the different approaches` },
+    { id: 'channel-topic', text: `\n\n\n\n${topicContext}` },
+  ]
+  return applyPromptConfig({ intro, sections, config: getPromptConfig() }) + '\n'
 }
