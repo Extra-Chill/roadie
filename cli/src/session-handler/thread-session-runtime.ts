@@ -9,7 +9,9 @@
 import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
+import { type Client, type ThreadChannel } from 'discord.js'
+import type { ChatThread } from '../chat-platform/types.js'
+import { createDiscordChatThread } from '../chat-platform/discord.js'
 import type {
   Event as OpenCodeEvent,
   Part,
@@ -46,8 +48,6 @@ import {
 } from './global-event-listener.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
-  sendThreadMessage,
-  sendSessionPartMessage,
   SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
@@ -455,10 +455,7 @@ export async function resumeInterruptedSessions({
       logger.log(`[RUNTIME] Thread ${entry.threadId} moved to another session since the restart; not resuming`)
       continue
     }
-    await runtime.thread.send({
-      content: asSubtext('Roadie restarted while this session was running. Resuming.'),
-      flags: SILENT_MESSAGE_FLAGS,
-    }).catch(() => undefined)
+    await runtime.chat.sendNotice(asSubtext('Roadie restarted while this session was running. Resuming.'))
     const result = await runtime.enqueueIncoming({
       prompt: RESTART_CONTINUATION_PROMPT,
       userId: entry.userId || discordClient.user?.id || '',
@@ -1008,6 +1005,8 @@ export class ThreadSessionRuntime {
   readonly channelId: string | undefined
   readonly appId: string | undefined
   readonly thread: ThreadChannel
+  /** Platform-neutral view of `thread`; prefer it for conversation operations. */
+  readonly chat: ChatThread
 
   // ── Resource handles (mechanisms, not domain state) ──
 
@@ -1081,6 +1080,7 @@ export class ThreadSessionRuntime {
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread
+    this.chat = createDiscordChatThread(opts.thread)
     this.sentPartIdsBootstrap = this.bootstrapSentPartIds().catch((error) => {
       logger.warn(
         `[PART BOOTSTRAP] Failed to load sent part ids for thread ${this.threadId}:`,
@@ -1158,7 +1158,7 @@ export class ThreadSessionRuntime {
     if (typeof lastEventTimestamp === 'number' && Number.isFinite(lastEventTimestamp)) {
       return lastEventTimestamp
     }
-    const threadCreatedTimestamp = this.thread.createdTimestamp
+    const threadCreatedTimestamp = this.chat.createdAt
     if (
       typeof threadCreatedTimestamp === 'number'
       && Number.isFinite(threadCreatedTimestamp)
@@ -2022,8 +2022,7 @@ export class ThreadSessionRuntime {
   }
 
   private async sendTypingPulse(): Promise<void> {
-    const result = await this.thread.sendTyping()
-      .catch((e) => new DiscordOperationError({ operation: 'sendTyping', cause: e }))
+    const result = await this.chat.sendTyping()
     if (result instanceof Error) {
       discordLogger.log(`Failed to send typing: ${result}`)
     }
@@ -2112,7 +2111,7 @@ export class ThreadSessionRuntime {
   // ── Part Buffering & Output ─────────────────────────────────
 
   private getVerbosityChannelId(): string {
-    return this.channelId || this.thread.parentId || this.thread.id
+    return this.channelId || this.chat.parentId || this.chat.id
   }
 
   private async getVerbosity() {
@@ -2192,25 +2191,23 @@ export class ThreadSessionRuntime {
     }
     const messageId = row?.message_id
     if (!messageId) return
-    const message = await this.thread.messages.fetch(messageId)
-      .catch((e) => new DiscordOperationError({ operation: 'fetchMessage', cause: e }))
-    if (message instanceof Error) {
-      discordLogger.error(`Failed to fetch Discord message for ${last.id}:`, message)
+    const messageText = await this.chat.readMessageText(messageId)
+    if (messageText instanceof Error) {
+      discordLogger.error(`Failed to fetch Discord message for ${last.id}:`, messageText)
       return
     }
     const formatted = formatPart(last)
-    const leadWithBlankLine = message.content.startsWith('\n')
+    const leadWithBlankLine = messageText.startsWith('\n')
     const quoted = sessionPartContent({
       content: asDiscordQuote(formatted),
       leadWithBlankLine,
     })
-    if (message.content !== quoted) return
+    if (messageText !== quoted) return
     const plain = sessionPartContent({
       content: formatted,
       leadWithBlankLine,
     })
-    const edited = await message.edit({ content: plain })
-      .catch((e) => new DiscordOperationError({ operation: 'editMessage', cause: e }))
+    const edited = await this.chat.editMessageText(messageId, plain)
     if (edited instanceof Error) {
       discordLogger.error(`ERROR: Failed to unquote final text ${last.id}:`, edited)
     }
@@ -2300,7 +2297,7 @@ export class ThreadSessionRuntime {
     })
 
     const kind = sessionPartKind(part)
-    const sendResult = await sendSessionPartMessage(this.thread, content, {
+    const sendResult = await this.chat.sendPart(content, {
       leadWithBlankLine: shouldLeadWithBlankLine({
         previousKind: this.lastSentPartKind,
         nextKind: kind,
@@ -2512,8 +2509,7 @@ export class ThreadSessionRuntime {
     }
     this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = asSubtext(`context usage ${currentPercentage}%`)
-    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const sendResult = await this.chat.sendNotice(chunk)
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
     }
@@ -2594,7 +2590,7 @@ export class ThreadSessionRuntime {
             newIds.add(part.id)
             return { ...t, sentPartIds: newIds }
           })
-          const sendResult = await sendSessionPartMessage(this.thread, taskDisplay, {
+          const sendResult = await this.chat.sendPart(taskDisplay, {
             leadWithBlankLine: shouldLeadWithBlankLine({
               previousKind: this.lastSentPartKind,
               nextKind: 'tool',
@@ -2662,11 +2658,7 @@ export class ThreadSessionRuntime {
               '[ACTION] Failed to show action buttons:',
               showResult,
             )
-            await sendThreadMessage(
-              this.thread,
-              `Failed to show action buttons: ${showResult.message}`,
-              { flags: NOTIFY_MESSAGE_FLAGS },
-            )
+            await this.chat.sendMessage(`Failed to show action buttons: ${showResult.message}`, { notify: true })
           }
         },
       })
@@ -2729,10 +2721,7 @@ export class ThreadSessionRuntime {
             return ` (${pct.toFixed(1)}%)`
           })()
           const chunk = asSubtext(`${STATUS_PREFIX}${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`)
-          const largeOutputResult = await this.thread.send({
-            content: chunk,
-            flags: SILENT_MESSAGE_FLAGS,
-          }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+          const largeOutputResult = await this.chat.sendNotice(chunk)
           if (largeOutputResult instanceof Error) {
             discordLogger.error('Failed to send large output notice:', largeOutputResult)
           }
@@ -2792,7 +2781,7 @@ export class ThreadSessionRuntime {
       return
     }
     const kind = sessionPartKind(part)
-    const sendResult = await sendSessionPartMessage(this.thread, content, {
+    const sendResult = await this.chat.sendPart(content, {
       leadWithBlankLine: shouldLeadWithBlankLine({
         previousKind: this.lastSentPartKind,
         nextKind: kind,
@@ -2956,11 +2945,7 @@ export class ThreadSessionRuntime {
       formatSessionErrorFromProps(properties.error),
     )
     logger.error(`Sending error to thread: ${errorMessage}`)
-    await sendThreadMessage(
-      this.thread,
-      `✗ opencode session error: ${errorMessage}`,
-      { flags: NOTIFY_MESSAGE_FLAGS },
-    )
+    await this.chat.sendMessage(`✗ opencode session error: ${errorMessage}`, { notify: true })
     await this.persistEventBufferDebounced.flush()
 
     // Inject synthetic idle so isSessionBusy() returns false and queued
@@ -3317,8 +3302,7 @@ export class ThreadSessionRuntime {
     })()
 
     const chunk = asSubtext(`${message} - retrying in ${duration} (attempt #${attempt})`)
-    const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const retryResult = await this.chat.sendNotice(chunk)
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
     }
@@ -3347,7 +3331,7 @@ export class ThreadSessionRuntime {
     }
     const desiredName = deriveThreadNameFromSessionTitle({
       sessionTitle: info.title,
-      currentName: this.thread.name,
+      currentName: this.chat.name,
     })
     // Mark before setName so concurrent session.updated events don't stack
     // renames. Keep the mark on failure — retry is almost always a rate limit.
@@ -3357,7 +3341,7 @@ export class ThreadSessionRuntime {
     }
 
     const renameResult = await raceDiscordRename({
-      rename: this.thread.setName(desiredName)
+      rename: this.chat.rename(desiredName)
         .catch((e) =>
           new Error('Failed to rename thread from OpenCode title', {
             cause: e,
@@ -3403,8 +3387,7 @@ export class ThreadSessionRuntime {
       ? `${properties.title.trim()}: `
       : ''
     const chunk = asSubtext(`${properties.variant}: ${titlePrefix}${toastMessage}`)
-    const toastResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const toastResult = await this.chat.sendNotice(chunk)
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
     }
@@ -3484,9 +3467,7 @@ export class ThreadSessionRuntime {
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
-        await sendThreadMessage(this.thread, errorMessage, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        await this.chat.sendMessage(errorMessage, { notify: true })
         await this.tryDrainQueue({ showIndicator: true })
       }
 
@@ -3667,23 +3648,7 @@ export class ThreadSessionRuntime {
       // ── Working directory + channel topic for per-turn prompt context ──
       const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
 
-      const channelTopic = await (async () => {
-        if (this.thread.parent?.type === ChannelType.GuildText) {
-          return this.thread.parent.topic?.trim() || undefined
-        }
-        if (!channelId) {
-          return undefined
-        }
-        const fetched = await this.thread.guild.channels.fetch(channelId)
-          .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
-        if (fetched instanceof Error || !fetched) {
-          return undefined
-        }
-        if (fetched.type !== ChannelType.GuildText) {
-          return undefined
-        }
-        return fetched.topic?.trim() || undefined
-      })()
+      const channelTopic = await this.chat.channelTopic(channelId)
       const system = await this.resolveTurnSystemPrompt({
         sessionId: session.id,
         channelTopic,
@@ -3702,7 +3667,7 @@ export class ThreadSessionRuntime {
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId || this.thread.id,
-        threadName: this.thread.name || undefined,
+        threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
         workingDirectory,
         currentAgent: resolvedAgent,
@@ -3882,9 +3847,9 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
     input = applyPersonToIngress(input)
-    input = applyChannelPolicyToIngress({ input, channelId: this.channelId || this.thread.parentId || this.threadId })
+    input = applyChannelPolicyToIngress({ input, channelId: this.channelId || this.chat.parentId || this.threadId })
     threadState.setSessionUsername(this.threadId, input.username)
-    const botUserId = this.thread.client.user?.id
+    const botUserId = this.chat.botUserId
     if (input.userId && input.userId !== botUserId) {
       threadState.setSessionUserId(this.threadId, input.userId)
     }
@@ -4420,14 +4385,7 @@ export class ThreadSessionRuntime {
         : item.prompt.replace(/\s+/g, ' ').trim().slice(0, 150)
       return asSubtext(`Executing queued prompt from ${item.username}: ${preview}`)
     })()
-    const sendResult = await this.thread.send({
-      content,
-      flags: SILENT_MESSAGE_FLAGS,
-      allowedMentions: { parse: [], repliedUser: false },
-      reply: replyTarget
-        ? { messageReference: replyTarget, failIfNotExists: false }
-        : undefined,
-    }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const sendResult = await this.chat.sendNotice(content, replyTarget ? { replyTo: replyTarget } : undefined)
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send queue drain indicator:', sendResult)
     }
@@ -4535,10 +4493,10 @@ export class ThreadSessionRuntime {
       })
       if (result instanceof Error) {
         logger.error('[QUEUE] Could not fork queued btw:', result)
-        await sendThreadMessage(this.thread, `Could not fork queued btw: ${result.message}`)
+        await this.chat.sendMessage(`Could not fork queued btw: ${result.message}`)
         return true
       }
-      await sendThreadMessage(this.thread, `Session forked! Continue in ${result.thread.toString()}`)
+      await this.chat.sendMessage(`Session forked! Continue in ${result.thread.toString()}`)
       return true
     }
     this.lastDisplayedContextPercentage = 0
@@ -4556,11 +4514,7 @@ export class ThreadSessionRuntime {
     })
     if (sessionResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `✗ ${sessionResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+      await this.chat.sendMessage(`✗ ${sessionResult.message}`, { notify: true })
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
       return false
@@ -4575,11 +4529,7 @@ export class ThreadSessionRuntime {
     })
     if (updatePermissionsResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to update session permissions: ${updatePermissionsResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+      await this.chat.sendMessage(`Failed to update session permissions: ${updatePermissionsResult.message}`, { notify: true })
       return false
     }
 
@@ -4603,11 +4553,7 @@ export class ThreadSessionRuntime {
       })
       if (validatedModel instanceof Error) {
         this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `Failed to resolve model: ${validatedModel.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
+        await this.chat.sendMessage(`Failed to resolve model: ${validatedModel.message}`, { notify: true })
         return false
       }
     }
@@ -4632,11 +4578,7 @@ export class ThreadSessionRuntime {
     }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve agent: ${earlyAgentResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+      await this.chat.sendMessage(`Failed to resolve agent: ${earlyAgentResult.message}`, { notify: true })
       return false
     }
     const earlyAgentPreference = earlyAgentResult.agentPreference
@@ -4681,20 +4623,13 @@ export class ThreadSessionRuntime {
     ])
     if (earlyModelResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve model: ${earlyModelResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+      await this.chat.sendMessage(`Failed to resolve model: ${earlyModelResult.message}`, { notify: true })
       return false
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
-      )
+      await this.chat.sendMessage('No AI provider connected. Configure a provider in OpenCode with `/connect` command.')
       return false
     }
 
@@ -4750,23 +4685,7 @@ export class ThreadSessionRuntime {
     // ── Working directory for per-turn prompt context ─────────
     const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
 
-    const channelTopic = await (async () => {
-      if (this.thread.parent?.type === ChannelType.GuildText) {
-        return this.thread.parent.topic?.trim() || undefined
-      }
-      if (!channelId) {
-        return undefined
-      }
-      const fetched = await this.thread.guild.channels.fetch(channelId)
-        .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
-      if (fetched instanceof Error || !fetched) {
-        return undefined
-      }
-      if (fetched.type !== ChannelType.GuildText) {
-        return undefined
-      }
-      return fetched.topic?.trim() || undefined
-    })()
+    const channelTopic = await this.chat.channelTopic(channelId)
     // Pinned before building parts so the fork notice can compare identities.
     // Also covers session.command: the context-awareness plugin reads the same
     // pinned file because the command API has no system field.
@@ -4782,11 +4701,7 @@ export class ThreadSessionRuntime {
       )
       void notifyError(system, 'Failed to pin session system prompt')
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `✗ Failed to prepare system prompt: ${system.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+      await this.chat.sendMessage(`✗ Failed to prepare system prompt: ${system.message}`, { notify: true })
       return false
     }
     const systemPromptFromSourceSession = !isSystemPromptForSession({ system, sessionId: session.id })
@@ -4798,7 +4713,7 @@ export class ThreadSessionRuntime {
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId || this.thread.id,
-      threadName: this.thread.name || undefined,
+      threadName: this.chat.name || undefined,
       repliedMessage: input.repliedMessage,
       workingDirectory,
       currentAgent: earlyAgentPreference,
@@ -4859,7 +4774,7 @@ export class ThreadSessionRuntime {
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId || this.thread.id,
-        threadName: this.thread.name || undefined,
+        threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
         systemPromptFromSourceSession,
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
@@ -4890,11 +4805,7 @@ export class ThreadSessionRuntime {
             `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
           )
           this.stopTyping()
-          await sendThreadMessage(
-            this.thread,
-            '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
-            { flags: NOTIFY_MESSAGE_FLAGS },
-          )
+          await this.chat.sendMessage('✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.', { notify: true })
           return false
         }
 
@@ -4912,11 +4823,7 @@ export class ThreadSessionRuntime {
         )
         void notifyError(commandResponse, 'Failed to send command to OpenCode')
         this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Unexpected bot Error: ${commandResponse.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
+        await this.chat.sendMessage(`✗ Unexpected bot Error: ${commandResponse.message}`, { notify: true })
         return false
       }
 
@@ -4933,9 +4840,7 @@ export class ThreadSessionRuntime {
         logger.error(`[DISPATCH] ${apiError.message}`)
         void notifyError(apiError, 'OpenCode API error during command')
         this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
         return false
       }
 
@@ -4966,9 +4871,7 @@ export class ThreadSessionRuntime {
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
-        flags: NOTIFY_MESSAGE_FLAGS,
-      })
+      await this.chat.sendMessage(`✗ OpenCode API error: ${errorMessage}`, { notify: true })
       return false
     }
 
@@ -5094,7 +4997,7 @@ export class ThreadSessionRuntime {
         const base = getOpencodeSystemMessage({
           sessionId,
           channelId: this.channelId,
-          guildId: this.thread.guildId,
+          guildId: this.chat.spaceId ?? undefined,
           threadId: this.thread.id,
           channelTopic,
           agents,
@@ -5349,11 +5252,7 @@ export class ThreadSessionRuntime {
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
-    const result = await sendThreadMessage(
-      this.thread,
-      asSubtext(`*using ${modelLabel}${agentLabel}*`),
-      { flags: SILENT_MESSAGE_FLAGS },
-    ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const result = await this.chat.sendMessage(asSubtext(`*using ${modelLabel}${agentLabel}*`)).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (result instanceof Error) {
       logger.warn(`[SESSION INFO] Failed to send model info: ${result.message}`)
     }
@@ -5509,9 +5408,7 @@ export class ThreadSessionRuntime {
     )
     this.stopTyping()
 
-    await sendThreadMessage(this.thread, footerText, {
-      flags: shouldNotifyUser ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS,
-    })
+    await this.chat.sendMessage(footerText, { notify: shouldNotifyUser })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
     )
@@ -5557,8 +5454,7 @@ export class ThreadSessionRuntime {
       currentMessageId: cacheClear.currentMessageId,
     })
     const chunk = asSubtext(formatPromptCacheClearMessage(cacheClear, systemDiff))
-    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    const sendResult = await this.chat.sendNotice(chunk)
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send prompt cache notice:', sendResult)
     }
