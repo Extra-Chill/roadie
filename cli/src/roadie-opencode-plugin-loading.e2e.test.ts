@@ -33,12 +33,17 @@ async function api<T>(routePath: string): Promise<T> {
   return (await response.json()) as T
 }
 
-async function waitForHealth() {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const ok = await fetch(`http://127.0.0.1:${port}/api/health`)
+// Each probe is bounded: a server that accepts the connection but never
+// answers would otherwise block one fetch past the hook timeout and fail with
+// no evidence of what the server was doing.
+async function waitForHealth({ timeoutMs = 90_000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const ok = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2_000) })
       .then((r) => r.status < 500)
       .catch(() => false)
     if (ok) return true
+    if (serverProcess?.exitCode !== null && serverProcess?.exitCode !== undefined) return false
     await new Promise((resolve) => {
       setTimeout(resolve, 500)
     })
@@ -91,7 +96,13 @@ beforeAll(async () => {
     stderrLines.push(...data.toString().split('\n').filter(Boolean))
   })
 
-  expect(await waitForHealth()).toBe(true)
+  const healthy = await waitForHealth()
+  if (!healthy) {
+    // Make a startup failure diagnosable from the CI log.
+    throw new Error(
+      `opencode serve never became healthy (exit code: ${serverProcess.exitCode}). Last stderr:\n${stderrLines.slice(-60).join('\n')}`,
+    )
+  }
 }, 120_000)
 
 afterAll(() => {
