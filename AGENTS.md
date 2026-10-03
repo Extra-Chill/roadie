@@ -89,7 +89,7 @@ Prisma belongs to test-support packages (`discord-digital-twin`). The cli SQLite
 
 ## publishing
 
-before any publish, run `pnpm sync-skills` in `cli`.
+before any publish, run `pnpm build` in `cli`.
 
 ## github issues
 
@@ -146,7 +146,7 @@ agent sessions call `roadie` through the `~/.roadie/bin/roadie` shim that is pre
 
 ## skills folder
 
-skills live at the repository root in `skills/`. build and publish scripts copy them into `cli/skills/` so the npm package ships the bundled skills. some skills are synced from github repos (see `cli/scripts/sync-skills.ts`). never manually update synced copies; start roadie threads on their source projects instead (find them via `roadie project list`).
+Roadie ships no skills. Skills are an agent-runtime feature: OpenCode discovers them from the project and the host's config. `--enable-skill` / `--disable-skill` only pass through as OpenCode permission rules. The root `skills/` folder holds development skills for working on this repo and is not packaged.
 
 # discord
 

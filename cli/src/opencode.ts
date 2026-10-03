@@ -943,9 +943,6 @@ async function startSingleServer({
         },
       },
     },
-    skills: {
-      paths: [path.resolve(__dirname, '..', 'skills')],
-    },
   } satisfies Config
   const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
   const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)

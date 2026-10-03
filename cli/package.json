@@ -5,7 +5,7 @@
   "version": "0.31.0",
   "scripts": {
     "dev": "tsx src/bin.ts",
-    "prepublishOnly": "pnpm sync-skills && pnpm build",
+    "prepublishOnly": "pnpm build",
     "build": "rm -rf dist && pnpm generate && pnpm tsc",
     "watch": "tsx scripts/watch-session.ts",
     "generate": "pnpm generate:sql",
@@ -15,8 +15,7 @@
     "test:send": "tsx send-test-message.ts",
     "register-commands": "tsx scripts/register-commands.ts",
     "lint": "lintcn lint",
-    "format": "oxfmt src",
-    "sync-skills": "tsx scripts/sync-skills.ts"
+    "format": "oxfmt src"
   },
   "repository": "https://github.com/Extra-Chill/roadie",
   "bin": {
@@ -32,7 +31,6 @@
   "files": [
     "dist",
     "src",
-    "skills",
     "bin.js"
   ],
   "devDependencies": {
