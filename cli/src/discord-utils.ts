@@ -33,7 +33,7 @@ import {
   shouldLeadWithBlankLine,
   type SessionChunk,
 } from './message-formatting.js'
-import { getChannelDirectory, getThreadIdBySessionId, getThreadWorktreeOrWorkspace } from './database.js'
+import { getChannelDirectory, getThreadIdBySessionId, getThreadWorkingDirectory } from './database.js'
 import { DiscordOperationError } from './errors.js'
 import type { ThreadStartMarker } from './system-message.js'
 import YAML from 'yaml'
@@ -953,7 +953,7 @@ export async function getRoadieMetadata(
  * Resolve project directory from an autocomplete interaction.
  * Uses interaction.channelId (always available from raw payload) instead of
  * interaction.channel (cache-based getter, often null with gateway-proxy).
- * Checks the channel ID directly in DB, then tries thread worktree lookup,
+ * Checks the channel ID directly in DB, then the thread's working directory,
  * then falls back to fetching the channel to resolve thread parent.
  */
 export async function resolveProjectDirectoryFromAutocomplete(
@@ -967,10 +967,10 @@ export async function resolveProjectDirectoryFromAutocomplete(
     return channelConfig.directory
   }
 
-  // If we're in a thread, try worktree/workspace info first (has project_directory)
-  const workspace = await getThreadWorktreeOrWorkspace(channelId)
-  if (workspace?.project_directory) {
-    return workspace.project_directory
+  // A thread bound to a working directory records its project root.
+  const threadDir = await getThreadWorkingDirectory(channelId)
+  if (threadDir) {
+    return threadDir.projectDirectory
   }
 
   // Thread fallback: resolve parent channel ID and look up its directory.
@@ -1002,9 +1002,8 @@ export async function resolveProjectDirectoryFromAutocomplete(
 /**
  * Resolve the working directory for a channel or thread.
  * Returns both the base project directory (for server init) and the working directory
- * (worktree directory if in a worktree thread, otherwise same as projectDirectory).
- * This prevents commands from accidentally running in the base project dir when a
- * worktree is active — the bug that caused /diff, /compact, etc. to use wrong cwd.
+ * (the thread's bound working directory, otherwise the project directory), so
+ * commands like /compact run where the thread works rather than the project root.
  */
 export async function resolveWorkingDirectory({
   channel,
@@ -1034,10 +1033,9 @@ export async function resolveWorkingDirectory({
 
   let workingDirectory = metadata.projectDirectory
   if (isThread) {
-    // Check thread_workspaces first (new path), then thread_worktrees (legacy)
-    const info = await getThreadWorktreeOrWorkspace(channel.id)
-    if (info?.status === 'ready' && info.workspace_directory) {
-      workingDirectory = info.workspace_directory
+    const threadDir = await getThreadWorkingDirectory(channel.id)
+    if (threadDir) {
+      workingDirectory = threadDir.workingDirectory
     }
   }
 

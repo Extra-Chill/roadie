@@ -17,7 +17,7 @@ import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
   closeDatabase,
-  getThreadWorktreeOrWorkspace,
+  getThreadWorkingDirectory,
   getThreadSession,
   getChannelMentionMode,
   getChannelDirectory,
@@ -28,13 +28,12 @@ import {
   deleteChannelDirectoryById,
   findChannelsByDirectory,
   isCurrentThreadSessionBinding,
-  createPendingWorkspace,
-  setWorkspaceReady,
+  setThreadWorkingDirectory,
 } from './database.js'
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { resolveSessionWorkingDirectory, git } from './worktrees.js'
+import { resolveSessionWorkingDirectory, git } from './git-utils.js'
 import { asSubtext } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -801,36 +800,14 @@ export async function startDiscordBot({
           }
         }
 
-        // Check if this thread is a worktree thread.
-        // When the runtime exists in memory, pending worktrees are handled by
-        // the preprocess chain (messages queue behind the worktree promise).
-        // After a bot restart the runtime is gone, so we must reject messages
-        // for pending worktrees to avoid running in the base directory.
-        // Check both thread_workspaces (new) and thread_worktrees (legacy)
-        const worktreeInfo = await getThreadWorktreeOrWorkspace(thread.id)
-        if (worktreeInfo) {
-          if (worktreeInfo.status === 'pending' && !getRuntime(thread.id)) {
-            await message.reply({
-              content: '⏳ Worktree is still being created. Please wait...',
-              flags: SILENT_MESSAGE_FLAGS,
-            })
-            return
-          }
-          if (worktreeInfo.status === 'error') {
-            await message.reply({
-              content: `❌ Worktree creation failed: ${(worktreeInfo.error_message || '').slice(0, 1900)}`,
-              flags: NOTIFY_MESSAGE_FLAGS,
-            })
-            return
-          }
-          // Use original project directory for OpenCode server (session lives there)
-          // The worktree directory is passed via query.directory in prompt/command calls
-          if (worktreeInfo.project_directory) {
-            projectDirectory = worktreeInfo.project_directory
-            discordLogger.log(
-              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.workspace_directory})`,
-            )
-          }
+        // A thread bound to its own working directory still runs its agent
+        // server in the project root; the working directory is passed per call.
+        const threadDir = await getThreadWorkingDirectory(thread.id)
+        if (threadDir) {
+          projectDirectory = threadDir.projectDirectory
+          discordLogger.log(
+            `Using project directory: ${projectDirectory} (thread working directory: ${threadDir.workingDirectory})`,
+          )
         }
 
         if (projectDirectory && !fs.existsSync(projectDirectory)) {
@@ -842,25 +819,16 @@ export async function startDiscordBot({
           return
         }
 
-        // ! prefix runs a shell command instead of starting/continuing a session.
-        // Use worktree directory if available, so commands run in the worktree cwd.
-        // Skip shell commands while worktree is pending — they'd run in the base dir.
-        if (
-          message.content?.startsWith('!') &&
-          projectDirectory &&
-          worktreeInfo?.status !== 'pending'
-        ) {
+        // ! prefix runs a shell command in the thread's working directory
+        // instead of starting/continuing a session.
+        if (message.content?.startsWith('!') && projectDirectory) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
             if (!(await allowShellCommand({ message, isCliInjectedPrompt }))) {
               return
             }
-            const shellDir =
-              worktreeInfo?.status === 'ready' &&
-              worktreeInfo.workspace_directory
-                ? worktreeInfo.workspace_directory
-                : projectDirectory
+            const shellDir = threadDir?.workingDirectory ?? projectDirectory
             const loadingReply = await message.reply({
               content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
             })
@@ -877,14 +845,9 @@ export async function startDiscordBot({
         // Works like queue: just the word "btw" at the end after punctuation
         // or newline. The whole message (minus the suffix) becomes the fork prompt.
         const suffix = extractBtwQueueSuffix(message.content || '')
-        if (suffix.forceBtw && !suffix.forceQueue && projectDirectory
-          && worktreeInfo?.status !== 'pending' && !isLeadingMentionToOtherUser) {
+        if (suffix.forceBtw && !suffix.forceQueue && projectDirectory && !isLeadingMentionToOtherUser) {
           threadIngressSlot?.release()
-          const btwSdkDir =
-            worktreeInfo?.status === 'ready' &&
-            worktreeInfo.workspace_directory
-              ? worktreeInfo.workspace_directory
-              : projectDirectory
+          const btwSdkDir = threadDir?.workingDirectory ?? projectDirectory
           // Ack right away: fork + thread creation can take seconds. Runs in
           // parallel with the fork and is edited with the result at the end.
           const ackPromise = message.reply({
@@ -948,11 +911,7 @@ export async function startDiscordBot({
 
         const resolvedProjectDir = projectDirectory
 
-        const sdkDir =
-          worktreeInfo?.status === 'ready' &&
-          worktreeInfo.workspace_directory
-            ? worktreeInfo.workspace_directory
-            : resolvedProjectDir
+        const sdkDir = threadDir?.workingDirectory ?? resolvedProjectDir
         const runtime = getOrCreateRuntime({
           threadId: thread.id,
           thread,
@@ -1313,7 +1272,7 @@ export async function startDiscordBot({
   })
 
   // Handle bot-initiated threads created by `roadie send` (without --notify-only)
-  // Uses JSON embed marker to pass options (start, worktree name)
+  // Uses a YAML embed marker to pass options (start, cwd, agent, model)
   discordClient.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     try {
       if (!newlyCreated) {
@@ -1412,11 +1371,10 @@ export async function startDiscordBot({
         })
       }
 
-      // --cwd: reuse an existing project subfolder or worktree directory. Revalidate at bot-time
-      // (CLI validated at send-time but the path could become stale).
-      // Only worktree directories are stored in thread_workspaces. Project
-      // subfolders simply become the OpenCode session directory.
-      // --cwd: if it matches projectDirectory, ignore silently (already the default).
+      // --cwd binds the thread to an existing project subfolder or worktree.
+      // Revalidated here because the path could have gone stale since send
+      // time. The binding is stored so restarts and forks keep it; the
+      // project root itself is the default and needs no binding.
       let cwdDirectory: string | undefined
       if (marker.cwd) {
         const cwdResult = await resolveSessionWorkingDirectory({
@@ -1436,31 +1394,25 @@ export async function startDiscordBot({
           cwdDirectory = cwdResult.directory
         }
 
-        if (cwdResult.kind === 'worktree' && cwdDirectory) {
-          // Resolve actual branch name instead of using directory basename
-          const branchResult = await git(cwdDirectory, 'symbolic-ref --short HEAD')
-          const cwdWorktreeName = branchResult instanceof Error
-            ? path.basename(cwdDirectory)
-            : branchResult
-
-          await createPendingWorkspace({
+        if (cwdDirectory) {
+          const isWorktree = cwdResult.kind === 'worktree'
+          // Label a worktree with its checked-out branch, anything else with its folder name.
+          const branchResult = isWorktree ? await git(cwdDirectory, 'symbolic-ref --short HEAD') : undefined
+          await setThreadWorkingDirectory({
             threadId: thread.id,
-            workspaceType: 'roadie-worktree',
-            workspaceName: cwdWorktreeName,
             projectDirectory,
+            workingDirectory: cwdDirectory,
+            label: typeof branchResult === 'string' ? branchResult : path.basename(cwdDirectory),
+            kind: isWorktree ? 'git-worktree' : 'directory',
           })
-          await setWorkspaceReady({
-            threadId: thread.id,
-            workspaceDirectory: cwdDirectory,
-          })
-
-          // React with tree emoji to mark as worktree thread
-          await reactToThread({
-            rest: discordClient.rest,
-            threadId: thread.id,
-            channelId: parent.id,
-            emoji: '🌳',
-          })
+          if (isWorktree) {
+            await reactToThread({
+              rest: discordClient.rest,
+              threadId: thread.id,
+              channelId: parent.id,
+              emoji: '🌳',
+            })
+          }
         }
       }
 

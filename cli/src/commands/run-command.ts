@@ -15,7 +15,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { execAsync } from '../worktrees.js'
+import { execAsync } from '../git-utils.js'
 import { stripAnsi } from '../utils.js'
 
 const logger = createLogger(LogPrefix.INTERACTION)

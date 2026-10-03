@@ -1,4 +1,4 @@
-// Upgrade and worktree maintenance terminal commands.
+// Upgrade and maintenance terminal commands.
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -20,7 +20,7 @@ import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-e
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
+import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {

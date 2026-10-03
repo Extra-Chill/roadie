@@ -34,7 +34,6 @@ export const SUBTEXT_PREFIX = '-# '
 // Same width as ┣. Only used for tool-related status lines; other bot status lines have no glyph.
 export const STATUS_PREFIX = '⬦ '
 export const QUEUE_PREFIX = '» '
-export const WORKTREE_PREFIX = '⬦ '
 
 export function asSubtext(text: string): string {
   const lead = text.startsWith('\n') ? '\n' : ''

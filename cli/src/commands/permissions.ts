@@ -3,7 +3,7 @@
 // Accept, Accept Always, and Deny.
 //
 // The `directory` stored in PendingPermissionContext is the session directory
-// (sdkDirectory), which equals the worktree path for worktree threads.
+// (sdkDirectory), which is the thread's working directory when it has one.
 // This is used for both getOpencodeClient() (so the client header matches)
 // and for explicit `directory` params in SDK calls.
 

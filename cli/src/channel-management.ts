@@ -20,7 +20,7 @@ import {
   setGuildCategoryId,
 } from './database.js'
 import { getProjectsDir } from './config.js'
-import { execAsync } from './worktrees.js'
+import { execAsync } from './git-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.CHANNEL)

@@ -1,6 +1,6 @@
 // /new-session command - Start a new OpenCode session.
 // Works in both text channels and threads. When used in a thread, the new
-// session inherits the same working directory (worktree/workspace) so the
+// session inherits the same working directory (thread working directory) so the
 // user stays in the same folder context.
 // Also owns the fresh-thread creation flow used by voice routing.
 
@@ -10,9 +10,9 @@ import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
   getChannelDirectory,
-  getThreadWorktreeOrWorkspace,
-  createPendingWorkspace,
-  setWorkspaceReady,
+  getThreadWorkingDirectory,
+  setThreadWorkingDirectory,
+  type ThreadWorkingDirectory,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -41,7 +41,7 @@ export async function createNewSessionThread({
 }: {
   textChannel: TextChannel
   projectDirectory: string
-  sourceWorkspace?: Awaited<ReturnType<typeof getThreadWorktreeOrWorkspace>>
+  sourceWorkspace?: ThreadWorkingDirectory
   prompt: string
   files?: string[]
   userId: string
@@ -65,18 +65,8 @@ export async function createNewSessionThread({
   }
 
   // Persist the directory association for later commands and bot restarts.
-  if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
-    await createPendingWorkspace({
-      threadId: thread.id,
-      workspaceType: sourceWorkspace.workspace_type,
-      workspaceName: sourceWorkspace.workspace_name ?? '',
-      projectDirectory,
-    })
-    await setWorkspaceReady({
-      threadId: thread.id,
-      workspaceId: sourceWorkspace.workspace_id ?? undefined,
-      workspaceDirectory: sourceWorkspace.workspace_directory,
-    })
+  if (sourceWorkspace) {
+    await setThreadWorkingDirectory({ ...sourceWorkspace, threadId: thread.id, projectDirectory })
   }
   await thread.members.add(userId).catch((error) => {
     logger.warn('Could not add session member:', error)
@@ -113,19 +103,19 @@ export async function handleSessionCommand({
   }
 
   // Resolve project and working directories.
-  // In a thread: inherit from the thread's session (worktree/workspace aware).
+  // In a thread: inherit the thread's working directory.
   // In a text channel: look up the channel's configured directory.
   let projectDirectory: string
   let sdkDirectory: string
   let textChannel: TextChannel
-  let sourceWorkspace: Awaited<ReturnType<typeof getThreadWorktreeOrWorkspace>> | undefined
+  let sourceWorkspace: ThreadWorkingDirectory | undefined
 
   if (isThread) {
     const threadChannel = channel as ThreadChannel
     const [resolved, parentChannel, workspace] = await Promise.all([
       resolveWorkingDirectory({ channel: threadChannel }),
       resolveTextChannel(threadChannel),
-      getThreadWorktreeOrWorkspace(threadChannel.id),
+      getThreadWorkingDirectory(threadChannel.id),
     ])
     if (!resolved) {
       await command.editReply('Could not determine project directory for this thread')

@@ -26,7 +26,6 @@ import {
   getThreadSession,
   getSessionAgent,
   getChannelAgent,
-  getChannelWorktreesEnabled,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {

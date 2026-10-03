@@ -18,8 +18,6 @@ import type {
   SessionEvent,
   ThreadSessionSource,
   VerbosityLevel,
-  WorkspaceStatus,
-  WorktreeStatus,
 } from './schema.js'
 import { store } from './store.js'
 import { readRoadieSecret } from './config.js'
@@ -38,10 +36,8 @@ export async function initDatabase() {
 export const closeDatabase = closeDb
 
 export type { VerbosityLevel }
-export type { WorktreeStatus }
 export type DatabaseChannelType = ChannelType
 
-export type ThreadWorktree = typeof schema.thread_worktrees.$inferSelect
 export type ScheduledTaskStatus = typeof schema.scheduled_tasks.$inferSelect.status
 export type ScheduledTaskScheduleKind = typeof schema.scheduled_tasks.$inferSelect.schedule_kind
 export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
@@ -668,129 +664,80 @@ export async function setSessionAgent(sessionId: string, agentName: string) {
     .onConflictDoUpdate({ target: schema.session_agents.session_id, set: { agent_name: agentName } })
 }
 
-export async function getThreadWorktree(threadId: string) {
-  const db = await getDb()
-  return await db.query.thread_worktrees.findFirst({ where: { thread_id: threadId } }) ?? undefined
+// ─── Thread working directory ────────────────────────────────────────────────
+// A thread can work in a directory other than its channel's project root
+// (`roadie send --cwd`; forks inherit the binding). Roadie never creates these
+// directories, it only remembers which one a thread works in. Rows live in
+// thread_workspaces; legacy thread_worktrees rows are migrated there on startup.
+
+export type ThreadWorkingDirectory = {
+  /** The channel's project root, where the agent server for the thread runs. */
+  projectDirectory: string
+  /** The directory the thread's session works in. */
+  workingDirectory: string
+  /** Short display label, such as a branch name. */
+  label: string
+  /** Free-form origin of the binding, e.g. "git-worktree" or "directory". */
+  kind: string
+  workspaceId?: string
 }
 
-export async function createPendingWorktree({ threadId, worktreeName, projectDirectory }: { threadId: string; worktreeName: string; projectDirectory: string }) {
-  const db = await getDb()
-  await db.batch([
-    db.insert(schema.thread_sessions)
-      .values({ thread_id: threadId, session_id: '' })
-      .onConflictDoNothing({ target: schema.thread_sessions.thread_id }),
-    db.insert(schema.thread_worktrees)
-      .values({ thread_id: threadId, worktree_name: worktreeName, project_directory: projectDirectory, status: 'pending' })
-      .onConflictDoUpdate({
-        target: schema.thread_worktrees.thread_id,
-        set: { worktree_name: worktreeName, project_directory: projectDirectory, status: 'pending', worktree_directory: null, error_message: null },
-      }),
-  ] as const)
+// Before bindings were generic, only worktrees were stored, under
+// 'roadie-worktree' (migrated from thread_worktrees) or 'kimaki-worktree'.
+function normalizeWorkingDirectoryKind(kind: string): string {
+  return /worktree/.test(kind) ? 'git-worktree' : kind
 }
 
-export async function setWorktreeReady({ threadId, worktreeDirectory }: { threadId: string; worktreeDirectory: string }) {
+export async function getThreadWorkingDirectory(threadId: string): Promise<ThreadWorkingDirectory | undefined> {
   const db = await getDb()
-  await db.update(schema.thread_worktrees).set({ worktree_directory: worktreeDirectory, status: 'ready' }).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
+  const row = await db.query.thread_workspaces.findFirst({ where: { thread_id: threadId } })
+  // Rows left pending or failed by the removed checkout creation never got a
+  // directory; those threads work in the project root.
+  if (!row || row.status !== 'ready' || !row.workspace_directory) return undefined
+  return {
+    projectDirectory: row.project_directory,
+    workingDirectory: row.workspace_directory,
+    label: row.workspace_name,
+    kind: normalizeWorkingDirectoryKind(row.workspace_type),
+    ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+  }
 }
 
-export async function setWorktreeError({ threadId, errorMessage }: { threadId: string; errorMessage: string }) {
-  const db = await getDb()
-  await db.update(schema.thread_worktrees).set({ status: 'error', error_message: errorMessage }).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
-}
-
-export async function deleteThreadWorktree(threadId: string) {
-  const db = await getDb()
-  await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
-}
-
-// ─── thread_workspaces helpers ───────────────────────────────────────────────
-
-export type ThreadWorkspace = typeof schema.thread_workspaces.$inferSelect
-export type { WorkspaceStatus }
-
-export async function createPendingWorkspace({
+export async function setThreadWorkingDirectory({
   threadId,
-  workspaceType,
-  workspaceName,
   projectDirectory,
+  workingDirectory,
+  label,
+  kind = 'directory',
+  workspaceId,
 }: {
   threadId: string
-  workspaceType: string
-  workspaceName: string
   projectDirectory: string
+  workingDirectory: string
+  label: string
+  kind?: string
+  workspaceId?: string
 }) {
   const db = await getDb()
+  const values = {
+    workspace_type: kind,
+    workspace_name: label,
+    project_directory: projectDirectory,
+    workspace_directory: workingDirectory,
+    workspace_id: workspaceId ?? null,
+    status: 'ready' as const,
+    error_message: null,
+  }
   await db.batch([
+    // thread_workspaces references thread_sessions; the session id is filled in later.
     db.insert(schema.thread_sessions)
       .values({ thread_id: threadId, session_id: '' })
       .onConflictDoNothing({ target: schema.thread_sessions.thread_id }),
     db.insert(schema.thread_workspaces)
-      .values({
-        thread_id: threadId,
-        workspace_type: workspaceType,
-        workspace_name: workspaceName,
-        project_directory: projectDirectory,
-        status: 'pending',
-      })
-      .onConflictDoUpdate({
-        target: schema.thread_workspaces.thread_id,
-        set: {
-          workspace_type: workspaceType,
-          workspace_name: workspaceName,
-          project_directory: projectDirectory,
-          status: 'pending',
-          workspace_id: null,
-          workspace_directory: null,
-          error_message: null,
-        },
-      }),
+      .values({ thread_id: threadId, ...values })
+      .onConflictDoUpdate({ target: schema.thread_workspaces.thread_id, set: values }),
   ] as const)
 }
-
-export async function setWorkspaceReady({
-  threadId,
-  workspaceId,
-  workspaceDirectory,
-}: {
-  threadId: string
-  workspaceId?: string
-  workspaceDirectory: string
-}) {
-  const db = await getDb()
-  await db.update(schema.thread_workspaces)
-    .set({
-      workspace_directory: workspaceDirectory,
-      workspace_id: workspaceId ?? null,
-      status: 'ready',
-    })
-    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
-}
-
-export async function setWorkspaceError({
-  threadId,
-  errorMessage,
-}: {
-  threadId: string
-  errorMessage: string
-}) {
-  const db = await getDb()
-  await db.update(schema.thread_workspaces)
-    .set({ status: 'error', error_message: errorMessage })
-    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
-}
-
-export async function getThreadWorkspace(threadId: string) {
-  const db = await getDb()
-  return await db.query.thread_workspaces.findFirst({ where: { thread_id: threadId } }) ?? undefined
-}
-
-export async function deleteThreadWorkspace(threadId: string) {
-  const db = await getDb()
-  await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
-}
-
-/** Alias for getThreadWorkspace — used throughout the codebase. */
-export const getThreadWorktreeOrWorkspace = getThreadWorkspace
 
 export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
   const fromPolicy = channelPolicyOverrides(channelId).verbosity
@@ -818,18 +765,6 @@ export async function setChannelMentionMode(channelId: string, enabled: boolean)
   await db.insert(schema.channel_mention_mode)
     .values({ channel_id: channelId, enabled: enabled ? 1 : 0 })
     .onConflictDoUpdate({ target: schema.channel_mention_mode.channel_id, set: { enabled: enabled ? 1 : 0, updated_at: new Date() } })
-}
-
-export async function getChannelWorktreesEnabled(channelId: string) {
-  const db = await getDb()
-  return (await db.query.channel_worktrees.findFirst({ where: { channel_id: channelId } }))?.enabled === 1
-}
-
-export async function setChannelWorktreesEnabled(channelId: string, enabled: boolean) {
-  const db = await getDb()
-  await db.insert(schema.channel_worktrees)
-    .values({ channel_id: channelId, enabled: enabled ? 1 : 0 })
-    .onConflictDoUpdate({ target: schema.channel_worktrees.channel_id, set: { enabled: enabled ? 1 : 0, updated_at: new Date() } })
 }
 
 export async function getChannelDirectory(channelId: string): Promise<{ directory: string } | undefined> {
