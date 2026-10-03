@@ -139,7 +139,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
 
   // session.command has no system field. Match an operational roadie system
   // instruction (upload helper) so we know the real session system prompt was
-  // injected — not just any string that happens to mention kimaki.dev.
+  // injected — not just any string that happens to mention Roadie.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
   const commandSystemMatcher: DeterministicMatcher = {
     id: 'command-system-check',

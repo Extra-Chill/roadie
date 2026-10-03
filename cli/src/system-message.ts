@@ -27,7 +27,7 @@ import { FilesystemOperationError } from './errors.js'
 export const SESSION_SYSTEM_PROMPT_DIR = 'session-system-pinned'
 
 /** Stable marker present in every roadie system prompt; used by tests and plugins. */
-export const ROADIE_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
+export const ROADIE_SYSTEM_PROMPT_MARKER = 'via Roadie'
 
 export function getSessionSystemPromptPath({
   sessionId,
@@ -475,7 +475,7 @@ export function getOpencodeSystemMessage({
     ? `\n${getParentSessionInstructions(parentSessionId)}`
     : ''
   return `
-The user is reading your messages from inside Discord, via kimaki.dev
+The user is reading your messages from inside Discord, via Roadie
 
 ## Discord output
 
@@ -527,7 +527,7 @@ Do not restart the bot unless the user explicitly asks for it.
 
 ## debugging roadie issues
 
-ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Roadie. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
+To report a Roadie bug, export the session event jsonl and the relevant log lines (see \`docs/debugging-roadie.md\` in the Roadie repository) and file an issue there with that evidence.
 If there are internal roadie issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/roadie.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
 ## uploading files to discord

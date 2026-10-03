@@ -540,7 +540,7 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ERR_TLS_CERT_ALTNAME_INVALID',
   // undici fetch/WebSocket connect failures when the network is down.
   // Without these, Discord login exits EXIT_NO_RESTART and the wrapper never
-  // comes back after a connect timeout to discord-gateway.kimaki.dev.
+  // comes back after a connect timeout.
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT',

@@ -54,7 +54,7 @@ test('raw Discord user ID does not invent a username', async () => {
 })
 
 describe('getOpenUrlCommand', () => {
-  const installUrl = 'https://kimaki.dev/discord-install?clientId=abc&clientSecret=def'
+  const installUrl = 'https://example.com/install?clientId=abc&clientSecret=def'
 
   test('uses a shell-free opener on Windows', () => {
     expect(getOpenUrlCommand(installUrl, 'win32')).toEqual({
@@ -118,7 +118,7 @@ describe('isTransientNetworkError', () => {
   test('treats undici connect timeouts as transient', () => {
     const error = Object.assign(
       new Error(
-        'Connect Timeout Error (attempted address: discord-gateway.kimaki.dev:443, timeout: 10000ms)',
+        'Connect Timeout Error (attempted address: discord.com:443, timeout: 10000ms)',
       ),
       {
         name: 'ConnectTimeoutError',
@@ -132,7 +132,7 @@ describe('isTransientNetworkError', () => {
     expect(
       isTransientNetworkError(
         new Error(
-          'Connect Timeout Error (attempted address: discord-gateway.kimaki.dev:443, timeout: 10000ms)',
+          'Connect Timeout Error (attempted address: discord.com:443, timeout: 10000ms)',
         ),
       ),
     ).toBe(true)
@@ -141,7 +141,7 @@ describe('isTransientNetworkError', () => {
   test('walks cause chains for nested undici connect timeouts', () => {
     const cause = Object.assign(
       new Error(
-        'Connect Timeout Error (attempted address: discord-gateway.kimaki.dev:443, timeout: 10000ms)',
+        'Connect Timeout Error (attempted address: discord.com:443, timeout: 10000ms)',
       ),
       {
         name: 'ConnectTimeoutError',
