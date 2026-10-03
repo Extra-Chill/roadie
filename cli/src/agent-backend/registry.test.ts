@@ -38,6 +38,8 @@ function fakeProvider(calls: string[]): AgentBackendProvider {
       calls.push(`initialize:${directory}`)
       return () => backend
     },
+    subscribeEvents: () => null,
+    onStarted: () => {},
   }
 }
 

@@ -9,7 +9,7 @@
 // Keep this list in sync with real call sites. Add an operation only when the
 // runtime starts using it.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent, OpencodeClient } from '@opencode-ai/sdk/v2'
 
 export type AgentBackend = {
   session: Pick<
@@ -28,6 +28,9 @@ export type AgentBackend = {
   config: Pick<OpencodeClient['config'], 'get'>
   app: Pick<OpencodeClient['app'], 'agents'>
 }
+
+/** One event from the backend's stream. OpenCode-shaped, like the rest of the seam. */
+export type AgentBackendEvent = OpenCodeEvent
 
 /** Lazily returns the backend for a directory once it has been initialized. */
 export type AgentBackendGetter = () => AgentBackend
@@ -51,4 +54,14 @@ export type AgentBackendProvider = {
     directory: string,
     options?: AgentBackendInitializeOptions,
   ): Promise<Error | AgentBackendGetter>
+  /**
+   * One stream of events for every session and directory this provider
+   * serves. Returns null while no backend is running. The stream ends or
+   * throws when the connection drops; callers reconnect.
+   */
+  subscribeEvents(options: {
+    signal: AbortSignal
+  }): null | Promise<Error | AsyncIterable<AgentBackendEvent>>
+  /** Called whenever the backend (re)starts, so event consumers reconnect. */
+  onStarted(listener: (info: { description: string }) => void): void
 }
