@@ -335,16 +335,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('undo')
-      .setDescription(truncateCommandDescription('Undo the last assistant message (revert file changes)'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('redo')
-      .setDescription(truncateCommandDescription('Redo previously undone changes'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('verbosity')
       .setDescription(truncateCommandDescription('Set output verbosity for this channel'))
       .setDMPermission(false)
