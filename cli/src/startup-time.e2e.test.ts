@@ -33,7 +33,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
-import { chooseLockPort, cleanupTestSessions, initTestGitRepo } from './test-utils.js'
+import { chooseLockPort, cleanupTestSessions, initTestGitRepo, removeTestDataDir } from './test-utils.js'
 
 interface PhaseTimings {
   hranaServerMs: number
@@ -139,7 +139,7 @@ startupBenchmark('startup time measurement', () => {
     delete process.env['ROADIE_DB_URL']
 
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   }, 5_000)
 

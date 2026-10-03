@@ -49,8 +49,7 @@ import {
   initTestGitRepo,
   isFooterMessage,
   waitForBotMessageContaining,
-  waitForBotReplyAfterUserMessage,
-} from './test-utils.js'
+  waitForBotReplyAfterUserMessage, removeTestDataDir } from './test-utils.js'
 
 
 const TEST_USER_ID = '200000000000000888'
@@ -268,7 +267,7 @@ describe('runtime lifecycle', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   }, 5_000)
 

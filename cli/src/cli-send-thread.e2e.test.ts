@@ -49,8 +49,7 @@ import {
   cleanupTestSessions,
   initTestGitRepo,
   waitForBotMessageContaining,
-  waitForFooterMessage,
-} from './test-utils.js'
+  waitForFooterMessage, removeTestDataDir } from './test-utils.js'
 import YAML from 'yaml'
 import type { ThreadStartMarker } from './system-message.js'
 
@@ -302,7 +301,7 @@ describe('roadie send --channel thread creation', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   }, 5_000)
 

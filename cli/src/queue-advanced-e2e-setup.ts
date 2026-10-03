@@ -11,7 +11,7 @@ import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
-import { initTestGitRepo } from './test-utils.js'
+import { initTestGitRepo, removeTestDataDir } from './test-utils.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -1172,7 +1172,7 @@ export function setupQueueAdvancedSuite({
       })
     }
     if (ctx.directories) {
-      fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(ctx.directories.dataDir)
     }
   }, 5_000)
 

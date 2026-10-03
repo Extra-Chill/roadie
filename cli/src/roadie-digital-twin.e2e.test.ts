@@ -16,7 +16,7 @@ import {
   setChannelDirectory,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { cleanupTestSessions, chooseLockPort, initTestGitRepo } from './test-utils.js'
+import { cleanupTestSessions, chooseLockPort, initTestGitRepo, removeTestDataDir } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 
 const geminiApiKey =
@@ -192,7 +192,7 @@ e2eTest(
 
       delete process.env['ROADIE_LOCK_PORT']
       delete process.env['ROADIE_DB_URL']
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   },
   360_000,

@@ -57,8 +57,7 @@ import {
   initTestGitRepo,
   isFooterMessage,
   waitForBotMessageContaining,
-  waitForFooterMessage,
-} from './test-utils.js'
+  waitForFooterMessage, removeTestDataDir } from './test-utils.js'
 import { buildQuickAgentCommandDescription } from './commands/agent.js'
 import { buildQuickAgentSlashCommand } from './discord-command-registration.js'
 
@@ -459,7 +458,7 @@ describe('agent model resolution', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   }, 5_000)
 
