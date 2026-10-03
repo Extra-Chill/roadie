@@ -51,7 +51,7 @@ jobs:
       # --retry 3: some e2e tests have timing sensitivity on CI hardware
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
-        run: pnpm test:all -- --run --retry 3
+        run: pnpm run test:all --run --retry 3
         working-directory: cli
         env:
           NODE_ENV: test

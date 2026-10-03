@@ -6,11 +6,11 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "prepare": "pnpm -r --filter discord-slack-bridge run build",
-    "test": "NODE_ENV=test pnpm --filter @extrachill/roadie exec vitest run --exclude '**/*.e2e.test.ts'",
+    "test": "pnpm --filter @extrachill/roadie exec env NODE_ENV=test vitest run --exclude '**/*.e2e.test.ts'",
     "dev": "pnpm --filter @extrachill/roadie dev",
     "roadie": "pnpm --filter @extrachill/roadie play",
     "release:package": "bash scripts/release-package.sh",
-    "test:all": "NODE_ENV=test pnpm --filter @extrachill/roadie run vitest"
+    "test:all": "pnpm --filter @extrachill/roadie exec env NODE_ENV=test vitest"
   },
   "devDependencies": {
     "oxfmt": "^0.24.0",
