@@ -7,12 +7,12 @@
 // Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
 // which uses a single global.event() SSE stream for all directories.
 
-import type { Event as OpenCodeEvent, GlobalEvent } from '@opencode-ai/sdk/v2'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
-
 import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getOpencodeServerAuthHeaders } from '../opencode.js'
+import type { AgentBackendEvent } from '../agent-backend/types.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+
+type OpenCodeEvent = AgentBackendEvent
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -109,31 +109,20 @@ export function waitForGlobalEventListener(): Promise<void> {
 
 // ── Internals ──────────────────────────────────────────────────
 
-// Lazy subscription to opencode server lifecycle. Deferred to avoid
-// circular import: global-event-listener imports opencode.ts which
-// imports global-event-listener at module scope.
-let lifecycleSubscribed = false
+// Reconnect whenever the backend restarts. Subscribed lazily, once per
+// provider, so swapping the provider re-subscribes to the new one.
+const lifecycleSubscribed = new WeakSet<object>()
 
 function ensureLifecycleSubscription(): void {
-  if (lifecycleSubscribed) return
-  lifecycleSubscribed = true
-  void import('../opencode.js')
-    .then(({ subscribeOpencodeServerLifecycle }) => {
-      subscribeOpencodeServerLifecycle((event) => {
-        if (event.type === 'started') {
-          logger.log(
-            `[GLOBAL LISTENER] OpenCode server started on port ${event.port}, reconnecting`,
-          )
-          restartGlobalEventListener()
-        }
-      })
-    })
-    .catch((error) => {
-      logger.warn(
-        '[GLOBAL LISTENER] Failed to subscribe to OpenCode lifecycle:',
-        error,
-      )
-    })
+  const provider = getAgentBackendProvider()
+  if (lifecycleSubscribed.has(provider)) return
+  lifecycleSubscribed.add(provider)
+  provider.onStarted(({ description }) => {
+    // A listener left on a provider that was swapped out must not restart the stream.
+    if (getAgentBackendProvider() !== provider) return
+    logger.log(`[GLOBAL LISTENER] ${description} started, reconnecting`)
+    restartGlobalEventListener()
+  })
 }
 
 function ensureListenerRunning(): void {
@@ -143,29 +132,13 @@ function ensureListenerRunning(): void {
   void runEventLoop()
 }
 
-/** Resolve getOpencodeServerBaseUrl lazily to break circular dep. */
-let _getBaseUrl: (() => string | null) | null = null
-
-async function resolveBaseUrlGetter(): Promise<() => string | null> {
-  if (_getBaseUrl) return _getBaseUrl
-  const mod = await import('../opencode.js')
-  _getBaseUrl = mod.getOpencodeServerBaseUrl
-  return _getBaseUrl
-}
-
-function createGlobalClient(baseUrl: string): OpencodeClient {
-  return createOpencodeClient({ baseUrl, headers: getOpencodeServerAuthHeaders() })
-}
-
-function dispatchEvent(globalEvent: GlobalEvent): void {
-  const payload = globalEvent.payload as OpenCodeEvent
+function dispatchEvent(event: OpenCodeEvent): void {
   for (const callback of callbacks.values()) {
-    callback(payload)
+    callback(event)
   }
 }
 
 async function runEventLoop(): Promise<void> {
-  const getBaseUrl = await resolveBaseUrlGetter()
 
   let backoffMs = 500
   const maxBackoffMs = 30_000
@@ -174,25 +147,22 @@ async function runEventLoop(): Promise<void> {
     controller = new AbortController()
     const signal = controller.signal
 
-    const baseUrl = getBaseUrl()
-    if (!baseUrl) {
+    const subscription = getAgentBackendProvider().subscribeEvents({ signal })
+    if (!subscription) {
       if (callbacks.size === 0) {
         logger.log('[GLOBAL LISTENER] No registrations, pausing')
         loopRunning = false
         return
       }
       logger.warn(
-        `[GLOBAL LISTENER] No OpenCode server available, retrying in ${backoffMs}ms`,
+        `[GLOBAL LISTENER] No agent backend available, retrying in ${backoffMs}ms`,
       )
       await delay(backoffMs, signal)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
       continue
     }
 
-    const client = createGlobalClient(baseUrl)
-
-    const subscribeResult = await client.global.event({ signal })
-      .catch((e) => new OpenCodeSdkError({ operation: 'event.subscribe', cause: e }))
+    const subscribeResult = await subscription
 
     if (subscribeResult instanceof Error) {
       if (isAbortError(subscribeResult)) {
@@ -209,7 +179,7 @@ async function runEventLoop(): Promise<void> {
       continue
     }
 
-    const events = subscribeResult.stream
+    const events = subscribeResult
 
     connected = true
     for (const resolve of connectionWaiters) resolve()
