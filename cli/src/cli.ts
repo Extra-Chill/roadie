@@ -31,6 +31,7 @@ import {
   setChannelsConfigPath,
 } from './channel-policy.js'
 import { setPromptConfigPath } from './prompt-config.js'
+import { setContextProviderCommand } from './context-provider.js'
 import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
@@ -89,6 +90,10 @@ cli
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Roadie role or admin permissions (no-roadie role still blocks)',
+  )
+  .option(
+    '--context-provider <command>',
+    'Command that supplies host context (memory) per session and per speaker (JSON on stdin/stdout). Also ROADIE_CONTEXT_PROVIDER',
   )
   .option(
     '--prompt-config <path>',
@@ -179,6 +184,7 @@ cli
       identityHook?: string
       channelsConfig?: string
       promptConfig?: string
+      contextProvider?: string
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
@@ -330,6 +336,9 @@ cli
 
         if (options.identityHook) {
           setIdentityHookCommand(options.identityHook)
+        }
+        if (options.contextProvider) {
+          setContextProviderCommand(options.contextProvider)
         }
         if (options.promptConfig) {
           setPromptConfigPath(path.resolve(options.promptConfig))
