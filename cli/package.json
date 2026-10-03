@@ -9,6 +9,7 @@
     "build": "rm -rf dist && pnpm generate && pnpm tsc",
     "watch": "tsx scripts/watch-session.ts",
     "generate": "pnpm generate:sql",
+    "pack:release": "tsx scripts/pack-release.ts",
     "generate:sql": "tsx scripts/generate-schema-sql.ts",
     "test": "vitest",
     "validate-typing-indicator": "doppler run -- tsx scripts/validate-typing-indicator.ts",
