@@ -12,7 +12,7 @@ import { drizzle } from 'drizzle-orm/libsql'
 import * as orm from 'drizzle-orm'
 import { fileURLToPath } from 'node:url'
 
-import { getDataDir, getLockPort, readRoadieSecret } from './config.js'
+import { getDataDir, readRoadieSecret } from './config.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import * as schema from './schema.js'
 
@@ -50,22 +50,9 @@ export function getDb(): Promise<RoadieDb> {
 }
 
 
-// Set by the bot process, which owns the database file and serves it over
-// Hrana. Everything else holding a service token is a client.
-let ownsDatabaseFile = false
-export function claimDatabaseFile(): void {
-  ownsDatabaseFile = true
-}
-
 function getDbUrl(): string {
   if (process.env.ROADIE_DB_URL) {
     return process.env.ROADIE_DB_URL
-  }
-  // A process that holds the service token but not the data dir (another OS
-  // user running `roadie send`, a host integration) talks to the running
-  // bot's database over Hrana on the lock port instead of opening the file.
-  if (!ownsDatabaseFile && !process.env.ROADIE_VITEST && readRoadieSecret('ROADIE_SERVICE_TOKEN')) {
-    return `http://127.0.0.1:${getLockPort()}`
   }
   const dataDir = getDataDir()
   const dbPath = path.join(dataDir, 'discord-sessions.db')
@@ -73,8 +60,7 @@ function getDbUrl(): string {
 }
 
 function getDbAuthToken(): string | undefined {
-  if (ownsDatabaseFile) return readRoadieSecret('ROADIE_DB_AUTH_TOKEN')
-  return readRoadieSecret('ROADIE_DB_AUTH_TOKEN') ?? readRoadieSecret('ROADIE_SERVICE_TOKEN')
+  return readRoadieSecret('ROADIE_DB_AUTH_TOKEN')
 }
 
 async function initializeDb(): Promise<RoadieDb> {

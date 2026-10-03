@@ -20,7 +20,6 @@ import type {
   VerbosityLevel,
 } from './schema.js'
 import { store } from './store.js'
-import { readRoadieSecret } from './config.js'
 import { channelPolicyOverrides } from './channel-policy.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
@@ -1087,9 +1086,7 @@ export async function getBotTokenWithMode(): Promise<{
   const db = await getDb()
   const [row] = await db.query.bot_tokens.findMany({ orderBy: { last_used_at: 'desc', created_at: 'desc' }, limit: 1 })
   if (!row) return undefined
-  // A host-provided service token is authoritative and never persisted;
-  // otherwise use (and lazily create) the stored one.
-  const gatewayToken = readRoadieSecret('ROADIE_SERVICE_TOKEN') ?? (await ensureServiceAuthToken({ appId: row.app_id }))
+  const gatewayToken = await ensureServiceAuthToken({ appId: row.app_id })
   const serviceParts = splitServiceAuthToken({ token: gatewayToken })
   const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
   const token = mode === 'gateway' && serviceParts ? gatewayToken : row.token

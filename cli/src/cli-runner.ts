@@ -65,7 +65,6 @@ import {
   isThreadChannelType,
 } from './discord-utils.js'
 import { setDataDir, getDataDir, readRoadieSecret } from './config.js'
-import { claimDatabaseFile } from './db.js'
 import { cleanupOrphanedAgentServer, isManagedInstall, markServiceProcess } from './service-lifecycle.js'
 import { execAsync } from './git-utils.js'
 import { backgroundUpgradeRoadie } from './upgrade.js'
@@ -1295,7 +1294,6 @@ export async function run({
   // process because it serves as both the DB server and the single-instance
   // lock (binds the fixed lock port). Without it, IPC and lock enforcement
   // don't work. CLI subcommands skip the server and use file: directly.
-  claimDatabaseFile()
   markServiceProcess()
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
@@ -1321,14 +1319,12 @@ export async function run({
   })
 
 
-  // A host-provided service token (ROADIE_SERVICE_TOKEN or _FILE) lets other
-  // local processes and OS users reach this bot's database over Hrana with a
-  // credential they already hold, instead of reading the data dir.
-  const gatewayToken =
-    readRoadieSecret('ROADIE_SERVICE_TOKEN') ??
-    (await ensureServiceAuthToken({
-      appId,
-    }))
+  // Internal credential for Roadie's own processes (the agent plugin) on the
+  // local database endpoint. Never shared with hosts: they get the narrower
+  // send token (ROADIE_SERVICE_TOKEN), which only reaches /roadie/send.
+  const gatewayToken = await ensureServiceAuthToken({
+    appId,
+  })
   // Always set service auth token so local and internet control-plane paths
   // share one auth model (Hrana and future service endpoints).
   store.setState({ gatewayToken })

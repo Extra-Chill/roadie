@@ -93,12 +93,14 @@ Service installs configure Roadie entirely through the environment; nothing need
 | Variable | Purpose |
 |---|---|
 | `ROADIE_BOT_TOKEN` / `ROADIE_BOT_TOKEN_FILE` | Discord bot token. Saved on startup; the application ID is derived from it. |
-| `ROADIE_SERVICE_TOKEN` / `ROADIE_SERVICE_TOKEN_FILE` | Local service credential (`<id>:<secret>`). Authenticates the bot's local database endpoint. |
+| `ROADIE_SERVICE_TOKEN` / `ROADIE_SERVICE_TOKEN_FILE` | Send token: any secret string. Lets other OS users run `roadie send` through the running bot. Unset, the send endpoint is off. |
 | `ROADIE_LOCK_PORT` | Port of that local endpoint (bound to `127.0.0.1`). |
 
 Every secret accepts a `_FILE` variant holding the value, so it can live in a file with restricted permissions instead of a unit file. An unreadable or empty `_FILE` is a startup error.
 
-Any process that holds the service token, including one running as a different OS user, can run `roadie send` (and the other client subcommands) against the running bot. It talks to the bot over the local endpoint rather than opening the data directory, so no shared file permissions or privilege escalation are needed. Grant access by sharing the token file, for example through a group with read permission.
+A user that holds the send token but cannot open the data directory can still run `roadie send`: it posts the options to the running bot (`POST /roadie/send` on the local endpoint), which runs the send itself as the bot user and streams the output back. Attachments (`--file`) are uploaded with the request. No shared file permissions or privilege escalation are needed; grant access by sharing the token file, for example through a group with read permission.
+
+The send token only sends. It does not open the bot's database, so it cannot read stored credentials such as the Discord bot token. Sending a prompt still drives the agent and its tools, so share it as deliberately as shell access. `--pre-run`, which runs a shell command directly, is not available over the endpoint.
 
 ### Running as a service
 
