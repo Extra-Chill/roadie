@@ -1,5 +1,2092 @@
 # Changelog
 
+## [0.32.0] - 2026-10-03
+
+### Added
+- release Roadie as an installable GitHub release tarball
+- Roadie agent events and the OpenCode translator
+- service mode with orphan cleanup, restart continuation, managed installs
+- headless config and service-token local send
+- context provider hook (generic memory API)
+- composable system prompt with host overrides
+- per-channel policy for who, when, threads, directory, agent and capabilities
+- identity hook maps chat users to people with per-person capabilities
+- export per-turn actor and thread attribution to tool processes
+- ack side questions immediately while forking
+- allow disabling completion footer mentions
+- add --opencode-hostname and --opencode-port for VPS attach
+- add --question-timeout-minutes for AskUserQuestion dropdowns
+- add persistent kimaki_sleep tool for hours-long session waits
+- upgrade transcribe fallback to whisper-large-v3-turbo
+- free Whisper transcription fallback via kimaki.dev Workers AI
+- add --no-analytics and drop dead --no-sentry
+- edit scheduled task model/agent and fix thread membership
+- auto-resolve best remote ref for worktree base branch
+- allow /new-session command in threads with inherited working directory
+- show session ID alternative in parentheses alongside thread ID
+- add --all flag to project list for cross-machine discovery
+- validate file attachments and attach long prompts as prompt.md
+- prefer --thread over --session in system message for cross-machine compatibility
+- add --file option to kimaki send for attaching local files
+- show guild name in project list, add project remove command
+- add Run now button to /tasks for planned scheduled tasks
+- pass parent session id when spawning child sessions
+- add mention-prefixed thread messages to session context without triggering AI
+- allow kimaki send --notify-only to target arbitrary Discord channels
+- add `kimaki session abort` command and print session ID from `kimaki send`
+- add bindClient to plugin logger for dual file+opencode logging
+- auto-reject permission requests in subagent sessions
+- add contextual feedback message on permission timeout
+- add configurable permission timeout and enable continue on deny
+- show Discord notification when user edits or removes a queued message
+- support editing queued messages via Discord message edits
+- restrict /login and /transcription-key to admin-only when --allow-all-users is active
+- add kimaki-demo Fly.io deployment for public demo server
+- add --allow-all-users flag to bypass role/permission checks
+- add one-shot prompt support to quick agent commands (/xx-agent)
+- use git worktree list as source of truth for /worktrees command
+- shorten worktree paths and folder names
+- add --enable-skill / --disable-skill to filter injected skills
+- add --cwd option to kimaki send for reusing existing worktree directories
+- add image optimizer plugin to prevent oversized image API errors
+- detect leading /command in user prompts and route to opencode command API
+- auto-rename Discord threads from OpenCode session titles
+- run dependency install after worktree creation, queue messages during pending
+- show detected agent indicator after voice transcription
+- add /btw slash command — fork session with full context and send a new prompt
+- drain local queue immediately after question answered via select menu
+- add legal pages for Discord verification
+- reclaim external sync when user resumes from OpenCode CLI
+- validate slack install inputs with Spiceflow
+- switch live voice sessions to Gemini 3.1 Flash Live
+- convert to spiceflow RSC on Cloudflare Workers
+- typing indicator, Sync: prefix, discord-user metadata
+- clean up SQLite when Discord channels are deleted
+- add libsqlproxy package — runtime-agnostic Hrana v2 HTTP server for SQLite
+- re-register Discord slash commands on /restart-opencode-server
+- add /memory-snapshot Discord command
+- add paginated select menus for /model and /login commands
+- add `task edit <id>` CLI command for editing planned task prompt and schedule
+- unify service auth token and wire reachable wake flow
+- add /screenshare command — VNC + websockify + tunnel
+- run Linux bridge tests in real desktop session and enforce strict contract
+- switch client constructor to object input
+- switch to errore-style typed failures and rename package
+- add suspendMachine, memory, and org-level listing
+- vendor fly-admin as workspace package
+- unify VM scripts, harden Linux X11 screenshot, fix zig version
+- add UTM VM test runner and vm:exec command
+- extend gateway clients for Slack bridge tenants
+- route Slack bridge traffic through per-client runtimes
+- add KV-backed gateway client cache for Slack installs
+- add egaki and resync upstream skill docs
+- route source prisma exports by runtime
+- export plain library helpers for computer-use harnesses
+- add coord-mapped debug-point workflow
+- add CLI rendering and debug overlay helpers
+- add native scroll backend and window listing
+- simplify client routing and bootstrap preview mapping
+- scale screenshots and add coord-map remapping for pointer actions
+- route traffic by client durable object
+- add native text typing and key combo synthesis
+- simplify slack gateway routing and harden bridge runtime startup
+- ship npm-ready macOS package with real screenshot capture
+- implement real macOS mouse events and intuitive coordinate flags
+- add gateway session manager and native usecomputer scaffold
+- add block_suggestion autocomplete bridge and typed interactive payloads
+- route slash commands through modal-backed option mapping
+- improve demo bot UX and Slack interaction parity
+- add event-sourced thread typing bridge
+- add callback-based auth and explicit unauth route policy
+- add Slack parity for attachments and thread APIs
+- improve error descriptions and align thread/event parity tests
+- add message thread endpoint and structured API errors
+- e2e tests + snowflake-compatible IDs + AGENTS.md docs
+- add e2e test infrastructure for discord-slack-bridge
+- complete event, interaction, and REST spec parity
+- support all Discord message select components
+- add initial Slack bridge and digital twin foundation
+- SSE event protocol for programmatic gateway mode
+- mention installer in welcome thread
+- welcome thread, DB-only channel detection, Bun tutorial
+- support ". queue" suffix in regular messages
+- add welcome message and tutorial plugin for default kimaki channel
+- create default kimaki channel for general-purpose tasks
+- non-TTY gateway mode with JSON event protocol
+- add `kimaki bot` command group with status set/clear and install-url
+- include client_id in gateway callback URL redirect params
+- add --gateway-callback-url CLI option for custom post-OAuth redirect
+- pass current agent to system message examples and agent list
+- add HTML action buttons to worktree tables
+- add /model-variant command for quick thinking level switching
+- add base-branch and target-branch autocomplete to worktree commands
+- add explanation line for external_directory permissions
+- add /mcp command for MCP server management
+- include thread starter message in .text() and getMessages()
+- add created_at field to gateway_clients
+- add 2-hour idle threshold before stopping servers
+- always show critique diff at end of session
+- smart bot selection when multiple bots exist in DB
+- use agent name instead of 'task' prefix in Discord messages
+- delete legacy global slash commands on guild registration
+- support gateway install URL mode
+- add gateway-aware discord-install-url command
+- explain unlinked channels on explicit mentions
+- add idle runtime/server cleanup and stop-opencode-server
+- add VITEST_CPU_PROF env var for vitest cpu profiling
+- add profano — CLI tool to analyze .cpuprofile files
+- deterministic footer placeholders and typing event tracking
+- complete text() snapshot coverage in messages.test.ts
+- add text() method to ChannelScope for thread snapshot debugging
+- add multi-guild support and gateway URL override
+- add 'queue this message' voice intent detection + queueOrSendMessage abstraction
+- move log file to data directory (~/.kimaki/kimaki.log)
+- add simplify, batch, and security-review skills extracted from Claude Code CLI
+- make interrupt handling immediate and stabilize queue e2e with deterministic provider
+- abort running session at step-finish when next message is queued
+- add Phase 5 guild management routes + README
+- add cached OpenCode provider proxy workspace package
+- strengthen memory compliance with synthetic reminders and mandatory instructions
+- add Prisma relations for scheduler and forum config tables
+- add scheduled send/task automation and session origin tracking
+- gate memory features behind explicit --memory flag
+- add global memory scope with forum tagging
+- replace forum-sync.json with SQLite table, auto-create memory forum channel
+- scope memory by project channel ID and add forum sync subfolder support
+- add persistent memory folder with system prompt instructions
+- add forum markdown sync engine
+- show Discord channel name and folder name in project list
+- dismiss action buttons when user sends a new message
+- add kimaki_action_buttons tool for quick Discord button confirmations
+- add /session-id command and remove footer session id
+- add session search for past project conversations
+- warn on detached git states in branch context
+- inject synthetic parts for branch detection and idle-time awareness
+- show skill tool calls in essential tools verbosity
+- add --verbose-opencode-server flag for debugging server output
+- add errore/zele/critique skill sources and only copy SKILL.md for repo-root skills
+- add skills paths to opencode config and include skills in package
+- inject V8 heap snapshot flags into child process
+- add sync-skills script to clone and discover skills from remote repos
+- increase bash command inline display threshold from 50 to 100 chars
+- make `kimaki upgrade` restart the running bot after upgrading
+- store model variant in model tables with session/channel/global cascade
+- enable SQLite WAL mode and busy_timeout
+- add --wait flag to kimaki send command
+- add /queue-command slash command for queueing user commands
+- add /context-usage slash command
+- add `project open-in-discord` command, remove outer try/catch from project commands
+- improve quick agent command replies with previous agent, model, and already-using check
+- show current agent in /agent command reply
+- add kimaki_file_upload tool - Discord native file picker
+- show exit code and loading message for ! shell commands
+- add kimaki self-upgrade support
+- auto-detect and install OpenCode + Bun at startup with Windows support
+- add ! prefix shortcut for shell commands in Discord messages
+- centralize permission checks and enforce on all interactions
+- add /run-shell-command Discord command
+- render tables as Discord Components V2 instead of code blocks
+- move session list/read from plugin tools to CLI commands
+- auto-upgrade opencode in background on bot startup
+- add mention-only mode for channels
+- shorten session preview
+- save long session output to tmp
+- use squash merge with descriptive commit message
+- add project directory to external_directory permissions
+- add --agent and --model options, markdown tip in system message
+- add --user option to add user to thread and discord_list_users tool
+- allow worktree sessions to access original repo directory
+- add --worktree option to create git worktree for session
+- add /unset-model-override command
+- add global model setting for /model command
+- add messagediff tool via opencode plugin
+- add preview deployment environment
+- add external_directory permissions with dynamic tmpdir
+- always pass explicit model to OpenCode like TUI does
+- add no-kimaki role to block users from bot access
+- add text-and-essential-tools verbosity level
+- add discord username prefix to AI prompts and ignore non-bot mentions
+- make verbosity apply mid-session and add --verbosity default flag
+- add /compact command to trigger session context compaction
+- spawn caffeinate on macOS to prevent system sleep
+- display rate limit status in Discord when OpenCode is retrying
+- display apply_patch tool like edit with square icon and file summary
+- transfer uncommitted changes to worktree when using /new-worktree in threads
+- add /verbosity command for text-only mode
+- add /new-worktree support for existing threads
+- check for uncommitted changes before merge
+- add /enable-worktrees and /disable-worktrees commands
+- handle detached HEAD and use detached after merge
+- switch worktree to main after merge
+- add /merge-worktree command with ⬦ thread prefix
+- add add-project command and worktree submodule/deps init
+- add --use-worktrees flag for automatic worktree sessions
+- handle 2000 char limit in send command, add handoff docs
+- add /new-worktree command and rename /session to /new-session
+- migrate errors to createTaggedError factory
+- add quick agent commands and fix agent model switching
+- remove message prefixes, use database for auto-start detection
+- add --notify-only flag and fix multi-bot guild selection
+- add /remove-project command and --project option for start-session
+- unnest code blocks from lists for Discord compatibility
+- add --install-url CLI option to print bot invite URL
+- auto-create Kimaki role on CLI startup
+- add start-session CLI command for programmatic session creation
+- add --data-dir option for multi-instance support
+- support user-defined opencode commands as discord slash commands
+- graceful shutdown with SIGTERM before SIGKILL, add /stop alias
+- abort and retry with new model on mid-session model change
+- add file logging in dev mode
+- add lowercase capitalization rules to system prompt
+- auto-kill existing kimaki instance instead of failing
+- trigger notification badge on session completion message
+- add /undo and /redo commands for session history
+- add /clear-queue command to clear queued messages
+- show last assistant message in fork and fix resume newlines
+- add /queue command to queue messages during active sessions
+- add /model command and fix interaction timeouts
+- add permission request handling with /accept, /accept-always, /reject commands
+- add SIGUSR2 restart handler and batch assistant messages
+
+### Changed
+- db migration tests use their own temp dir instead of cli/tmp
+- root test script generates schema clients before running unit tests
+- one /fork command replaces /btw and the btw suffix
+- drop git submodules and the libsqlproxy copy for their npm releases
+- Roadie-owned session operations on the agent backend seam
+- runtime event handlers and part rendering run on Roadie agent events (#55 part 3)
+- wait for /queue to enqueue before asserting in the abort test
+- event buffer and derived session state run on Roadie agent events
+- scope the service token to a send endpoint instead of database access
+- keep test lock ports below the OS ephemeral port range
+- remove /undo and /redo
+- retry e2e data dir removal while the agent server finishes writing
+- remove external session sync into Discord
+- unique e2e channel ids so parallel files never share a lock port
+- chat platform seam for the session runtime's thread operations
+- agent backend seam owns the event stream and restarts
+- bound the plugin-loading health wait and surface server stderr
+- thread working directory replaces worktree bindings
+- remove the remaining kimaki.dev references
+- stop bundling skills
+- subrouter as a pinned dependency; retire legacy OAuth rotation
+- warm the OpenCode instance before e2e suites run
+- remove unused upstream packages and docs
+- remove tunnels, screenshare, vscode, share, memory snapshots and the game tutorial
+- clean break from Kimaki install compatibility
+- hand worktree create and merge to host tooling
+- remove voice support
+- remove Kimaki's MEMORY.md system
+- remove forum sync
+- remove hosted gateway mode
+- remove critique.work diff uploads
+- remove Strada product analytics
+- give vitest runs a temp SUBROUTER_HOME
+- route session runtime through an AgentBackend seam
+- rename Kimaki to Roadie with full Kimaki compatibility
+- kimaki@0.31.0
+- require fresh clone before reading
+- system prompt: show found sessions as Discord thread links
+- remove proactivity rules from system prompt
+- Rebalance agent guidance and correct CLI database instructions
+- Reduce the fixed Kimaki system prompt for new sessions
+- Move task-specific Kimaki guidance into an agent reference
+- Document queue and btw suffixes for sent follow-ups
+- Detect prompt cache misses on the first btw fork reply
+- Queue btw forks after earlier prompts finish
+- Post the /queue ack inside the serialized enqueue so drain replies always target it
+- Reply silently to the queuing message when a queued prompt starts
+- Honor the queue suffix in /new-session and /queue prompts
+- Pin session system prompt so btw and fork reuse the prompt cache
+- Honor the queue suffix for every kimaki send path
+- Use @strada.sh/sdk 0.8.0 for analytics
+- Use @strada.sh/light for anonymous CLI analytics
+- Discard experimental footer re-add notification flow
+- Keep multiline progress text full-width and refresh reply snapshots
+- Use derived labels when rendering child tool calls
+- Label child tools only after task metadata arrives
+- Show estimated input mix in context usage
+- kimaki@0.30.1
+- Link the parent thread in threads started with --parent-session
+- Make /abort also clear the thread /queue
+- Show prompt cache miss notice after the first reply of each message
+- Show tool calls and bot status lines as Discord subtext
+- Bump subrouter to 7a54825 for Claude Code user-agent on OAuth token requests
+- Mark Discord system lines with -# subtext instead of quotes or diamonds
+- Show system prompt diff in prompt cache miss notices and save .patch files
+- Add getPromptCacheClear derivation for mid-session prompt cache misses
+- Advertise Claude Code 2.1.280 on Anthropic OAuth requests
+- Make footer mentions opt-in with --enable-footer-mentions
+- Unquote the last Discord text when a turn ends.
+- Move session-read duration after the last assistant reply
+- Keep queued Discord messages waiting while a task subagent is still running.
+- Drop per-turn session-read frames; keep one user duration
+- Compress kimaki session read markdown for later agents
+- Document opensrc cache refresh behavior
+- Update voice transcription model IDs
+- Stop session waits at pending questions
+- Keep autonomous task runs out of the sidebar
+- Resume aborted sessions with question answers
+- kimaki@0.29.0 and @kimaki/automode@0.2.0
+- Enrich `kimaki session list` with status, tokens, and --all
+- Keep /queue messages in SQLite across bot restarts.
+- Give each Kimaki machine its own Discord group.
+- Tell agents to skip session title on the first turn.
+- Show Discord thread ID in /session-id.
+- Prevent synthetic user context from leaking into Discord
+- Refresh the lockfile after kimaki@0.28.0.
+- Read Subrouter auth.json in the plugin-loading e2e test.
+- Show the OpenCode SDK error when session create fails.
+- Keep Discord sessions from being reclaimed as TUI sync.
+- Keep /btw forks from freezing Discord updates in the parent thread.
+- Reject OpenCode 2.x before Kimaki starts the shared server.
+- Ignore the local nested Subrouter OpenCode v2 plugin checkout.
+- Quote short Discord text immediately and restore readable prefixes.
+- Drop the unpublished local-channel setup changeset.
+- Add a changeset for quieter Discord agent turns.
+- Add a private read-only React node-graph package.
+- Silence footer notifications after sleep turns
+- Require local channel ownership for Discord setup commands.
+- Limit kimaki session search to the last 14 days by default.
+- Flush live Discord tool parts during a turn.
+- Replace Discord line prefixes with CJK radicals.
+- Quote the new-session model banner in Discord.
+- Fail `kimaki project add` when the folder is already registered.
+- Bump Traforo for hidden kimaki.dev backlinks
+- Bump Subrouter for provider timeout retries
+- Bump errore after compressing the SKILL.md
+- Add a Discord colored text generator to the website
+- Add OpenCode v2 Kimaki plugin migration plan
+- Document Discord leftover slash text filling the first option
+- Call matchThinkingValue directly in session variant apply
+- Separate Discord text and tool parts with a blank line
+- Hold Discord parts until compaction summary identity is known
+- Remove the standalone oscilloscope package.
+- Add an optional variant option to xxx-agent slash commands.
+- Soften the homepage Discord playground window corners.
+- Replace CSS oscilloscope knobs and switches with image textures.
+- Prefer known users over thread member fetch in footers.
+- Skip bot mentions in final session footers.
+- Soften the kimaki tunnel system prompt.
+- Match homepage H1 to title without repeating Kimaki.
+- Require explicit voice chat creation and preserve source sessions
+- Quote the homepage title so YAML keeps Kimaki as the page title.
+- Add voice routing to side chats and fresh sessions
+- Add interactive analog oscilloscope recreation
+- Tell agents the kimaki_sleep tool result is not a wake
+- Tell agents to upload Discord images instead of markdown
+- Rewrite the homepage Discord playground around real Kimaki sessions
+- Add e2e coverage for leftover abort text before a question dropdown
+- Show ignored plugin notices as silent bot messages
+- Explain that btw: titles are side sessions, not duplicates
+- Assign the bash tool jsonSchema from a Zod object
+- Put a Separator on both text-and-tool transitions
+- Restore default session footers and mention the thread creator
+- Polish the homepage Discord playground and add a Mintlify dither field.
+- Add an interactive Discord playground to the homepage hero.
+- Advertise description and hasSideEffect on the built-in bash tool
+- Turn session footers off by default and ping in the final reply
+- Limit the ingress FIFO to one-shot agent and cmd slash calls
+- Serialize agent and model preference writes with follow-up Discord messages
+- Replace diamond text prefixes with a separator before tools
+- Bump Subrouter for encrypted reasoning replay
+- Move undo-redo e2e off lock port 51767 held by workerd
+- Return Discord 404 for unknown channels through the gateway
+- Bump Traforo after dropping Playwriter tunnel routes
+- Show the live Subrouter model in /model and footers
+- Bump Subrouter for live session routes and GPT apply_patch
+- Add a cpuprof stdin command for live CPU profiles
+- Skip interrupt abort for ignored context notices
+- Add kimaki session search --all for every local project
+- Harden part_messages orphan cleanup against NULL parent keys
+- Scheduled task section: drop the archive-the-thread instruction
+- Delete orphaned part_messages rows on database startup
+- Add scheduled task context to the session system message
+- Allow omitting --user on scheduled tasks and clear it with task edit --user ''
+- Harden OpenCode auto-mode skip and classifier paths
+- Add OpenCode auto-mode plugin that gates tool execution
+- Advance Subrouter for identity, stream errors, and notices
+- Ignore Subrouter display-only fallback notices in Discord sync
+- Use the current Claude Code client identity
+- kimaki@0.27.0
+- make packaged skill sync reliable
+- align Subrouter plugin integration expectations
+- align documentation dependencies and submodules
+- reduce slow and redundant integration coverage
+- Document ground-truth session bug reports
+- Drop stale questions after a newer user turn
+- Avoid an extra model-list request for the session banner
+- Stop aborting task subagents on provider rate limits
+- Keep next kimaki publish typechecking after the opencode-go rename.
+- Point the traforo submodule at close-handshake and docs layout commits.
+- Point the subrouter submodule at the opencode-go provider rename.
+- Show preceding assistant text before the question dropdown
+- Link the self-restart hang recovery changeset to #190
+- Add Kimaki visual design notes for generated graphics
+- Document kimaki-demo Fly deploy and bump demo image pins
+- Print Error.cause chains in Kimaki logs
+- Always pass --hostname so OpenCode cannot bind 0.0.0.0
+- Mention the thread creator in the final session footer
+- Validate --model against the live OpenCode model list
+- Migrate leftover session_sleeps columns on existing databases
+- Use OpenCode session title as the only source of truth
+- Show git command, exit code, and stderr when merge-worktree fails
+- Add kimaki session title for OpenCode and Discord thread names
+- Add session editors tracking for file edits
+- Count task child session tokens in Strada tokens_used events
+- Show queued subagent tasks in Discord
+- Expose worktree merge CLI and auto-retry conflicts
+- Simplify worktree identity validation
+- Add Subrouter subscription routing to Kimaki
+- Add squash strategy to worktree merges
+- Clean failed worktree workspace state
+- Add active session listing for agent coordination
+- Bump subrouter submodule: @subrouter/cli rename, docs site, merged AGENTS.md
+- Bump subrouter submodule: codex payload fixes + AGENTS.md
+- npm-package skill: ban rm -rf and any delete from build scripts
+- Add subrouter as submodule
+- Recommend .ts/.tsx extensions in relative source imports
+- simplify sleep delivery to one retry path and no stored thread
+- Pin force-kill to the child generation that received the signal
+- Force-kill the bot process when self-restart hangs on process.exit
+- kimaki@0.26.0
+- Save Discord text attachments locally instead of filling context
+- Declare spiceflow vite peer in packageExtensions
+- Require question and button tools after all text
+- Add --pre-run and non-overlapping scheduled tasks
+- Track billed token usage on session idle for Strada
+- Show localhost next to kimaki tunnel URLs
+- Refresh /agent even when the same agent is already selected
+- Add xAI (Grok) multi-account OAuth rotation
+- Allow every directory by default, remove /add-dir
+- restore /model-variant and /clear-queue slash commands
+- kimaki@0.24.0
+- add changeset for missing analytics module source-build fix
+- report website server and browser errors to strada
+- add anonymous product analytics to the cli
+- add @strada.sh/sdk dependency to cli and website
+- free Discord command slots by moving secondary actions to buttons
+- improve abort command discoverability
+- support disabling default channel creation
+- update demo to kimaki 0.23.1
+- remove stale skills from published bundles
+- clarify OAuth callback paste action
+- Remove Anthropic OAuth accounts on permanent refresh failure
+- /clear-queue now lists the cleared messages
+- Pre-install opencode in demo Dockerfile to avoid runtime fetch failures
+- enable Exa web search tool by default for all kimaki sessions
+- Delete batch and simplify skills
+- Delete security-review skill
+- Skip recreating default kimaki channel if user previously deleted it
+- omit scheduledTaskId from one-shot task markers
+- delete one-shot scheduled tasks after they run
+- Add kimaki merge-worktree instruction to worktree system message
+- add task deduplication guidance to system message
+- scheduled tasks: prefer short prompts with task md files in repo
+- kimaki@0.22.0
+- add Channel column to /tasks command table
+- kimaki@0.21.0, @kimaki/opencode-plugin@0.1.0, discord-digital-twin@0.1.1
+- stabilize full CLI suite
+- remove critique review command from system message
+- Add dedup guard to @kimaki/opencode-plugin
+- Add @kimaki/opencode-plugin package for standalone Anthropic OAuth
+- add pre-publish checklist rule: sync skills before npm publish
+- kimaki@0.20.1
+- fail fast when files exceed Discord upload size limit
+- add description field to bash tool system prompt as TypeScript interface
+- show custom/MCP/plugin tools in default verbosity mode
+- kimaki@0.19.0
+- compact session markdown export: hide tool outputs by default
+- kimaki@0.18.0
+- add deploy website after publish instruction to AGENTS.md
+- use OpenCode workspace SDK for worktree management
+- add comprehensive worktree e2e tests for channel-level and auto-worktree flows
+- Add kimaki.dev docs fetching instructions to demo AGENTS.md
+- harden gateway reconnect restart to survive sustained network outages
+- Add inference proxy worker for Kimaki Pro
+- remove spiceflow override, keep packageExtensions for @holocron.so/vite
+- add local prisma dev database for website development
+- document #Thread Title syntax for finding sessions by thread title
+- restore ThreadChannel question types
+- add cache drift detection plugin (log-only)
+- add --no-auto-upgrade CLI flag to disable background auto-upgrade on startup
+- KIMAKI_BOT_TOKEN env var takes priority over saved DB credentials
+- add `kimaki bot token` command and CI automation docs
+- update @holocron.so/vite to 0.21.0, reduce hero dot color to 70% opacity
+- kimaki@0.17.1
+- reserve text budget for truncation notice, harden groupBySeparator edges
+- skip voice channel join when no Gemini API key is configured
+- cover btw fork model preservation
+- add xAI grok-composer-2.5-fast model to default injected opencode config
+- redesign install-success page: minimal, no card/shadow, Vercel-style
+- kimaki@0.16.0
+- split long --notify-only messages instead of attaching as file
+- enable gateway mode option in onboarding wizard
+- kimaki@0.15.0
+- pass parent session ID into btw-forked session context
+- nn
+- rename "Built by Tommy" section to "Battle tested every day"
+- filter disabled skills from Discord slash command registration
+- show clickable source thread link in fork/btw new thread messages
+- remove broken subagent permission auto-reject code
+- force exit after 50 failed gateway reconnect attempts
+- cover subagent permission abort messaging
+- Parallelize async operations in /btw and /new-worktree commands
+- simplify cast from as unknown as to as any
+- Update model-switching.mdx
+- extract getOpencodeServerAuthHeaders helper, deduplicate auth logic
+- pass OPENCODE_SERVER_PASSWORD to all createOpencodeClient call sites
+- collapse single-statement instanceof Error blocks to one line
+- replace deprecated tryAsync with .catch()
+- kimaki@0.14.0
+- update pnpm lockfile and website vite config formatting
+- update new-skill SKILL.md repo format to owner/repo
+- add worktree base branch and commit discovery instructions to system message
+- clarify user is probably away in timeout message
+- Add GitHub PR template and issue templates (bug report + feature request)
+- prevent @username mentions in scheduled task prompts
+- replace per-thread SSE listeners with single global event stream
+- add full response body to ensureSession error/warn logs
+- add troubleshooting docs page for /restart-opencode-server and /upgrade-and-restart
+- Add strada repo to skills sync sources
+- show thread notifications when queued messages are edited or removed
+- Replace Three.js DottedVideoBackground with VideoBackgroundShader from @holocron.so/vite/mdx
+- add user input prefix for button clicks, question answers, and file uploads
+- Gateway 503 for stale auth + defense-in-depth REST token guard
+- Block discord.js REST token nullification on 401
+- Update gateway-proxy submodule: stale DB timeout 30s → 120s
+- kimaki@0.13.1
+- update @holocron.so/vite from ^0.16.0 to ^0.17.1
+- Update README.md
+- refresh e2e expectations for tool output
+- await goke parser result
+- Update cli.ts
+- update kimaki-demo dockerfile, traforo submodule, and changeset issue ref
+- improve ensureSession error logging with full diagnostic context
+- change btw shortcut from prefix to suffix detection
+- use caffeinate -s to prevent sleep on lid close (AC power only)
+- Update traforo submodule pointer
+- make state-changing slash commands non-ephemeral so all users see them
+- Add changeset for --allow-mention flag
+- Add --allow-mention CLI flag to control which Discord mention types the bot can trigger
+- move all doc pages under /docs/ URL prefix
+- Add holocron to skill sync sources
+- Remove large "Kimaki" title from website hero section
+- fall back to default agent instead of throwing when agent not found
+- kimaki@0.12.0
+- add prune-inactive-guilds maintenance script
+- update traforo submodule: tighter port ignore patterns
+- add full HTML document shell to /slack-install layout
+- remove duplicate docs/ .md files, keep website/src/docs/ .mdx as single source
+- add AGENTS.md to kimaki-demo with demo reminder instructions
+- enable allowImportingTsExtensions in website tsconfig
+- revert dot sizes to original (dotSize: 6, minDotSize: 1)
+- add Three.js hero section to docs website
+- add hidden class, convert to lists, remove emdashes
+- update traforo submodule: fix inspector port detection
+- add holocron docs to kimaki website
+- remove kimaki opencode passthrough command
+- add --disable-sync flag, per-directory timeout, and background sync docs
+- revert pinned opencode binary
+- revert pinned opencode binary, restore global install check
+- serialize Discord polls and forwarded messages as text
+- serialize Discord embeds as text in user messages
+- test quick-agent prompt channel isolation
+- make state-changing slash commands visible to all users in the channel
+- Update fly.json
+- kimaki@0.11.0
+- add text-to-speech CLI command (`kimaki tts`)
+- add peer dependencies and SSR bundle exclusion sections to npm-package skill
+- kimaki@0.10.2
+- Update AGENTS.md
+- Update opencode.ts
+- pin opencode binary to v1.14.41, download from GitHub releases on first run
+- kimaki@0.10.1
+- switch back from global event stream to per-directory event.subscribe
+- remove skills from cli
+- clarify GlobalEvent-to-Event cast comment with Sync* event details
+- Update thread-session-runtime.ts
+- Update pnpm-lock.yaml
+- Let session wait finish on questions
+- Add session wait command
+- Resolve channel mentions without Discord fetches
+- Update traforo tunnel helper
+- Allow channel references to grant project access
+- Support cwd subfolders for Kimaki sends
+- Clarify Kimaki session routing guidance
+- Clean CLI package build output
+- Migrate Kimaki CLI database to Drizzle
+- prefer per-commit critique URLs when user asks for diff after commits
+- kimaki@0.9.1
+- Allow tunnel port detection for dev server commands
+- Quiet channel creation logs
+- Document pending Kimaki release changesets
+- Split terminal CLI commands out of entrypoint
+- Extract email from OpenAI JWT, add debug logging to plugin
+- Extract multioauth commands to separate file with goke .use()
+- Unified multi-provider OAuth rotation plugin
+- Remove redundant type assertions, property checks, and annotations
+- Add isTruthy type guard in forum-sync to replace inline type predicates
+- Use exported `Hooks` type from @opencode-ai/plugin directly
+- Remove redundant `as Error` casts and explicit error type annotations
+- Add `void` prefix to intentionally-unhandled promises
+- Remove unnecessary `as TextChannel` casts across command handlers and utilities
+- move personal skills to global opencode config
+- Make Discord member lookup optional
+- Add Discord thread starter content probe
+- Handle Discord messages without readable content
+- Persist synced Discord thread names
+- Respect manual Discord thread renames
+- kimaki@0.8.1
+- Add null guards for Bun .json() across all fetch call sites
+- Point submodules to their tracking branches
+- Resume idle sessions after permission replies
+- Use tsx for CLI development
+- Update gateway proxy for Bun startup
+- Use single quotes in kimaki send examples
+- Keep CLI JSON output pipe-safe
+- Require Kimaki callouts for important notices
+- Document skill repository frontmatter
+- Apply add-dir permissions to busy sessions immediately
+- Update errore submodule instructions
+- Simplify agent instructions source
+- Document root skills folder
+- Keep synced skills out of root skills
+- Add last-sessions command
+- show model and agent banner for opencode commands
+- show model and agent as first message when creating a new session thread
+- kimaki@0.7.1
+- poll hrana eviction for up to 10 seconds
+- avoid SIGKILL during hrana eviction
+- sync spiceflow skill with typed fetch rules
+- add sigillo skill
+- assume bundled skills always exist in cli
+- inline skill copy into package scripts
+- make root skills the canonical source
+- sync skill docs from upstream repos
+- remove system prompt drift toast plugin
+- add /fork-subagent thread for subagent sessions
+- Improve callout guidance in the system prompt
+- Simplify callout color guidance in the system prompt
+- Add callout containers to Discord markdown rendering
+- replace tmux guidance with bunx tuistory flows
+- sync upstream terminal and automation skills
+- support queue as a standalone final line
+- readme info for npm packages
+- Update new-skill and npm-package skills: prefer root README in workspaces
+- Make /add-dir default to all directories
+- Track OpenAI transcription requests in Kimaki
+- Relax queue e2e hook timeouts for CI
+- Revert "add bash tool for GenAI worker with remote skill loading"
+- kimaki@0.6.0
+- centralize appendToastSessionMarker so plugin toasts route to Discord
+- Update anthropic-auth-plugin.ts
+- Rebrand opencode → openc0de in Anthropic system prompt and allow ~/.config/openc0de directory
+- allow common home toolchain caches by default
+- replace gitchamber with opensrc
+- remove openc0de thing
+- ignore unscoped Discord toasts
+- abort rate-limited subagent sessions
+- simplify subagent rate-limit fallback plugin
+- add subagent rate-limit model fallback plugin
+- kimaki@0.5.0
+- prevent worktree sessions from editing the main checkout
+- update traforo submodule for frozen lockfile installs
+- update opencode-injection-guard submodule for CI
+- simplify /add-dir permission updates
+- add /add-dir session permission updates
+- kimaki@0.4.104
+- kimaki@0.4.103
+- preserve btw: and Fork: prefixes during OpenCode session title renames
+- add pnpm workspaces and CI sections to npm-package skill
+- support punctuation separators in btw prefix detection
+- agents
+- remove profano
+- delete betterstack thing
+- test sync /plan-agent model snapshot
+- show model in /xx-agent quick-switch reply
+- Add BTW message shortcut for side-question forks
+- sync skills: add profano skill and update npm-package skill
+- clarify scheduled task no-op cleanup
+- make /new-worktree use the current local HEAD by default
+- revert GenAI bash tool extraction
+- extract GenAI bash tool and cache remote skills
+- dedupe repeated question tool requests
+- improve skill sync reliability and refresh skill docs
+- add positional clear-queue support
+- add anthropic current account command
+- kimaki@0.4.102
+- allow opensrc directory in opencode defaults
+- kimaki@0.4.101
+- refactor anthropic prompt rewriting
+- add opencode go to providers for login
+- Extract frozen memory overview plugin
+- remove lintcn. I will use my global config instead
+- remove brittle opencode command snapshots
+- refresh cli send thread command snapshot
+- kimaki@0.4.100
+- kimaki@0.4.99
+- migrate stored gateway proxy urls from xyz to dev
+- kimaki@0.4.98
+- remove downlevelIteration from shared tsconfig
+- bump traforo submodule to kimaki.dev routing commit
+- regenerate AGENTS.md after kimaki.dev instruction updates
+- bump gateway-proxy submodule for kimaki.dev defaults
+- update bridge and onboarding docs to kimaki.dev
+- use kimaki.dev as CLI and onboarding default domain
+- switch website defaults to kimaki.dev with xyz fallback
+- Prefer current-agent kimaki send examples
+- Add /vscode browser workspace tunnel
+- delay system prompt drift detection
+- remove latestPromptPath
+- kimaki@0.4.97
+- refine agentmap scope for initial kimaki context
+- simplify worktree base selection to HEAD
+- normalize generated agents markdown whitespace
+- persist anthropic account identity across oauth rotation
+- disable gateway onboarding mode. fucking discord verification process takes forever
+- expose anthropic account CLI commands
+- scope anthropic plugin toasts to the active session
+- kimaki@0.4.96
+- scope marked toasts to the matching session
+- simplify saved system prompt filenames
+- refine system prompt drift toast copy
+- kimaki@0.4.95
+- kimaki@0.4.94
+- Truncate log args to 1000 chars to prevent giant log output
+- Update system-prompt-drift-plugin.ts
+- add system prompt drift detector plugin
+- soften worktree directory reminder wording
+- kimaki@0.4.93
+- improve merge-worktree conflict resolution guidance
+- show toast notification on Claude account rotation
+- clarify agent switches apply on the next thread message
+- document running opencode commands and switching agents via kimaki send
+- increase footer truncation limit to 30 chars
+- kimaki@0.4.92
+- truncate folder and branch names to 15 chars in footer
+- ignore subagent sessions in external sync
+- kimaki@0.4.91
+- remove automatic Kimaki Discord role reconciliation
+- reduce external sync log noise
+- sync bundled skill docs
+- refactor anthropic auth state handling
+- add Discord reply context to prompt ingress
+- bring back colored clack logger output
+- rename discord/ folder to cli/
+- tighten MEMORY.md prompt instructions for conciseness
+- simplify MEMORY reminder to latest assistant reply
+- detect /command on any line instead of stripping prefixes
+- Update package.json
+- /merge-worktree: rebase instead of squash
+- relax flaky voice question thread snapshot
+- stabilize voice question session assertions
+- update voice question queue snapshots
+- remove terminal styling deps from shared logger
+- use single root prepare script with --filter instead of per-package prepare:build
+- Update new-skill: synced skills warning, better README example, singular title
+- Rewrite new-skill SKILL.md as a best-practices guide for creating skills
+- worktree merge: opencode/kimaki-see-that-right-now-voice-messages-have-the-ability-to-choose-if-to-queue-the-me
+- Update goke to ^6.3.2
+- Replace `e as Error` casts with proper Error wrapping using cause chains
+- Add multi-account Anthropic OAuth rotation
+- Update bin.ts
+- auto enable auto-restart
+- Delete bin.sh
+- remove undici use
+- Remove undici, @sentry/node; move @types/ws to devDependencies
+- remove fragile bot-message count assertions and add null guard
+- update typing e2e assertions to use position-based checks
+- Update dependencies: replace js-yaml with yaml, replace @discordjs/opus with opusscript, update @libsql/client, marked, domhandler, htmlparser2
+- Remove @openauthjs/openauth dependency, inline PKCE helper
+- kimaki@0.4.90
+- Wrap /btw prompt with side-question framing so forked session only answers the question and does not continue the parent task
+- Add --projects-dir flag to `project create` subcommand
+- Make CI-failing tests more robust
+- Strip git branch context from markdown snapshots
+- Bump retry to 3, revert echo wait to 500ms delay
+- Increase CI-sensitive timeouts from 4s to 8s in question tests
+- Remove frozen-lockfile, re-enable all tests, skip existing repos
+- Exclude thread-message-queue from CI (reply ordering race)
+- Exclude 2 question-interaction test files from CI
+- Add --retry 2 for flaky e2e tests on CI
+- Add CI workflow for integration tests
+- Allow CLI-injected self-bot prompts without Kimaki role
+- kimaki@0.4.89
+- Normalize existing-thread CLI prompts to the start marker
+- Update discord test snapshots after full suite refresh
+- Add per-session injection guard support to kimaki send
+- Revert "add one-shot add-directory preapproval"
+- Revert "add thread-scoped directory preapproval command"
+- migrate deterministic provider to AI SDK v3
+- kimaki@0.4.88
+- add e2e test for kimaki send --channel thread creation race
+- add failing e2e test for missing finish field on opencode message.updated events
+- Add opencode-injection-guard as kimaki dependency
+- kimaki@0.4.87
+- add gitchamber skill to sync sources
+- kimaki@0.4.86
+- kimaki@0.4.85
+- kimaki@0.4.84
+- remove forced gateway relogin (6fab3fd)
+- add --projects-dir flag to set custom project directory
+- update traforo submodule for port suffix tunnel ids
+- harden screenshare tunnel sharing defaults
+- Update screenshare start message with privacy warning and stop command hint
+- Add critique annotations docs to skill and system prompt
+- expose --kill flag on kimaki tunnel CLI and update all usage examples
+- kimaki@0.4.83
+- Update vite.config.ts
+- logos
+- Add standalone Better Stack traces app
+- use global session list endpoint, reduce API calls from N*2 to 1+active
+- use normal ThreadSessionRuntime for external sessions
+- Update sync-skills.ts
+- stabilize e2e timeouts and relax non-deterministic snapshots
+- add bot recovery after proxy restart e2e test
+- bump e2e timeouts for abort-and-wait settle overhead
+- Add external OpenCode session polling sync
+- remove prettier
+- unify worktree creation into shared createWorktreeInBackground helper
+- Add dependency install instructions to anthropic auth plugin
+- Update kitty-graphics-agent to ^0.0.5
+- Replace kitty-graphics-agent workspace package with npm dependency
+- Move usecomputer to standalone repo: github.com/remorses/usecomputer
+- Remove zeke folder
+- Move SLACK_ADAPTER_DEEP_DIVE.md to slop/
+- Remove zoke file
+- Remove lintcn folder
+- usecomputer 0.1.2: remove all unimplemented TODO command stubs
+- usecomputer@0.1.1
+- fix Linux build — omit -Dtarget for native host builds
+- fix usecomputer CI — pin zeke hash, drop retired macos-13 runner
+- use matrix strategy with per-platform runners
+- add usecomputer build and publish workflow
+- restructure with progressive disclosure
+- Update errore submodule: untrack opensrc/ files
+- remove unnecessary in operator usage
+- suppress notifications for action buttons, question dropdowns, and footer when queue has next item
+- add noUncheckedIndexedAccess to npm-package skill tsconfig
+- libsqlproxy@0.1.0
+- Create SKILL.md
+- omit session title on creation so OpenCode auto-generates a summary
+- kimaki@0.4.82
+- increase IPC stale TTL and runtime idle sweeper to 24 hours
+- rename opencode-plugin to kimaki-opencode-plugin
+- Migrate no_unhandled_error rule to subfolder layout
+- kimaki@0.4.81
+- kimaki@0.4.80
+- wrap long lines in prompt.md file attachment for Discord readability
+- simplify anthropic auth plugin: 1242 → 688 lines
+- move anthropic OAuth auth plugin into discord package
+- add `session discord-url` CLI command
+- add lintcn dependency and lint script to discord package
+- improve voice attachment detection and guard against empty prompts after transcription
+- add multi-tenant best practices and examples to fly-admin README
+- add lintcn package, .lintcn project rules, and lintcn skill
+- update npm-package skill: remove typescript pinning rule, add .gitignore section
+- set KIMAKI=1 env var when spawning opencode server process
+- kimaki@0.4.79
+- updates
+- remove refs to hono
+- Use error.stack instead of error.message in internal logger calls for easier debugging
+- tweak /tasks: rename button to Delete, increase prompt truncation to 240 chars
+- unified select handler with plugin prompt support
+- add /tasks Discord slash command
+- Suppress footer notification when queue has pending messages
+- Rename Slack bridge WebSocket path from /gateway to /slack/gateway
+- Update task-runner.ts
+- Bump submodules: errore, gateway-proxy, traforo
+- Use timing-safe token comparison in hrana server auth
+- Add --permission flag to kimaki send for per-session tool restrictions
+- profano changes. --sort
+- Improve plugin state management: encapsulate state, extract pure derivation functions, merge onboarding
+- Simplify error handler and onboarding status response
+- improve /merge-worktree UX: clarify safety in description and error message
+- Refactor opencode plugin into focused modules + add working directory tracking for worktrees
+- Migrate website from Hono to Spiceflow
+- Add spiceflow to synced skills list
+- update gateway-proxy submodule: graceful Result for wait_until_ready
+- update gateway-proxy submodule: fix missed-notify race in shard Ready primitive
+- update gateway-proxy submodule: shard READY gate for client connections
+- Revert "perf(discord): skip GUILD_CREATE wait on startup with waitGuildTimeout: 0"
+- optimize startup time for scale-to-zero cold starts
+- kimaki@0.4.78
+- type-safe CLI framework for Zig + usecomputer standalone executable
+- Update discord-bot.ts
+- kimaki@0.4.77
+- switch bridge to direct napigen methods with real-native tests
+- Create native-click-smoke.test.ts
+- refresh e2e snapshots for agent and queue flows
+- Create README.md
+- Create interactions.e2e.test.ts
+- split node runtime and make gateway URLs origin-driven
+- replace Record<string,unknown> with Slack SDK response types
+- update queue-advanced snapshots for tool-calls footer exclusion
+- add agent switching instructions to system prompt
+- add footer dedup tests for multi-step tool chains + fix flaky e2e port collisions
+- replace custom Slack types with @slack/web-api SDK imports
+- generate schema.sql from prisma instead of hand-writing SQL in applySchema()
+- add e2e test for worktree lifecycle — session responds after /new-worktree switches sdkDirectory
+- npm-package skill: switch from .js to .ts/.tsx import extensions
+- wrap background ensureDefaultChannelsWithWelcome in try/catch
+- kimaki@0.4.76
+- remove per-channel log spam on startup, print only count
+- split typing interrupt test for parallel execution
+- rename deploy script to deployment in website/package.json
+- replace 3s sleep with polling in question tool test
+- support more punctuation in queue suffix pattern
+- strengthen question tool test with regression assertion
+- Update onboarding-welcome.ts
+- add e2e test for user text message answering pending question tool
+- kimaki@0.4.75
+- more clear critique urls info for dumb agents
+- Update onboarding-tutorial.ts
+- update gateway vs self-hosted select labels
+- improve onboarding tutorial: touch controls, server port, tmux robustness, diff URL, formatted suggestions
+- remove hint properties from clack select options and drop experimental label from gateway mode
+- sync-skills: only copy SKILL.md, never full skill directories
+- npm-package skill: move chmod +x into build script, simplify prepublishOnly
+- npm-package skill: add bin field section with chmod +x and shebang instructions
+- npm-package skill: make prepublishOnly script explicit with example
+- npm-package skill: add sections for runtime version reading, path resolution, and dev detection
+- -u
+- simplify onboarding flow — extract resolveCredentials, replace isQuickStart
+- Update hrana-server.ts
+- undo bot status commits for clean recommit
+- move branch injection to last synthetic part, lowercase format
+- rename commands/worktree.ts to commands/new-worktree.ts
+- debounce typing re-pulses
+- Update bin.js
+- change agent commands wording
+- update permission typing snapshot
+- share one opencode server across projects
+- compress heap snapshots with gzip and disable monitor in production
+- kimaki@0.4.74
+- replace plugin Discord REST tools with CLI commands
+- add e2e tests for thread model isolation on channel agent change
+- wait for aborted assistant update before interrupt resume
+- kimaki@0.4.73
+- better getDiscordRestApiUrl() log
+- disable sentry
+- back to use hooks after for creating the gateway clients
+- simplify user-defined commands log to only show count
+- remove request-local guild closure in OAuth callback
+- Avoid duplicate context usage notice before the footer
+- Gate queue draining behind real run completion
+- add todo test for interrupt plugin bug: user message dropped after abort
+- Update .gitignore
+- usecomputer idea
+- rename gateway install endpoint to /discord-install
+- migrate gateway onboarding to better-auth state flow
+- Group consecutive same-author messages in text() and fix snapshot placement
+- use Prisma compilerBuild = "small" for smaller WASM
+- reduce website CF Worker bundle from 7100 KiB to 2916 KiB (59%)
+- batch CLI flag store.setState calls into single call
+- use Prisma enums for BotMode, VerbosityLevel, WorktreeStatus, ChannelType
+- remove git diff capture/apply from worktree creation
+- move worktree logic into a reusable module
+- move message preprocessing from discord-bot into runtime's serialized chain
+- add tracked real task-events fixture for subtask derivation
+- derive subtask labels from event-indexed task metadata
+- rename gateway app id env
+- remove channel app-id scoping from channel mappings
+- Add gateway onboarding sync delay and update proxy integration
+- Use guild-scoped slash command registration in gateway mode and improve auth rejection visibility
+- bump discord-digital-twin to 0.1.0
+- cover interrupt runtime and remove dead reducer path
+- replay real opencode interrupt events
+- Revert "fix: harden gateway failure handling and typing diagnostics"
+- replace event-stream inline snapshots with explicit assertions
+- simplify opencode session jsonl format
+- drop unrelated cli/jsonl log refactor from event-order commit
+- persist deterministic same-millisecond session event order
+- add runtime event snapshot export and compact buffered opencode events
+- derive queue dispatch gating from event buffer and expand typing-stop e2e coverage
+- stabilize queue-ordering e2e semantics and anchored assertions
+- simplify typing lifecycle to event-derived reconcile loop
+- make typing start non-blocking in serialized runtime path
+- phase 5: remove phase-polling tests and document event-sourcing
+- phase 4: remove runController from thread runtime
+- Update voice-message.e2e.test.ts
+- phase 3: remove mirrored run lifecycle store state
+- replace runtime lifecycle decisions with event-stream derivation
+- phase 0: add pure event-stream state derivation module + fixture tests
+- stop typing indicator before sending footer message
+- add apply patch as essential tool
+- improve e2e test infrastructure and stabilize suites
+- add real cached-provider event capture suite and fixtures
+- refresh e2e snapshots after queue and voice stabilization
+- stabilize discord e2e infrastructure under parallel runs
+- replace onTestFailed log dumps with opt-in KIMAKI_TEST_LOGS env var
+- Update event-driven-state-simplification.md
+- add deterministic event-stream jsonl fixtures
+- cap vitest workers to 4, split queue-advanced tests, await startTyping
+- rename [typing] to [bot typing] in text() snapshots
+- add inline text() snapshots to all e2e tests
+- Add event-driven state simplification plan
+- Add e2e test reproducing agent model bug in promptAsync path
+- Add event sourcing coverage to zustand-centralized-state skill description
+- Suppress footer on interrupted runs using unreplied-user-message heuristic
+- Instruct model to always use critique for diff requests
+- Suppress spurious footer after abort/interrupt and make interrupt timeout configurable
+- Add state encapsulation and event sourcing sections to zustand skill
+- Document session-event JSONL debugging workflow with jq examples
+- Keep opencode plugin exports explicit and stable
+- Refresh queue and abort e2e coverage for promptAsync behavior
+- Switch runtime ingress to opencode queue mode and harden part delivery
+- Allow OpenCode sessions to read ~/.kimaki without permission prompts
+- add interruptOpencodeSessionOnUserMessage support as a plugin. so user messages are not ignored forever
+- Simplify thread run lifecycle and abort handling
+- Differentiate skill and command slash routing
+- Simplify bot credential resolution: remove mode param, use timestamp touch
+- Add TODO: consider dropping app_id channel filtering
+- Support mode switching between self-hosted and gateway without re-onboarding
+- Update gateway-proxy submodule: fix database TLS connection to PlanetScale
+- Inline route handlers into index.tsx, extract Discord utils to discord.ts
+- Verify OAuth callback with Discord code exchange, store user data
+- Update gateway-proxy submodule: rename 'built-in bot mode' to 'gateway bot mode'
+- Add Cloudflare Hyperdrive for pooled DB connections (~3x faster)
+- Add per-request Prisma client guidance to website AGENTS.md
+- Rename '--restart' to '--restart-onboarding' and 'built-in' BotMode to 'gateway'
+- Improve built-in onboarding UX: longer timeout, progressive hints, credential warnings
+- Update gateway-proxy submodule: add landing page at root
+- Type-safe gateway OAuth state + per-request Prisma client factory
+- Add --gateway flag to force built-in gateway mode
+- Add repo architecture documentation to AGENTS.md
+- Set up db package with Prisma client and deploy website to kimaki.xyz
+- Sort /login providers by popularity instead of alphabetically
+- Document Zustand state fields: why each exists, when it changes, who reads it
+- Delay /queue echo until queued item is actually dispatched
+- Replace /verbosity string option with select menu dropdown
+- Add explanatory comment for atomic queue position snapshot
+- Show queue position notification for queued voice messages
+- Add OpenCode session assertions to voice message e2e tests
+- Add voice message e2e test infrastructure with deterministic transcription
+- Strengthen tunnel instructions in system message
+- Phase 5: remove legacy globals, dead code, and threadMessageQueue
+- pre-warm opencode server in thread-message-queue beforeAll
+- make markdown tests deterministic with isolated opencode server
+- extract shared e2e test cleanup, add session deletion to all test files
+- centralize ThreadSessionRuntime class fields into zustand store
+- phase 4 runtime fixes + deterministic e2e hardening
+- Phase 4: migrate all command dependencies to ThreadSessionRuntime APIs
+- update e2e tests: reduce timeouts, fix assertion for silenced abort errors
+- Phase 2+3: implement ThreadSessionRuntime — event listener, dispatch, and ingress routing
+- delete session snapshot files — replaced by deterministic inline snapshots
+- Phase 1: event listener runtime migration — extend store, add runtime skeleton
+- centralize config state into zustand/vanilla store (Phase 1)
+- zustand skill: add subscribeWithSelector section for watching nested state
+- simplify built-in bot mode: remove dead code, centralize REST routing, JSON OAuth state
+- add workerd runtime to Prisma generator for CF Workers compatibility
+- deploy website to Cloudflare Workers
+- add event-listener runtime migration blueprint with derived-state constraints
+- support state and redirect uri in utils discord install url
+- move built-in REST proxy path to gateway and add e2e coverage
+- add website onboarding and proxy routes with errore flow
+- update gateway-proxy submodule: track deployment script
+- update gateway-proxy submodule, AGENTS.md opensrc section, and lockfile
+- update gateway-proxy submodule: dynamic client config + schema docs
+- update submodules: errore (deprecate tryAsync, add SKILL.md guidelines) and gateway-proxy (database-backed client registry)
+- simplify voice reply handling by removing queue path
+- add configurable Discord REST/WS URL overrides
+- add 5 gateway-proxy e2e tests for event routing
+- increase queue message preview from 100 to 1000 characters
+- add gateway-proxy e2e integration test
+- add gateway-proxy submodule on multi-client-support branch
+- update traforo: bump goke to ^6.2.0
+- kimaki@0.4.72
+- add interaction-member permission regression tests
+- kimaki@0.4.71
+- kimaki@0.4.70
+- extract session run transitions into dedicated Zustand state module
+- treat mutable resources as centralized state
+- fix flaky interrupt e2e tests + add slow tool call abort test
+- add resource co-location section to zustand centralized state
+- bump discord-api-types to 0.38.40, deduplicate versions
+- add e2e tests for thread message queue timing edge cases
+- document critique review --web in system message
+- replace flat API with scoped channel/thread accessors
+- add e2e tests for thread message queue ordering + improve session error display
+- improve libsql cache proxy performance: WAL pragmas + remove redundant UPDATE
+- use errore.isAbortError in sentry beforeSend for cause-chain aware abort filtering
+- replace .abort(new Error()) with typed SessionAbortError
+- remove 'only agents listed above are valid' claim
+- inject available agents list with descriptions into session system message
+- remove --frozen-lockfile from worktree install commands
+- Delete SKILL.md
+- add centralized-state skill for Zustand-based state management
+- update errore submodule pointer
+- Update opencode-plugin.ts
+- add sentry reporting at terminal error boundaries
+- update remote machines plan: thread-per-machine model, hrana already built, OpenCode server auth
+- truncate large tool outputs in session read to 30k chars
+- add goke CLI framework as synced skill
+- condense MEMORY.md into line-numbered TOC via marked AST, update reminder wording
+- remove --memory flag and ~/.kimaki/memory/ infrastructure, replace with simple MEMORY.md plugin
+- Create startup-service.ts
+- kimaki@0.4.69
+- increase action button TTL from 30 minutes to 24 hours
+- simplify waitForServer to single /api/health endpoint, replace localhost with 127.0.0.1
+- remove opncode upgrade command. fix #49
+- termcast skill
+- skills
+- add repo, description, license, author and keywords to discord-digital-twin package.json
+- add changelog for discord-digital-twin 0.0.1
+- prepare discord-digital-twin for npm publish
+- switch DigitalDiscord to action-then-wait API
+- add playwright-style DigitalDiscord actor and expect APIs
+- switch kimaki e2e to discord-digital-twin
+- format docs, plans, and config files with prettier
+- format discord package with prettier
+- format discord-digital-twin with prettier
+- Create sandbox-sdk.md
+- teach agents to proactively schedule reminders with --send-at
+- store projectChannelId in Discord forum starter messages
+- discord-digital-twin Phase 4: interactions (slash commands, webhooks, follow-ups)
+- discord-digital-twin Phase 3: channels, threads, and thread members
+- discord-digital-twin: add dbUrl option and named in-memory DBs for test isolation
+- discord-digital-twin Phase 2: messages, reactions, and libsql cache=shared fix
+- Increase archive thread delay from 5s to 10s
+- sort /login and /model dropdown options alphabetically by name
+- Update digital-discord plan to match Phase 1 implementation
+- Add app.log to gitignore
+- Add discord-digital-twin package (Phase 1) with type-safe serializers
+- Add OpenAI transcription support and /transcription-key command
+- Auto-create project tags on memory forum, suppress embeds in forum messages
+- Refactor voice transcription to use AI SDK providers (LanguageModelV3)
+- restructure gateway example as DiscordGateway class
+- Remove unused bot_instances table
+- Use direct file: for bot Prisma, Hrana only for plugin processes
+- Replace sqld with in-process Hrana v2 server and DB-based IPC
+- add threadId to system prompt and thread reminder use case for --send-at
+- add self-message guard to prevent loops when bot has Kimaki role
+- allow bots with Kimaki role to trigger sessions
+- kimaki@0.4.68
+- Update system-message.ts
+- Update openclaw-tools.md
+- Create welcome-channel-plan.md
+- format
+- split monolithic 1432-line file into focused modules
+- make quick-start startup non-blocking
+- remove $message usage
+- submods
+- show tui.toast.show
+- update kimaki tunnel guidance and bump traforo
+- kimaki@0.4.66
+- traforo@0.0.8
+- migrate from @opencode-ai/sdk v1 to v2
+- run oxfmt formatter across src
+- replace deprecated ephemeral: true with MessageFlags.Ephemeral
+- parallelize session-handler async operations
+- Revert "style(discord): run oxfmt on all src and scripts files"
+- kimaki@0.4.64
+- session read: search across all projects when session not found in current project
+- rely on marked AST for list/code formatting
+- silently remove permission buttons on auto-reject instead of sending warning message
+- add --no-critique flag to disable auto diff upload to critique.work
+- prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
+- abort all active channel sessions before restarting opencode server
+- kimaki@0.4.63
+- remove ai sdk tool dependency
+- use asterisk markdown italic instead of underscore in session completion message
+- silently remove buttons instead of showing expired permission message
+- kimaki@0.4.62
+- show project folder and git branch in session completion message
+- unify /model scope selection for threads and channels
+- hide session cost line in /context-usage when cost is zero
+- Update session-handler.ts
+- remove /context-usage token breakdown line
+- snapshot model+agent at message arrival to prevent race with /agent changes
+- context usage fixes
+- speed up /xxx-agent quick commands by skipping opencode server
+- Create remote-opencode-servers.md
+- kimaki@0.4.60
+- reuse thread archive flow in CLI and plugin
+- adjust archive-thread delay to 2s
+- migrate discord CLI parser from cac to goke
+- Create KIMAKI_AGENTS.md
+- change merge-worktree dirty handling to explicit error
+- switch kimaki worktree creation to native git and improve thread feedback
+- Deduplicate redundant permission prompts by pattern coverage
+- Revert diamond prefix suppression for consecutive text parts
+- Add worktree creation instructions to system message
+- Downgrade non-actionable session error logs
+- Add --auto-restart respawn wrapper and version command
+- Increase previous handler wait timeout from 1000ms to 1500ms
+- Add heap snapshot monitor with SIGUSR1 support
+- Update AGENTS.md opensrc section and errore submodule
+- Skip squash+rebase on retry after resolved conflict
+- Refactor merge-worktree to use errore: tagged errors as values
+- Rewrite merge-worktree to use worktrunk-style pipeline
+- Add system message instruction to always show URLs in search results
+- Add ManageEvents permission to bot install URL
+- improve detectPm to use script realpath instead of execPath
+- update system prompt: prefer h1/h2 headings with numbered steps, heavy ASCII diagrams
+- replace SIGUSR2 restart with spawning new kimaki process
+- centralize execAsync with default timeout and strip ANSI from shell output
+- kimaki@0.4.59
+- simplify table keys to bold only, remove code formatting and padding
+- use bold inline code for table keys with padded alignment
+- rename CLI add-project references to project add
+- kimaki@0.4.58
+- kimaki@0.4.57
+- Strip mentions from thread titles and check mention mode before permissions
+- Document cross-project commands in system message and fix project add exit code
+- Add project subcommands and make send default to cwd
+- Add trailing newline to AGENTS.md
+- Change default verbosity to text-and-essential-tools
+- Update permission button styles for better UX
+- Add emoji reactions for thread marking and worktree identification
+- skip logging abort errors in session handler
+- enhance diff command with embed preview, add archive thread tool
+- add /diff command to show git diff as shareable URL
+- resolve Discord mentions to usernames in prompts and thread titles
+- Update mention-mode.ts
+- Add Claude-style markdown formatting instructions to system prompt
+- use YAML instead of JSON for embed marker
+- send discord username as synthetic text part for TUI hiding
+- remove gemini api key step from onboarding
+- kimaki@0.4.55
+- migrate back to idempotent schema
+- adopt prisma migrations for db setup
+- Update db.ts
+- run schema.sql at startup to keep existing dbs compatible
+- migrate database calls from raw SQL to Prisma functions
+- add Prisma schema with type-safe queries and FK relations
+- remove spinner, use simple logs
+- Guard idle abort until assistant output
+- remove bin.js retry logic
+- Add Gemini API key prompt for voice
+- Update logger.ts
+- add sqlitedb CLI command to show database location
+- remove --domain flag from kimaki tunnel command
+- kimaki@0.4.54 and traforo@0.0.5
+- move traforo to standalone repo as submodule
+- add baseDomain option, default to traforo.dev
+- Update CHANGELOG.md
+- kimaki@0.4.53 and traforo@0.0.4
+- Update client.ts
+- Create jitter-clipboard.json
+- nicer offline html response
+- add @xmorse/cac to discord package
+- switch to @xmorse/cac and npx kimaki tunnel
+- jitter skill
+- add comprehensive integration tests
+- add streaming/SSE support and Bun example server with WS
+- prefix with /traforo
+- use NodeNext module resolution and compile to dist for traforo
+- rename tunnel folder to traforo
+- rename kimaki-tunnel to traforo and publish
+- add tunnel package for exposing local servers via cloudflare DO
+- Show current model info in /model command
+- Show task agent in Discord
+- Filter bash tools by side effects
+- Keep /resume as sole resume command
+- Add /resume-session and restrict resume to channels
+- Clarify /login as /connect replacement
+- replace worktree enable/disable with toggle
+- Prefer agent model over channel preference
+- add /login command to authenticate with AI providers
+- Create restart-opencode-server.ts
+- kimaki@0.4.52
+- include Discord CDN URLs for image attachments in prompts
+- add-project: add suggestion to use CLI for unlisted projects
+- prefixWithDiscordUser
+- disable voice channels by default, add --enable-voice-channels flag
+- update clack to latest
+- more abort logs
+- refactor createNewProject
+- parsePatchCounts
+- simplify waitForServer to check single health endpoint
+- shorten log prefixes to max 8 chars
+- aligned logging with LogPrefix enum and picocolors
+- use different clack errors
+- kimaki@0.4.45
+- add session snapshot transcripts
+- refactor to use errore in session handler instead of try catch blocks
+- errore submod
+- linearize discord session event flow
+- move channel config from XML topic to SQLite
+- kimaki@0.4.44
+- kimaki@0.4.43, errore@0.9.0
+- kimaki@0.4.42, errore@0.8.0
+- kimaki@0.4.41
+- kimaki@0.4.40
+- use instanceof Error instead of errore.isError for consistency
+- send all images in single Discord message for grid display
+- Update errore submodule to 0.7.1
+- kimaki@0.4.39
+- display subtask events with indexed labels (explore-1, explore-2)
+- Update remove-project.ts
+- normalize spaces
+- Update tools.ts
+- Adopt errore typed errors across discord bot
+- errore things
+- Create .gitmodules
+- Use namespace imports in docs for better readability
+- Add let+try-catch migration patterns to MIGRATION.md
+- Add MIGRATION.md guide for Go-style error handling
+- Add _ handler in matchError for plain Error support
+- Add composition examples and tests
+- Add Error | T | null examples: Result + Option combined naturally
+- Add errore package: type-safe errors as values for TypeScript
+- exclude hidden agents
+- opensrc
+- add support for creating channels for folders in new session command
+- use first option for placeholder in question tool
+- format with oxc
+- add agent param in /session command
+- Add keep-running instructions to CLI setup outro
+- kimaki@0.4.35
+- Use opencode from PATH instead of hardcoded path
+- Create voice-channel-analysis.md
+- kimaki@0.4.34
+- send text parts immediately when complete (time.end set)
+- don0t type on questions
+- tell to use question tool on end
+- - fix(cli.ts): sanitize command name by replacing colons with hyphens
+- kimaki@0.4.33
+- use digit-with-period unicode for todo numbers
+- add heading depth limiter for Discord markdown
+- kimaki@0.4.32
+- kimaki@0.4.31
+- context usage empty diamond symbol for parts
+- change context usage char
+- parallelize CLI startup operations
+- kimaki@0.4.30
+- kimaki@0.4.29
+- improve project list display: abbreviate paths with ~ and filter test projects
+- kimaki 0.4.27
+- enable notifications for question dropdown messages
+- kimaki 0.4.26
+- add Discord dropdown support for AI question tool
+- less system prompt
+- remove text message slash command parsing
+- use bot username in category names for multi-bot support
+- add /agent command to set agent preference per channel or session
+- include image file paths in prompt text
+- download image attachments to tmp/ and include paths in prompt
+- update discord message icons and formatting
+- inline command dispatcher into interaction-handler
+- extract commands into separate files with switch dispatcher
+- add comments on files
+- readme thing
+- rename discordBot.ts to discord-bot.ts, delete refactor plan
+- extract voice state and interaction handlers (discordBot.ts 1652 -> 496 lines)
+- split discordBot.ts into focused modules (3327 -> 1652 lines)
+- refactor discord bot into modules, add /fork command
+- improve transcription prompts to ensure transcriptionResult tool is always called
+- add SILENT_MESSAGE_FLAGS constant combining SuppressEmbeds and SuppressNotifications
+- packages
+- new audio with grep, etc
+- put audio channels in separate thing
+- reject permission on new message
+- add prev session in transcribe
+- do not show already added sessions in resume
+- add glob package
+- Revert "add critique command docs to KIMAKI_AGENTS.md"
+- Add MIT license
+- release kimaki@0.4.22
+- remove liveapi package (moved to separate repo)
+- add Manage Server permission and Kimaki role support
+- nicer looking tool calls
+- add /add-new-project and /share commands, single instance lock, tool running status
+- throw errors if prompt fails
+- add support for file attachments. fix restart signal
+- update to gemini-2.5-flash-native-audio model for better live audio
+- update ai-sdk, @google/genai, and zod to latest versions
+- remove send to discord command
+- mention long files as uploadable in system prompt
+- remove misleading error message in upload-to-discord
+- move upload-to-discord info to system prompt
+- add upload-to-discord command and refactor plugin to CLI-based commands
+- bash tool shows command in inline code when short
+- code blocks for tables and diagrams MUST have Max length of 85 characters. otherwise the content will wrap
+- adding OPENCODE_SYSTEM_MESSAGE
+- discord message splitting preserves code block formatting
+- show toast at start when creating Discord thread
+- improve error handling in OpenCode plugin
+- add support for sending current session to discord
+- release
+- add support for images
+- update discord sdk
+- add used model info
+- Revert "Batch assistant parts in resume command to avoid Discord rate limits"
+- more fixes for rest api
+- nicer end comment
+- add-project command. also remove backticks inside code snippets. better summaries for tools
+- Create escape-backticks.test.ts
+- refactor formatPart
+- revert abort controller separation, bump to 0.4.2
+- Revert "fix event stream being aborted when new messages arrive during long commands"
+- hide the too many tool calls texts
+- support DOMException from undici in isAbortError, bump to 0.3.2
+- display custom tool calls in Discord with colon-delimited key-value fields, add webfetch URL formatting, bump to 0.3.1
+- change
+- better isAbortError
+- pass OPENCODE_CONFIG_CONTENT
+- disable undici timeout
+- undici
+- add isAbortError
+- add script
+- delete unused folders
+- pass custom fetch
+- simpler onboarding. do not ask for server id
+- Update pcm-to-mp3.ts
+- use nicer cross unicode
+- - Check for OpenCode CLI availability at startup and offer to install it if missing - Automatically install OpenCode using the official install script when user confirms - Set OPENCODE_PATH environment variable for the current session after installation - Use the discovered OpenCode path for all subsequent spawn commands
+- put database in homedir
+- use gemini to transcribe too
+- add api keys inputs in the onboarding
+- cleaner logs
+- show the channel select when bot has no channels
+- bot asks to confirm intents required
+- move saving of discord bot token after using it
+- remove xml from user messages
+- nicer handling of opencode server errors
+- Update discordBot.ts
+- use clack for logs. adding session command
+- nicer looking todos
+- hide think bubbles
+- abort prompt request on new messages
+- only send completed messages on finish
+- add ensureKimakiCategory
+- better cli
+- adding bin.sh
+- adding files inside
+- rm stuff
+- add more error handlers for voice
+- add error handlers for opus
+- use my own personal resampler
+- Update genai-worker.ts
+- send audioStreamEnd
+- write audio files on exit
+- using worker for audio
+- debug audio. nicer code foramtting too
+- trued openai realtime. same shit
+- use better model. ask to greet
+- better system prompt for voice channels
+- better sigint
+- notify the agent on sessino ends
+- only call interrupt on interrupt
+- add tools for voice bot
+- rename files
+- adding tools in discord
+- Update directVoiceStreaming.ts
+- add interrupt
+- add my own streamer. it fucking owrks. if i send every 20ms
+- works with node???
+- use working sqlite
+- more debugging
+- do not rely on bun
+- register only once
+- try using opus.Encoder
+- works.
+- voice channels work
+- testing
+- genai works
+- added genai
+- added voice channels handling
+- Simplify Discord escaping to use single function
+- Refactor Discord escaping into reusable functions
+- Add escaping for double pipe characters in Discord output
+- Improve Discord formatting escaping for tool outputs
+- Improve tool call formatting in Discord bot
+- do not always show channels list
+- cli works
+- only handle channels for this app id
+- create channels in the cli
+- adding cli
+- send basenames in voice prompt
+- update voice thread names
+- handle voice channels
+- show typing even after sending messages
+- stop typing on abort
+- better todo write. better typing events
+- add voice
+- use reactions
+- no layout shifts
+- abort requests if there is a reply. split at markdown chunks
+- handle long messages
+- abort events after finish
+- support many channels
+- add getOpencodeProjects
+- adding more functions
+- nicer output
+- nicer rendering of tools
+- added test events script
+- opencode is shit
+- events are not sent
+- cleanup types.
+- remove some files. refactor
+- edit last message instead
+- kind of works
+- convert to opencode
+- add initial discord bot
+- reneames
+- Update config.json
+- Delete todo-tool.ts
+- revert change
+- adding build
+- realtime works
+- adding reatime
+- colors
+- add ascii video animation
+- claude fixed issues. i hope
+- use ansi brightness for ascii
+- add ascii things. tried using bun. fails. added Ink for nicer tui
+- Ensure consistent per-session model by reusing the last assistant model on submit; prevent model drift by not accepting model/provider in the submit tool.
+- adding models select
+- add session resumption
+- use much better model. add abort chat tool
+- stabilize messaging flow by removing messageId coupling and adding startup delay to improve spiceflow handshake
+- DEBUG
+- apply prettier formatting to all files
+- save audio files for user to debug
+- use xml
+- send when a message is completed
+- nicer prompt
+- remove useless try catches
+- snapshots
+- markdown thing
+- markdown works
+- plugin works
+- adding liveapi
+- ini
+
+### Fixed
+- reject cut-off and blocked provider responses
+- retry transient transcription failures, drop AI SDK for fetch
+- retry db initialization after a failed attempt
+- Fix tsc error in session read last-assistant filter
+- Fix bot stuck on hrana lock port after a stop signal during startup
+- Fix Anthropic OAuth fetch crashing when auth.json lost its anthropic entry
+- Fix OpenAI voice transcription Invalid JSON response.
+- Fix cleanup after Discord channel deletion
+- Fix upload-to-discord posting into the parent /btw thread.
+- Fix persisted /queue FIFO order and delivery.
+- sanitize callout thread titles
+- Fix Discord reply handling across compaction
+- keep sessions running when threads are archived
+- Fix single-line Discord callout rendering
+- Fix worktrees selecting duplicate remote clones
+- Fix Discord sleep wake nonce length
+- do not transcribe video attachments as voice messages
+- restart Kimaki after Discord connect timeouts
+- remove AskUserQuestion timeout instead of making it configurable
+- resolve a session to its most recently bound Discord thread
+- post Discord task lines on running, not completed
+- keep Discord IDs separate from usernames
+- show OpenAI task parts in Discord
+- build long prompt attachments in memory for parallel send
+- Fix two more table/callout text-limit edge cases found by oracle review
+- Fix Discord sendMessage failure for long tables
+- directory allow rules must not override user config
+- harden /api/transcribe against memory blowup and quota bypass
+- allow /create-new-project to run from inside a thread
+- fix flaky first-turn waits in e2e tests
+- fix inference-proxy memoize cache never storing anything
+- inject kimaki system prompt into OpenCode commands
+- retry first voice note after API key setup
+- fix legal document imports
+- fix event delivery across OpenCode restarts
+- fix worktree session tool directory
+- fix redundant "kimaki -- kimaki" browser tab title, update holocron to 0.25.1
+- CLI subcommands reuse bot OpenCode server via hrana discovery
+- skip embed-only MESSAGE_UPDATE events to prevent false queue removals
+- persist workspace association for /new-session in threads
+- use worktree directory for /btw, . btw suffix, and user commands in worktree threads
+- update worktree lifecycle test snapshot for deterministic suffix
+- include text attachments and file images in preprocessNewSessionMessage
+- guard CLI-side worktree prefix with isGitRepositoryRoot check, add test snapshot
+- auto-create worktrees for kimaki send --channel when channel toggle is enabled
+- replace rimraf with rm -rf in opencode-kimaki-plugin prepublish
+- let setup commands run from any channel in multi-machine mode
+- pin frozen dependency bootstrap
+- use os.tmpdir() for prompt attachment temp files in kimaki send
+- treat Discord TLS cert failures as restartable
+- keep parent system block opt-in for btw/task forks
+- remove queued messages when Discord messages are deleted
+- fix stale comment about selfRestart wrapper behavior
+- remove fragile detached spawn fallback in selfRestart
+- add worktree support to user-defined slash commands (-cmd, -skill, -mcp-prompt)
+- always show ellipsis when bash command is truncated to first line
+- project guild resolution in gateway mode + show custom tools in default verbosity
+- skip leading blank lines in bash tool title truncation
+- handle missing bash tool description field by truncating command first line
+- agent slash commands with prompts now create worktrees when worktree mode is enabled
+- guard --wait and --send-at before sending in existing thread mode
+- make kimaki send work in CI without local database state
+- fix workspace worktree cleanup
+- Fix oracle review findings in inference-proxy
+- reply with guidance when setup commands run in non-project channels
+- route setup commands to the machine active in the guild
+- guard all inbound Discord events with channel ownership check
+- route interactions only to the machine that owns the channel
+- fix question dropdown completion
+- open gateway install URL on Windows
+- add missing colors field to APIRole mock
+- fix /worktrees exceeding Discord 4000-char displayable text limit
+- gateway onboarding timeout — guild_id fallback, error visibility, consent prompt
+- fix truncation to use separator-delimited row groups, fix deferReply vs deferUpdate detection
+- fix truncateComponents to truncate Container children instead of dropping entire Containers
+- fix /worktrees and /last-sessions exceeding Discord 40-component limit, fix silent interaction errors
+- stop adopting default kimaki channel from another instance in shared guilds
+- improve btw fork prompt and use correct channelId
+- preserve model across forked sessions
+- clear worktree marker when merge has no commits
+- skip thread creation for notify-only on non-project channels
+- prefer wrapper restart in selfRestart for Ctrl+C support
+- guard selfRestart against concurrent calls
+- self-restart on gateway reconnect limit instead of process.exit(1)
+- allow --agent and --model with --thread/--session in kimaki send
+- use stdout for machine-readable output, warn on catch, drop directory from abort
+- use sdkDirectory (session/worktree dir) for all OpenCode client lookups
+- dismiss stale permission buttons when plugin auto-rejects
+- remove followup prompt after subagent abort, add TODO
+- wait 200ms before sending followup prompt after subagent abort
+- remove notifyError for expected subagent abort failures
+- auto-reject subagent permission prompts
+- stabilize flaky queue edit-remove test
+- move permission auto-reject before getEventSessionId early return
+- use correct event type for subagent permission auto-reject
+- wrap .catch() callbacks in tagged domain errors
+- convert errore.try object-form to positional args
+- use namespace imports in ipc-polling.ts and markdown.ts
+- use namespace import in errors.ts instead of destructured imports
+- guard permission timeout against setTimeout overflow
+- prevent stale interrupt timers from aborting unrelated generations
+- restore queue hint text and update snapshots
+- remove duplicate changeset file, update existing one
+- pass OpenCode server auth credentials to SDK client
+- /model and /model-variant global/channel scope now updates current session
+- fix all broken docs links: convert absolute /docs/ paths to relative
+- keep completion history when a later message update lacks completed
+- point model-switching tip at the new docs path
+- fork new worktree sessions into separate threads
+- keep worktree threads on the same session
+- start fresh sessions after worktree switches
+- use current OpenAI audio transcription model
+- strip --env-file flags from the relocatable kimaki shim
+- adapt to opencode SDK 1.15.11 event ids and error shapes
+- build own v2 client from serverUrl instead of broken ctx.client
+- fix btw suffix to be end-of-message marker like queue
+- use resolveMentions in MessageUpdate handler to preserve newlines
+- Fix interrupt replay after abort idle ordering
+- fix model-switching docs URL: kimaki.dev/model-switching not /docs/model-switching
+- fix sync timeout: use AbortController with proper cancellation
+- fix kimaki opencode passthrough: allow unknown options and handle Windows shims
+- safe sorting and trim-before-fallback in model select options
+- sanitize model/provider select options for undefined names
+- fix inline quick-agent prompt sessions
+- fix Discord ingress permission checks
+- clear stale global Discord commands
+- truncate opencode session errors in Discord
+- fix event stream listener reconnect loop on normal stream completion
+- fix musl detection ESM bug and rename race condition
+- fix opencode download: musl/baseline fallback, race-safe temp dir, anchored cleanup
+- handle opencode global event stream
+- Fix OpenCode startup healthcheck hangs
+- Fix Hrana SQLite schema bootstrap
+- Fix non-git worktree session fallback
+- Fix main CI snapshot failures
+- Fix merge-worktree dirty target failures
+- Fix Anthropic prompt instruction stripping
+- Fix voice agent selection to not trigger on casual use of agent name words
+- Fix Bun crash in evictExistingInstance when .json() returns null
+- Fix Bun dev startup isolation
+- pass resolved model to opencode commands
+- handle subagent prompts in anthropic system text sanitization
+- update cwd extraction regex in anthropic plugin for new opencode system prompt format
+- fix callout rendering: skip ⬥ prefix for <callout> tags
+- fix fork-subagent replay formatting
+- extract per-session cwd from stripped OpenCode identity block
+- fix website dev restart loop from doppler mount
+- Fix CI-only permission and plugin loading tests
+- Fix vitest OpenCode startup paths
+- fix interrupt plugin infinite abort→replay loop on large contexts
+- fix homedir bug
+- fix anthropic again. very picky
+- fix opencode directory resolution and speed up e2e failures
+- fix opencode log chunking for readable output
+- fix system prompt drift toast diff display
+- fix queued question handoff and update goke
+- dedupe task start messages
+- fix anthropic again? I am such a genius
+- fix ~/.config/opencode/skills/<skill-name>/SKILL.md
+- re-inject process cwd into Anthropic sanitized system prompt
+- use MUST wording and cite overriding other changes in worktree/cwd reminders
+- drop confusing 'worktree reminders emitted only on change' note
+- mention pwd change and forbid writes to previous folder in worktree/cwd reminders
+- append trailing newline to synthetic user message parts
+- fix queue drain after dropdown answers
+- load the built OpenCode plugin from dist in published kimaki
+- fix anthropic third party app detection
+- fix max subscription by removing OpenCode identity section instead of replacing full prompt
+- use namespace import for discord.js CJS interop in plugin chain
+- Fix Anthropic Max Subscription third party detection. Max subscription works again
+- route /command-cmd prompts via session.command when registeredUserCommands is empty
+- fix external sync session discovery
+- replay interrupted queued prompts instead of resuming empty sessions
+- remove final clack import from plugin startup path
+- isolate opencode plugin logging from clack
+- drop opencode server log prefixes
+- always log opencode server warnings
+- skip restart wrapper only for --help
+- keep stable --user examples in Kimaki send prompts
+- fix lockfile
+- keep stable channel context in the session prompt
+- keep Kimaki system prompt stable across a session
+- avoid duplicating markdown task list markers after marked upgrade
+- fix anthropic plugin lockfile import for plugin startup
+- fix plugin logger compatibility on Node 22
+- fix main CI queue recovery and plugin loading
+- scope /worktrees to the current project
+- Fix pending question handling for voice follow-ups
+- stop typing indicator immediately after final part flush at session end
+- move injection guard config dir from tmpdir to dataDir
+- stop overriding user's external_directory permission defaults
+- Fix abort test: replace exact snapshot with ordering invariants
+- Fix select-drain snapshot: use contains assertions
+- Fix remaining CI test failures
+- Fix CI: init git repos in test project directories
+- Fix CI: also build libsqlproxy before tests
+- Fix CI: pass --run flag through to vitest via pnpm test -- --run
+- Fix CI: build submodules (errore, traforo, opencode-injection-guard) before tests
+- correct worktree directory switch reminders
+- include dynamic command args in new session threads
+- correct changelog — injection guard is opt-in, not auto-enabled
+- add sessionID to message.updated test fixtures for SDK 1.3.7 compatibility
+- skip GuildText startThread for kimaki send starter messages
+- use OPENCODE_CONFIG file instead of OPENCODE_CONFIG_CONTENT env var
+- cap slash commands at 100 and reorder dynamic commands by priority
+- graceful INVALID_SESSION delivery + catch ClientReady errors
+- detect discord-user tag in command messages
+- always persist direct mappings with || '' fallback
+- detect Discord origin when message-id is missing
+- remove proxy restart test that killed mid-suite, tighten timeouts
+- detect kimaki-owned sessions from events, not DB
+- restore production Durable Object migration history
+- declare raw markdown imports for preview deploy
+- stop logging already-managed session skips
+- resume scheduled thread prompts via start marker
+- claim forked and resumed sessions earlier
+- batch messages, filter subagents, skip placeholders, reduce log noise
+- skip sessions created before CLI started
+- add debug logging, fix race and silent error swallowing
+- fix concurrent message ordering and natural completion detection
+- add abortActiveRunAndWait to settle abort before next message
+- pass workingDirectory to SDK calls, wait for idle before revert
+- defer interaction reply before async work
+- remove deprecated ephemeral option from deferReply
+- normalize gateway_clients secrets across guild rows on upsert
+- add shard recovery timeout with forced relogin
+- abort busy session before undo/redo revert
+- link libc for standalone exe on Linux native builds
+- fix readme examples
+- harden pipeline validation, condition propagation, and stream lifecycle
+- prevent opencode server auto-restart on SIGINT and bot shutdown
+- drop session.diff buffering and recursively prune oversized event strings
+- Fix Anthropic OAuth transport inside opencode auth
+- /model provider pagination filters to connected providers only and preserves header text
+- fix OOM: strip parts/system/summary/tools from all message.updated events in event buffer
+- fix 3 regressions in anthropic auth plugin simplification
+- add error checks on session.get and session.messages SDK responses
+- step-by-step forward walk matching OpenCode TUI behavior
+- use any to bypass zod version skew between opencode-plugin and goke
+- add truncateCommandDescription guard to all slash command descriptions
+- shorten merge-worktree description to fit Discord's 100-char limit
+- use UTC for cron scheduling instead of machine local timezone
+- consistent error parsing and context cleanup on failure
+- complete code-mode OAuth, improve error parsing, add basic auth
+- fix /tasks: cap rows to 10, sanitize table cells, remove unused guildId
+- drain queued messages immediately when session is idle, even with pending interactive UI
+- Fix --permission gaps: scheduled sends, thread sends, parser hardening, tests
+- Fix getInternetReachableBaseUrl doc comment: clarify /kimaki/wake endpoint
+- Fix tutorial injection regression: run before non-synthetic text guard
+- Fix /undo to match OpenCode TUI approach: pass user message ID, don't delete messages
+- Fix Spiceflow migration behavior regressions
+- fix local queue draining while session is busy (delta event buffer overflow)
+- fix queue suffix detection broken by text attachments
+- skip redundant login() that caused spurious gateway reconnect
+- enable notifications for error replies
+- ignore non-kimaki threads in project channels
+- prefix part IDs with prt_ to satisfy OpenCode validation
+- close tunnel client on connect failure + poll x11vnc port readiness
+- complete OpenAPI 3.0 parity for endpoints and schemas
+- sync all types with OpenAPI 3.0 spec
+- simplify Linux screenshot desktopIndex cast
+- resume thread turns after dismissed permission prompts
+- allow opencode tool-output directory by default
+- keep critique examples on bunx
+- expose kimaki as a direct command in opencode sessions
+- restore Windows opencode startup
+- route OpenAI audio conversions by normalized media type
+- fail closed on callback team authorization
+- harden interactive payload handling and scope diagnostics
+- map edge REST errors and lock parity tests
+- clean up echo-bot script, fix self-echo loop
+- reversible thread IDs eliminate cross-channel collisions
+- close interrupt resume model fallback
+- preserve selected model on interrupt resume
+- use SDK types for resolveThreadTsForReaction
+- harden interaction routing and Slack contract handling
+- autocomplete handlers return empty results with gateway-proxy
+- reconnect event listener and reset session when sdkDirectory changes after worktree creation
+- preserve content-encoding header, rename deploy→deployment
+- namespace custom gateway callback state field
+- create default channel and welcome message in non-TTY headless mode
+- use mutable Response for gateway callback redirect
+- gateway callback URL redirect was silently ignored
+- stabilize flaky 'slow stream' test with deterministic timing
+- delete question context before abort to prevent race
+- question tool stale timeout no longer fakes 'Other' selection
+- user text message during pending question no longer sent as duplicate prompt
+- fix mkdir for tutorial
+- share tutorial trigger and harden channel lookup
+- return [inaudible audio] for very short or incomprehensible audio
+- anchor footers to assistant completion
+- drain local queue on session idle to prevent stuck queued voice transcriptions
+- first-message-only tutorial check, return textChannel, cleanup
+- harden default channel idempotency with 3-layer detection
+- use topic marker for default channel idempotency, graceful git init
+- drain local queue after session error
+- force-remove worktrees with submodules, use white delete button
+- comprehensive runtime and pending-UI cleanup to prevent memory leaks
+- prevent agents from running `kimaki` root command inside OpenCode sessions
+- replace Section accessories with ActionRow for button cells
+- add login timeout, text validation, and shared helper for bot status commands
+- show git stderr on delete failure, use ephemeral followUp instead of replacing table
+- validate gateway callback URL scheme to prevent open redirect
+- pre-allow common directories in server-level external_directory permissions
+- mark /worktrees replies as CV2 messages
+- reduce voice transcription prefix spacing to single newline
+- reconnect runtimes after shared server restart
+- correct /worktrees error handling and timeout lifecycle
+- add timeouts and caching to /worktrees command
+- delay footer send to avoid spurious footer after interruption (disabled)
+- skip augmentation for empty plugin messages
+- delay footer send by 400ms to avoid spurious footer after interruption
+- use -mcp-prompt suffix for MCP-sourced commands instead of -cmd
+- keep typing visible during active runs
+- skip conflict check when main repo is on a different branch
+- only log 'submodules initialized' when init actually succeeded
+- guard against passing both threadId and --session to session archive
+- make submodule init error in createWorktreeWithSubmodules non-fatal
+- make submodule init and validation non-fatal
+- resolveBotCredentials prefers DB over env var for gateway mode
+- use last_used_at timestamp for cross-process bot mode resolution
+- ignore empty resume messages in interrupt plugin
+- cap /worktrees output to latest 10 entries
+- interrupt queued follow-ups on blocking step finish
+- preserve oauth state cookies on discord-install redirect
+- remove flaky inline snapshot from concurrent messages test
+- update gateway-proxy submodule — add MESSAGE_CONTENT intent
+- gateway-proxy reconnection after deploy + e2e test + reconnect logging
+- bypass auth for tokenized interaction/webhook routes
+- handle deleted worktree folders gracefully in /worktrees
+- clean up stale action buttons and cover button continuation
+- await enqueue in preprocessChain to prevent session-creation races
+- preserve quick-agent names with description metadata
+- skip tool display for old assistant messages not in current run window
+- guard interactive prompts in non-tty startup
+- force channel setup when no channels are configured
+- fixes to the discord package.json
+- publish discord-digital-twin from dist output
+- derive interactive UI gating and snapshot user interactions
+- serialize typing pulses to avoid REST queue buildup
+- simplify queued-message interrupt plugin
+- log gateway lifecycle events for Discord diagnosis
+- harden gateway failure handling and typing diagnostics
+- enable DAVE encryption for voice connections
+- use signal check instead of magic retry count for SIGTERM handling
+- eliminate zombie opencode processes after e2e tests
+- stabilize 'slow tool call abort' e2e test with explicit waits
+- remove trailing newlines from assistant messages, add [typing] markers to text()
+- stabilize text() ordering and escape embed titles
+- harden run footer and stale-event handling
+- simplify promptAsync queue path state handling
+- align promptAsync queue path with dispatch behavior
+- Fix e2e tests to assert on Discord messages instead of internal logs
+- Fix runtime assistant-part routing and restore footer metadata in promptAsync flow
+- fix interrupt plugin: use sequence-based event ordering and error barrier before idle wait
+- Fix FK constraint: upsert discord_users before gateway_clients, return error details
+- Fix stale runtime footer calculations after interrupt races
+- Fix typing indicator not stopped after /abort
+- Fix interrupt messages showing » queue indicator
+- Fix interrupt abort race by settling aborts before redispatch
+- Fix overlapping lock port ranges across e2e test files
+- Fix 6 oracle review issues from Phase 5, split e2e tests, reduce test delays
+- fix voice reply queue latency while preserving queue intent
+- fix discord-digital-twin serialization for twilight compatibility
+- sync verbosity dropdown default annotation with actual default
+- accept /gateway/ path for twilight-gateway compatibility
+- race-safe arrival snapshot, audio failure guards, remove premature label
+- snapshot active request state at voice message arrival for reliable queueing
+- defer thread interrupt for voice messages until after transcription
+- remove premature '(queued)' label from transcription message
+- opencode plugin was silently failing to load
+- restore non-sensitive identifiers stripped by sanitization commit
+- sanitize logs and Sentry payloads safely
+- attach kimaki version metadata to every error
+- make pending worktree writes atomic
+- handle interaction member permission shape
+- prevent stale idle from ending interrupted follow-up prompts
+- add @discordjs/opus to pnpm onlyBuiltDependencies
+- suppress clack terminal output during vitest runs
+- preserve original command names through Discord sanitization and prevent suffix truncation
+- proxy URL forwarding drops base path prefix + add streamChunkDelayMs
+- handle slashes and colons in Discord slash command name sanitization
+- serialize thread messages to prevent voice transcription race condition
+- disable broken ni dependency install in worktree creation
+- wrap session context in XML and prevent reusing past transcriptions
+- preserve voice message transcription order
+- prevent transcription model from answering user questions
+- filter synthetic parts from fork dropdown, abort-retry, and session search
+- prevent agent from triggering permission prompts on memory and config paths
+- OpenAI voice transcription — use gpt-4o-audio-preview chat model + OGG-to-WAV conversion
+- derive App ID from bot token, skip interactive prompt when KIMAKI_BOT_TOKEN is set
+- markdown test error handling + update stale snapshots
+- auto-isolate tests from real ~/.kimaki/ database
+- interaction callback preserves messageId, handles UpdateMessage correctly
+- ensure project channel footer survives 2000-char limit and empty body fallback
+- Fix hrana-server and IPC polling issues from oracle review
+- never use --worktree unless user explicitly asks
+- snapshot thread agent/model preferences
+- ensure parent thread_sessions row exists before creating worktree
+- parallelize footer async calls to fix archive-thread race
+- resolve deferred session idle race in interactive flows
+- require UTC date format for send-at scheduling
+- harden memory forum sync startup and file processing
+- preserve channelId across server restarts, fix forum-sync subfolder handling
+- read file attachments in bot-initiated threads
+- prevent duplicate part output on interrupted runs
+- prevent interactive UI flush from echoing user messages
+- fix resume stuck on 'Loading N messages...' forever
+- include opencode stderr tail in startup timeout errors
+- render action buttons after stream flush and hide tool call output
+- show context percentage first in /context-usage
+- harden opencode plugin hooks and upload timeout handling
+- label voice transcription prompts for model context
+- suppress /model tip link embeds in confirmation replies
+- enforce read-only explore permissions in injected opencode config
+- prevent typing indicator from restarting after session cleanup
+- increase archive delay from 3s to 5s
+- truncate unbounded message content to prevent Discord API errors
+- guard against non-hydrated guild members in permission check
+- fix parallelization bugs in session-handler
+- remove decimal digits from session duration in footer
+- keep /fork select menu customId under 100 chars
+- prevent list/code markdown gluing
+- log prisma init stack traces
+- avoid echoing command args in channel
+- print stack traces for unhandled errors
+- show context percentage for large tool outputs
+- fail fast on invalid session agent
+- harden schema migration SQL parsing
+- keep only error reaction on thread messages
+- add resolveWorkingDirectory util to fix worktree cwd in slash commands
+- avoid repeating diamond prefix on same-message text parts
+- use worktree directory for /run-shell-command in worktree threads
+- allow ! shell commands to bypass mention mode in text channels
+- pass parent channelId to reactToThread in worktree command
+- pass parent channelId to reactToThread calls
+- react to thread starter message in parent channel
+- remove double newlines from permission request messages
+- update stale @opencode-ai/sdk override to ^1.1.51
+- move @opencode-ai/plugin to dependencies and add version check
+- fix permission buttons not being handled
+- fix closing thread with set timeout
+- trim text parts before rendering
+- force function calling mode for transcription
+- scope permission auto-reject to instance
+- remove broken submodule stubs before initialization
+- route permission replies to correct directory
+- normalize command names to lowercase for Discord slash commands
+- include channel topic in system prompt
+- preserve list/code fence separation in Discord output
+- disable DM for all slash commands and fetch guilds if cache empty
+- fix behavioral changes from SQL to Prisma migration
+- fix console logs
+- Windows support for OpenCode binary detection and server spawn
+- make CLI executable after build
+- improve Node.js package setup
+- support binary WebSocket messages and non-JSON text frames
+- normalize tmpdir path for Windows compatibility
+- fix serverUrl undefined issue and add example-static
+- check config.model before recent models for default model selection
+- don't embed base64 image URLs in prompt text, add HEIC support
+- send images as base64 data URLs with resizing support
+- strip bracketed paste escape sequences from CLI input
+- gate session idle completion
+- show apply_patch file names from input
+- filter hidden agents from new-session autocomplete
+- log ignored errors and gate idle abort
+- handle permission requests from subtask sessions
+- use ⋅ separator for subtasks and fix double spaces in tool output
+- ignore stale session.idle events before content received
+- handle apply_patch tool summaries defensively
+- pass Error to .abort() to prevent string reason leaking as error
+- add defensive handling for apply_patch tool fields
+- normalize whitespace in tool call arguments for Discord display
+- send user message as question tool answer instead of 'cancelled'
+- remove extra blank lines from command response messages
+- hide subtask output in text-only verbosity mode
+- add users to threads so they appear in sidebar
+- serialize discord event handlers
+- send queued messages after session completion
+- add-project --guild flag now works with large Discord IDs
+- dedupe permission dropdowns
+- prevent discord markdown chunks exceeding limit
+- use embed marker for auto-start instead of database
+- use update-ref instead of fetch
+- handle non-fast-forward by merging into worktree first
+- track multiple pending permissions per thread to prevent duplicates and hangs
+- check if worktree exists before creating thread
+- edit starter message when worktree is ready instead of sending new message
+- increase connection pool to prevent SSE deadlock
+- fix 0% token usage race condition by fetching from API
+- Fix errore submodule setup
+- Fix matchError examples to use return values
+- avoid duplicate kimaki in category names
+- make database optional in send command for CI environments
+- limit discord command name to 32 characters
+- fix error display showing unhelpful [string] type, fix unnest trailing whitespace
+- fix numbered list code block unnesting to avoid repeating numbers
+- prevent infinite loop in splitLongLine with small maxLength
+- cancel pending question when user sends new message
+- reply with helpful message when user lacks Kimaki role
+- flush pending text before showing question dropdowns
+- move Kimaki role to bottom position for easier assignment
+- use v2 permission API for Accept Always to persist
+- fix usage of -cmd commands
+- send transcription errors to thread instead of channel
+- improve opencode server startup reliability
+- handle lines longer than Discord limit in markdown splitting
+- escape inline markdown in dynamic content for Discord
+- prevent killing own process when checking for existing instance
+- register interaction handlers when client is already ready
+- fix race conditions and improve session handling performance
+- fix context usage percentage
+- fix resuem command
+- fix event stream being aborted when new messages arrive during long commands
+- fix abort controller to pass Error objects instead of strings
+- fix isAbortError
+- fix entrypoint
+- fix get client thing
+- FIXED THE BUG BRUHHHHHH
+- fix
+- use session ID instead of directory for abort controller mapping
+- fix thinking remainging there
+- fix double text mesages
+- fix debouncing
+- fixes
+- Fix typo in README for GEMINI_API_KEY
+- fix isModelSpeaking
+- fix cracking user input
+- fix sessions sorting
+
 ## 0.31.0
 
 1. **Queue a side question until the current turn ends.** In a session thread, end a message with `btw queue`, or use `/queue` with a `btw` prompt, or end a `/btw` prompt with `. queue`. Kimaki waits for earlier queued prompts, then forks the **updated** session into a new thread. The side question never starts a turn in the source thread:
