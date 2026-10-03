@@ -435,14 +435,13 @@ function killSingleServerProcessNow({
   }
 
   const killResult = errore.try(
-    () => {
+    { try: () => {
       serverProcess.kill('SIGTERM')
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error('Failed to send SIGTERM to opencode server', {
         cause: error,
       })
-    },
+    } },
   )
 
   if (killResult instanceof Error) {
@@ -473,14 +472,13 @@ function killStartingServerProcessNow({
   }
 
   const killResult = errore.try(
-    () => {
+    { try: () => {
       serverProcess.kill('SIGTERM')
-    },
-    (error) => {
+    }, catch: (error) => {
       return new Error('Failed to send SIGTERM to starting opencode server', {
         cause: error,
       })
-    },
+    } },
   )
 
   if (killResult instanceof Error) {
@@ -562,7 +560,7 @@ export function resolveOpencodeCommand(): string {
   const isWindows = process.platform === 'win32'
   const whichCmd = isWindows ? 'where' : 'which'
   const result = errore.try(
-    () => {
+    { try: () => {
       const commandOutput = execFileSync(whichCmd, ['opencode'], {
         encoding: 'utf8',
         timeout: 5000,
@@ -575,8 +573,7 @@ export function resolveOpencodeCommand(): string {
         return resolved
       }
       throw new Error('opencode not found in PATH')
-    },
-    () => new Error('opencode not found in PATH'),
+    }, catch: () => new Error('opencode not found in PATH') },
   )
 
   if (result instanceof Error) {
@@ -1556,14 +1553,13 @@ export async function stopOpencodeServer(): Promise<boolean> {
   )
   if (!server.process.killed) {
     const killResult = errore.try(
-      () => {
+      { try: () => {
         server.process!.kill('SIGTERM')
-      },
-      (error) => {
+      }, catch: (error) => {
         return new Error('Failed to send SIGTERM to opencode server', {
           cause: error,
         })
-      },
+      } },
     )
     if (killResult instanceof Error) {
       opencodeLogger.warn(killResult.message)

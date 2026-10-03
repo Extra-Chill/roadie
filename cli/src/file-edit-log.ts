@@ -91,14 +91,13 @@ export function editorsForFile({
 
 function parseFileEditEvent(line: string) {
   const parsed = errore.try(
-    () => JSON.parse(line) as {
+    { try: () => JSON.parse(line) as {
       v: number
       at: number
       sessionId: string
       file: string
       tool: string
-    },
-    (cause) => new FilesystemOperationError({ operation: 'parse file edit event', cause }),
+    }, catch: (cause) => new FilesystemOperationError({ operation: 'parse file edit event', cause }) },
   )
   if (parsed instanceof Error) return null
   if (!parsed || typeof parsed !== 'object') return null
@@ -126,8 +125,7 @@ function nodeErrorCode(error: Error) {
 export function loadFileEditEvents({ dataDir }: { dataDir: string }) {
   const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
   const raw = errore.try(
-    () => fs.readFileSync(logPath, 'utf8'),
-    (cause) => new FilesystemOperationError({ operation: 'read file edit log', cause }),
+    { try: () => fs.readFileSync(logPath, 'utf8'), catch: (cause) => new FilesystemOperationError({ operation: 'read file edit log', cause }) },
   )
   if (raw instanceof Error) {
     if (nodeErrorCode(raw) === 'ENOENT') return []
@@ -169,11 +167,10 @@ function compactFileEditLog({
   const tempPath = `${logPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   const body = kept.map((event) => `${JSON.stringify(event)}\n`).join('')
   const written = errore.try(
-    () => {
+    { try: () => {
       fs.writeFileSync(tempPath, body)
       fs.renameSync(tempPath, logPath)
-    },
-    (cause) => new FilesystemOperationError({ operation: 'compact file edit log', cause }),
+    }, catch: (cause) => new FilesystemOperationError({ operation: 'compact file edit log', cause }) },
   )
   if (written instanceof Error) {
     fs.rmSync(tempPath, { force: true })
@@ -195,16 +192,14 @@ export function appendFileEditEvents({
   if (events.length === 0) return
   const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
   const prepared = errore.try(
-    () => {
+    { try: () => {
       fs.mkdirSync(dataDir, { recursive: true })
       fs.appendFileSync(logPath, events.map((event) => `${JSON.stringify(event)}\n`).join(''))
-    },
-    (cause) => new FilesystemOperationError({ operation: 'append file edit log', cause }),
+    }, catch: (cause) => new FilesystemOperationError({ operation: 'append file edit log', cause }) },
   )
   if (prepared instanceof Error) return prepared
   const size = errore.try(
-    () => fs.statSync(logPath).size,
-    (cause) => new FilesystemOperationError({ operation: 'stat file edit log', cause }),
+    { try: () => fs.statSync(logPath).size, catch: (cause) => new FilesystemOperationError({ operation: 'stat file edit log', cause }) },
   )
   if (size instanceof Error) return size
   if (size < compactAfterBytes) return
@@ -273,8 +268,7 @@ export const fileEditTrackerPlugin: Plugin = async ({ directory }) => {
   if (!dataDir) return {}
   setPluginLogFilePath(dataDir)
   const created = errore.try(
-    () => fs.mkdirSync(dataDir, { recursive: true }),
-    (cause) => new FilesystemOperationError({ operation: 'create file edit log dir', cause }),
+    { try: () => fs.mkdirSync(dataDir, { recursive: true }), catch: (cause) => new FilesystemOperationError({ operation: 'create file edit log dir', cause }) },
   )
   if (created instanceof Error) {
     logger.warn('Failed to create file edit log dir', created.message)

@@ -334,13 +334,12 @@ export async function evictExistingInstance({
     `Evicting existing roadie process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`,
   )
   const killResult = errore.try(
-    () => {
+    { try: () => {
       process.kill(wrapperPid ?? targetPid, 'SIGTERM')
-    },
-    (e) =>
+    }, catch: (e) =>
       new Error('Failed to send SIGTERM to existing roadie process', {
         cause: e,
-      }),
+      }) },
   )
   if (killResult instanceof Error) {
     hranaLogger.log(`Failed to kill PID ${targetPid}: ${killResult.message}`)
@@ -359,23 +358,21 @@ export async function evictExistingInstance({
   // Wrapper first so it cannot respawn the child we are about to kill.
   const wrapperKillResult = wrapperPid
     ? errore.try(
-        () => {
+        { try: () => {
           process.kill(wrapperPid, 'SIGKILL')
-        },
-        (e) => new Error('Failed to send SIGKILL to roadie wrapper', { cause: e }),
+        }, catch: (e) => new Error('Failed to send SIGKILL to roadie wrapper', { cause: e }) },
       )
     : null
   if (wrapperKillResult instanceof Error) {
     hranaLogger.log(`Failed to kill wrapper PID ${wrapperPid}: ${wrapperKillResult.message}`)
   }
   const forceKillResult = errore.try(
-    () => {
+    { try: () => {
       process.kill(targetPid, 'SIGKILL')
-    },
-    (e) =>
+    }, catch: (e) =>
       new Error('Failed to send SIGKILL to existing roadie process', {
         cause: e,
-      }),
+      }) },
   )
   if (forceKillResult instanceof Error) {
     hranaLogger.log(`Failed to kill PID ${targetPid}: ${forceKillResult.message}`)
@@ -398,10 +395,9 @@ function getWrapperPid(): number | null {
 
 function isProcessAlive(pid: number): boolean {
   const result = errore.try(
-    () => {
+    { try: () => {
       process.kill(pid, 0)
-    },
-    (e) => new Error('Process liveness check failed', { cause: e }),
+    }, catch: (e) => new Error('Process liveness check failed', { cause: e }) },
   )
   if (result instanceof Error) {
     // EPERM means the PID exists but belongs to another user.

@@ -17,11 +17,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   pnpm() { npx --yes "$pnpm_spec" "$@"; }
 fi
 
-if [[ -d .git || -f .git ]]; then
-  git submodule update --init errore opencode-injection-guard
-fi
 pnpm install --frozen-lockfile
-pnpm --filter errore --filter opencode-injection-guard --filter libsqlproxy run build
 # The CLI typecheck covers its tests, which import the Discord twin.
 (cd discord-digital-twin && pnpm generate && pnpm build)
 (cd cli && pnpm build)

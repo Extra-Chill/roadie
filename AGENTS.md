@@ -27,8 +27,6 @@ Roadie is a chat-to-agent bridge: a chat adapter (Discord today) on one side, an
 - `cli/`: TypeScript CLI + Discord bot. `src/cli.ts` main CLI and onboarding, `src/discord-bot.ts` event loop and session routing, SQLite at `~/.roadie/discord-sessions.db`.
 - `discord-digital-twin/`, `opencode-deterministic-provider/`, `opencode-cached-provider/`: test harness for the e2e suite.
 - `discord-slack-bridge/`, `slack-digital-twin/`: Slack support via Discord emulation, until the native Slack adapter replaces it.
-- `libsqlproxy/`: Hrana protocol used by the bot's local SQLite server.
-- `errore/`, `opencode-injection-guard/`: submodule dependencies.
 - Account rotation comes from `@subrouter/cli` and `@subrouter/opencode` (pinned npm packages). The OpenCode backend loads the subrouter plugin unless `--no-subrouter` / `ROADIE_SUBROUTER=0`; models are `subrouter/<preset>`.
 - `slop/`: upstream design notes (Slack adapter, platform abstraction).
 
@@ -97,25 +95,9 @@ never suggest installing roadie from git (e.g. `npm i -g Extra-Chill/roadie#main
 
 the bug report workflow (export jsonl, share evidence in a gist) is in `docs/debugging-roadie.md`. keep it in sync when these debug commands change.
 
-## git submodules
-
-submodules: `errore`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
-
-**never rewrite or force-push a submodule branch in a way that drops commits roadie still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
-
-workflow when changing a submodule:
-
-1. commit and **push** the submodule branch first so GitHub has the objects
-2. only then bump the gitlink in roadie (`git add errore` etc.) and commit that pointer update
-3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/<owner>/<submodule>/commits/<sha> --jq .sha` (must not 422)
-
-when pulling submodules and they jump to a new commit, commit that pointer update right away before other work. otherwise later diffs include the noisy submodule jump along with the real changes.
-
-if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" roadie by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
-
 ## errore
 
-errore is a submodule for using errors as values in ts. it should always be on main, never in detached state. this whole codebase uses errore.org conventions. ALWAYS read the errore skill before editing any code.
+errore (the `errore` npm package) is used for errors as values in ts. this whole codebase uses errore.org conventions. ALWAYS read the errore skill before editing any code.
 
 ## goke cli
 
