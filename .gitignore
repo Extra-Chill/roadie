@@ -29,3 +29,6 @@ website/.wrangler/
 .wrangler
 betterstack
 /subrouter-opencode-v2-plugin/
+
+# Release tarballs built by cli/scripts/pack-release.ts
+/cli/release

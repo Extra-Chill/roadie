@@ -1,11 +1,25 @@
 {
   "auto_cleanup": false,
   "changelog_target": "cli/CHANGELOG.md",
+  "extensions": {
+    "nodejs": {
+      "settings": {
+        "release_package_script": "release:package"
+      }
+    }
+  },
   "id": "roadie",
+  "release": {
+    "publish": false
+  },
   "remote_path": "",
   "version_targets": [
     {
       "file": "cli/package.json",
+      "pattern": "\"version\": \"([0-9.]+)\""
+    },
+    {
+      "file": "package.json",
       "pattern": "\"version\": \"([0-9.]+)\""
     }
   ]

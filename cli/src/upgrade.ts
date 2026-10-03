@@ -1,5 +1,5 @@
 // Roadie self-upgrade utilities.
-// Detects the package manager used to install roadie, checks npm for newer versions,
+// Detects the package manager used to install roadie, checks GitHub releases for newer versions,
 // and runs the global upgrade command. Used by both CLI `roadie upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
 // The package name comes from package.json, so the running package is what gets upgraded.
@@ -69,9 +69,11 @@ function resolveScriptRealpath(): string | null {
   }
 }
 
-function readPackageJson(): { name: string; version: string } {
+type PackageJson = { name: string; version: string; repository?: string | { url?: string } }
+
+function readPackageJson(): PackageJson {
   const require = createRequire(import.meta.url)
-  return require('../package.json') as { name: string; version: string }
+  return require('../package.json') as PackageJson
 }
 
 export function getPackageName(): string {
@@ -82,39 +84,65 @@ export function getCurrentVersion(): string {
   return readPackageJson().version
 }
 
-export async function getLatestNpmVersion(): Promise<string | null> {
+/** `owner/repo` of the GitHub repository in package.json `repository`. */
+export function githubRepoSlug(repository: PackageJson['repository']): string | null {
+  const url = typeof repository === 'string' ? repository : repository?.url
+  const match = url?.match(/github\.com[/:]([^/]+\/[^/.#]+)/)
+  return match?.[1] ?? null
+}
+
+export type ReleaseAsset = { version: string; url: string }
+type GithubRelease = { tag_name?: string; assets?: Array<{ name: string; browser_download_url: string }> }
+
+/**
+ * Pick the installable tarball from a GitHub release. Releases also carry a
+ * small workspace tarball, so match the CLI package's own pack name.
+ */
+export function selectReleaseAsset(
+  release: GithubRelease,
+  packageName: string,
+): ReleaseAsset | null {
+  const version = release.tag_name?.replace(/^v/, '')
+  if (!version) return null
+  const packName = `${packageName.replace(/^@/, '').replace('/', '-')}-${version}.tgz`
+  const asset = release.assets?.find((candidate) => candidate.name === packName)
+  return asset ? { version, url: asset.browser_download_url } : null
+}
+
+/** Latest release tarball on GitHub, or null when it cannot be determined. */
+export async function getLatestRelease(): Promise<ReleaseAsset | null> {
   try {
-    const name = getPackageName()
-    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, {
+    const pkg = readPackageJson()
+    const slug = githubRepoSlug(pkg.repository)
+    if (!slug) return null
+    const res = await fetch(`https://api.github.com/repos/${slug}/releases/latest`, {
+      headers: { accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(15_000),
     })
-    if (!res.ok) {
-      return null
-    }
-    const data = (await res.json()) as { version: string } | null
-    return data?.version ?? null
+    if (!res.ok) return null
+    return selectReleaseAsset((await res.json()) as GithubRelease, pkg.name)
   } catch {
     return null
   }
 }
 
+async function installRelease(asset: ReleaseAsset): Promise<void> {
+  await execAsync(`${detectPm()} i -g ${asset.url}`, { timeout: 180_000 })
+}
+
 // Returns the new version string if upgraded, null if already up to date.
 export async function upgrade(): Promise<string | null> {
   const current = getCurrentVersion()
-  const latest = await getLatestNpmVersion()
+  const latest = await getLatestRelease()
   if (!latest) {
-    throw new Error('Failed to check latest version from npm')
+    throw new Error('Failed to find the latest Roadie release on GitHub')
   }
-  if (current === latest) {
+  if (current === latest.version) {
     return null
   }
-
-  const pm = detectPm()
-  const name = getPackageName()
-  logger.log(`Upgrading ${name} from v${current} to v${latest} using ${pm}...`)
-  await execAsync(`${pm} i -g ${name}@latest`, { timeout: 120_000 })
-
-  return latest
+  logger.log(`Upgrading ${getPackageName()} from v${current} to v${latest.version}...`)
+  await installRelease(latest)
+  return latest.version
 }
 
 // Fire-and-forget background upgrade check on bot startup.
@@ -122,16 +150,13 @@ export async function upgrade(): Promise<string | null> {
 export async function backgroundUpgradeRoadie(): Promise<void> {
   try {
     const current = getCurrentVersion()
-    const latest = await getLatestNpmVersion()
-    if (!latest || current === latest) {
+    const latest = await getLatestRelease()
+    if (!latest || current === latest.version) {
       return
     }
-
-    const pm = detectPm()
-    const name = getPackageName()
-    logger.debug(`Background ${name} upgrade started: v${current} -> v${latest}`)
-    await execAsync(`${pm} i -g ${name}@latest`, { timeout: 120_000 })
-    logger.debug(`Background ${name} upgrade completed: v${latest}`)
+    logger.debug(`Background ${getPackageName()} upgrade started: v${current} -> v${latest.version}`)
+    await installRelease(latest)
+    logger.debug(`Background ${getPackageName()} upgrade completed: v${latest.version}`)
   } catch {
     // silently ignored, non-critical
   }
