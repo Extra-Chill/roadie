@@ -11,6 +11,7 @@
 
 import fs from 'node:fs'
 import http from 'node:http'
+import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import Database from 'libsql'
@@ -22,7 +23,15 @@ import {
 } from 'libsqlproxy'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
-import { getLockPort, readRoadieSecret } from './config.js'
+import { getLockPort } from './config.js'
+import {
+  buildRemoteSendArgs,
+  getRemoteSendRunner,
+  getSendToken,
+  isAuthorizedSend,
+  REMOTE_SEND_MAX_BODY_BYTES,
+  type RemoteSendEvent,
+} from './remote-send.js'
 import { store } from './store.js'
 // Circular import: opencode.ts → hrana-server.ts → opencode.ts.
 // Safe because both sides only use lazy runtime function calls, never
@@ -77,11 +86,6 @@ function ensureServiceAuthTokenInStore(): string {
   const existingToken = store.getState().gatewayToken
   if (existingToken) {
     return existingToken
-  }
-  const configured = readRoadieSecret('ROADIE_SERVICE_TOKEN')
-  if (configured) {
-    store.setState({ gatewayToken: configured })
-    return configured
   }
   const generatedToken = `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}`
   store.setState({ gatewayToken: generatedToken })
@@ -154,6 +158,11 @@ export async function startHranaServer({
       res.end(JSON.stringify({ port }))
       return
     }
+    // Cross-user send. Disabled unless the host configured a send token.
+    if (pathname === '/roadie/send') {
+      await handleRemoteSend(req, res)
+      return
+    }
     // Hrana routes: /v2, /v2/pipeline — require auth
     if (pathname === '/v2' || pathname === '/v2/pipeline') {
       if (!isAuthorizedRequest(req)) {
@@ -219,6 +228,67 @@ export async function stopHranaServer() {
   hranaUrl = null
   discordGatewayReady = false
   hranaLogger.log('Hrana server stopped')
+}
+
+// ── Cross-user send ──────────────────────────────────────────────────
+
+async function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | Error> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length
+    if (size > limit) return new Error(`Body exceeds ${limit} bytes`)
+    chunks.push(chunk as Buffer)
+  }
+  return Buffer.concat(chunks)
+}
+
+async function handleRemoteSend(req: http.IncomingMessage, res: http.ServerResponse) {
+  const token = getSendToken()
+  if (!token) {
+    res.writeHead(404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: 'send endpoint not configured' }))
+    return
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, { allow: 'POST' })
+    res.end()
+    return
+  }
+  if (!isAuthorizedSend(req.headers.authorization, token)) {
+    res.writeHead(401, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: 'unauthorized' }))
+    return
+  }
+  const body = await readBody(req, REMOTE_SEND_MAX_BODY_BYTES)
+  if (body instanceof Error) {
+    res.writeHead(413, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: body.message }))
+    return
+  }
+  const fileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-send-'))
+  try {
+    let args: string[]
+    try {
+      args = buildRemoteSendArgs(JSON.parse(body.toString('utf8')), fileDir)
+    } catch (error) {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+      return
+    }
+    hranaLogger.log(`Remote send: ${args.filter((arg) => !arg.startsWith('--prompt=')).join(' ')}`)
+    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    const emit = (event: RemoteSendEvent) => {
+      res.write(`${JSON.stringify(event)}\n`)
+    }
+    // `send --wait` can stay quiet for a long time; keep idle timeouts away.
+    const keepalive = setInterval(() => emit({ keepalive: true }), 20_000)
+    const exit = await getRemoteSendRunner()(args, emit).finally(() => clearInterval(keepalive))
+    emit({ exit })
+    res.end()
+  } finally {
+    fs.rmSync(fileDir, { recursive: true, force: true })
+  }
 }
 
 // ── Single-instance enforcement ──────────────────────────────────────

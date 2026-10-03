@@ -23,7 +23,8 @@ import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
-import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
+import { setDataDir, setProjectsDir, getDataDir, getProjectsDir, getLockPort } from '../config.js'
+import { getSendToken, remoteSendOptions, sendViaRunningBot, shouldSendRemotely } from '../remote-send.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
@@ -133,6 +134,21 @@ cli
     'Wait for session to complete, then print session text to stdout',
   )
   .action(async (options) => {
+      // A host user with a send token but no access to the bot's data dir
+      // sends through the running bot instead (see remote-send.ts).
+      if (shouldSendRemotely({ dataDir: getDataDir() })) {
+        if (options.preRun) {
+          cliLogger.error('--pre-run is not available when sending through the running bot')
+          process.exit(EXIT_NO_RESTART)
+        }
+        const exitCode = await sendViaRunningBot({
+          port: getLockPort(),
+          token: getSendToken()!,
+          options: remoteSendOptions(options),
+          filePaths: (options.file ?? []).map((f: string) => path.resolve(f)),
+        })
+        process.exit(exitCode)
+      }
       try {
         // `--name` / `--app-id` are optional-value flags: `undefined` when
         // omitted, `''` when passed bare, a real string when given a value.
