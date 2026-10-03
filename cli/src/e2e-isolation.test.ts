@@ -30,4 +30,6 @@ test('every e2e file uses its own channel ids and lock ports', () => {
   }
   expect(owners.size).toBeGreaterThan(10)
   expect(clashes).toEqual([])
+  // Ports in the Linux ephemeral range can be handed to any outbound connection.
+  expect([...ports.keys()].filter((port) => port >= 32_768)).toEqual([])
 })
