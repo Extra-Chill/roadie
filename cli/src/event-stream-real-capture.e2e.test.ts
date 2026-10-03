@@ -22,7 +22,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { chooseLockPort, cleanupTestSessions, initTestGitRepo } from './test-utils.js'
+import { chooseLockPort, cleanupTestSessions, initTestGitRepo, removeTestDataDir } from './test-utils.js'
 import { waitForBotMessageContaining, waitForBotReplyAfterUserMessage } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 import { disposeRuntime, pendingPermissions } from './session-handler/thread-session-runtime.js'
@@ -418,7 +418,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
 
-    fs.rmSync(directories.dataDir, { recursive: true, force: true })
+    removeTestDataDir(directories.dataDir)
   }, 180_000)
 
   realCaptureTest(

@@ -547,3 +547,12 @@ export async function waitForThreadState({
     `Current: queue=${queueLen}, sessionId=${sessionId}`,
   )
 }
+
+/**
+ * Remove a test data directory. The agent server can still be flushing files
+ * into it for a moment after it is told to stop, which makes a single
+ * recursive rm fail with ENOTEMPTY; retry briefly instead of failing the file.
+ */
+export function removeTestDataDir(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+}

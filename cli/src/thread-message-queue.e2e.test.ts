@@ -47,8 +47,7 @@ import {
   waitForBotReplyAfterUserMessage,
   waitForBotReplyTo,
   waitForThreadState,
-  getMessageVisibleText,
-} from './test-utils.js'
+  getMessageVisibleText, removeTestDataDir } from './test-utils.js'
 
 
 const e2eTest = describe
@@ -425,7 +424,7 @@ e2eTest('thread message queue ordering', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      removeTestDataDir(directories.dataDir)
     }
   }, 20_000)
 
