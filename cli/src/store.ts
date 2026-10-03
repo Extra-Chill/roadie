@@ -119,13 +119,6 @@ export type RoadieState = {
   // Read by: cli-runner.ts run() before calling backgroundUpgradeRoadie().
   autoUpgradeEnabled: boolean
 
-  // Whether background sync of external OpenCode sessions is enabled.
-  // When true (default), sessions started from the OpenCode CLI or TUI
-  // are mirrored into Discord threads so they can be browsed, searched,
-  // and resumed from Discord. Set to false via --disable-sync CLI flag.
-  // Changes: set once at startup.
-  // Read by: external-opencode-sync.ts startExternalOpencodeSessionSync().
-  syncEnabled: boolean
 
   // Whether the OpenCode backend loads @subrouter/opencode, which provides
   // account rotation across subscriptions (subrouter/<preset> models).
@@ -183,7 +176,6 @@ export const store = createStore<RoadieState>(() => ({
   restrictExternalDirectories: false,
   permissionTimeoutMs: 10 * 60 * 1000,
   autoUpgradeEnabled: true,
-  syncEnabled: true,
   subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,

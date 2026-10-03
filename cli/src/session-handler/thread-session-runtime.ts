@@ -856,8 +856,7 @@ export type IngressInput = {
   // Opaque host person id resolved by the identity hook for this turn.
   personId?: string
   // Discord message ID and thread ID for the source message, embedded in
-  // <discord-user> synthetic context so the external sync loop can detect
-  // messages that originated from Discord and skip re-mirroring them.
+  // <discord-user> synthetic context so the model knows which message it answers.
   sourceMessageId?: string
   sourceThreadId?: string
   // Channel that holds the source message. Differs from the thread for the
@@ -4765,8 +4764,8 @@ export class ThreadSessionRuntime {
       const queuedCommand = input.command
       const commandSignal = AbortSignal.timeout(30_000)
       // session.command() only accepts FilePart in parts, not text parts.
-      // Append <discord-user /> tag to arguments so external sync can
-      // detect this message came from Discord (same tag as promptAsync).
+      // Append the <discord-user /> tag to the arguments, same as promptAsync,
+      // so the model sees who sent the command.
       const discordTag = getOpencodePromptContext({
         sessionId: session.id,
         threadId: this.thread.id,

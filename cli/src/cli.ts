@@ -117,7 +117,7 @@ cli
   )
   .option(
     '--disable-sync',
-    'Disable background sync of external OpenCode sessions into Discord',
+    'Deprecated no-op: Roadie no longer mirrors external sessions into Discord',
   )
   .option(
     '--no-subrouter',
@@ -314,7 +314,6 @@ cli
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
-          ...(options.disableSync && { syncEnabled: false }),
           ...(options.subrouter === false && { subrouterEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
@@ -392,11 +391,6 @@ cli
         if (options.noAutoUpgrade) {
           cliLogger.log(
             'Auto-upgrade disabled: roadie will not check for updates on startup',
-          )
-        }
-        if (options.disableSync) {
-          cliLogger.log(
-            'Background sync disabled: external OpenCode sessions will not appear in Discord',
           )
         }
         if (options.noAnalytics) {
