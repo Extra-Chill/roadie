@@ -3,6 +3,7 @@
 // Imported by both cli.ts (startup registration) and restart-opencode-server.ts
 // (post-restart re-registration).
 
+import { isManagedInstall } from './service-lifecycle.js'
 import {
   type REST,
   Routes,
@@ -386,13 +387,18 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
 
-    new SlashCommandBuilder()
-      .setName('upgrade-and-restart')
-      .setDescription(
-        truncateCommandDescription('Upgrade roadie to the latest version and restart the bot'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
+    // Managed installs are upgraded by the host, never from chat.
+    ...(isManagedInstall()
+      ? []
+      : [
+          new SlashCommandBuilder()
+            .setName('upgrade-and-restart')
+            .setDescription(
+              truncateCommandDescription('Upgrade roadie to the latest version and restart the bot'),
+            )
+            .setDMPermission(false)
+            .toJSON(),
+        ]),
     new SlashCommandBuilder()
       .setName('mcp')
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))

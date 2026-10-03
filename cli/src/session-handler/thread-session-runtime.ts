@@ -6,6 +6,7 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
+import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
@@ -355,6 +356,129 @@ function groupQueueRowsByThread(
   return byThread
 }
 
+/** Existing runtime for a thread, or one rebuilt from Discord and the DB after a restart. */
+async function ensureRuntimeForThread({
+  discordClient,
+  threadId,
+  appId,
+  purpose,
+}: {
+  discordClient: Client
+  threadId: string
+  appId?: string
+  purpose: string
+}): Promise<ThreadSessionRuntime | undefined> {
+  const existing = runtimes.get(threadId)
+  if (existing) {
+    return existing
+  }
+  const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
+    logger.warn(
+      `[RUNTIME] Failed to fetch thread ${threadId} for ${purpose}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return null
+  })
+  if (!fetched?.isThread()) {
+    logger.warn(`[RUNTIME] Skipping ${purpose} for missing thread ${threadId}`)
+    return undefined
+  }
+  const resolved = await resolveWorkingDirectory({ channel: fetched })
+  if (!resolved) {
+    logger.warn(`[RUNTIME] Skipping ${purpose} for thread ${threadId}: no project directory`)
+    return undefined
+  }
+  const sessionId = await getThreadSession(threadId)
+  return getOrCreateRuntime({
+    threadId,
+    thread: fetched,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: fetched.parentId || fetched.id,
+    appId,
+    sessionId,
+  })
+}
+
+/** Threads whose main session has a run in progress right now. */
+export function snapshotBusyRuntimes(): InterruptedSession[] {
+  const busy: InterruptedSession[] = []
+  for (const [threadId, runtime] of runtimes) {
+    const sessionId = runtime.state?.sessionId
+    if (!sessionId || !runtime.isBusy()) {
+      continue
+    }
+    busy.push({
+      threadId,
+      sessionId,
+      userId: runtime.state?.sessionUserId,
+      username: runtime.state?.sessionUsername,
+    })
+  }
+  return busy
+}
+
+/**
+ * Resume runs interrupted by the previous process's shutdown. Fresh records
+ * get a continuation turn; stale ones only get a notice in their thread.
+ */
+export async function resumeInterruptedSessions({
+  discordClient,
+  appId,
+  consume = consumeInterruptedSessions,
+}: {
+  discordClient: Client
+  appId?: string
+  consume?: typeof consumeInterruptedSessions
+}): Promise<{ resumed: string[]; notified: string[] }> {
+  const { resume, stale } = consume()
+  const resumed: string[] = []
+  const notified: string[] = []
+  for (const entry of stale) {
+    const thread = await discordClient.channels.fetch(entry.threadId).catch(() => null)
+    if (!thread?.isThread()) continue
+    await thread.send({
+      content: asSubtext('Roadie restarted while this session was running. It was too long ago to resume automatically; send a message to continue.'),
+      flags: SILENT_MESSAGE_FLAGS,
+    }).catch(() => undefined)
+    notified.push(entry.threadId)
+  }
+  for (const entry of resume) {
+    const runtime = await ensureRuntimeForThread({
+      discordClient,
+      threadId: entry.threadId,
+      appId,
+      purpose: 'restart continuation',
+    })
+    if (!runtime) continue
+    // The thread was rebound (e.g. /resume) since the snapshot; the old run is not ours to continue.
+    if (runtime.state?.sessionId && runtime.state.sessionId !== entry.sessionId) {
+      logger.log(`[RUNTIME] Thread ${entry.threadId} moved to another session since the restart; not resuming`)
+      continue
+    }
+    await runtime.thread.send({
+      content: asSubtext('Roadie restarted while this session was running. Resuming.'),
+      flags: SILENT_MESSAGE_FLAGS,
+    }).catch(() => undefined)
+    const result = await runtime.enqueueIncoming({
+      prompt: RESTART_CONTINUATION_PROMPT,
+      userId: entry.userId || discordClient.user?.id || '',
+      username: entry.username || 'Roadie',
+      appId,
+      expectedSessionId: entry.sessionId,
+    }).catch((error: unknown) => {
+      logger.warn(
+        `[RUNTIME] Failed to resume thread ${entry.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return undefined
+    })
+    if (result) resumed.push(entry.threadId)
+  }
+  if (resumed.length || notified.length) {
+    logger.log(`[RUNTIME] Restart continuation: resumed ${resumed.length}, notified ${notified.length}`)
+  }
+  return { resumed, notified }
+}
+
 export async function restorePersistedLocalQueues({
   discordClient,
   appId,
@@ -372,35 +496,9 @@ export async function restorePersistedLocalQueues({
     if (items.length === 0) {
       continue
     }
-    let runtime = runtimes.get(threadId)
+    const runtime = await ensureRuntimeForThread({ discordClient, threadId, appId, purpose: 'restored queue' })
     if (!runtime) {
-      const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
-        logger.warn(
-          `[QUEUE] Failed to fetch thread ${threadId} for restored queue: ${error instanceof Error ? error.message : String(error)}`,
-        )
-        return null
-      })
-      if (!fetched?.isThread()) {
-        logger.warn(`[QUEUE] Skipping restored queue for missing thread ${threadId}`)
-        continue
-      }
-
-      const resolved = await resolveWorkingDirectory({ channel: fetched })
-      if (!resolved) {
-        logger.warn(`[QUEUE] Skipping restored queue for thread ${threadId}: no project directory`)
-        continue
-      }
-
-      const sessionId = await getThreadSession(threadId)
-      runtime = getOrCreateRuntime({
-        threadId,
-        thread: fetched,
-        projectDirectory: resolved.projectDirectory,
-        sdkDirectory: resolved.workingDirectory,
-        channelId: fetched.parentId || fetched.id,
-        appId,
-        sessionId,
-      })
+      continue
     }
     await runtime.dispatchAction(() => {
       return runtime.mergeRestoredQueueAndDrain(items)

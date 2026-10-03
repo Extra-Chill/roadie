@@ -137,7 +137,7 @@ export async function startHranaServer({
     // Health check — no auth required
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid() }))
+      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid(), discordReady: discordGatewayReady }))
       return
     }
     // OpenCode server port discovery — no auth required (localhost only).

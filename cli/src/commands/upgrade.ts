@@ -2,16 +2,22 @@
 // Checks npm for a newer version, installs it globally, then spawns a new roadie process.
 // The new process kills the old one on startup (roadie's single-instance lock).
 
+import { isManagedInstall, MANAGED_UPGRADE_MESSAGE } from '../service-lifecycle.js'
 import type { CommandContext } from './types.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getCurrentVersion, upgrade } from '../upgrade.js'
 import { spawn } from 'node:child_process'
+import { MessageFlags } from 'discord.js'
 
 const logger = createLogger(LogPrefix.CLI)
 
 export async function handleUpgradeAndRestartCommand({
   command,
 }: CommandContext): Promise<void> {
+  if (isManagedInstall()) {
+    await command.reply({ content: MANAGED_UPGRADE_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
   await command.deferReply()
 
   logger.log('[UPGRADE] /upgrade-and-restart triggered')
