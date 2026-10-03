@@ -16,6 +16,27 @@ export function getRoadieEnv(name: string): string | undefined {
 }
 
 /**
+ * Read a secret from ROADIE_<NAME> or, failing that, from the file named by
+ * ROADIE_<NAME>_FILE (trailing whitespace trimmed). File form keeps secrets
+ * out of process environments and service units. Returns undefined when
+ * neither is set; throws when the file is set but unreadable or empty.
+ */
+export function readRoadieSecret(name: string): string | undefined {
+  const direct = process.env[name]?.trim()
+  if (direct) return direct
+  const file = process.env[`${name}_FILE`]?.trim()
+  if (!file) return undefined
+  let value: string
+  try {
+    value = fs.readFileSync(file, 'utf8').trim()
+  } catch (e) {
+    throw new Error(`${name}_FILE (${file}) is not readable: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (!value) throw new Error(`${name}_FILE (${file}) is empty`)
+  return value
+}
+
+/**
  * Get the data directory path.
  * Order: store value, vitest temp dir, ROADIE_DATA_DIR, then ~/.roadie.
  * Under vitest (ROADIE_VITEST env var), auto-creates an isolated temp dir so

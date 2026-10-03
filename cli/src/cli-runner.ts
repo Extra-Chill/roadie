@@ -64,7 +64,8 @@ import {
   stripMentions,
   isThreadChannelType,
 } from './discord-utils.js'
-import { setDataDir, getDataDir } from './config.js'
+import { setDataDir, getDataDir, readRoadieSecret } from './config.js'
+import { claimDatabaseFile } from './db.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeRoadie } from './upgrade.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
@@ -161,7 +162,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   token: string
   appId: string | undefined
 }> {
-  const envToken = process.env.ROADIE_BOT_TOKEN
+  const envToken = readRoadieSecret('ROADIE_BOT_TOKEN')
   if (envToken) {
     const appId = appIdOverride || appIdFromToken(envToken)
     return { token: envToken, appId }
@@ -1116,7 +1117,7 @@ export async function resolveCredentials({
 }: {
   forceRestartOnboarding: boolean
 }): Promise<CredentialResult> {
-  const envToken = process.env.ROADIE_BOT_TOKEN
+  const envToken = readRoadieSecret('ROADIE_BOT_TOKEN')
   const existingBot = await getBotTokenWithMode()
 
   // 1. Env var takes precedence (headless deployments)
@@ -1293,6 +1294,7 @@ export async function run({
   // process because it serves as both the DB server and the single-instance
   // lock (binds the fixed lock port). Without it, IPC and lock enforcement
   // don't work. CLI subcommands skip the server and use file: directly.
+  claimDatabaseFile()
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
   })
@@ -1312,9 +1314,14 @@ export async function run({
   })
 
 
-  const gatewayToken = await ensureServiceAuthToken({
-    appId,
-  })
+  // A host-provided service token (ROADIE_SERVICE_TOKEN or _FILE) lets other
+  // local processes and OS users reach this bot's database over Hrana with a
+  // credential they already hold, instead of reading the data dir.
+  const gatewayToken =
+    readRoadieSecret('ROADIE_SERVICE_TOKEN') ??
+    (await ensureServiceAuthToken({
+      appId,
+    }))
   // Always set service auth token so local and internet control-plane paths
   // share one auth model (Hrana and future service endpoints).
   store.setState({ gatewayToken })
