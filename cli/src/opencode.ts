@@ -882,9 +882,6 @@ async function startSingleServer({
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
-    // Git snapshots of the working tree on every step only served undo/redo,
-    // which Roadie does not offer. Skipping them saves disk and CPU per turn.
-    snapshot: false,
     plugin: buildServerPluginList({
       isDev,
       subrouterEnabled: store.getState().subrouterEnabled,
