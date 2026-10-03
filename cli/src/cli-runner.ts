@@ -66,6 +66,7 @@ import {
 } from './discord-utils.js'
 import { setDataDir, getDataDir, readRoadieSecret } from './config.js'
 import { claimDatabaseFile } from './db.js'
+import { cleanupOrphanedAgentServer, isManagedInstall, markServiceProcess } from './service-lifecycle.js'
 import { execAsync } from './git-utils.js'
 import { backgroundUpgradeRoadie } from './upgrade.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
@@ -1286,7 +1287,7 @@ export async function run({
   }
 
 
-  if (store.getState().autoUpgradeEnabled) {
+  if (store.getState().autoUpgradeEnabled && !isManagedInstall()) {
     void backgroundUpgradeRoadie()
   }
 
@@ -1295,6 +1296,7 @@ export async function run({
   // lock (binds the fixed lock port). Without it, IPC and lock enforcement
   // don't work. CLI subcommands skip the server and use file: directly.
   claimDatabaseFile()
+  markServiceProcess()
   const hranaResult = await startHranaServer({
     dbPath: path.join(getDataDir(), 'discord-sessions.db'),
   })
@@ -1305,6 +1307,11 @@ export async function run({
   // We own the lock port from here on. Stop signals must release it in every
   // startup phase (Discord login, channel reconcile), not only after ready.
   registerBotLifecycleHandlers()
+
+  // Holding the lock means no other bot owns an agent server. One recorded by
+  // a previous run that died without cleanup is an orphan; stop it before
+  // spawning a fresh server.
+  await cleanupOrphanedAgentServer()
 
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()

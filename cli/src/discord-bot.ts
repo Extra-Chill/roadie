@@ -13,6 +13,7 @@ declare global {
   var shuttingDown: boolean | undefined
 }
 
+import { recordInterruptedSessions } from './service-lifecycle.js'
 import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
@@ -82,6 +83,8 @@ import {
   disposeRuntime,
   getRuntimeThreadIdsForChannel,
   restorePersistedLocalQueues,
+  resumeInterruptedSessions,
+  snapshotBusyRuntimes,
   reserveThreadIngress,
   runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
@@ -421,6 +424,14 @@ export async function startDiscordBot({
     }).catch((error) => {
       discordLogger.warn(
         `Failed to restore persisted local queues: ${error instanceof Error ? error.stack : String(error)}`,
+      )
+    })
+    await resumeInterruptedSessions({
+      discordClient: c,
+      appId: currentAppId,
+    }).catch((error) => {
+      discordLogger.warn(
+        `Failed to resume interrupted sessions: ${error instanceof Error ? error.stack : String(error)}`,
       )
     })
 
@@ -1631,6 +1642,16 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
         (e as Error).message,
       )
     })
+
+    // Before the agent server stops, so busy runs are still visible.
+    try {
+      recordInterruptedSessions(snapshotBusyRuntimes())
+    } catch (error) {
+      discordLogger.warn(
+        'Failed to record interrupted sessions:',
+        error instanceof Error ? error.message : String(error),
+      )
+    }
 
     voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
     stopExternalOpencodeSessionSync()

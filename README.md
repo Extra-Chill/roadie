@@ -100,6 +100,24 @@ Every secret accepts a `_FILE` variant holding the value, so it can live in a fi
 
 Any process that holds the service token, including one running as a different OS user, can run `roadie send` (and the other client subcommands) against the running bot. It talks to the bot over the local endpoint rather than opening the data directory, so no shared file permissions or privilege escalation are needed. Grant access by sharing the token file, for example through a group with read permission.
 
+### Running as a service
+
+The contract a service manager (systemd, launchd, a container) can rely on:
+
+| | |
+|---|---|
+| Data directory | `--data-dir` or `ROADIE_DATA_DIR` (default `~/.roadie`). Owned by the service user. |
+| Single instance | The bot binds `127.0.0.1:<lock port>` (`ROADIE_LOCK_PORT`). A second bot on the same data directory takes over from the first. |
+| Health | `GET http://127.0.0.1:<lock port>/health` returns `{"status":"ok","pid":…,"discordReady":true}`. No auth. `discordReady` is false until the Discord connection is up. |
+| Stop | `SIGTERM` (or `SIGINT`). Shutdown is bounded at 15 seconds. |
+| Graceful restart | `SIGUSR2` restarts in place under the `roadie` wrapper; a supervisor restart (`systemctl restart`) works the same way. |
+| Managed install | `ROADIE_MANAGED=1`: the host owns installation. Roadie never upgrades itself, `roadie upgrade` refuses, and `/upgrade-and-restart` is not registered. |
+
+Restart behavior is built in, so the unit needs no pre- or post-start scripts:
+
+- **Orphan cleanup.** The bot records the pid of the agent server it spawns. If a previous run died without cleaning up, the next start stops that leftover server first. A recorded pid that now belongs to some other program is left alone.
+- **Restart continuation.** On shutdown the bot records which threads had a run in progress. The next start posts a notice in each one and gives the session a continuation turn. Records older than 15 minutes only get the notice. Disable with `ROADIE_RESUME_INTERRUPTED=0`.
+
 ## Commands
 
 Roadie ships a full set of slash commands and a CLI. The most common slash commands:

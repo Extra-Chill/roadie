@@ -1,4 +1,5 @@
 // Upgrade and maintenance terminal commands.
+import { isManagedInstall, MANAGED_UPGRADE_MESSAGE } from '../service-lifecycle.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -47,6 +48,10 @@ cli
   )
   .option('--skip-restart', 'Only upgrade, do not restart the running bot')
   .action(async (options) => {
+    if (isManagedInstall()) {
+      cliLogger.error(MANAGED_UPGRADE_MESSAGE)
+      process.exit(1)
+    }
     try {
       const current = getCurrentVersion()
       cliLogger.log(`Current version: v${current}`)

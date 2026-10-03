@@ -34,6 +34,7 @@
 //
 // Uses errore for type-safe error handling.
 
+import { recordAgentServerPid, clearAgentServerPid } from './service-lifecycle.js'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -993,6 +994,7 @@ async function startSingleServer({
   )
 
   startingServerProcess = serverProcess
+  if (serverProcess.pid) recordAgentServerPid(serverProcess.pid)
 
   // Buffer logs until we know if server started successfully.
   const logBuffer: string[] = []
@@ -1033,6 +1035,7 @@ async function startSingleServer({
   serverProcess.on('exit', (code, signal) => {
     stdoutReader?.close()
     stderrReader?.close()
+    if (serverProcess.pid) clearAgentServerPid(serverProcess.pid)
 
     if (startingServerProcess === serverProcess) {
       startingServerProcess = null
