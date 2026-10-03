@@ -13,6 +13,7 @@ declare global {
   var shuttingDown: boolean | undefined
 }
 
+import { doAction } from './hooks.js'
 import { recordInterruptedSessions } from './service-lifecycle.js'
 import { DiscordOperationError } from './errors.js'
 import {
@@ -427,6 +428,7 @@ export async function startDiscordBot({
         `Failed to resume interrupted sessions: ${error instanceof Error ? error.stack : String(error)}`,
       )
     })
+    void doAction('ready', {})
 
     // Channel logging is informational only; do it in background so startup stays responsive.
     void (async () => {

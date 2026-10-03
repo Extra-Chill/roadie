@@ -28,6 +28,7 @@
 // invalid file is reported and the last valid config stays in effect; if no
 // valid config was ever loaded, no channel is answered (fail closed).
 
+import { applyFilters, hasFilter } from './hooks.js'
 import fs from 'node:fs'
 import YAML from 'yaml'
 import { z } from 'zod'
@@ -97,8 +98,9 @@ export function setChannelParentResolver(resolver: ParentResolver) {
   parentResolver = resolver
 }
 
+/** True when a channels config file or a `channel_policy` filter is in place. */
 export function isChannelPolicyConfigured(): boolean {
-  return Boolean(getChannelsConfigPath())
+  return Boolean(getChannelsConfigPath()) || hasFilter('channel_policy')
 }
 
 export function parseChannelsConfig(text: string): ChannelsConfig | Error {
@@ -177,6 +179,10 @@ function lookupChain(channelId: string): string[] {
  *   null      → config file present but nothing matches: do not answer
  */
 export function resolveChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
+  return applyFilters('channel_policy', configuredChannelPolicy(channelId), { channelId })
+}
+
+function configuredChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
   const config = currentConfig()
   if (config === undefined) return undefined
   if (config === null) return null

@@ -6,6 +6,7 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
+import { doAction } from '../hooks.js'
 import { toAgentEvent, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvent } from './persisted-events.js'
 import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
@@ -1795,6 +1796,8 @@ export class ThreadSessionRuntime {
       case 'idle':
         await completeScheduledTaskRunsForSession(agentEvent.sessionId)
         await this.handleSessionIdle(agentEvent.sessionId)
+        // Not awaited: plugins never hold up the event stream.
+        void doAction('session_idle', { sessionId: agentEvent.sessionId, threadId: this.threadId })
         break
       case 'error':
         if (agentEvent.sessionId) {
@@ -1804,6 +1807,13 @@ export class ThreadSessionRuntime {
           })
         }
         await this.handleSessionError(agentEvent)
+        if (agentEvent.error?.name !== 'MessageAbortedError') {
+          void doAction('session_error', {
+            ...(agentEvent.sessionId && { sessionId: agentEvent.sessionId }),
+            threadId: this.threadId,
+            message: agentEvent.error?.message || 'Session failed',
+          })
+        }
         break
       case 'permission.asked':
         await this.handlePermissionAsked(agentEvent.request)

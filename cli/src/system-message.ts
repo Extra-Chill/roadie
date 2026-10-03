@@ -12,6 +12,7 @@
 // per-turn synthetic context. session.command has no `system` field, so the
 // context-awareness plugin copies the pinned file onto command user messages.
 
+import { applyFilters } from './hooks.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
@@ -962,5 +963,9 @@ Examples:
 - After a genuinely ambiguous request where you cannot infer intent: offer the different approaches` },
     { id: 'channel-topic', text: `\n\n\n\n${topicContext}` },
   ]
-  return applyPromptConfig({ intro, sections, config: getPromptConfig() }) + '\n'
+  return applyPromptConfig({
+    intro,
+    sections: applyFilters('system_prompt_sections', sections, { sessionId }),
+    config: getPromptConfig(),
+  }) + '\n'
 }
