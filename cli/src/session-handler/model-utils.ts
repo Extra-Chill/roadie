@@ -7,7 +7,7 @@ import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
 import type { Provider } from '@opencode-ai/sdk/v2'
-import type { AgentBackendGetter } from '../agent-backend/types.js'
+import type { AgentCatalogGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   formatCandidateRef,
@@ -257,7 +257,7 @@ export async function listModels({
   getClient,
   directory,
 }: {
-  getClient: AgentBackendGetter
+  getClient: AgentCatalogGetter
   directory?: string
 }): Promise<ListedModel[] | OpenCodeSdkError> {
   const cacheKey = directory ?? ''
@@ -352,7 +352,7 @@ export async function validateModelId({
   directory,
 }: {
   model: string
-  getClient: AgentBackendGetter
+  getClient: AgentCatalogGetter
   directory?: string
 }): Promise<
   { providerID: string; modelID: string } | InvalidModelError | OpenCodeSdkError
@@ -396,7 +396,7 @@ export async function getDefaultModel({
   getClient,
   directory,
 }: {
-  getClient: Error | AgentBackendGetter
+  getClient: Error | AgentCatalogGetter
   directory?: string
 }): Promise<
   | { providerID: string; modelID: string; source: DefaultModelSource }
