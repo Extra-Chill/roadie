@@ -35,6 +35,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { warmOpencodeInstance } from './queue-advanced-e2e-setup.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -386,6 +387,11 @@ e2eTest('thread message queue ordering', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
+    // Also pay the per-directory instance bootstrap on first session.create.
+    await warmOpencodeInstance({
+      getClient: warmup,
+      directory: directories.projectDirectory,
+    })
   }, 60_000)
 
   afterAll(async () => {
@@ -1127,6 +1133,15 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      // The final text is edited from quoted to full width right before the
+      // footer, so snapshot only after the turn's footer to avoid that race.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+      })
+
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -1140,7 +1155,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        > ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
