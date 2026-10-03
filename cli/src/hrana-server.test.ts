@@ -84,7 +84,8 @@ describe('hrana-server', () => {
     database.exec('PRAGMA busy_timeout = 5000')
     testDb = database
 
-    const port = 10000 + Math.floor(Math.random() * 50000)
+    // Below the ephemeral range (32768+), clear of the lock-port test ranges.
+    const port = 26_000 + Math.floor(Math.random() * 4_000)
     await new Promise<void>((resolve, reject) => {
       const hranaFetchHandler = createLibsqlHandler(libsqlExecutor(database))
       const hranaNodeHandler = createLibsqlNodeHandler(hranaFetchHandler)

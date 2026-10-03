@@ -15,11 +15,15 @@ import type { APIMessage } from 'discord.js'
 
 /**
  * Deterministic port from a string key (channel ID, test file name, etc.).
- * Uses a hash to pick a stable port in range 53000-54999, avoiding overlap
- * with queue-advanced tests (51000-52999) and getLockPort (30000-39999).
+ * Uses a hash to pick a stable port in range 24000-25999, avoiding overlap
+ * with queue-advanced tests (22000-23999) and getLockPort (30000-39999), and
+ * staying below the Linux ephemeral range (32768-60999) so the kernel never
+ * assigns the same port to an unrelated connection.
  * Replaces the old TOCTOU-prone pattern of binding port 0, reading the
  * assigned port, closing, then rebinding — which races under parallel vitest.
  */
+export const TEST_LOCK_PORT_BASE = 24_000
+
 export function chooseLockPort({ key }: { key: string }): number {
   let hash = 0
   for (let i = 0; i < key.length; i++) {
@@ -27,7 +31,7 @@ export function chooseLockPort({ key }: { key: string }): number {
     hash = (hash << 5) - hash + char
     hash |= 0
   }
-  return 53_000 + (Math.abs(hash) % 2_000)
+  return TEST_LOCK_PORT_BASE + (Math.abs(hash) % 2_000)
 }
 
 async function isTcpPortAvailable({ port }: { port: number }) {
@@ -47,13 +51,13 @@ async function isTcpPortAvailable({ port }: { port: number }) {
 export async function chooseAvailableLockPort({ key }: { key: string }) {
   const start = chooseLockPort({ key })
   for (let offset = 0; offset < 2_000; offset += 1) {
-    const port = 53_000 + ((start - 53_000 + offset) % 2_000)
+    const port = TEST_LOCK_PORT_BASE + ((start - TEST_LOCK_PORT_BASE + offset) % 2_000)
     const available = await isTcpPortAvailable({ port })
     if (available) {
       return port
     }
   }
-  throw new Error('No available test lock port in 53000-54999')
+  throw new Error(`No available test lock port in ${TEST_LOCK_PORT_BASE}-${TEST_LOCK_PORT_BASE + 1_999}`)
 }
 /**
  * Initialize a git repo with a `main` branch and empty initial commit.

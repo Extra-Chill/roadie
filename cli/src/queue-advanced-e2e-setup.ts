@@ -67,6 +67,11 @@ export function createRunDirectories({ name }: { name: string }) {
   return { root, dataDir, projectDirectory }
 }
 
+// Below the Linux ephemeral range (32768-60999). Inside it, the kernel can hand
+// the same port to any outbound connection or listen(0) in a parallel test,
+// which surfaced as "Port … still in use after eviction".
+export const QUEUE_SUITE_LOCK_PORT_BASE = 22_000
+
 export function chooseLockPort({ channelId }: { channelId: string }): number {
   let hash = 0
   for (let i = 0; i < channelId.length; i++) {
@@ -74,7 +79,7 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
     hash = (hash << 5) - hash + char
     hash |= 0
   }
-  return 51_000 + (Math.abs(hash) % 2_000)
+  return QUEUE_SUITE_LOCK_PORT_BASE + (Math.abs(hash) % 2_000)
 }
 
 export const EXTERNAL_DIRECTORY_PROBE_DIR = path.resolve(
