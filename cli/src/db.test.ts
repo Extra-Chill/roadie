@@ -2,6 +2,7 @@
 // Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears ROADIE_DB_URL).
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { afterAll, describe, expect, test } from 'vitest'
@@ -44,8 +45,13 @@ import { chooseLockPort } from './test-utils.js'
 import { copySessionPreferences } from './commands/model.js'
 import type { initializeOpencodeForDirectory } from './opencode.js'
 
+// Created per run: a fresh checkout has no tmp/, and other test files only
+// create one as a side effect, so relying on it made these tests order-dependent.
+const testDbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-db-test-'))
+
 afterAll(async () => {
   await closeDb()
+  fs.rmSync(testDbDir, { recursive: true, force: true })
 })
 
 describe('getDb', () => {
@@ -222,10 +228,7 @@ describe('getDb', () => {
     await closeDb()
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-legacy-queue-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-legacy-queue-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       const client = createClient({ url: `file:${dbPath}` })
@@ -291,10 +294,7 @@ describe('getDb', () => {
     await closeDb()
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-orphan-parts-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-orphan-parts-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       const client = createClient({ url: `file:${dbPath}` })
@@ -396,10 +396,7 @@ describe('getDb', () => {
     await closeDb()
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-legacy-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-legacy-sleeps-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       const client = createClient({ url: `file:${dbPath}` })
@@ -473,10 +470,7 @@ describe('getDb', () => {
     await closeDb()
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-posted-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-posted-sleeps-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       const client = createClient({ url: `file:${dbPath}` })
@@ -582,10 +576,7 @@ describe('getDb', () => {
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
     const previousLockPort = process.env['ROADIE_LOCK_PORT']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-hrana-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-hrana-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       process.env['ROADIE_LOCK_PORT'] = String(chooseLockPort({ key: 'db-hrana-migration-test' }))
@@ -639,10 +630,7 @@ describe('getDb', () => {
 
     const previousDbUrl = process.env['ROADIE_DB_URL']
     const previousLockPort = process.env['ROADIE_LOCK_PORT']
-    const dbPath = path.join(
-      process.cwd(),
-      `tmp/test-db-init-retry-${crypto.randomUUID().slice(0, 8)}.db`,
-    )
+    const dbPath = path.join(testDbDir, `test-db-init-retry-${crypto.randomUUID().slice(0, 8)}.db`)
 
     try {
       process.env['ROADIE_LOCK_PORT'] = String(chooseLockPort({ key: 'db-init-retry-test' }))
