@@ -78,20 +78,27 @@ When you send a message during an active run, OpenCode normally queues it to run
 
 ## Setup
 
-Run the CLI and follow the interactive prompts:
+Create a Discord bot at [discord.com/developers](https://discord.com/developers/applications), then run the CLI and follow the interactive prompts:
 
 ```bash
 npx -y roadie@latest
 ```
 
-The setup wizard gives you two options:
+Keep the CLI running; it's the bridge between Discord and your machine.
 
-- **Gateway mode (default)**: uses Roadie's pre-built Discord bot. No Discord Developer Portal setup needed. Click one install link, authorize the bot in your server, and you're running. Recommended.
-- **Self-hosted mode**: create your own Discord bot at [discord.com/developers](https://discord.com/developers/applications). Takes 5-10 minutes. Useful if you want full control over the bot identity.
+### Headless setup
 
-Both modes work identically after setup. Keep the CLI running; it's the bridge between Discord and your machine.
+Service installs configure Roadie entirely through the environment; nothing needs to touch the data directory or Roadie's internal modules.
 
-Agents installing Roadie on a laptop or VPS should follow [Set up Roadie from an agent](https://kimaki.dev/docs/guides/agent-machine-setup) instead of cloning this repo.
+| Variable | Purpose |
+|---|---|
+| `ROADIE_BOT_TOKEN` / `ROADIE_BOT_TOKEN_FILE` | Discord bot token. Saved on startup; the application ID is derived from it. |
+| `ROADIE_SERVICE_TOKEN` / `ROADIE_SERVICE_TOKEN_FILE` | Local service credential (`<id>:<secret>`). Authenticates the bot's local database endpoint. |
+| `ROADIE_LOCK_PORT` | Port of that local endpoint (bound to `127.0.0.1`). |
+
+Every secret accepts a `_FILE` variant holding the value, so it can live in a file with restricted permissions instead of a unit file. An unreadable or empty `_FILE` is a startup error.
+
+Any process that holds the service token, including one running as a different OS user, can run `roadie send` (and the other client subcommands) against the running bot. It talks to the bot over the local endpoint rather than opening the data directory, so no shared file permissions or privilege escalation are needed. Grant access by sharing the token file, for example through a group with read permission.
 
 ## Commands
 

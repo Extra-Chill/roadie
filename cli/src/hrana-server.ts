@@ -22,7 +22,7 @@ import {
 } from 'libsqlproxy'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
-import { getLockPort } from './config.js'
+import { getLockPort, readRoadieSecret } from './config.js'
 import { store } from './store.js'
 // Circular import: opencode.ts → hrana-server.ts → opencode.ts.
 // Safe because both sides only use lazy runtime function calls, never
@@ -77,6 +77,11 @@ function ensureServiceAuthTokenInStore(): string {
   const existingToken = store.getState().gatewayToken
   if (existingToken) {
     return existingToken
+  }
+  const configured = readRoadieSecret('ROADIE_SERVICE_TOKEN')
+  if (configured) {
+    store.setState({ gatewayToken: configured })
+    return configured
   }
   const generatedToken = `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}`
   store.setState({ gatewayToken: generatedToken })
