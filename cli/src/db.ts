@@ -240,7 +240,6 @@ async function migrateSchema({
     "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
     "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
     "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
-    "UPDATE bot_tokens SET proxy_url = REPLACE(proxy_url, 'discord-gateway.kimaki.xyz', 'discord-gateway.kimaki.dev') WHERE bot_mode = 'gateway' AND proxy_url LIKE '%discord-gateway.kimaki.xyz%'",
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
     "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
     'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',

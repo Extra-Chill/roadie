@@ -1289,7 +1289,7 @@ export async function handleModelScopeSelectMenu(
   const variant = context.selectedVariant ?? null
   const variantSuffix = variant ? ` (${variant})` : ''
   const agentTip =
-    '\n_Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_'
+    '\n_Tip: create [agent .md files](https://opencode.ai/docs/agents/) in .opencode/agent/ for one-command model switching_'
 
   try {
     if (selectedScope === 'session') {
