@@ -49,6 +49,8 @@ export type AgentError = {
   message: string
   statusCode?: number
   retryable?: boolean
+  /** Model provider the error came from, when known. */
+  provider?: string
 }
 
 export type AgentSession = {
@@ -81,6 +83,8 @@ export type AgentMessage = {
   system?: string
   /** Ids and types of the message's parts, when the backend reports them inline. */
   partsSummary?: Array<{ id: string; type: string }>
+  /** The parts themselves, when the backend reports them inline. */
+  parts?: AgentPart[]
 }
 
 export type AgentToolStatus = 'pending' | 'running' | 'completed' | 'error'
@@ -123,7 +127,7 @@ export type AgentPart = PartBase & (
   | { kind: 'step-finish'; reason: string; cost: number; usage: AgentUsage }
   | { kind: 'file'; mime: string; url: string; filename?: string }
   /** A part type Roadie does not render. Kept so ordering stays intact. */
-  | { kind: 'other'; type: string }
+  | { kind: 'other'; type: string; detail?: string }
 )
 
 export type AgentStatus =

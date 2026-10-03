@@ -50,6 +50,7 @@ export function toAgentError(error: unknown): AgentError | undefined {
     message: message ?? (typeof name === 'string' ? name : 'Unknown error'),
     ...(typeof data?.statusCode === 'number' && { statusCode: data.statusCode }),
     ...(typeof data?.isRetryable === 'boolean' && { retryable: data.isRetryable }),
+    ...(typeof data?.providerID === 'string' && { provider: data.providerID }),
   }
 }
 
@@ -72,20 +73,23 @@ export function toAgentSession(info: OpenCodeSession): AgentSession {
 }
 
 // Some OpenCode versions inline a message's parts on message.updated.
-function partsSummaryOf(info: object): Array<{ id: string; type: string }> | undefined {
+function inlinePartsOf(info: object): OpenCodePart[] {
   const parts = (info as { parts?: unknown }).parts
-  if (!Array.isArray(parts)) return undefined
-  const summary = parts.flatMap((part) => {
-    const candidate = part as { id?: unknown; type?: unknown } | null
-    return candidate && typeof candidate.id === 'string' && typeof candidate.type === 'string'
-      ? [{ id: candidate.id, type: candidate.type }]
-      : []
+  if (!Array.isArray(parts)) return []
+  return parts.filter((part): part is OpenCodePart => {
+    const candidate = part as { id?: unknown; type?: unknown; messageID?: unknown } | null
+    return Boolean(candidate)
+      && typeof candidate!.id === 'string'
+      && typeof candidate!.type === 'string'
   })
-  return summary.length > 0 ? summary : undefined
 }
 
 export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessage {
-  const partsSummary = partsSummaryOf(info)
+  const inline = inlinePartsOf(info)
+  const partsSummary = inline.length > 0 ? inline.map((p) => ({ id: p.id, type: p.type })) : undefined
+  // Full parts only when they carry their message id, like streamed parts do.
+  const fullParts = inline.filter((p) => typeof (p as { messageID?: unknown }).messageID === 'string')
+  const parts = fullParts.length > 0 ? fullParts.map(toAgentPart) : undefined
   if (info.role === 'user') {
     return {
       id: info.id,
@@ -100,6 +104,7 @@ export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessa
       },
       ...(info.system && { system: info.system }),
       ...(partsSummary && { partsSummary }),
+      ...(parts && { parts }),
     }
   }
   const error = toAgentError(info.error)
@@ -123,6 +128,7 @@ export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessa
     ...(info.summary && { summary: true }),
     ...(info.finish && { finish: info.finish }),
     ...(partsSummary && { partsSummary }),
+    ...(parts && { parts }),
   }
 }
 
@@ -180,6 +186,8 @@ export function toAgentPart(part: OpenCodePart): AgentPart {
         url: part.url,
         ...(part.filename && { filename: part.filename }),
       }
+    case 'snapshot':
+      return { ...base, kind: 'other', type: part.type, detail: part.snapshot }
     default:
       return { ...base, kind: 'other', type: part.type }
   }

@@ -16,11 +16,17 @@ import type { ChatThread } from '../chat-platform/types.js'
 import { createDiscordChatThread } from '../chat-platform/discord.js'
 import type {
   Event as OpenCodeEvent,
-  Part,
-  PermissionRequest,
-  QuestionRequest,
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
+import {
+  agentEventSessionId,
+  type AgentError,
+  type AgentMessage,
+  type AgentPart,
+  type AgentPermissionRequest,
+  type AgentQuestionRequest,
+  type AgentStatus,
+} from '../agent-backend/events.js'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
@@ -151,7 +157,6 @@ import { store } from '../store.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
   appendOpencodeSessionEventLog,
-  getOpencodeEventSessionId,
   isOpencodeSessionEventLogEnabled,
 } from './opencode-session-event-log.js'
 import {
@@ -191,7 +196,7 @@ export const pendingPermissions = new Map<
   Map<
     string,
     {
-      permission: PermissionRequest
+      permission: AgentPermissionRequest
       messageId: string
       directory: string
       contextHash: string
@@ -702,15 +707,15 @@ export function isEssentialToolName(toolName: string): boolean {
   })
 }
 
-export function isEssentialToolPart(part: Part): boolean {
-  if (part.type !== 'tool') {
+export function isEssentialToolPart(part: AgentPart): boolean {
+  if (part.kind !== 'tool') {
     return false
   }
   if (!isEssentialToolName(part.tool)) {
     return false
   }
   if (part.tool === 'bash') {
-    const hasSideEffect = part.state.input?.hasSideEffect
+    const hasSideEffect = part.input?.hasSideEffect
     return hasSideEffect !== false
   }
   return true
@@ -1038,7 +1043,7 @@ export class ThreadSessionRuntime {
   private appliedOpencodeTitle: string | undefined
 
   // Part output buffering (write-side cache, not domain state)
-  private partBuffer = new Map<string, Map<string, Part>>()
+  private partBuffer = new Map<string, Map<string, AgentPart>>()
   private shownQuestionRequestIds = new Set<string>()
 
   // Derivable cache (perf optimization for provider.list API call)
@@ -1697,10 +1702,13 @@ export class ThreadSessionRuntime {
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
     const sessionId = this.state?.sessionId
-    // The buffer and its derivations speak Roadie agent events. Handlers below
-    // still take the backend event until they move over too (#55).
+    // Everything below speaks Roadie agent events. The raw backend event is
+    // kept only for the opt-in backend event log.
     const agentEvent = toAgentEvent(event)
-    if (agentEvent && !shouldBufferSessionEvent({
+    if (!agentEvent) {
+      return
+    }
+    if (!shouldBufferSessionEvent({
       event: agentEvent,
       mainSessionId: sessionId,
       isKnownChildSession: (candidateSessionId) => {
@@ -1710,53 +1718,49 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Skip message.part.delta from the event buffer — no derivation function
+    // Skip part deltas from the event buffer — no derivation function
     // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
     // etc.) uses them. During long streaming responses they flood the 1000-slot
-    // buffer, evicting session.status busy events that isSessionBusy needs,
+    // buffer, evicting busy status events that isSessionBusy needs,
     // causing tryDrainQueue to drain the local queue while the session is
     // actually still busy. This was the root cause of "? queue" messages
     // interrupting instead of queuing.
     // Child task part floods are also dropped at retain time for the same reason.
-    if (agentEvent && agentEvent.type !== 'part.delta') {
+    if (agentEvent.type !== 'part.delta') {
       this.appendEventToBuffer(agentEvent)
     }
 
-    const eventSessionId = getOpencodeEventSessionId(event)
-    const toastSessionId = event.type === 'tui.toast.show'
-      ? extractToastSessionId({ message: event.properties.message })
+    const eventSessionId = agentEventSessionId(agentEvent)
+    const toastSessionId = agentEvent.type === 'notice'
+      ? extractToastSessionId({ message: agentEvent.message })
       : undefined
 
     if (shouldLogSessionEvents) {
       const eventDetails = (() => {
-        if (event.type === 'session.error') {
-          const errorName = event.properties.error?.name || 'unknown'
-          return ` error=${errorName}`
+        if (agentEvent.type === 'error') {
+          return ` error=${agentEvent.error?.name || 'unknown'}`
         }
-        if (event.type === 'session.status') {
-          const status = event.properties.status || 'unknown'
-          return ` status=${status}`
+        if (agentEvent.type === 'status') {
+          return ` status=${agentEvent.status.state}`
         }
-        if (event.type === 'message.updated') {
-          return ` role=${event.properties.info.role} messageID=${event.properties.info.id}`
+        if (agentEvent.type === 'message') {
+          return ` role=${agentEvent.message.role} messageID=${agentEvent.message.id}`
         }
-        if (event.type === 'message.part.updated') {
-          const partType = event.properties.part.type
-          const partId = event.properties.part.id
-          const messageId = event.properties.part.messageID
-          const toolSuffix = partType === 'tool'
-            ? ` tool=${event.properties.part.tool} status=${event.properties.part.state.status}`
+        if (agentEvent.type === 'part') {
+          const { part } = agentEvent
+          const toolSuffix = part.kind === 'tool'
+            ? ` tool=${part.tool} status=${part.status}`
             : ''
-          return ` part=${partType} partID=${partId} messageID=${messageId}${toolSuffix}`
+          return ` part=${part.kind} partID=${part.id} messageID=${part.messageId}${toolSuffix}`
         }
         return ''
       })()
       logger.log(
-        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
+        `[EVENT] type=${agentEvent.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
       )
     }
 
-    const isGlobalEvent = event.type === 'tui.toast.show'
+    const isGlobalEvent = agentEvent.type === 'notice'
     const isScopedToastEvent = Boolean(toastSessionId)
 
     // Drop events that don't match current session (stale events from
@@ -1786,55 +1790,52 @@ export class ThreadSessionRuntime {
       }
     }
 
-    switch (event.type) {
-      case 'message.updated':
-        await this.handleMessageUpdated(event.properties.info)
+    switch (agentEvent.type) {
+      case 'message':
+        await this.handleMessageUpdated(agentEvent.message)
         break
-      case 'message.part.updated':
-        await this.handlePartUpdated(event.properties.part)
+      case 'part':
+        await this.handlePartUpdated(agentEvent.part)
         break
-      case 'session.idle':
-        await completeScheduledTaskRunsForSession(event.properties.sessionID)
-        await this.handleSessionIdle(event.properties.sessionID)
+      case 'idle':
+        await completeScheduledTaskRunsForSession(agentEvent.sessionId)
+        await this.handleSessionIdle(agentEvent.sessionId)
         break
-      case 'session.error':
-        if (event.properties.sessionID) {
-          const sessionError = event.properties.error
-          const errorMessage = sessionError && typeof sessionError === 'object'
-            ? String(sessionError.data?.message || sessionError.name || 'Session failed')
-            : 'Session failed'
+      case 'error':
+        if (agentEvent.sessionId) {
           await failScheduledTaskRunsForSession({
-            sessionId: event.properties.sessionID,
-            error: errorMessage,
+            sessionId: agentEvent.sessionId,
+            error: agentEvent.error?.message || 'Session failed',
           })
         }
-        await this.handleSessionError(event.properties)
+        await this.handleSessionError(agentEvent)
         break
       case 'permission.asked':
-        await this.handlePermissionAsked(event.properties)
+        await this.handlePermissionAsked(agentEvent.request)
         break
       case 'permission.replied':
-        this.handlePermissionReplied(event.properties)
+        this.handlePermissionReplied(agentEvent)
         break
       case 'question.asked':
-        await this.handleQuestionAsked(event.properties)
+        await this.handleQuestionAsked(agentEvent.request)
         break
       case 'question.replied':
-        this.handleQuestionReplied(event.properties)
+        this.handleQuestionReplied(agentEvent)
         break
-      case 'session.status':
-        await this.handleSessionStatus(event.properties)
+      case 'status':
+        await this.handleSessionStatus(agentEvent)
         break
       case 'session.updated':
-        await this.handleSessionUpdated(event.properties.info)
+        await this.handleSessionUpdated(agentEvent.session)
         break
-      case 'tui.toast.show':
-        await this.handleTuiToast(event.properties)
+      case 'notice':
+        await this.handleTuiToast(agentEvent)
         break
       default:
         break
     }
   }
+
 
   // ── Serialized Action Queue (§7.4) ──────────────────────────
   // Serializes event handling + local-queue state mutations.
@@ -2036,14 +2037,14 @@ export class ThreadSessionRuntime {
     return getChannelVerbosity(this.getVerbosityChannelId())
   }
 
-  private storePart(part: Part): void {
+  private storePart(part: AgentPart): void {
     const messageParts =
-      this.partBuffer.get(part.messageID) || new Map<string, Part>()
+      this.partBuffer.get(part.messageId) || new Map<string, AgentPart>()
     messageParts.set(part.id, part)
-    this.partBuffer.set(part.messageID, messageParts)
+    this.partBuffer.set(part.messageId, messageParts)
   }
 
-  private getBufferedParts(messageID: string): Part[] {
+  private getBufferedParts(messageID: string): AgentPart[] {
     return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
   }
 
@@ -2056,7 +2057,7 @@ export class ThreadSessionRuntime {
 
   private hasBufferedStepFinish(messageID: string): boolean {
     return this.getBufferedParts(messageID).some((part) => {
-      return part.type === 'step-finish'
+      return part.kind === 'step-finish'
     })
   }
 
@@ -2064,25 +2065,25 @@ export class ThreadSessionRuntime {
     part,
     mode,
   }: {
-    part: Part
+    part: AgentPart
     mode: AssistantTurnFlushMode
   }): boolean {
-    if (part.type === 'step-start' || part.type === 'step-finish') {
+    if (part.kind === 'step-start' || part.kind === 'step-finish') {
       return false
     }
-    if (part.type === 'tool' && part.state.status === 'pending') {
+    if (part.kind === 'tool' && part.status === 'pending') {
       return false
     }
-    if (part.type === 'text' && !part.time?.end && mode === 'progress') {
+    if (part.kind === 'text' && !part.endedAt && mode === 'progress') {
       return false
     }
-    if (part.type === 'text' && part.synthetic === true) {
+    if (part.kind === 'text' && part.synthetic === true) {
       return false
     }
     return true
   }
 
-  private getCurrentTurnParts(): Part[] {
+  private getCurrentTurnParts(): AgentPart[] {
     const sessionId = this.state?.sessionId
     const messageIds = sessionId
       ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
@@ -2095,8 +2096,8 @@ export class ThreadSessionRuntime {
 
   private async unquoteFinalTextPart(): Promise<void> {
     const parts = this.getCurrentTurnParts()
-    const finalPart = parts.findLast((part) => part.type === 'text' || part.type === 'tool')
-    if (!finalPart || finalPart.type !== 'text') return
+    const finalPart = parts.findLast((part) => part.kind === 'text' || part.kind === 'tool')
+    if (!finalPart || finalPart.kind !== 'text') return
     const last = finalPart
     const db = await getDb()
     const row = await db.query.part_messages.findFirst({
@@ -2158,11 +2159,11 @@ export class ThreadSessionRuntime {
       if (!this.shouldSendPlannedPart({ part, mode })) {
         continue
       }
-      if (part.type === 'tool' && part.tool === 'task') {
+      if (part.kind === 'tool' && part.tool === 'task') {
         continue
       }
       const pulseTyping =
-        part.type === 'text' && part.ignored === true
+        part.kind === 'text' && part.ignored === true
           ? false
           : repulseTyping
       await this.sendPartMessage({
@@ -2178,16 +2179,16 @@ export class ThreadSessionRuntime {
     repulseTyping = true,
     quoteText = false,
   }: {
-    part: Part
+    part: AgentPart
     repulseTyping?: boolean
     quoteText?: boolean
   }): Promise<void> {
     const verbosity = await this.getVerbosity()
-    if (verbosity === 'text_only' && part.type !== 'text') {
+    if (verbosity === 'text_only' && part.kind !== 'text') {
       return
     }
     if (verbosity === 'text_and_essential_tools') {
-      if (part.type !== 'text' && !(part.type === 'tool' && isEssentialToolPart(part))) {
+      if (part.kind !== 'text' && !(part.kind === 'tool' && isEssentialToolPart(part))) {
         return
       }
     }
@@ -2302,7 +2303,7 @@ export class ThreadSessionRuntime {
   // Extracted from session-handler.ts eventHandler closure.
   // These operate on runtime instance state + global store transitions.
 
-  private async handleMessageUpdated(msg: OpenCodeMessage): Promise<void> {
+  private async handleMessageUpdated(msg: AgentMessage): Promise<void> {
     const sessionId = this.state?.sessionId
 
     if (msg.role !== 'assistant') {
@@ -2313,8 +2314,8 @@ export class ThreadSessionRuntime {
       logger.info(`[SKIP] message.updated for compaction summary ${msg.id}`)
       return
     }
-    if (msg.sessionID !== sessionId) {
-      const subtaskInfo = this.getSubtaskInfoForSession(msg.sessionID)
+    if (msg.sessionId !== sessionId) {
+      const subtaskInfo = this.getSubtaskInfoForSession(msg.sessionId)
       if (subtaskInfo) {
         for (const part of this.getBufferedParts(msg.id)) {
           await this.handleSubtaskPart(part, subtaskInfo)
@@ -2341,27 +2342,7 @@ export class ThreadSessionRuntime {
     // message.part.updated events are sparse or absent. Seed the part buffer
     // from message.parts when we have not seen per-part events for this message.
     if (!knownMessage) {
-      const messageParts = (() => {
-        const candidate: { parts?: unknown } = msg as { parts?: unknown }
-        if (!Array.isArray(candidate.parts)) {
-          return [] as Part[]
-        }
-        return candidate.parts.filter((part): part is Part => {
-          if (!part || typeof part !== 'object') {
-            return false
-          }
-          const maybePart = part as {
-            id?: unknown
-            type?: unknown
-            messageID?: unknown
-          }
-          return (
-            typeof maybePart.id === 'string' &&
-            typeof maybePart.type === 'string' &&
-            typeof maybePart.messageID === 'string'
-          )
-        })
-      })()
+      const messageParts = msg.parts ?? []
       messageParts.forEach((part) => {
         this.storePart(part)
       })
@@ -2377,9 +2358,9 @@ export class ThreadSessionRuntime {
       messageId: msg.id,
       upToIndex: this.eventBuffer.length - 2,
     })
-    const completedAt = msg.time.completed
+    const completedAt = msg.completedAt
     if (!wasAlreadyCompleted && typeof completedAt === 'number') {
-      if (isAssistantMessageNaturalCompletion({ message: toAgentMessage(msg) })) {
+      if (isAssistantMessageNaturalCompletion({ message: msg })) {
         await this.handleNaturalAssistantCompletion({
           completedMessageId: msg.id,
           completedAt,
@@ -2433,25 +2414,25 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async handlePartUpdated(part: Part): Promise<void> {
+  private async handlePartUpdated(part: AgentPart): Promise<void> {
     const sessionId = this.state?.sessionId
     const messageKind = getAssistantMessageKind({
       events: this.eventBuffer,
-      sessionId: part.sessionID,
-      messageId: part.messageID,
+      sessionId: part.sessionId,
+      messageId: part.messageId,
     })
 
     if (messageKind === 'summary') {
-      this.clearBufferedPartsForMessages([part.messageID])
-      logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageID}`)
+      this.clearBufferedPartsForMessages([part.messageId])
+      logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageId}`)
       return
     }
 
-    if (part.type === 'text' && part.synthetic === true) {
+    if (part.kind === 'text' && part.synthetic === true) {
       return
     }
 
-    if (part.type === 'text' && part.ignored === true) {
+    if (part.kind === 'text' && part.ignored === true) {
       await this.sendPartMessage({ part, repulseTyping: false })
       return
     }
@@ -2462,10 +2443,10 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
+    const subtaskInfo = this.getSubtaskInfoForSession(part.sessionId)
     const isSubtaskEvent = Boolean(subtaskInfo)
 
-    if (part.sessionID !== sessionId && !isSubtaskEvent) {
+    if (part.sessionId !== sessionId && !isSubtaskEvent) {
       return
     }
 
@@ -2477,15 +2458,15 @@ export class ThreadSessionRuntime {
     await this.handleMainPart(part)
   }
 
-  private async handleMainPart(part: Part): Promise<void> {
+  private async handleMainPart(part: AgentPart): Promise<void> {
     const sessionId = this.state?.sessionId
 
-    if (part.type === 'step-start') {
+    if (part.kind === 'step-start') {
       this.ensureTypingNow()
       return
     }
 
-    if (part.type === 'tool' && part.state.status === 'running') {
+    if (part.kind === 'tool' && part.status === 'running') {
       await this.flushCurrentTurnParts({
         mode: 'progress',
       })
@@ -2536,14 +2517,14 @@ export class ThreadSessionRuntime {
 
     // Action buttons tool handler
     if (
-      part.type === 'tool' &&
-      part.state.status === 'completed' &&
+      part.kind === 'tool' &&
+      part.status === 'completed' &&
       part.tool.endsWith('roadie_action_buttons')
     ) {
       const sessionId = this.state?.sessionId
       await this.showInteractiveUi({
         skipPartId: part.id,
-        flushMessageId: part.messageID,
+        flushMessageId: part.messageId,
         show: async () => {
           if (!sessionId) {
             return
@@ -2584,16 +2565,16 @@ export class ThreadSessionRuntime {
     }
 
     // Large output notification for completed tools
-    if (part.type === 'tool' && part.state.status === 'completed') {
+    if (part.kind === 'tool' && part.status === 'completed') {
       const sessionId = this.state?.sessionId
       if (sessionId) {
         const isCurrentRunMessage = isAssistantMessageInLatestUserTurn({
           events: this.eventBuffer,
           sessionId,
-          messageId: part.messageID,
+          messageId: part.messageId,
         })
         if (!isCurrentRunMessage) {
-          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageID}, not in latest user turn`)
+          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageId}, not in latest user turn`)
           return
         }
       }
@@ -2608,7 +2589,7 @@ export class ThreadSessionRuntime {
         return true
       })()
       if (showLargeOutput) {
-        const output = part.state.output || ''
+        const output = part.output || ''
         const outputTokens = Math.ceil(output.length / 4)
         const largeOutputThreshold = 3000
         if (outputTokens >= largeOutputThreshold) {
@@ -2647,26 +2628,26 @@ export class ThreadSessionRuntime {
       }
     }
 
-    if (part.type === 'reasoning') {
+    if (part.kind === 'reasoning') {
       await this.flushCurrentTurnParts({ mode: 'progress' })
       return
     }
 
-    if (part.type === 'text') {
+    if (part.kind === 'text') {
       await this.flushCurrentTurnParts({ mode: 'progress' })
-      if (part.time?.end) {
+      if (part.endedAt) {
         await this.tryShowPendingQuestion()
       }
       return
     }
 
-    if (part.type === 'step-finish') {
+    if (part.kind === 'step-finish') {
       this.ensureTypingKeepalive()
     }
   }
 
   private async handleSubtaskPart(
-    part: Part,
+    part: AgentPart,
     subtaskInfo: { label: string; assistantMessageId?: string },
   ): Promise<void> {
     const verbosity = await this.getVerbosity()
@@ -2678,18 +2659,18 @@ export class ThreadSessionRuntime {
         return
       }
     }
-    if (part.type === 'step-start' || part.type === 'step-finish') {
+    if (part.kind === 'step-start' || part.kind === 'step-finish') {
       return
     }
-    if (part.type === 'tool' && part.state.status === 'pending') {
+    if (part.kind === 'tool' && part.status === 'pending') {
       return
     }
-    if (part.type === 'text') {
+    if (part.kind === 'text') {
       return
     }
     if (
       !subtaskInfo.assistantMessageId ||
-      part.messageID !== subtaskInfo.assistantMessageId
+      part.messageId !== subtaskInfo.assistantMessageId
     ) {
       return
     }
@@ -2796,7 +2777,7 @@ export class ThreadSessionRuntime {
     const hasVisibleOutput = assistantMessageIds.some((msgId) => {
       const parts = this.getBufferedParts(msgId)
       return parts.some(
-        (part) => part.type !== 'step-start' && part.type !== 'step-finish',
+        (part) => part.kind !== 'step-start' && part.kind !== 'step-finish',
       )
     })
     if (!hasVisibleOutput) {
@@ -2829,29 +2810,20 @@ export class ThreadSessionRuntime {
     )
   }
 
-  private async handleSessionError(properties: {
-    sessionID?: string
-    error?: {
-      name?: string
-      data?: {
-        message?: string
-        statusCode?: number
-        providerID?: string
-        isRetryable?: boolean
-        responseBody?: string
-      }
-    }
+  private async handleSessionError(event: {
+    sessionId?: string
+    error?: AgentError
   }): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (!properties.sessionID || properties.sessionID !== sessionId) {
+    if (!event.sessionId || event.sessionId !== sessionId) {
       logger.log(
-        `Ignoring error for different session (expected: ${sessionId}, got: ${properties.sessionID})`,
+        `Ignoring error for different session (expected: ${sessionId}, got: ${event.sessionId})`,
       )
       return
     }
 
     // Skip abort errors — they are expected when operations are cancelled
-    if (properties.error?.name === 'MessageAbortedError') {
+    if (event.error?.name === 'MessageAbortedError') {
       logger.log(
         `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
       )
@@ -2860,7 +2832,7 @@ export class ThreadSessionRuntime {
     }
 
     const errorMessage = truncateSessionErrorMessage(
-      formatSessionErrorFromProps(properties.error),
+      formatSessionErrorFromProps(event.error),
     )
     logger.error(`Sending error to thread: ${errorMessage}`)
     await this.chat.sendMessage(`✗ opencode session error: ${errorMessage}`, { notify: true })
@@ -2875,16 +2847,16 @@ export class ThreadSessionRuntime {
   }
 
   private async handlePermissionAsked(
-    permission: PermissionRequest,
+    permission: AgentPermissionRequest,
   ): Promise<void> {
     const sessionId = this.state?.sessionId
-    const subtaskInfo = this.getSubtaskInfoForSession(permission.sessionID)
-    const isMainSession = permission.sessionID === sessionId
+    const subtaskInfo = this.getSubtaskInfoForSession(permission.sessionId)
+    const isMainSession = permission.sessionId === sessionId
     const isSubtaskSession = Boolean(subtaskInfo)
 
     if (!isMainSession && !isSubtaskSession) {
       logger.log(
-        `[PERMISSION IGNORED] Permission for unknown session (expected: ${sessionId} or subtask, got: ${permission.sessionID})`,
+        `[PERMISSION IGNORED] Permission for unknown session (expected: ${sessionId} or subtask, got: ${permission.sessionId})`,
       )
       return
     }
@@ -2967,13 +2939,13 @@ export class ThreadSessionRuntime {
   }
 
   private handlePermissionReplied(properties: {
-    requestID: string
+    requestId: string
     reply: string
-    sessionID: string
+    sessionId: string
   }): void {
     const sessionId = this.state?.sessionId
-    const subtaskInfo = this.getSubtaskInfoForSession(properties.sessionID)
-    const isMainSession = properties.sessionID === sessionId
+    const subtaskInfo = this.getSubtaskInfoForSession(properties.sessionId)
+    const isMainSession = properties.sessionId === sessionId
     const isSubtaskSession = Boolean(subtaskInfo)
 
     if (!isMainSession && !isSubtaskSession) {
@@ -2981,19 +2953,19 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(
-      `Permission ${properties.requestID} replied with: ${properties.reply}`,
+      `Permission ${properties.requestId} replied with: ${properties.reply}`,
     )
 
     const threadPermissions = pendingPermissions.get(this.thread.id)
     if (!threadPermissions) {
       return
     }
-    const pending = threadPermissions.get(properties.requestID)
+    const pending = threadPermissions.get(properties.requestId)
     if (!pending) {
       return
     }
     pendingPermissionContexts.delete(pending.contextHash)
-    threadPermissions.delete(properties.requestID)
+    threadPermissions.delete(properties.requestId)
     if (threadPermissions.size === 0) {
       pendingPermissions.delete(this.thread.id)
     }
@@ -3002,7 +2974,7 @@ export class ThreadSessionRuntime {
 
   private hasUnfinishedTextPart(messageID: string): boolean {
     return this.getBufferedParts(messageID).some((part) => {
-      return part.type === 'text' && !part.time?.end
+      return part.kind === 'text' && !part.endedAt
     })
   }
 
@@ -3065,12 +3037,12 @@ export class ThreadSessionRuntime {
   }
 
   private async handleQuestionAsked(
-    questionRequest: QuestionRequest,
+    questionRequest: AgentQuestionRequest,
   ): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (questionRequest.sessionID !== sessionId) {
+    if (questionRequest.sessionId !== sessionId) {
       logger.log(
-        `[QUESTION IGNORED] Question for different session (expected: ${sessionId}, got: ${questionRequest.sessionID})`,
+        `[QUESTION IGNORED] Question for different session (expected: ${sessionId}, got: ${questionRequest.sessionId})`,
       )
       return
     }
@@ -3085,9 +3057,9 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private handleQuestionReplied(properties: { sessionID: string }): void {
+  private handleQuestionReplied(properties: { sessionId: string }): void {
     const sessionId = this.state?.sessionId
-    if (properties.sessionID !== sessionId) {
+    if (properties.sessionId !== sessionId) {
       return
     }
     this.deferredQuestionShow.clear()
@@ -3174,29 +3146,26 @@ export class ThreadSessionRuntime {
     await this.submitViaOpencodeQueue(next)
   }
 
-  private async handleSessionStatus(properties: {
-    sessionID: string
-    status:
-      | { type: 'idle' }
-      | { type: 'retry'; attempt: number; message: string; next: number }
-      | { type: 'busy' }
+  private async handleSessionStatus(event: {
+    sessionId: string
+    status: AgentStatus
   }): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (properties.sessionID !== sessionId) {
+    if (event.sessionId !== sessionId) {
       return
     }
 
-    if (properties.status.type === 'idle') {
+    if (event.status.state === 'idle') {
       this.stopTyping()
       return
     }
 
-    if (properties.status.type === 'busy') {
+    if (event.status.state === 'busy') {
       this.ensureTypingNow()
       return
     }
 
-    if (properties.status.type !== 'retry') {
+    if (event.status.state !== 'retry') {
       return
     }
 
@@ -3207,7 +3176,7 @@ export class ThreadSessionRuntime {
     }
     this.lastRateLimitDisplayTime = now
 
-    const { attempt, message, next } = properties.status
+    const { attempt, message, nextAt: next } = event.status
     const remainingMs = Math.max(0, next - now)
     const remainingSec = Math.ceil(remainingMs / 1000)
     const duration = (() => {
@@ -3287,10 +3256,9 @@ export class ThreadSessionRuntime {
   private async handleTuiToast(properties: {
     title?: string
     message: string
-    variant: 'info' | 'success' | 'warning' | 'error'
-    duration?: number
+    level: 'info' | 'success' | 'warning' | 'error'
   }): Promise<void> {
-    if (properties.variant === 'warning') {
+    if (properties.level === 'warning') {
       return
     }
     const toastSessionId = extractToastSessionId({ message: properties.message })
@@ -3304,7 +3272,7 @@ export class ThreadSessionRuntime {
     const titlePrefix = properties.title
       ? `${properties.title.trim()}: `
       : ''
-    const chunk = asSubtext(`${properties.variant}: ${titlePrefix}${toastMessage}`)
+    const chunk = asSubtext(`${properties.level}: ${titlePrefix}${toastMessage}`)
     const toastResult = await this.chat.sendNotice(chunk)
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
@@ -5534,7 +5502,7 @@ function buildPermissionDedupeKey({
   permission,
   directory,
 }: {
-  permission: PermissionRequest
+  permission: AgentPermissionRequest
   directory: string
 }): string {
   const normalizedPatterns = [...permission.patterns].sort((a, b) => {
@@ -5555,32 +5523,20 @@ function getFallbackContextLimit({
 }
 
 /** Format a session error from event properties for display. */
-function formatSessionErrorFromProps(error?: {
-  name?: string
-  data?: {
-    message?: string
-    statusCode?: number
-    providerID?: string
-    isRetryable?: boolean
-    responseBody?: string
-  }
-}): string {
+function formatSessionErrorFromProps(error?: AgentError): string {
   if (!error) {
     return 'Unknown error'
   }
-  const data = error.data
-  if (!data) {
-    return error.name || 'Unknown error'
-  }
   const parts: string[] = []
-  if (data.message) {
-    parts.push(data.message)
+  // A backend error without a message carries only its name as the message.
+  if (error.message && error.message !== error.name) {
+    parts.push(error.message)
   }
-  if (data.statusCode) {
-    parts.push(`(${data.statusCode})`)
+  if (error.statusCode) {
+    parts.push(`(${error.statusCode})`)
   }
-  if (data.providerID) {
-    parts.push(`[${data.providerID}]`)
+  if (error.provider) {
+    parts.push(`[${error.provider}]`)
   }
   return parts.length > 0 ? parts.join(' ') : error.name || 'Unknown error'
 }
