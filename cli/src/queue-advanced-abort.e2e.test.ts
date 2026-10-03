@@ -173,6 +173,13 @@ e2eTest('queue advanced: abort and retry', () => {
         options: [{ name: 'message', type: 3, value: 'Reply with exactly: abort-cleared-queued' }],
       })
       await th.waitForInteractionAck({ interactionId: queueInteractionId, timeout: 4_000 })
+      // /queue posts its ack before the item enters the queue (so no drain can
+      // run it before the ack exists), so the ack alone does not mean queued.
+      for (let i = 0; i < 100 && getRuntime(thread.id)?.getQueueLength() !== 1; i++) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 20)
+        })
+      }
       expect(getRuntime(thread.id)?.getQueueLength()).toBe(1)
       expect(await listThreadQueueItems(thread.id)).toHaveLength(1)
 
