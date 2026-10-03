@@ -26,7 +26,9 @@ import {
   type AgentPermissionRequest,
   type AgentQuestionRequest,
   type AgentStatus,
+  type AgentUsage,
 } from '../agent-backend/events.js'
+import { AgentRequestError, type AgentPromptPart } from '../agent-backend/types.js'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
@@ -614,8 +616,8 @@ function cleanupPendingUiForThread(threadId: string): void {
             : [ctx.permission.id]
           void Promise.all(
             requestIds.map((requestId) => {
-              return client.permission.reply({
-                requestID: requestId,
+              return client.sessions.replyPermission({
+                requestId,
                 directory: ctx.directory,
                 reply: 'reject',
               })
@@ -668,21 +670,17 @@ function getTimestampFromSnowflake(snowflake: string): number | undefined {
   return timestampMs
 }
 
-type TokenUsage = {
-  input: number
-  output: number
-  reasoning: number
-  cache: { read: number; write: number }
+function toPromptFilePart(file: DiscordFileAttachment): AgentPromptPart {
+  return {
+    kind: 'file',
+    mime: file.mime,
+    url: file.url,
+    ...(file.filename && { filename: file.filename }),
+  }
 }
 
-function getTokenTotal(tokens: TokenUsage): number {
-  return (
-    tokens.input +
-    tokens.output +
-    tokens.reasoning +
-    tokens.cache.read +
-    tokens.cache.write
-  )
+function getTokenTotal(usage: AgentUsage): number {
+  return usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
 }
 
 /**
@@ -3566,36 +3564,28 @@ export class ThreadSessionRuntime {
         input,
         isFirstTurn: createdNewSession,
       })
-      const parts = [
-        { type: 'text' as const, text: promptWithImagePaths },
-        { type: 'text' as const, text: syntheticContext, synthetic: true },
-        ...(turnContext ? [{ type: 'text' as const, text: turnContext, synthetic: true }] : []),
-        ...images,
+      const parts: AgentPromptPart[] = [
+        { kind: 'text', text: promptWithImagePaths },
+        { kind: 'text', text: syntheticContext, synthetic: true },
+        ...(turnContext ? [{ kind: 'text' as const, text: turnContext, synthetic: true }] : []),
+        ...images.map(toPromptFilePart),
       ]
 
-      const request = {
-        sessionID: session.id,
+      await this.recordTurnAttribution({ sessionId: session.id, input })
+      await waitForGlobalEventListener()
+      const promptResult = await getClient().sessions.prompt({
+        sessionId: session.id,
         directory: this.sdkDirectory,
         parts,
         system,
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-        ...(modelField ? { model: modelField } : {}),
-        ...variantField,
+        ...(modelField ? { model: { providerId: modelField.providerID, modelId: modelField.modelID } } : {}),
+        ...(variantField.variant ? { variant: variantField.variant } : {}),
         ...(input.noReply ? { noReply: true } : {}),
-      }
-      await this.recordTurnAttribution({ sessionId: session.id, input })
-      await waitForGlobalEventListener()
-      const promptResult = await getClient().session.promptAsync(request)
-        .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-      if (promptResult instanceof Error || promptResult.error) {
-        const errorMessage = promptResult instanceof Error
-          ? promptResult.message
-          : extractSdkErrorMessage(promptResult.error)
-        const errObj = promptResult instanceof Error
-          ? promptResult
-          : new Error(errorMessage)
-        void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue')
-        await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`)
+      })
+      if (promptResult instanceof Error) {
+        void notifyError(promptResult, 'promptAsync failed in submitViaOpencodeQueue')
+        await cleanupOnError(`✗ OpenCode API error: ${promptResult.message}`)
         return
       }
 
@@ -3904,10 +3894,10 @@ export class ThreadSessionRuntime {
     logger.log(
       `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
     )
-    const abortResult = await client.session.abort({
-      sessionID: sessionId,
+    const abortResult = await client.sessions.abort({
+      sessionId,
       directory: this.sdkDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
+    })
     if (!(abortResult instanceof Error)) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
@@ -4218,19 +4208,17 @@ export class ThreadSessionRuntime {
       )
       return 'unavailable'
     }
-    const statusResponse = await getClient().session.status({
+    const statuses = await getClient().sessions.status({
       directory: this.sdkDirectory,
-    }).catch((error) => {
-      logger.warn(
-        `[QUEUE] Failed to read session status while restoring queue for ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
     })
-    if (!statusResponse || statusResponse.error) {
+    if (statuses instanceof Error) {
+      logger.warn(
+        `[QUEUE] Failed to read session status while restoring queue for ${this.threadId}: ${statuses.message}`,
+      )
       return 'unavailable'
     }
-    const sessionStatus = statusResponse.data?.[sessionId]
-    if (!sessionStatus || sessionStatus.type === 'idle') {
+    const sessionStatus = statuses[sessionId]
+    if (!sessionStatus || sessionStatus.state === 'idle') {
       this.markQueueDispatchIdle(sessionId)
       return 'idle'
     }
@@ -4611,40 +4599,16 @@ export class ThreadSessionRuntime {
       input,
       isFirstTurn: createdNewSession,
     })
-    const parts = [
-      { type: 'text' as const, text: promptWithImagePaths },
-      { type: 'text' as const, text: syntheticContext, synthetic: true },
-      ...(turnContext ? [{ type: 'text' as const, text: turnContext, synthetic: true }] : []),
-      ...images,
+    const parts: AgentPromptPart[] = [
+      { kind: 'text', text: promptWithImagePaths },
+      { kind: 'text', text: syntheticContext, synthetic: true },
+      ...(turnContext ? [{ kind: 'text' as const, text: turnContext, synthetic: true }] : []),
+      ...images.map(toPromptFilePart),
     ]
 
     const variantField = earlyThinkingValue
       ? { variant: earlyThinkingValue }
       : {}
-
-    const parseOpenCodeErrorMessage = (err: unknown): string => {
-      if (err && typeof err === 'object') {
-        if (
-          'data' in err &&
-          err.data &&
-          typeof err.data === 'object' &&
-          'message' in err.data
-        ) {
-          return String(err.data.message)
-        }
-        if (
-          'errors' in err &&
-          Array.isArray(err.errors) &&
-          err.errors.length > 0
-        ) {
-          return JSON.stringify(err.errors)
-        }
-        if ('message' in err && typeof err.message === 'string') {
-          return err.message
-        }
-      }
-      return 'Unknown OpenCode API error'
-    }
 
     if (input.command) {
       const queuedCommand = input.command
@@ -4665,19 +4629,35 @@ export class ThreadSessionRuntime {
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
       await this.recordTurnAttribution({ sessionId: session.id, input })
-      const commandResponse = await getClient().session.command(
+      const commandResponse = await getClient().sessions.command(
         {
-          sessionID: session.id,
-
+          sessionId: session.id,
           directory: this.sdkDirectory,
           command: queuedCommand.name,
           arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
           agent: earlyAgentPreference,
-          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
-          ...variantField,
+          model: { providerId: earlyModelParam.providerID, modelId: earlyModelParam.modelID },
+          ...(variantField.variant ? { variant: variantField.variant } : {}),
         },
         { signal: commandSignal },
-      ).catch((e) => new OpenCodeSdkError({ operation: 'session.command', cause: e }))
+      )
+
+      if (commandResponse instanceof AgentRequestError) {
+        const errorMessage = commandResponse.message
+        if (errorMessage.includes('aborted')) {
+          logger.log(
+            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
+          )
+          this.stopTyping()
+          return true
+        }
+        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
+        logger.error(`[DISPATCH] ${apiError.message}`)
+        void notifyError(apiError, 'OpenCode API error during command')
+        this.stopTyping()
+        await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
+        return false
+      }
 
       if (commandResponse instanceof Error) {
         const timeoutReason = commandSignal.reason
@@ -4712,47 +4692,25 @@ export class ThreadSessionRuntime {
         return false
       }
 
-      if (commandResponse.error) {
-        const errorMessage = parseOpenCodeErrorMessage(commandResponse.error)
-        if (errorMessage.includes('aborted')) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.stopTyping()
-          return true
-        }
-        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
-        logger.error(`[DISPATCH] ${apiError.message}`)
-        void notifyError(apiError, 'OpenCode API error during command')
-        this.stopTyping()
-        await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
-        return false
-      }
-
       logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
       return true
     }
 
     await this.recordTurnAttribution({ sessionId: session.id, input })
     await waitForGlobalEventListener()
-    const promptResponse = await getClient().session.promptAsync({
-      sessionID: session.id,
+    const promptResponse = await getClient().sessions.prompt({
+      sessionId: session.id,
       directory: this.sdkDirectory,
       parts,
       system,
-      model: earlyModelParam,
+      model: { providerId: earlyModelParam.providerID, modelId: earlyModelParam.modelID },
       agent: earlyAgentPreference,
-      ...variantField,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
+      ...(variantField.variant ? { variant: variantField.variant } : {}),
+    })
 
-    if (promptResponse instanceof Error || promptResponse.error) {
-      const errorMessage = (() => {
-        if (promptResponse instanceof Error) return promptResponse.message
-        return parseOpenCodeErrorMessage(promptResponse.error)
-      })()
-      const errorObject = promptResponse instanceof Error
-        ? promptResponse
-        : new Error(errorMessage)
+    if (promptResponse instanceof Error) {
+      const errorMessage = promptResponse.message
+      const errorObject = promptResponse
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
@@ -4940,14 +4898,14 @@ export class ThreadSessionRuntime {
       return null
     }
 
-    const updateResult = await client.session.update({
-      sessionID: sessionId,
+    const updateResult = await client.sessions.setPermissions({
+      sessionId,
       permission: rules,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
-    if (updateResult instanceof Error) return updateResult
-    if (updateResult.error) {
-      return new Error('OpenCode rejected permission update')
+    })
+    if (updateResult instanceof AgentRequestError) {
+      return new Error('OpenCode rejected permission update', { cause: updateResult })
     }
+    if (updateResult instanceof Error) return updateResult
     return null
   }
 
@@ -5001,20 +4959,19 @@ export class ThreadSessionRuntime {
     let createdNewSession = false
 
     if (sessionId) {
-      const sessionResponse = await getClient().session.get({
-        sessionID: sessionId,
+      const sessionResponse = await getClient().sessions.get({
+        sessionId,
         directory: this.sdkDirectory,
-      }).catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
+      })
       if (sessionResponse instanceof Error) {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
         )
-      } else if (sessionResponse.data) {
-        session = sessionResponse.data
+      } else if (sessionResponse) {
+        session = sessionResponse
       } else {
-        const sdkMessage = extractSdkErrorMessage(sessionResponse.error)
         logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}: ${sdkMessage}, response=${JSON.stringify(sessionResponse)}`,
+          `[ENSURE SESSION] session.get returned no data for ${sessionId}`,
         )
       }
     }
@@ -5032,29 +4989,20 @@ export class ThreadSessionRuntime {
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation
-      const createResult = await getClient().session.create({
+      const createResult = await getClient().sessions.create({
         directory: this.sdkDirectory,
         permission: sessionPermissions,
-      }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
+      })
       if (createResult instanceof Error) {
         logger.error(
-          `[ENSURE SESSION] session.create failed: ${createResult.message}`,
+          `[ENSURE SESSION] session.create failed: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
         )
         return new Error(
           `Failed to create session: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
           { cause: createResult },
         )
       }
-      if (createResult.error || !createResult.data) {
-        const errorMessage = extractSdkErrorMessage(createResult.error)
-        logger.error(
-          `[ENSURE SESSION] session.create failed: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
-        )
-        return new Error(
-          `Failed to create session: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
-        )
-      }
-      session = createResult.data
+      session = createResult
       // Insert DB row immediately so the external-sync poller sees
       // source='roadie' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
@@ -5191,10 +5139,10 @@ export class ThreadSessionRuntime {
         // Fetch final token count from API
         const [messagesResult, providersResult] = await Promise.all([
           tokensUsed === 0
-            ? client.session.messages({
-                sessionID: sessionId,
+            ? client.sessions.messages({
+                sessionId,
                 directory: this.sdkDirectory,
-              }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
+              })
             : null,
           client.provider.list({
             directory: this.sdkDirectory,
@@ -5202,20 +5150,19 @@ export class ThreadSessionRuntime {
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
-          const messages = messagesResult.data || []
-          const lastAssistant = [...messages]
+          const lastAssistant = [...messagesResult]
             .reverse()
             .find((m) => {
-              if (m.info.role !== 'assistant') {
+              if (m.message.role !== 'assistant') {
                 return false
               }
-              if (!m.info.tokens) {
+              if (!m.message.usage) {
                 return false
               }
-              return getTokenTotal(m.info.tokens) > 0
+              return getTokenTotal(m.message.usage) > 0
             })
-          if (lastAssistant && 'tokens' in lastAssistant.info) {
-            tokensUsed = getTokenTotal(lastAssistant.info.tokens)
+          if (lastAssistant?.message.usage) {
+            tokensUsed = getTokenTotal(lastAssistant.message.usage)
           }
         }
 

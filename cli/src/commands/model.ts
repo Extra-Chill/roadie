@@ -27,7 +27,11 @@ import {
   getVariantCascade,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import type { AgentBackendGetter } from '../agent-backend/types.js'
+import type { AgentCatalog, AgentCatalogGetter } from '../agent-backend/types.js'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+
+// Forks are OpenCode sessions read through its paged history API.
+type ForkHistoryGetter = () => AgentCatalog & { session: Pick<OpencodeClient['session'], 'messages'> }
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import {
   getDefaultModel,
@@ -205,7 +209,7 @@ export async function ensureSessionPreferencesSnapshot({
   sessionId: string
   channelId?: string
   appId?: string
-  getClient: Error | AgentBackendGetter
+  getClient: Error | AgentCatalogGetter
   directory?: string
   agentOverride?: string
   modelOverride?: string
@@ -300,7 +304,7 @@ async function getLastUserMessageAgent({
   before,
   page = 0,
 }: {
-  getClient: AgentBackendGetter
+  getClient: ForkHistoryGetter
   sessionId: string
   directory?: string
   before?: string
@@ -348,7 +352,7 @@ export async function copySessionPreferences({
   targetSessionId: string
   channelId?: string
   appId?: string
-  getClient: Error | AgentBackendGetter
+  getClient: Error | ForkHistoryGetter
   directory?: string
 }) {
   const [historyAgent, preferredAgent, modelInfo, variant] = await Promise.all([
@@ -406,7 +410,7 @@ export async function getCurrentModelInfo({
   channelId?: string
   appId?: string
   agentPreference?: string
-  getClient: Error | AgentBackendGetter
+  getClient: Error | AgentCatalogGetter
   directory?: string
 }): Promise<CurrentModelInfo> {
   if (getClient instanceof Error) {

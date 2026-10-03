@@ -1,8 +1,7 @@
 // OpenCode implementation of the agent backend seam.
 //
-// The OpenCode SDK client already satisfies `AgentBackend` structurally, so
-// this provider hands the runtime the exact same client objects as before.
-// Behavior is unchanged; only the import path the runtime depends on moves.
+// Session operations are adapted to Roadie types by ./opencode-sessions.ts; the
+// catalog passes through the OpenCode client unchanged.
 
 import { createOpencodeClient, type Event as OpenCodeEvent, type GlobalEvent } from '@opencode-ai/sdk/v2'
 import {
@@ -13,6 +12,7 @@ import {
   subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { toOpenCodeBackend } from './opencode-sessions.js'
 import type { AgentBackendEvent, AgentBackendProvider } from './types.js'
 
 // OpenCode wraps every event in a { directory, payload } envelope on the
@@ -26,10 +26,13 @@ async function* unwrapGlobalEvents(stream: AsyncIterable<GlobalEvent>): AsyncIte
 export const openCodeBackendProvider: AgentBackendProvider = {
   id: 'opencode',
   getBackend(directory) {
-    return getOpencodeClient(directory)
+    const client = getOpencodeClient(directory)
+    return client ? toOpenCodeBackend(client) : null
   },
-  initializeForDirectory(directory, options) {
-    return initializeOpencodeForDirectory(directory, options)
+  async initializeForDirectory(directory, options) {
+    const getClient = await initializeOpencodeForDirectory(directory, options)
+    if (getClient instanceof Error) return getClient
+    return () => toOpenCodeBackend(getClient())
   },
   subscribeEvents({ signal }) {
     const baseUrl = getOpencodeServerBaseUrl()

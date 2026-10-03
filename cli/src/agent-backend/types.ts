@@ -1,36 +1,103 @@
 // Agent backend seam for the session runtime.
 //
-// `AgentBackend` lists exactly the agent operations the session runtime calls
-// today, derived from the call sites in `session-handler/`. Signatures and
-// payloads are still OpenCode-shaped: the seam is the call surface, so a
-// second backend can implement it (or adapt to it) later without the runtime
-// importing the OpenCode SDK client directly.
+// Session operations (`sessions`) are defined in Roadie's own terms and return
+// Roadie types (./events.ts) or an Error, so a second backend implements them
+// directly. The catalog (providers/models, config, agents) is still
+// OpenCode-shaped; it moves to Roadie types in a follow-up step of #5.
 //
 // Keep this list in sync with real call sites. Add an operation only when the
 // runtime starts using it.
 
 import type { Event as OpenCodeEvent, OpencodeClient } from '@opencode-ai/sdk/v2'
+import * as errore from 'errore'
+import type { AgentMessage, AgentPart, AgentSession, AgentStatus } from './events.js'
 
-export type AgentBackend = {
-  session: Pick<
-    OpencodeClient['session'],
-    | 'abort'
-    | 'command'
-    | 'create'
-    | 'get'
-    | 'messages'
-    | 'promptAsync'
-    | 'status'
-    | 'update'
-  >
-  permission: Pick<OpencodeClient['permission'], 'reply'>
+/**
+ * The backend rejected a request (as opposed to the request never arriving,
+ * which is a transport error). `message` is the backend's own explanation.
+ */
+export class AgentRequestError extends errore.createTaggedError({
+  name: 'AgentRequestError',
+  message: '$detail',
+}) {}
+
+/** One permission rule. The last matching rule wins. */
+export type AgentPermissionRule = {
+  permission: string
+  pattern: string
+  action: 'allow' | 'deny' | 'ask'
+}
+
+export type AgentModelSelection = { providerId: string; modelId: string }
+
+/** Input for a prompt. Synthetic text is context the person did not type. */
+export type AgentPromptPart =
+  | { kind: 'text'; text: string; synthetic?: boolean }
+  | { kind: 'file'; mime: string; url: string; filename?: string }
+
+export type AgentSessionMessage = { message: AgentMessage; parts: AgentPart[] }
+
+export type AgentSessionOperations = {
+  create(input: { directory: string; permission?: AgentPermissionRule[] }): Promise<AgentSession | Error>
+  /** Undefined when the backend has no such session. */
+  get(input: { sessionId: string; directory: string }): Promise<AgentSession | undefined | Error>
+  setPermissions(input: { sessionId: string; permission: AgentPermissionRule[] }): Promise<void | Error>
+  messages(input: { sessionId: string; directory: string }): Promise<AgentSessionMessage[] | Error>
+  /** Queue a prompt. Resolves once accepted; output arrives as events. */
+  prompt(input: {
+    sessionId: string
+    directory: string
+    parts: AgentPromptPart[]
+    system?: string
+    agent?: string
+    model?: AgentModelSelection
+    variant?: string
+    /** Record the message without starting a turn. */
+    noReply?: boolean
+  }): Promise<void | Error>
+  /** Run a named backend command (e.g. a project slash command). */
+  command(
+    input: {
+      sessionId: string
+      directory: string
+      command: string
+      arguments: string
+      agent?: string
+      model?: AgentModelSelection
+      variant?: string
+    },
+    options?: { signal?: AbortSignal },
+  ): Promise<void | Error>
+  abort(input: { sessionId: string; directory: string }): Promise<void | Error>
+  /** Status of every session with a known status; absent means idle. */
+  status(input: { directory: string }): Promise<Record<string, AgentStatus> | Error>
+  replyPermission(input: {
+    requestId: string
+    directory: string
+    reply: 'once' | 'always' | 'reject'
+  }): Promise<void | Error>
+}
+
+/** Model/provider, config and agent listings. Still OpenCode-shaped (#5). */
+export type AgentCatalog = {
   provider: Pick<OpencodeClient['provider'], 'list'>
   config: Pick<OpencodeClient['config'], 'get'>
   app: Pick<OpencodeClient['app'], 'agents'>
 }
 
-/** One event from the backend's stream. OpenCode-shaped, like the rest of the seam. */
+export type AgentBackend = AgentCatalog & {
+  sessions: AgentSessionOperations
+}
+
+/**
+ * One raw event from the backend's stream. The runtime translates it into an
+ * AgentEvent (./opencode-events.ts) and keeps the raw form only for the opt-in
+ * backend event log.
+ */
 export type AgentBackendEvent = OpenCodeEvent
+
+/** Lazily returns the catalog for a directory once it has been initialized. */
+export type AgentCatalogGetter = () => AgentCatalog
 
 /** Lazily returns the backend for a directory once it has been initialized. */
 export type AgentBackendGetter = () => AgentBackend
