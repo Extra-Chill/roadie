@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.33.0] - 2026-10-03
+
+### Added
+- plugin API with WordPress-style filters and actions
+
 ## [0.32.0] - 2026-10-03
 
 ### Added
