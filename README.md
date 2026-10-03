@@ -62,7 +62,7 @@ Roadie adds a layer of orchestration features on top of OpenCode. The ones worth
 
 - **[Scheduled tasks](https://kimaki.dev/docs/features/scheduled-tasks)** — run the bot on a schedule (cron or a future time). For example, every morning read your inbox with a CLI like [Zele](https://github.com/remorses/zele) and post an email digest thread; then reply to mark some read or unsubscribe.
 - **[The queue](https://kimaki.dev/docs/features/queue)** — queue a message to send when the current run finishes (impossible in plain OpenCode). Great for "review this when you're done" or "commit at the end". End any message with `. queue` and even edit it later to update the queued text.
-- **[btw](https://kimaki.dev/docs/features/btw)** — fork the current context into a new thread to ask a clarifying question in parallel while the agent keeps working. End a message with `. btw` or run `/btw`.
+- **Fork** — `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something right away, or `from:` to branch from an earlier message.
 - **[Worktrees](https://kimaki.dev/docs/features/worktrees)** — `/new-worktree` moves a session into an isolated folder mid-plan so it never touches your main checkout; `/merge-worktree` rebases the commits back and lets you preserve or squash them (and asks the agent to resolve conflicts).
 - **[Diff viewer](https://kimaki.dev/docs/features/diff-viewer)** — `/diff` generates a shareable URL to review changes in a real diff viewer from your phone or browser.
 - **[Voice messages](https://kimaki.dev/docs/features/voice)** — record a voice note; Roadie transcribes it using your project's file tree for accuracy.
@@ -132,7 +132,7 @@ Roadie ships a full set of slash commands and a CLI. The most common slash comma
 | `/agent` | Change the agent for this channel or session |
 | `/login` | Authenticate a provider (OAuth subscription or API key) |
 | `/queue <message>` | Queue a message to send after the current response finishes |
-| `/btw <prompt>` | Fork context into a new thread to ask a side question |
+| `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
 | `/new-worktree <name>` | Move the session into an isolated git worktree |
 | `/merge-worktree` | Merge the worktree branch back into the default branch |
 | `/diff` | Generate a shareable diff URL |

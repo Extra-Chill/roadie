@@ -4,7 +4,7 @@
 // args before execute. Extra fields stay in the model-facing schema and in
 // Discord input; they never reach the shell.
 //
-// Also injects ROADIE_SESSION_ID into bash env. /btw and /fork clone parent
+// Also injects ROADIE_SESSION_ID into bash env. /fork clones parent
 // history, so the copied system prompt still says --session <parent>. Upload
 // then prefers this live env over that stale flag.
 //

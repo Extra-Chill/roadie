@@ -769,7 +769,7 @@ describe('agent model resolution', () => {
   )
 
   test(
-    '/btw fork keeps source session model when channel model differs',
+    '/fork prompt keeps source session model when channel model differs',
     async () => {
       const db = await getDb()
       await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
@@ -779,7 +779,7 @@ describe('agent model resolution', () => {
         (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id),
       )
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: btw-source-msg',
+        content: 'Reply with exactly: fork-source-msg',
       })
 
       const sourceThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
@@ -813,8 +813,9 @@ describe('agent model resolution', () => {
       const existingForkThreadIds = new Set(
         (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id),
       )
-      await discord.thread(sourceThread.id).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: btw-model-check. btw',
+      await discord.thread(sourceThread.id).user(TEST_USER_ID).runSlashCommand({
+        name: 'fork',
+        options: [{ name: 'prompt', type: 3, value: 'Reply with exactly: fork-model-check' }],
       })
 
       const forkedThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
@@ -838,22 +839,13 @@ describe('agent model resolution', () => {
         ? await getSessionModel(forkedSessionId)
         : undefined
 
-      // The immediate btw ack is edited in place with the fork link.
-      const sourceThreadText = (await discord.thread(sourceThread.id).text())
-        .replace(`<#${forkedThread.id}>`, '<#FORK_THREAD>')
-      expect(sourceThreadText.split('\n').slice(-3).join('\n')).toMatchInlineSnapshot(`
-        "Reply with exactly: btw-model-check. btw
-        --- from: assistant (TestBot)
-        Session forked! Continue in <#FORK_THREAD>"
-      `)
-
       const forkedThreadText = (await discord.thread(forkedThread.id).text())
         .replace(`<#${sourceThread.id}>`, '<#SOURCE_THREAD>')
 
       expect(forkedThreadText).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        Reusing context from <#SOURCE_THREAD> to answer prompt...
-        Reply with exactly: btw-model-check
+        Forked from <#SOURCE_THREAD>.
+        Reply with exactly: fork-model-check
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2*"
       `)

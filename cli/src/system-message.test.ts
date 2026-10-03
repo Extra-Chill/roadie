@@ -488,7 +488,7 @@ describe('system-message', () => {
 
       Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the OpenCode title.
       Do not retitle every turn. Discord rate-limits thread renames.
-      Keep titles short. No emoji. No ⬦, btw:, or Fork: prefixes.
+      Keep titles short. No emoji. No ⬦ or Fork: prefixes.
 
       ## discord user mentions
 
@@ -557,20 +557,12 @@ describe('system-message', () => {
       roadie send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
       \`\`\`
 
-      ### prompt suffixes: queue and btw
+      ### prompt suffix: queue
 
-      A plain message to a busy thread **interrupts** its current run. \`roadie send\` has no queue flag. Instead, end the prompt with a suffix. Suffixes work in Discord messages and in \`roadie send --thread/--session\` prompts. Put them after punctuation (\`.\`, \`!\`, \`?\`, \`,\`, \`;\`, \`:\`) or on their own last line. Case does not matter. Roadie strips the suffix before sending the prompt.
-
-      - \`. queue\`: wait until the current run finishes, then send the prompt to the same session.
-      - \`. btw\`: fork the session now into a new \`btw:\` thread with this prompt. The source session keeps running.
-      - \`. btw queue\` (or \`. btw. queue\`): fork only after the current run finishes.
-
-      \`. btw\` needs an existing thread with a session. With \`roadie send --channel\` it does not fork. The fork thread only shows in a user's sidebar if you pass \`--user\`.
+      A plain message to a busy thread **interrupts** its current run. \`roadie send\` has no queue flag. Instead, end the prompt with \`. queue\` (after punctuation, or on its own last line; case does not matter). Roadie waits until the current run finishes, then sends the prompt to the same session. The suffix works in Discord messages and in \`roadie send --thread/--session\` prompts, and Roadie strips it before sending.
 
       \`\`\`bash
       roadie send --thread <thread_id> --prompt 'Run the tests after your current work. queue' --agent <current_agent>
-      roadie send --thread <thread_id> --prompt 'What does this error mean? btw' --agent <current_agent>
-      roadie send --thread <thread_id> --prompt 'Summarize what you changed. btw queue' --agent <current_agent>
       \`\`\`
 
       When sending a follow-up to a thread that may be busy, use \`. queue\` unless you mean to interrupt it.

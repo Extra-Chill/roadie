@@ -33,13 +33,12 @@ import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
 import {
   handleForkCommand,
-  handleForkSelectMenu,
+  handleForkAutocomplete,
 } from './commands/fork.js'
 import {
   handleForkSubagentCommand,
   handleForkSubagentSelectMenu,
 } from './commands/fork-subagent.js'
-import { handleBtwCommand } from './commands/btw.js'
 import {
   handleModelCommand,
   handleProviderSelectMenu,
@@ -291,6 +290,10 @@ export function registerInteractionHandler({
               await handleQueueCommandAutocomplete({ interaction, appId })
               return
 
+            case 'fork':
+              await handleForkAutocomplete({ interaction })
+              return
+
             default:
               if (
                 interaction.commandName.endsWith('-agent') &&
@@ -364,15 +367,11 @@ export function registerInteractionHandler({
               return
 
             case 'fork':
-              await handleForkCommand(interaction)
+              await handleForkCommand({ interaction, appId })
               return
 
             case 'fork-subagent':
               await handleForkSubagentCommand(interaction)
-              return
-
-            case 'btw':
-              await handleBtwCommand({ command: interaction, appId })
               return
 
             case 'model':
@@ -566,11 +565,6 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
-
-          if (customId.startsWith('fork_select:')) {
-            await handleForkSelectMenu(interaction)
-            return
-          }
 
           if (customId.startsWith('fork_subagent_select:')) {
             await handleForkSubagentSelectMenu(interaction)

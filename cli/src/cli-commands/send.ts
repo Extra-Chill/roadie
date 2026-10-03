@@ -59,7 +59,7 @@ cli
   )
   .option(
     '-p, --prompt <prompt>',
-    'Message content. With --thread/--session, end with ". queue" to wait for the current run instead of interrupting it, ". btw" to fork a side session now, or ". btw queue" to fork after the current run',
+    'Message content. With --thread/--session, end with ". queue" to wait for the current run instead of interrupting it',
   )
   .option(
     '-n, --name [name]',

@@ -19,9 +19,9 @@ import {
   serializeMessageExtras,
   getFileAttachments,
   getTextAttachments,
+  extractQueueSuffix,
 } from './message-formatting.js'
 import { getThreadSession } from './database.js'
-import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -51,14 +51,14 @@ export async function resolveMessagePrompt({
   forceQueue?: boolean
   /** Append serialized embeds, polls and forwards of `message`. */
   includeExtras?: boolean
-}): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode' | 'queuedAction'>> {
-  const qs = extractBtwQueueSuffix(text)
+}): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
+  const qs = extractQueueSuffix(text)
   const [images, textAttachments] = await Promise.all([
     getFileAttachments(message),
     getTextAttachments(message),
   ])
   const prompt = [
-    qs.forceBtw && !qs.forceQueue && !forceQueue ? text : qs.prompt,
+    qs.prompt,
     includeExtras ? serializeMessageExtras(message) : '',
     textAttachments,
   ]
@@ -68,7 +68,6 @@ export async function resolveMessagePrompt({
     prompt,
     images: images.length > 0 ? images : undefined,
     mode: qs.forceQueue || forceQueue ? 'local-queue' : 'opencode',
-    queuedAction: (qs.forceQueue || forceQueue) && qs.forceBtw ? 'btw' : undefined,
   }
 }
 
