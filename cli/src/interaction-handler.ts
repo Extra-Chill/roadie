@@ -77,7 +77,6 @@ import {
   handleQueueRemoveButton,
   QUEUE_REMOVE_CUSTOM_ID_PREFIX,
 } from './commands/queue.js'
-import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
 import {
   handleVerbosityCommand,
@@ -409,14 +408,6 @@ export function registerInteractionHandler({
 
             case 'queue-command':
               await handleQueueCommandCommand({ command: interaction, appId })
-              return
-
-            case 'undo':
-              await handleUndoCommand({ command: interaction, appId })
-              return
-
-            case 'redo':
-              await handleRedoCommand({ command: interaction, appId })
               return
 
             case 'verbosity':
