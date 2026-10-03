@@ -120,6 +120,39 @@ Restart behavior is built in, so the unit needs no pre- or post-start scripts:
 - **Orphan cleanup.** The bot records the pid of the agent server it spawns. If a previous run died without cleaning up, the next start stops that leftover server first. A recorded pid that now belongs to some other program is left alone.
 - **Restart continuation.** On shutdown the bot records which threads had a run in progress. The next start posts a notice in each one and gives the session a continuation turn. Records older than 15 minutes only get the notice. Disable with `ROADIE_RESUME_INTERRUPTED=0`.
 
+## Plugins and hooks
+
+Roadie extends the way WordPress does: plugins add **filters** (change a value) and **actions** (react to an event). Load plugins with `--plugin <path-or-package>` (repeatable) or `ROADIE_PLUGINS` (comma-separated). Each plugin exports `register(roadie)`:
+
+```js
+export function register(roadie) {
+  // Add host memory to every turn.
+  roadie.addFilter('context_sections', async (sections, request) => [
+    ...sections,
+    { id: 'memory', content: await lookupMemory(request.sessionId) },
+  ])
+  roadie.addAction('session_idle', ({ sessionId }) => console.log('done', sessionId))
+}
+```
+
+Lower `priority` runs first (default 10); equal priorities run in registration order. A callback that throws is logged and skipped, so a filter's value passes through unchanged. A plugin that fails to load stops startup instead of silently changing behavior.
+
+| Filter | Value | Context |
+|---|---|---|
+| `agent_backend` | the agent backend provider (default: OpenCode) | — |
+| `person` | the person behind a chat user, or `null` | `{ actor, context }` |
+| `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
+| `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |
+| `context_sections` | host context sections for a session start or turn | the context request |
+
+| Action | Context |
+|---|---|
+| `ready` | — |
+| `session_idle` | `{ sessionId, threadId }` |
+| `session_error` | `{ sessionId, threadId, message }` |
+
+The flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider` keep working: they supply the starting value that filters then refine, so hosts that integrate through external commands need no code.
+
 ## Commands
 
 Roadie ships a full set of slash commands and a CLI. The most common slash commands:

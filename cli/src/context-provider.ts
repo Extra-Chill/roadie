@@ -22,6 +22,7 @@
 // tools. Fails open: a provider error, timeout or invalid output means no
 // injected context for that call, logged, never a blocked message.
 
+import { applyFiltersAsync, hasFilter } from './hooks.js'
 import { spawn } from 'node:child_process'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
@@ -73,12 +74,19 @@ export function getContextProviderCommand(): string | undefined {
   return getRoadieEnv('ROADIE_CONTEXT_PROVIDER')?.trim() || undefined
 }
 
+/** True when a context provider command or a `context_sections` filter is in place. */
 export function isContextProviderConfigured(): boolean {
-  return Boolean(getContextProviderCommand())
+  return Boolean(getContextProviderCommand()) || hasFilter('context_sections')
 }
 
 /** Ask the host for context. Returns [] when unconfigured or on any failure. */
 export async function requestContext(request: ContextRequest): Promise<ContextSection[]> {
+  const fromCommand = await requestCommandContext(request)
+  const sections = await applyFiltersAsync('context_sections', fromCommand, request)
+  return boundSections(sections)
+}
+
+async function requestCommandContext(request: ContextRequest): Promise<ContextSection[]> {
   const command = getContextProviderCommand()
   if (!command) return []
   const input = JSON.stringify({
@@ -109,7 +117,7 @@ export async function requestContext(request: ContextRequest): Promise<ContextSe
     )
     return []
   }
-  return boundSections(parsed.sections)
+  return parsed.sections
 }
 
 function boundSections(sections: ContextSection[]): ContextSection[] {

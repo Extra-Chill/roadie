@@ -2,6 +2,8 @@
 // Main CLI entrypoint for the Roadie Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
+import { loadPlugins, resolvePluginSpecs } from './plugins.js'
+import { resolveAgentBackendProvider } from './agent-backend/registry.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import path from 'node:path'
@@ -150,6 +152,15 @@ cli
       ),
   )
   .option(
+    '--plugin <spec>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Load a Roadie plugin (file path or package name) that extends Roadie through hooks. Repeatable; loads in order. Also ROADIE_PLUGINS (comma-separated)',
+      ),
+  )
+  .option(
     '--enable-skill <name>',
     z
       .array(z.string())
@@ -195,6 +206,7 @@ cli
       gateway?: boolean
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
+      plugin?: string[]
       disableSkill?: string[]
       opencodeHostname?: string
       opencodePort?: string
@@ -412,6 +424,17 @@ cli
 
         if (options.installUrl) {
           await printDiscordInstallUrlAndExit()
+        }
+
+        // Plugins register their hooks before anything reads them.
+        const plugins = await loadPlugins(resolvePluginSpecs(options.plugin))
+        if (plugins instanceof Error) {
+          cliLogger.error(plugins.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+        const backend = resolveAgentBackendProvider()
+        if (backend.id !== 'opencode') {
+          cliLogger.log(`Agent backend: ${backend.id}`)
         }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.

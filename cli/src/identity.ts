@@ -28,6 +28,7 @@
 // built-in role checks unchanged. A configured hook that fails, times out or
 // returns invalid output denies access (fail closed) and logs why.
 
+import { applyFiltersAsync, hasFilter } from './hooks.js'
 import { spawn } from 'node:child_process'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
@@ -99,8 +100,9 @@ export function getIdentityHookCommand(): string | undefined {
   return fromEnv || undefined
 }
 
+/** True when an identity hook command or a `person` filter is in place. */
 export function isIdentityHookConfigured(): boolean {
-  return Boolean(getIdentityHookCommand())
+  return Boolean(getIdentityHookCommand()) || hasFilter('person')
 }
 
 function cacheKey(actor: IdentityActor): string {
@@ -142,7 +144,7 @@ export async function resolvePerson({
   context?: IdentityContext
 }): Promise<Person | null> {
   const command = getIdentityHookCommand()
-  if (!command) return null
+  if (!command && !hasFilter('person')) return null
 
   const cached = getCachedPerson(actor)
   if (cached) return cached
@@ -151,12 +153,18 @@ export async function resolvePerson({
   const pending = inflight.get(key)
   if (pending) return pending
 
-  const promise = runHook({ command, actor, context })
-    .then(({ person, ttlSeconds }) => {
+  const base = command
+    ? runHook({ command, actor, context })
+    : Promise.resolve({ person: null as Person | null, ttlSeconds: DEFAULT_TTL_SECONDS })
+  const promise = base
+    .then(async ({ person, ttlSeconds }) => {
+      // Plugins refine or supply the person. With an identity layer in place,
+      // an actor nobody vouches for is denied (fail closed).
+      const filtered = (await applyFiltersAsync('person', person, { actor, context })) ?? DENIED
       if (ttlSeconds > 0) {
-        cache.set(key, { person, expiresAt: Date.now() + ttlSeconds * 1000 })
+        cache.set(key, { person: filtered, expiresAt: Date.now() + ttlSeconds * 1000 })
       }
-      return person
+      return filtered
     })
     .finally(() => {
       inflight.delete(key)
