@@ -32,3 +32,6 @@ betterstack
 
 # Release tarballs built by cli/scripts/pack-release.ts
 /cli/release
+
+# Node module compile cache (module.enableCompileCache from vite/prettier/jiti bins)
+node-compile-cache/
