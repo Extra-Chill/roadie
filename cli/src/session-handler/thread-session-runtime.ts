@@ -6,6 +6,7 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
+import { resolveSessionPermissionRules } from '../permission-policy.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvent, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvent } from './persisted-events.js'
@@ -46,8 +47,6 @@ import {
   speakerKey,
 } from '../context-provider.js'
 import {
-  buildSessionPermissions,
-  parsePermissionRules,
   writeInjectionGuardConfig,
   extractSdkErrorMessage,
 } from '../opencode.js'
@@ -4864,7 +4863,11 @@ export class ThreadSessionRuntime {
       return null
     }
 
-    const rules = parsePermissionRules(permissions ?? [])
+    const rules = resolveSessionPermissionRules({
+      directory: this.sdkDirectory,
+      requested: permissions,
+      phase: 'update',
+    })
     if (rules.length === 0) {
       return null
     }
@@ -4948,17 +4951,14 @@ export class ThreadSessionRuntime {
     }
 
     if (!session) {
-      // Pass per-session external_directory permissions. By default this is a
-      // single allow-everything rule plus the worktree-origin deny rule.
-      // CLI --permission rules are appended after base rules so they win
-      // via opencode's findLast() evaluation.
-      const sessionPermissions = [
-        ...buildSessionPermissions({
-          directory: this.sdkDirectory,
-          originalRepoDirectory,
-        }),
-        ...parsePermissionRules(permissions ?? []),
-      ]
+      // Roadie's rules for the session: checkout isolation, then requested
+      // rules (send, channel policy, identity), then plugins. Later rules win.
+      const sessionPermissions = resolveSessionPermissionRules({
+        directory: this.sdkDirectory,
+        originalRepoDirectory,
+        requested: permissions,
+        phase: 'create',
+      })
       // Omit title so OpenCode auto-generates a summary from the conversation
       const createResult = await getClient().sessions.create({
         directory: this.sdkDirectory,

@@ -16,7 +16,7 @@
 //     ▼                     project opencode.json (deep-merged on top)
 //   config.agent.<name>.permission
 //     ▼
-//   session.permission   ── buildSessionPermissions(), always wins
+//   session.permission   ── resolveSessionPermissionRules() (permission-policy.ts), always wins
 //
 // Directory ALLOW rules therefore belong in the generated server config, never
 // in session rules or an agent block: a project opencode.json must still be
@@ -50,7 +50,6 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Config as SdkConfig,
-  type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
 import {
@@ -1166,7 +1165,7 @@ function getOrCreateClient({
  *
  * @param directory - The project directory to scope requests to
  * @param options.originalRepoDirectory - For worktrees: the original repo directory
- *   (no longer used for server-level permissions — use buildSessionPermissions
+ *   (no longer used for server-level permissions — use resolveSessionPermissionRules
  *   at session.create() time instead)
  */
 export async function initializeOpencodeForDirectory(
@@ -1255,7 +1254,7 @@ function buildServerExternalDirectoryPermissions(): Record<
   'ask' | 'allow' | 'deny'
 > {
   if (!getRestrictExternalDirectories()) {
-    return { [ALL_EXTERNAL_DIRECTORIES_PATTERN]: 'allow' }
+    return { '*': 'allow' }
   }
 
   const permissions: Record<string, 'ask' | 'allow' | 'deny'> = {}
@@ -1264,130 +1263,6 @@ function buildServerExternalDirectoryPermissions(): Record<
     permissions[`${directory}/*`] = 'allow'
   }
   return permissions
-}
-
-/**
- * Build the per-session permission ruleset passed to session.create/update.
- *
- * Keep this list minimal. Session rules are the LAST ruleset opencode
- * evaluates — `Permission.merge(agent.permission, session.permission)` in
- * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
- * here silently overrides the user's own opencode.json. Only rules that must
- * beat user config belong here.
- *
- * In particular, directory *allow* rules must NOT go here. They live in the
- * server config so a project opencode.json can still deny or ask for specific
- * folders. Putting an `external_directory: '*' allow` rule here would make
- * every user `deny` rule a no-op.
- *
- * The session's own working directory never needs a rule either: opencode skips
- * the external_directory gate entirely for paths inside the active instance
- * (`containsPath` in tool/external-directory.ts).
- *
- * That leaves one rule: checkout isolation. A thread bound to a separate git
- * checkout (`--cwd`) is denied the origin checkout so it does not edit the main repo.
- */
-export function buildSessionPermissions({
-  directory,
-  originalRepoDirectory,
-}: {
-  directory: string
-  originalRepoDirectory?: string
-}): PermissionRuleset {
-  // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-  const normalizedDirectory = directory.replaceAll('\\', '/')
-  const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
-
-  if (!originalRepo || originalRepo === normalizedDirectory) {
-    return []
-  }
-
-  return buildExternalDirectoryPermissionRules({
-    resolvedPattern: originalRepo,
-    action: 'deny',
-  })
-}
-
-const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'
-
-function buildExternalDirectoryPermissionRules({
-  resolvedPattern,
-  action,
-}: {
-  resolvedPattern: string
-  action: 'allow' | 'deny' | 'ask'
-}): PermissionRuleset {
-  if (resolvedPattern === ALL_EXTERNAL_DIRECTORIES_PATTERN) {
-    return [
-      {
-        permission: 'external_directory',
-        pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
-        action,
-      },
-    ]
-  }
-
-  return [
-    {
-      permission: 'external_directory',
-      pattern: resolvedPattern,
-      action,
-    },
-    {
-      permission: 'external_directory',
-      pattern: `${resolvedPattern}/*`,
-      action,
-    },
-  ]
-}
-
-/**
- * Parse raw permission strings into PermissionRuleset entries.
- *
- * Accepted formats:
- *   "tool:action"           → { permission: tool, pattern: "*", action }
- *   "tool:pattern:action"   → { permission: tool, pattern,      action }
- *
- * The action must be one of "allow", "deny", "ask" (case-insensitive).
- * Parts are trimmed to tolerate whitespace from YAML deserialization.
- * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
- * If `raw` is not an array, returns empty (defensive against malformed YAML markers).
- */
-export function parsePermissionRules(raw: unknown): PermissionRuleset {
-  if (!Array.isArray(raw)) {
-    return []
-  }
-  const validActions = new Set(['allow', 'deny', 'ask'])
-  return raw.flatMap((entry) => {
-    if (typeof entry !== 'string') {
-      return []
-    }
-    const parts = entry.split(':').map((s) => {
-      return s.trim()
-    })
-    if (parts.length === 2) {
-      const [permission, rawAction] = parts
-      const action = rawAction!.toLowerCase()
-      if (!permission || !validActions.has(action)) {
-        return []
-      }
-      return [{ permission, pattern: '*', action: action as 'allow' | 'deny' | 'ask' }]
-    }
-    if (parts.length >= 3) {
-      // Last segment is the action, first segment is the permission,
-      // everything in between is the pattern (may contain colons in theory,
-      // but unlikely for tool patterns).
-      const permission = parts[0]!
-      const rawAction = parts[parts.length - 1]!
-      const action = rawAction.toLowerCase()
-      const pattern = parts.slice(1, -1).join(':')
-      if (!permission || !pattern || !validActions.has(action)) {
-        return []
-      }
-      return [{ permission, pattern, action: action as 'allow' | 'deny' | 'ask' }]
-    }
-    return []
-  })
 }
 
 // ── Injection guard per-session config ───────────────────────────

@@ -7,6 +7,7 @@
 // This is used for both getOpencodeClient() (so the client header matches)
 // and for explicit `directory` params in SDK calls.
 
+import { matchesPermissionPattern } from '../permission-policy.js'
 import {
   ButtonBuilder,
   ButtonStyle,
@@ -60,25 +61,6 @@ async function resumeSessionIfIdleAfterPermission({
   return true
 }
 
-function wildcardMatch({
-  value,
-  pattern,
-}: {
-  value: string
-  pattern: string
-}): boolean {
-  let escapedPattern = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.')
-
-  if (escapedPattern.endsWith(' .*')) {
-    escapedPattern = escapedPattern.slice(0, -3) + '( .*)?'
-  }
-
-  return new RegExp(`^${escapedPattern}$`, 's').test(value)
-}
-
 export function arePatternsCoveredBy({
   patterns,
   coveringPatterns,
@@ -88,7 +70,7 @@ export function arePatternsCoveredBy({
 }): boolean {
   return patterns.every((pattern) => {
     return coveringPatterns.some((coveringPattern) => {
-      return wildcardMatch({ value: pattern, pattern: coveringPattern })
+      return matchesPermissionPattern({ value: pattern, pattern: coveringPattern })
     })
   })
 }
@@ -100,7 +82,7 @@ export function compactPermissionPatterns(patterns: string[]): string[] {
       if (candidateIndex === index) {
         return false
       }
-      return wildcardMatch({ value: pattern, pattern: candidate })
+      return matchesPermissionPattern({ value: pattern, pattern: candidate })
     })
   })
 }
