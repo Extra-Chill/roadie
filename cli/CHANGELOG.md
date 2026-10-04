@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.38.1] - 2026-10-04
+
+### Fixed
+- footer shows a self-named subrouter preset once and no late context notice
+
 ## [0.38.0] - 2026-10-04
 
 ### Changed
