@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.37.0] - 2026-10-04
+
+### Added
+- add native Slack runtime and shared project context
+
+### Fixed
+- narrow process-group test PID output before parsing
+- skip member lookup for webhook posts; log why a member fetch failed
+- stop the OpenCode server's whole process group and wait for it to exit
+- generate both chat twins for release packaging
+- await owned agent shutdown before releasing state
+
 ## [0.36.0] - 2026-10-04
 
 ### Added
