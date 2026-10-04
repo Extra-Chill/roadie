@@ -2921,6 +2921,9 @@ export class ThreadSessionRuntime {
     }
     if (watch.attempt < RESTART_CONTINUATION_MAX_ATTEMPTS) {
       watch.attempt += 1
+      // A duplicate idle for the aborted attempt can arrive before the re-sent
+      // prompt shows up; treating the aborted one as prior keeps that pending.
+      watch.priorUserMessageIds = this.currentUserMessageIds()
       logger.warn(
         `[RESTART CONTINUATION] turn ended aborted with no output, re-sending (attempt ${watch.attempt}/${RESTART_CONTINUATION_MAX_ATTEMPTS}) sessionId=${sessionId} threadId=${this.threadId}`,
       )
