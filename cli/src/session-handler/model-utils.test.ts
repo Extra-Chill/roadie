@@ -16,6 +16,7 @@ import {
 import { InvalidModelError } from '../errors.js'
 import {
   clearModelListCache,
+  displayedModelLabel,
   formatDisplayedModelId,
   getProviderModelName,
   listModels,
@@ -143,6 +144,24 @@ describe('formatDisplayedModelId', () => {
         name: 'build (claude-opus-4-6)',
       }),
     ).toMatchInlineSnapshot(`"subrouter/build (claude-opus-4-6)"`)
+  })
+
+  test('a preset named after its live model shows the model once', () => {
+    expect(
+      displayedModelLabel({
+        modelID: 'anthropic-claude-opus-5-5',
+        name: 'anthropic-claude-opus-5-5 (anthropic/claude-opus-5-5)',
+      }),
+    ).toBe('anthropic/claude-opus-5-5')
+  })
+
+  test('a preset named after one model that fell back to another keeps both', () => {
+    expect(
+      displayedModelLabel({
+        modelID: 'anthropic-claude-opus-5-5',
+        name: 'anthropic-claude-opus-5-5 (openai/gpt-6)',
+      }),
+    ).toBe('anthropic-claude-opus-5-5 (openai/gpt-6)')
   })
 
   test('falls back to provider/id when name is missing', () => {
