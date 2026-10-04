@@ -142,12 +142,15 @@ export function getOpencodePort(): number | null {
 export type { RegisteredUserCommand } from './store.js'
 
 const DEFAULT_LOCK_PORT = 29988
+export const CUSTOM_LOCK_PORT_BASE = 12_000
 
 /**
  * Derive a lock port from the data directory path.
  * If ROADIE_LOCK_PORT is set to a valid TCP port, it takes precedence.
  * Returns 29988 for the default ~/.roadie directory (backwards compatible).
- * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
+ * For custom data dirs, uses a hash to generate a port in the range 12000-21999:
+ * below the OS ephemeral range (32768+ on Linux), where the kernel could hand
+ * the port to an unrelated connection, and clear of the test ranges (22000+).
  */
 export function getLockPort(): number {
   const envPortRaw = getRoadieEnv('ROADIE_LOCK_PORT')
@@ -172,6 +175,5 @@ export function getLockPort(): number {
     hash = (hash << 5) - hash + char
     hash = hash & hash // Convert to 32bit integer
   }
-  // Map to port range 30000-39999
-  return 30000 + (Math.abs(hash) % 10000)
+  return CUSTOM_LOCK_PORT_BASE + (Math.abs(hash) % 10000)
 }
