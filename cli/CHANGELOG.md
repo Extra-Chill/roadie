@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.34.0] - 2026-10-04
+
+### Added
+- Roadie-owned permission policy
+
+### Changed
+- /login runs on Roadie-owned auth operations
+- /model picker on the backend catalog; remove /resume
+
 ## [0.33.1] - 2026-10-04
 
 ### Changed
