@@ -52,6 +52,7 @@ cli
     'Send a message to a Discord channel/thread. Default creates a thread; use --thread/--session to continue existing.',
   )
   .alias('start-session') // backwards compatibility
+  .option('--platform <name>', 'Chat platform: discord or slack. Defaults to ROADIE_PLATFORM')
   .option('-c, --channel <channelId>', 'Discord channel ID')
   .option(
     '-d, --project <path>',
@@ -134,6 +135,15 @@ cli
     'Wait for session to complete, then print session text to stdout',
   )
   .action(async (options) => {
+       if ((options.platform ?? process.env.ROADIE_PLATFORM) === 'slack') {
+         const token = getSendToken()
+         if (!token) { cliLogger.error('Set ROADIE_SERVICE_TOKEN (or its _FILE variant) to send through the running Slack bot'); process.exit(EXIT_NO_RESTART) }
+         if (options.preRun || options.worktree || options.appId) { cliLogger.error('Use --cwd for native Slack working directories; --pre-run, --worktree and --app-id are not supported on this send path'); process.exit(EXIT_NO_RESTART) }
+         const picked = remoteSendOptions(options)
+         if (options.project) picked.project = options.project
+         const exitCode = await sendViaRunningBot({ port: getLockPort(), token, options: picked, filePaths: (options.file ?? []).map((file: string) => path.resolve(file)) })
+         process.exit(exitCode)
+       }
       // A host user with a send token but no access to the bot's data dir
       // sends through the running bot instead (see remote-send.ts).
       if (shouldSendRemotely({ dataDir: getDataDir() })) {
@@ -338,6 +348,10 @@ cli
                 directory: dirPath,
                 channelType: 'text',
               })
+              if (channels.length > 1) {
+                cliLogger.error(`This project has multiple channels (${channels.map((channel) => channel.channel_id).join(', ')}). Pass --channel or --thread.`)
+                process.exit(EXIT_NO_RESTART)
+              }
               return channels[0]
             }
 

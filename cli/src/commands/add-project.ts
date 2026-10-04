@@ -3,10 +3,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import {
-  findRegisteredTextChannelForDirectory,
-  getAllTextChannelDirectories,
-} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -56,14 +52,6 @@ export async function handleAddProjectCommand({
       return
     }
 
-    const existingChannel = await findRegisteredTextChannelForDirectory(directory)
-    if (existingChannel) {
-      await command.editReply(
-        `A channel already exists for this directory: <#${existingChannel.channel_id}>`,
-      )
-      return
-    }
-
     const { textChannelId, channelName } =
       await createProjectChannels({
         guild,
@@ -103,13 +91,7 @@ export async function handleAddProjectAutocomplete({
       return
     }
 
-    const existingDirs = await getAllTextChannelDirectories()
-    const existingDirSet = new Set(existingDirs)
-
     const availableProjects = projectsResponse.data.filter((project) => {
-      if (existingDirSet.has(project.worktree)) {
-        return false
-      }
       if (path.basename(project.worktree).startsWith('opencode-test-')) {
         return false
       }

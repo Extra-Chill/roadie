@@ -36,13 +36,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Generate Prisma + SQL (discord-digital-twin)
-        run: pnpm generate
-        working-directory: discord-digital-twin
-
-      - name: Generate Prisma + SQL (cli)
-        run: pnpm generate
-        working-directory: cli
+      - name: Generate chat twins and CLI schemas
+        run: pnpm run generate
 
       - name: Build discord-digital-twin
         run: pnpm build

@@ -11,7 +11,7 @@
     "roadie": "pnpm --filter @extrachill/roadie play",
     "release:package": "bash scripts/release-package.sh",
     "test:all": "pnpm --filter @extrachill/roadie exec env NODE_ENV=test vitest",
-    "generate": "pnpm --filter discord-digital-twin --filter @extrachill/roadie run generate"
+    "generate": "pnpm --filter discord-digital-twin --filter slack-digital-twin --filter @extrachill/roadie run generate"
   },
   "devDependencies": {
     "oxfmt": "^0.24.0",

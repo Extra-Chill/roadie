@@ -12,6 +12,8 @@ import {
   cancelStaleProcessingRequests,
 } from './database.js'
 import { showFileUploadButton } from './commands/file-upload.js'
+import type { ChatThread } from './chat-platform/types.js'
+import { createDiscordChatThread } from './chat-platform/discord.js'
 import { queueActionButtonsRequest } from './commands/action-buttons.js'
 import type { ActionButtonColor } from './commands/action-buttons.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -67,12 +69,27 @@ type ClaimedRequest = {
   payload: string
 }
 
+type ChatResolver = (threadId: string) => Promise<ChatThread | undefined>
+
+async function resolveIpcThread(input: { req: ClaimedRequest; discordClient?: Client; resolveChatThread?: ChatResolver }): Promise<ChatThread | Error> {
+  if (input.resolveChatThread) {
+    const thread = await input.resolveChatThread(input.req.thread_id)
+    return thread ?? new IpcDispatchError({ requestId: input.req.id, reason: 'Thread not found' })
+  }
+  const channel = await input.discordClient?.channels.fetch(input.req.thread_id).catch((cause) => new IpcDispatchError({ requestId: input.req.id, reason: 'Thread fetch failed', cause }))
+  if (channel instanceof Error) return channel
+  if (!channel?.isThread()) return new IpcDispatchError({ requestId: input.req.id, reason: 'Thread not found' })
+  return createDiscordChatThread(channel)
+}
+
 async function dispatchRequest({
   req,
   discordClient,
+  resolveChatThread,
 }: {
   req: ClaimedRequest
-  discordClient: Client
+  discordClient?: Client
+  resolveChatThread?: ChatResolver
 }) {
   switch (req.type) {
     case 'file_upload': {
@@ -97,16 +114,7 @@ async function dispatchRequest({
         return parsed
       }
 
-      const thread = await discordClient.channels
-        .fetch(req.thread_id)
-        .catch(
-          (e) =>
-            new IpcDispatchError({
-              requestId: req.id,
-              reason: 'Thread fetch failed',
-              cause: e,
-            }),
-        )
+      const thread = await resolveIpcThread({ req, discordClient, resolveChatThread })
       if (thread instanceof Error) {
         await completeIpcRequest({
           id: req.id,
@@ -114,22 +122,10 @@ async function dispatchRequest({
         })
         return thread
       }
-      if (!thread?.isThread()) {
-        await completeIpcRequest({
-          id: req.id,
-          response: JSON.stringify({ error: 'Thread not found' }),
-        })
-        return new IpcDispatchError({
-          requestId: req.id,
-          reason: 'Channel is not a thread',
-        })
-      }
-
       // Fire-and-forget: showFileUploadButton waits for user interaction
       // (button click + modal + file download) which can take minutes.
       // Don't block the dispatch loop — complete the IPC request asynchronously.
-      showFileUploadButton({
-        thread,
+      thread.interactions.upload({
         sessionId: req.session_id,
         directory: parsed.directory || '',
         prompt: parsed.prompt || 'Please upload files',
@@ -186,16 +182,7 @@ async function dispatchRequest({
         return
       }
 
-      const thread = await discordClient.channels
-        .fetch(req.thread_id)
-        .catch(
-          (e) =>
-            new IpcDispatchError({
-              requestId: req.id,
-              reason: 'Thread fetch failed',
-              cause: e,
-            }),
-        )
+      const thread = await resolveIpcThread({ req, discordClient, resolveChatThread })
       if (thread instanceof Error) {
         await completeIpcRequest({
           id: req.id,
@@ -203,17 +190,6 @@ async function dispatchRequest({
         })
         return thread
       }
-      if (!thread?.isThread()) {
-        await completeIpcRequest({
-          id: req.id,
-          response: JSON.stringify({ error: 'Thread not found' }),
-        })
-        return new IpcDispatchError({
-          requestId: req.id,
-          reason: 'Channel is not a thread',
-        })
-      }
-
       queueActionButtonsRequest({
         sessionId: req.session_id,
         threadId: req.thread_id,
@@ -256,8 +232,10 @@ let lastStaleCheck = 0
  */
 export async function startIpcPolling({
   discordClient,
+  resolveChatThread,
 }: {
-  discordClient: Client
+  discordClient?: Client
+  resolveChatThread?: ChatResolver
 }) {
   // Clean up stale requests from previous runs before first poll tick
   await cancelAllPendingIpcRequests().catch((e) => {
@@ -298,7 +276,7 @@ export async function startIpcPolling({
     }
 
     for (const req of claimed) {
-      const result = await dispatchRequest({ req, discordClient }).catch(
+      const result = await dispatchRequest({ req, discordClient, resolveChatThread }).catch(
         (e) =>
           new IpcDispatchError({
             requestId: req.id,

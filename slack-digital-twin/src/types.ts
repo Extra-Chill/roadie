@@ -43,6 +43,7 @@ export interface SlackEventPayload {
   channel?: string
   user?: string
   bot_id?: string
+  bot_profile?: { name?: string }
   text?: string
   ts?: string
   thread_ts?: string
@@ -125,6 +126,7 @@ export type SlackBlockActionsPayload = {
 }
 
 export type SlackViewSubmissionStateValue = {
+  files?: Array<{ id: string }> | undefined
   value?: string | undefined
   selected_option?: { value?: string | undefined } | undefined
   selected_user?: string | undefined

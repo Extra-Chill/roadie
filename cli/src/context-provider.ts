@@ -44,6 +44,8 @@ export type ContextRequest = {
   threadId?: string
   channelId?: string
   directory?: string
+  projectId?: string
+  contextId?: string
   actor?: { platform: string; id: string; name?: string }
   personId?: string
 }
@@ -96,6 +98,8 @@ async function requestCommandContext(request: ContextRequest): Promise<ContextSe
     ...(request.threadId ? { thread_id: request.threadId } : {}),
     ...(request.channelId ? { channel_id: request.channelId } : {}),
     ...(request.directory ? { directory: request.directory } : {}),
+    ...(request.projectId ? { project_id: request.projectId } : {}),
+    ...(request.contextId ? { context_id: request.contextId } : {}),
     ...(request.actor ? { actor: request.actor } : {}),
     ...(request.personId ? { person_id: request.personId } : {}),
   })

@@ -35,6 +35,7 @@
 // Uses errore for type-safe error handling.
 
 import { recordAgentServerPid, clearAgentServerPid } from './service-lifecycle.js'
+import { stopOwnedChild } from './owned-process.js'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -1051,7 +1052,7 @@ async function startSingleServer({
     // - SIGINT propagated from Ctrl+C (parent process group signal)
     // - any exit during bot shutdown (shuttingDown flag)
     // Only unexpected crashes (non-zero exit without signal) get retried.
-    if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
+    if (serverProcess.killed || signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
       serverRetryCount = 0
       return
     }
@@ -1407,43 +1408,20 @@ export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefine
  * Used for process teardown, tests, and explicit restarts.
  */
 export async function stopOpencodeServer(): Promise<boolean> {
-  // A server still booting lives only in startingServerProcess.
-  killStartingServerProcessNow({ reason: 'stop-opencode-server' })
-  startingServerProcess = null
-
-  if (!singleServer) {
-    return false
-  }
-
+  const starting = startingServerProcess
   const server = singleServer
-
-  // For discovered servers (from another process), just clear local state
-  // without killing the process we don't own.
-  if (server.discovered || !server.process) {
-    singleServer = null
-    clientCache.clear()
-    serverRetryCount = 0
-    return true
+  startingServerProcess = null
+  const children = new Set<ChildProcess>()
+  if (starting) children.add(starting)
+  // A discovered server belongs to another process and is never ours to stop.
+  if (server?.process && !server.discovered) children.add(server.process)
+  for (const child of children) {
+    opencodeLogger.log(`Stopping owned OpenCode process ${child.pid}`)
+    const stopped = await stopOwnedChild({ child })
+    // Legacy callers expect exceptions on a teardown failure. Do not report
+    // success or permit file cleanup while the writer can still be alive.
+    if (stopped instanceof Error) throw stopped
   }
-
-  opencodeLogger.log(
-    `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
-  )
-  if (!server.process.killed) {
-    const killResult = errore.try(
-      { try: () => {
-        server.process!.kill('SIGTERM')
-      }, catch: (error) => {
-        return new Error('Failed to send SIGTERM to opencode server', {
-          cause: error,
-        })
-      } },
-    )
-    if (killResult instanceof Error) {
-      opencodeLogger.warn(killResult.message)
-    }
-  }
-
   singleServer = null
   clientCache.clear()
   serverRetryCount = 0
@@ -1451,10 +1429,7 @@ export async function stopOpencodeServer(): Promise<boolean> {
   // the server restarts. Only abort the current SSE connection so it
   // doesn't hang on a dead server.
   restartGlobalEventListener()
-  await new Promise((resolve) => {
-    setTimeout(resolve, 1000)
-  })
-  return true
+  return Boolean(server || starting)
 }
 
 /**

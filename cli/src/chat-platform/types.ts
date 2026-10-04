@@ -10,9 +10,30 @@
 // buttons, uploads) are not part of it yet.
 
 /** A message the platform accepted. */
+import type { AgentPermissionRequest } from '../agent-backend/events.js'
+import type { AskUserQuestionInput } from '../commands/ask-question.js'
+import type { ActionButtonOption } from '../commands/action-buttons.js'
+
+export type ChatInteractions = {
+  permission(input: { permission: AgentPermissionRequest; directory: string; subtaskLabel?: string }): Promise<{ messageId: string; contextHash: string }>
+  addPermissionRequest(input: { contextHash: string; requestId: string }): boolean
+  clearPermission(contextHash: string): void
+  question(input: { sessionId: string; directory: string; requestId: string; input: AskUserQuestionInput; silent?: boolean }): Promise<void>
+  actions(input: { sessionId: string; directory: string; buttons: ActionButtonOption[]; silent?: boolean }): Promise<void>
+  upload(input: { sessionId: string; directory: string; prompt: string; maxFiles: number }): Promise<string[]>
+  hasQuestion(): boolean
+  hasPending(): boolean
+  cancelQuestion(): Promise<void>
+  dispose(): void
+}
+
 export type ChatMessage = { id: string }
 
 export type ChatThread = {
+  readonly platform: string
+  readonly interactions: ChatInteractions
+  readonly capabilities: { rename: boolean; typing: boolean }
+  footerMentionUserId(sessionUserId?: string): Promise<string | undefined>
   /** Platform id of the thread. */
   readonly id: string
   /** Current thread title. */

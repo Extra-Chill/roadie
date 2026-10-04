@@ -86,7 +86,7 @@ export async function sendInteractivePayload({
   payload: SlackInteractivePayload
 }): Promise<Response> {
   const params = new URLSearchParams({
-    payload: JSON.stringify(payload),
+    payload: JSON.stringify({ ...payload, team: { id: config.workspaceId } }),
   })
 
   return sendSignedPayload({

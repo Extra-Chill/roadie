@@ -1,4 +1,4 @@
-// Tests that `roadie project add` refuses a folder already registered locally.
+// Project directory lookups and independent many-channel bindings.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -11,9 +11,12 @@ import {
   formatProjectAlreadyRegisteredError,
   initDatabase,
   setChannelDirectory,
+  findChannelsByDirectory,
+  deleteChannelDirectoryById,
+  getChannelDirectory,
 } from './database.js'
 
-describe('project add duplicate directory', () => {
+describe('project channel bindings', () => {
   let tmpDir: string
   let projectDir: string
 
@@ -44,6 +47,15 @@ describe('project add duplicate directory', () => {
       directory: projectDir,
       channel_type: 'text',
     })
+  })
+
+  test('two channels share a directory and removing one preserves the other binding', async () => {
+    await setChannelDirectory({ channelId: 'first', directory: projectDir, channelType: 'text' })
+    await setChannelDirectory({ channelId: 'second', directory: projectDir, channelType: 'text' })
+    expect((await findChannelsByDirectory({ directory: projectDir, channelType: 'text' })).map((row) => row.channel_id).sort()).toEqual(['first', 'second'])
+    await deleteChannelDirectoryById('first')
+    expect((await getChannelDirectory('second'))?.directory).toBe(projectDir)
+    expect(await getChannelDirectory('first')).toBeUndefined()
   })
 
   test('matches a symlink to the same registered folder', async () => {

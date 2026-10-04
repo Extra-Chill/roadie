@@ -56,6 +56,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.16.2
         version: 1.17.8
+      '@slack/web-api':
+        specifier: ^7.17.0
+        version: 7.17.0
       '@subrouter/cli':
         specifier: 0.6.1
         version: 0.6.1
@@ -181,6 +184,9 @@ importers:
       opencode-deterministic-provider:
         specifier: workspace:^
         version: link:../opencode-deterministic-provider
+      slack-digital-twin:
+        specifier: workspace:^
+        version: link:../slack-digital-twin
       tsx:
         specifier: ^4.20.5
         version: 4.22.4

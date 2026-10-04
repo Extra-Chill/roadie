@@ -72,6 +72,16 @@ When you send a message during an active run, OpenCode normally queues it to run
 
 ## Setup
 
+### Native Slack and shared project context
+
+Run `roadie --platform slack` for direct Slack Events API, Web API and Block Kit
+integration. Multiple Discord or Slack channels can share a named project and
+host context while retaining independent policies and sessions. See
+[Native Slack and shared project context](docs/native-slack.md) for setup,
+commands, host ingress, tested behavior and the remaining parity work in #14.
+
+### Discord
+
 Create a Discord bot at [discord.com/developers](https://discord.com/developers/applications), install Roadie (see Quick Start), then run `roadie` and follow the interactive prompts.
 
 Keep the CLI running; it's the bridge between Discord and your machine.

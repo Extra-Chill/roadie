@@ -40,6 +40,27 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+// Signed chat ingress is acknowledged only after it is durably inserted.
+// Keep handled IDs to deduplicate platform and host redelivery across restarts.
+export const chat_ingress_events = sqliteCore.sqliteTable('chat_ingress_events', {
+  id: sqliteCore.integer('id').primaryKey({ autoIncrement: true }),
+  event_id: sqliteCore.text('event_id').notNull().unique(),
+  platform: sqliteCore.text('platform').notNull(),
+  payload_json: sqliteCore.text('payload_json').notNull(),
+  received_at: datetime('received_at').notNull().default(orm.sql`CURRENT_TIMESTAMP`),
+  handled_at: datetime('handled_at'),
+})
+
+// Interaction payloads contain opaque IDs and choices, never bot credentials.
+export const chat_interactions = sqliteCore.sqliteTable('chat_interactions', {
+  id: sqliteCore.text('id').primaryKey(),
+  thread_id: sqliteCore.text('thread_id').notNull(),
+  kind: sqliteCore.text('kind').notNull(),
+  payload_json: sqliteCore.text('payload_json').notNull(),
+  message_id: sqliteCore.text('message_id').notNull(),
+  created_at: datetime('created_at').notNull().default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const thread_queue_items = sqliteCore.sqliteTable('thread_queue_items', {
   id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
   queue_id: sqliteCore.text('queue_id').notNull().unique(),
@@ -315,6 +336,8 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 ])
 
 export const relations = defineRelations({
+  chat_ingress_events,
+  chat_interactions,
   thread_sessions,
   thread_queue_items,
   session_events,

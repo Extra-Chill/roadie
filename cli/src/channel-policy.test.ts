@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import {
   channelAllowsCapability,
+  channelContextBinding,
   channelAllowsSpeaker,
   channelPolicyOverrides,
   channelStartsThreads,
@@ -95,6 +96,33 @@ describe('parseChannelsConfig', () => {
 })
 
 describe('resolution', () => {
+  test('multiple channels share project context while keeping independent intake policies', () => {
+    write(`
+projects:
+  north:
+    directory: /srv/north
+    context: north-brain
+    agent: north
+channels:
+  channel-ops:
+    project: north
+    respond: always
+  channel-general:
+    project: north
+    respond: mention
+`)
+    expect(channelContextBinding('thread-1')).toEqual({ projectId: 'north', contextId: 'north-brain' })
+    expect(channelContextBinding('channel-general')).toEqual(channelContextBinding('thread-1'))
+    expect(channelPolicyOverrides('thread-1')).toEqual({ directory: '/srv/north', agent: 'north' })
+    expect(channelPolicyOverrides('channel-general')).toEqual(channelPolicyOverrides('thread-1'))
+    expect(decideRespond('thread-1')).toBe('answer')
+    expect(decideRespond('channel-general')).toBe('needs-mention')
+  })
+
+  test('unknown project references fail configuration validation', () => {
+    expect(parseChannelsConfig('channels:\n  c:\n    project: missing\n')).toBeInstanceOf(Error)
+  })
+
   test('no config file: everything falls back to built-in behavior', () => {
     setChannelsConfigPath(null)
     expect(resolveChannelPolicy('channel-ops')).toBeUndefined()

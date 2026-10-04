@@ -71,9 +71,9 @@ const ipcToolsPlugin: any = async () => {
     tool: {
       roadie_file_upload: tool({
         description:
-          'Prompt the Discord user to upload files using a native file picker modal. ' +
+          'Prompt the chat user to upload files using a native file picker modal. ' +
           'The user sees a button, clicks it, and gets a file upload dialog. ' +
-          'Returns the local file paths of downloaded files in the project directory. ' +
+          'Returns the local attachment paths of downloaded files. ' +
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
           'You MUST call roadie_file_upload LAST, after ALL text. NEVER call it before your text.',
         args: {
@@ -141,7 +141,7 @@ const ipcToolsPlugin: any = async () => {
       }),
       roadie_action_buttons: tool({
         description: dedent`
-          Show action buttons in the current Discord thread for quick confirmations.
+          Show action buttons in the current chat thread for quick confirmations.
           Use this when the user can respond by clicking one of up to 3 buttons.
           Prefer a single button whenever possible.
           Default color is white (same visual style as permission deny button).
@@ -236,7 +236,7 @@ const ipcToolsPlugin: any = async () => {
 
           The tool result is not a wake. After it succeeds, write one short
           waiting line and stop. Do not continue the waited work until a later
-          Discord message that starts with "Woke after sleeping until".
+          chat message that starts with "Woke after sleeping until".
           A new user message cancels the sleep. If you still need that later
           wake after answering, call roadie_sleep again with until set to the
           original UTC time.
