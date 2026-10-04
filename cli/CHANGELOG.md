@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.35.1] - 2026-10-04
+
+### Changed
+- don't pin the queue position in the /queue ordering snapshot
+
 ## [0.35.0] - 2026-10-04
 
 ### Added
