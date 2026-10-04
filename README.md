@@ -146,6 +146,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `context_sections` | host context sections for a session start or turn | the context request |
 | `agent_providers` | providers and models offered to users (hide, rename, reorder) | `{ directory }` |
 | `agent_definitions` | agents offered to users and validated against | `{ directory }` |
+| `permission_rules` | a session's permission rules (`{ permission, pattern, action }`, last match wins) | `{ directory, phase }` |
 
 | Action | Context |
 |---|---|

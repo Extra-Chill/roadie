@@ -1,6 +1,6 @@
-// Tests for parsePermissionRules() from opencode.ts
+// Tests for parsePermissionRules() from permission-policy.ts
 import { describe, test, expect } from 'vitest'
-import { parsePermissionRules } from './opencode.js'
+import { parsePermissionRules } from './permission-policy.js'
 
 describe('parsePermissionRules', () => {
   test('simple tool:action format', () => {
