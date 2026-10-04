@@ -27,7 +27,7 @@ async function spawnLeaderWithChild(script: string) {
     leader.stdout!.on('data', (chunk) => {
       out += chunk
       const line = out.split('\n')[0]
-      if (out.includes('\n')) resolve(Number.parseInt(line, 10))
+      if (line !== undefined && out.includes('\n')) resolve(Number.parseInt(line, 10))
     })
     leader.once('error', reject)
   })
