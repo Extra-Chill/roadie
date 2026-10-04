@@ -36,7 +36,6 @@ import {
   stopOpencodeServer,
 } from './opencode.js'
 import { resolveSessionWorkingDirectory, git } from './git-utils.js'
-import { asSubtext, extractQueueSuffix } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -847,8 +846,6 @@ export async function startDiscordBot({
           }
         }
 
-        const suffix = extractQueueSuffix(message.content || '')
-
         if (!projectDirectory) {
           discordLogger.log(
             `Cannot process message: no project directory for thread ${thread.id}`,
@@ -898,9 +895,7 @@ export async function startDiscordBot({
           }
           void cancelPendingFileUpload(thread.id)
         }
-        if (!suffix.forceQueue) {
-          await dismissSourceUi()
-        }
+        await dismissSourceUi()
 
         // A sleep wake only becomes a turn if it can still claim its own row.
         // The claim fails when the user cancelled the sleep while the wake was
@@ -924,7 +919,7 @@ export async function startDiscordBot({
         // attachment download) runs inside the runtime's serialized
         // preprocess chain, preserving Discord arrival order without
         // blocking SSE event handling in dispatchAction.
-        const enqueueResult = await runtime.enqueueIncoming({
+        await runtime.enqueueIncoming({
           prompt: '',
           userId: cliInjectedUserId || message.author.id,
             actorVia: cliInjectedUserId ? 'cli' : 'chat',
@@ -958,14 +953,6 @@ export async function startDiscordBot({
             })
           },
         })
-
-        // Notify when the message was queued instead of sent immediately
-        if (enqueueResult.queued && enqueueResult.position) {
-          await sendThreadMessage(
-            thread,
-            asSubtext(`Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`),
-          )
-        }
       }
 
       if (channel.type === ChannelType.GuildText) {
@@ -1122,107 +1109,6 @@ export async function startDiscordBot({
       }
     }
     })
-  })
-
-  // Handle user message edits to update queued messages.
-  // When a user edits a message that is still waiting in roadie's local queue,
-  // the queue item is updated with the new content. If the edit removes the
-  // queue suffix, the item is removed from the queue.
-  discordClient.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
-    try {
-      // Fetch full message if partial (cache miss). Needed for mentions
-      // and content to be fully resolved.
-      const message = newMessage.partial
-        ? await newMessage.fetch().catch(() => null)
-        : newMessage
-      if (!message) return
-      if (message.author.bot) return
-      if (!message.content) return
-      // Discord fires MESSAGE_UPDATE for embed-only updates (link preview
-      // unfurling) without the user actually editing the message content.
-      // editedTimestamp is null for these; skip them to avoid false queue removals.
-      if (!message.editedTimestamp) return
-
-      const channel = message.channel
-      const isThread = [
-        ChannelType.PublicThread,
-        ChannelType.PrivateThread,
-        ChannelType.AnnouncementThread,
-      ].includes(channel.type)
-      if (!isThread) return
-
-      const runtime = getRuntime(channel.id)
-      if (!runtime) return
-
-      // Same resolution as initial ingress, so the edited prompt matches.
-      const { prompt, mode } = await resolveMessagePrompt({
-        message,
-        text: resolveContentMentions(message),
-      })
-
-      // If the edit removed the queue suffix, remove the item from the queue.
-      // If the suffix is still present, update the prompt.
-      const result = await runtime.updateQueuedMessage({
-        sourceMessageId: message.id,
-        newPrompt: mode === 'local-queue' ? prompt : '',
-      })
-
-      if (result.found && channel.isThread()) {
-        const displayName =
-          message.member?.displayName ?? message.author.displayName
-        if (result.removed) {
-          discordLogger.log(
-            `[MESSAGE_EDIT] Removed queued message ${message.id} in thread ${channel.id}`,
-          )
-          await sendThreadMessage(
-            channel,
-            asSubtext(`**${displayName}** removed message from queue`),
-          )
-        } else {
-          discordLogger.log(
-            `[MESSAGE_EDIT] Updated queued message ${message.id} in thread ${channel.id}`,
-          )
-          await sendThreadMessage(
-            channel,
-            asSubtext(`**${displayName}** edited queued message`),
-          )
-        }
-      }
-    } catch (error) {
-      discordLogger.error(
-        'Error handling message update:',
-        error instanceof Error ? error.stack : String(error),
-      )
-    }
-  })
-
-  // Handle user message deletes to remove queued messages.
-  // Discord delete events do not include author/content, so attribution comes
-  // from the queued item captured at enqueue time.
-  discordClient.on(Events.MessageDelete, async (message) => {
-    try {
-      const channel = message.channel
-      if (!channel.isThread()) return
-
-      const runtime = getRuntime(channel.id)
-      if (!runtime) return
-
-      const removed = await runtime.removeQueuedMessage(message.id)
-      if (!removed) return
-
-      discordLogger.log(
-        `[MESSAGE_DELETE] Removed queued message ${message.id} in thread ${channel.id}`,
-      )
-      await sendThreadMessage(
-        channel,
-        asSubtext(`**${removed.username}** removed message from queue`),
-      )
-    } catch (error) {
-      discordLogger.error(
-        'Error handling message delete:',
-        error instanceof Error ? error.stack : String(error),
-      )
-    }
   })
 
   // Handle bot-initiated threads created by `roadie send` (without --notify-only)

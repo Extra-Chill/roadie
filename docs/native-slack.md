@@ -70,7 +70,8 @@ The Slack receiver binds to `127.0.0.1`. A host or HTTPS reverse proxy forwards:
 
 Subscribe to `message.channels`, `message.groups` as needed, and `app_mention`.
 Invite the bot to configured channels. Required scopes include `chat:write`,
-`channels:read`, `channels:history`, `groups:read`/`groups:history` for private
+`channels:read`, `channels:history`, `reactions:write` (pending-message
+marker; without it the marker is skipped and logged), `groups:read`/`groups:history` for private
 channels, `users:read`, `app_mentions:read`, `commands`, `files:read`, and
 `files:write`. Slack's thread-history token/scope eligibility must be verified
 for the installed app when using `conversations.replies`.
@@ -93,7 +94,9 @@ the existing Discord-specific readiness field.
 
 A channel message becomes the root of a Slack thread and its Roadie session.
 Replies continue that session. Root messages in `existing-only` channels are
-ignored. End a message with `. queue` to use Roadie's persistent local queue.
+ignored. A reply to a busy session never interrupts it: the agent picks it up
+at its next step boundary, and the reply carries an hourglass reaction until
+then. `/roadie abort` stops a run.
 
 Thread identifiers are native, namespaced strings:
 
@@ -112,12 +115,12 @@ native Slack `file_input` modal, authenticated downloads and local attachment
 paths. Outbound files use Slack's external upload protocol.
 
 `/roadie new <prompt>` creates a session. Session commands include `abort`,
-`queue`, `model`, `agent`, `session`, and `fork`. An omitted thread target opens
+`model`, `agent`, `session`, and `fork`. An omitted thread target opens
 a native session picker; model and agent commands open their own catalog pickers
 when the value is omitted. An explicit thread timestamp also works:
 
 ```text
-/roadie queue 1700000000.000001 Review the result
+/roadie abort 1700000000.000001
 /roadie model 1700000000.000001
 /roadie fork 1700000000.000001 Explore another approach
 ```

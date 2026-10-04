@@ -1,6 +1,5 @@
 // Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
-import { extractQueueSuffix } from './message-formatting.js'
 import {
   intro,
   outro,
@@ -217,17 +216,15 @@ function wrapPromptAttachmentText(prompt: string): string {
 
 /**
  * Visible message content + prompt.md text for prompts over Discord's limit.
- * The bot reads the queue suffix only from message content, so the suffix
- * moves from the file to the visible message and the send still queues.
  */
 export function buildLongPromptMessage(prompt: string): {
   content: string
   fileText: string
 } {
-  const { prompt: fileText, forceQueue } = extractQueueSuffix(prompt)
+  const fileText = prompt
   const preview = fileText.slice(0, 100).replace(/\n/g, ' ')
   const summary = `Prompt attached as file (${fileText.length} chars)\n\n> ${preview}…`
-  return { content: forceQueue ? `${summary}\n\nqueue` : summary, fileText }
+  return { content: summary, fileText }
 }
 
 function promptAttachmentBlob(text: string) {

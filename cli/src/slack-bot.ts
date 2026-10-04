@@ -73,7 +73,6 @@ import { prepareChatAttachments } from './chat-platform/attachments.js'
 import { markChatPlatformReady } from './hrana-server.js'
 import { doAction } from './hooks.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
-import { extractQueueSuffix } from './message-formatting.js'
 
 const logger = createLogger('SLACK')
 const messageSchema = z.object({
@@ -417,7 +416,6 @@ export class NativeSlackBot {
     if (!parsed.success)
       return new SlackApiError({ operation: 'send', detail: parsed.error.message })
     const options = parsed.data
-    const queue = extractQueueSuffix(options.prompt)
     const sessionThread = options.session ? await getThreadIdBySessionId(options.session) : null
     const target = parseSlackThreadId(options.thread ?? sessionThread ?? '')
     if ((options.thread || options.session) && !target)
@@ -566,7 +564,7 @@ export class NativeSlackBot {
     if (options.notifyOnly) return { threadId: id }
     const runtime = await this.runtimeFor(channelId, root.id)
     if (runtime instanceof Error) return runtime
-    if (target && !queue.forceQueue) {
+    if (target) {
       const notice = await runtime.chat.sendNotice(`» Roadie: ${options.prompt}`)
       if (notice instanceof Error) return notice
     }
@@ -580,7 +578,7 @@ export class NativeSlackBot {
     const attachments = await prepareChatAttachments(attached)
     if (attachments instanceof Error) return attachments
     await runtime.enqueueIncoming({
-      prompt: [queue.prompt, attachments.context].filter(Boolean).join('\n\n'),
+      prompt: [options.prompt, attachments.context].filter(Boolean).join('\n\n'),
       userId: options.user ?? '',
       username: 'Roadie',
       actorVia: 'cli',
@@ -591,7 +589,7 @@ export class NativeSlackBot {
       parentSessionId: options.parentSession,
       sessionStartSource: source,
       images: attachments.images,
-      mode: queue.forceQueue ? 'local-queue' : 'opencode',
+      mode: 'opencode',
     })
     const sessionId = runtime.state?.sessionId
     if (options.wait && sessionId) {
@@ -983,8 +981,7 @@ export class NativeSlackBot {
     if (!message.thread_ts && !channelStartsThreads(message.channel)) return
     const runtime = await this.runtimeFor(message.channel, message.thread_ts ?? message.ts)
     if (runtime instanceof Error) return runtime
-    const queue = extractQueueSuffix(message.text.replaceAll(`<@${this.botUserId}>`, ''))
-    const prompt = queue.prompt.trim()
+    const prompt = message.text.replaceAll(`<@${this.botUserId}>`, '').trim()
     const attached: Array<{ name: string; mimetype: string; bytes: Buffer }> = []
     for (const file of message.files ?? []) {
       const downloaded = await this.api.downloadFile(file.id)
@@ -1003,7 +1000,7 @@ export class NativeSlackBot {
       sourceMessageId: message.ts,
       sourceThreadId: runtime.threadId,
       sourceChannelId: message.channel,
-      mode: queue.forceQueue ? 'local-queue' : 'opencode',
+      mode: 'opencode',
     })
   }
 
@@ -1057,7 +1054,7 @@ export class NativeSlackBot {
         })
       const result = await this.api.post({
         channel: event.channel_id,
-        text: 'Use /roadie new <prompt>, or /roadie <abort|queue|model|agent> <thread timestamp> [value]. Session commands target an explicit thread.',
+        text: 'Use /roadie new <prompt>, or /roadie <abort|model|agent> <thread timestamp> [value]. Session commands target an explicit thread.',
       })
       return result instanceof Error ? result : undefined
     }
@@ -1065,15 +1062,6 @@ export class NativeSlackBot {
     if (runtime instanceof Error) return runtime
     if (name === 'abort') {
       await runtime.abortActiveRun('Slack /roadie abort')
-      return
-    }
-    if (name === 'queue') {
-      await runtime.enqueueIncoming({
-        prompt: words.join(' '),
-        userId: event.user_id,
-        username: identity.actor.name,
-        mode: 'local-queue',
-      })
       return
     }
     const sessionId = runtime.state?.sessionId

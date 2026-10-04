@@ -60,7 +60,7 @@ cli
   )
   .option(
     '-p, --prompt <prompt>',
-    'Message content. With --thread/--session, end with ". queue" to wait for the current run instead of interrupting it',
+    'Message content. A busy --thread/--session takes it at its next step boundary; it never interrupts the run',
   )
   .option(
     '-n, --name [name]',
@@ -120,7 +120,7 @@ cli
   )
   .option(
     '--thread <threadId>',
-    'Post prompt to an existing thread. Interrupts a busy session unless the prompt ends with ". queue"',
+    'Post prompt to an existing thread. A busy session takes it at its next step boundary',
   )
   .option(
     '--session <sessionId>',

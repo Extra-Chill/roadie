@@ -63,6 +63,12 @@ export type ChatThread = {
   readMessageText(messageId: string): Promise<Error | string>
   /** Replace the text of a message the bot sent in this thread. */
   editMessageText(messageId: string, content: string): Promise<Error | void>
+  /**
+   * Mark (`on`) or unmark a message in this thread as waiting for the agent's
+   * next step boundary. The platform chooses the marker (Discord and Slack
+   * use an hourglass reaction).
+   */
+  setPendingMarker(messageId: string, on: boolean): Promise<Error | void>
   /** Show a typing indicator. */
   sendTyping(): Promise<Error | void>
   /** Change the thread title. Rejects on failure; may be slow when rate limited. */

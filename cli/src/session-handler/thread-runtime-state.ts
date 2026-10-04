@@ -41,7 +41,7 @@ export type QueuedMessage = {
   // (looking up channel/session model overrides keyed by appId).
   appId?: string
   // When set, dispatches via session.command() instead of session.prompt().
-  // Used by /queue-command and user-defined slash commands.
+  // Used by user-defined slash commands.
   command?: { name: string; arguments: string }
   // First-dispatch-only overrides — used when creating a new session.
   // Subsequent queue drains ignore these since the session already exists.
@@ -67,7 +67,7 @@ export type QueuedMessage = {
   sourceThreadId?: string
   // Channel holding sourceMessageId. The thread starter lives in the parent.
   sourceChannelId?: string
-  // Message the drain indicator replies to. Set for /queue slash commands to
+  // Message the drain indicator replies to. Set for queued slash commands to
   // the "Queued message" ack. Falls back to sourceMessageId.
   queueAckMessageId?: string
   repliedMessage?: RepliedMessageContext
@@ -103,10 +103,10 @@ export type ThreadRunState = {
 
   // FIFO queue of pending inputs waiting for roadie-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
-  // for explicit local-queue flows (for example /queue).
+  // for local-queue flows (slash commands).
   // Changes: enqueueItem (append), dequeueItem (head removal),
   // clearQueueItems, removeQueueItemAtPosition.
-  // Read by: runtime queue gating, hasQueue helpers, /queue command display.
+  // Read by: runtime queue gating, hasQueue helpers, queue display.
   queueItems: QueuedMessage[]
 
   // Output dedup: tracks which part IDs have already been sent to Discord.

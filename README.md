@@ -52,7 +52,6 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 - **All your models, including subscriptions.** Every model OpenCode supports. Run `/login` to authenticate a provider with an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
 - **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
-- **The queue.** Queue a message to run when the current turn finishes: `/queue`, or end a message with `. queue`.
 - **Fork.** `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something, or `from:` to branch from an earlier message.
 - **Subagents.** When a session delegates to a child session, Roadie tracks it and reports it to plugins (see [Subagents](#subagents)).
 - **Scheduled tasks.** Run a prompt at a future time or on a cron schedule with `roadie send --send-at`; manage them with `/tasks` or `roadie task list`. Sessions can also sleep and wake themselves later.
@@ -63,7 +62,9 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 
 ### How messages reach a busy session
 
-When you send a message during an active run, OpenCode normally queues it until the current tool call finishes. Roadie adds an interrupt: if the current step is still running after about 3 seconds, Roadie aborts it, sends your message, and the agent continues from there. End the message with `. queue` to wait for the turn to finish instead.
+A message sent during an active run **never interrupts it**. The agent picks it up at its **next step boundary**, as soon as the current tool call finishes, and carries on with it in context. A long build, rebase or deploy is never killed halfway because someone typed. While the message waits, it carries a ⏳ reaction.
+
+To stop a run, use `/abort`. To have something done after the current task, say so in the message ("after you finish, run the tests").
 
 ## Platforms
 
@@ -80,7 +81,7 @@ A role named **"no-roadie"** blocks a user, even a server owner. Other bots are 
 
 ### Slack
 
-The Slack path talks directly to Slack's Events API, Web API and Block Kit and shares the same runtime, queue, scheduler, permission policy and host hooks as Discord. Sessions are Slack threads; the `/roadie` slash command covers session commands (`new`, `abort`, `queue`, `model`, `agent`, `session`, `fork`). Access is governed by the [channel configuration](#channels-and-projects) and the host's identity layer.
+The Slack path talks directly to Slack's Events API, Web API and Block Kit and shares the same runtime, queue, scheduler, permission policy and host hooks as Discord. Sessions are Slack threads; the `/roadie` slash command covers session commands (`new`, `abort`, `model`, `agent`, `session`, `fork`). Access is governed by the [channel configuration](#channels-and-projects) and the host's identity layer.
 
 Some Discord features have no direct Slack equivalent yet (thread titles, a bot typing indicator, native login dialogs). [docs/native-slack.md](docs/native-slack.md) covers setup, the receiver endpoints, scopes and the remaining differences.
 
@@ -200,7 +201,6 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | Command | Description |
 |---|---|
 | `/abort` | Stop the current run |
-| `/queue <message>` | Queue a message for after the current turn |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
 | `/model`, `/agent` | Change the model or agent for this channel or session |
 | `/login` | Authenticate a provider (subscription or API key) |

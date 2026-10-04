@@ -64,14 +64,6 @@ import {
 } from './commands/file-upload.js'
 import { handleActionButton } from './commands/action-buttons.js'
 import { handleHtmlActionButton } from './html-actions.js'
-import {
-  handleQueueCommand,
-  handleClearQueueCommand,
-  handleQueueCommandCommand,
-  handleQueueCommandAutocomplete,
-  handleQueueRemoveButton,
-  QUEUE_REMOVE_CUSTOM_ID_PREFIX,
-} from './commands/queue.js'
 import { handleUserCommand } from './commands/user-command.js'
 import {
   handleVerbosityCommand,
@@ -278,10 +270,6 @@ export function registerInteractionHandler({
               await handleRemoveProjectAutocomplete({ interaction, appId })
               return
 
-            case 'queue-command':
-              await handleQueueCommandAutocomplete({ interaction, appId })
-              return
-
             case 'fork':
               await handleForkAutocomplete({ interaction })
               return
@@ -383,18 +371,6 @@ export function registerInteractionHandler({
 
             case 'agent':
               await handleAgentCommand({ interaction, appId })
-              return
-
-            case 'queue':
-              await handleQueueCommand({ command: interaction, appId })
-              return
-
-            case 'clear-queue':
-              await handleClearQueueCommand({ command: interaction, appId })
-              return
-
-            case 'queue-command':
-              await handleQueueCommandCommand({ command: interaction, appId })
               return
 
             case 'verbosity':
@@ -527,11 +503,6 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
-            return
-          }
-
-          if (customId.startsWith(QUEUE_REMOVE_CUSTOM_ID_PREFIX)) {
-            await handleQueueRemoveButton(interaction)
             return
           }
 

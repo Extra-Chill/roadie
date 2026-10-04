@@ -270,60 +270,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('queue')
-      .setDescription(
-        truncateCommandDescription(
-          'Queue a message after the current response (use Remove button to unqueue)',
-        ),
-      )
-      .addStringOption((option) => {
-        option
-          .setName('message')
-          .setDescription(truncateCommandDescription('The message to queue'))
-          .setRequired(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('clear-queue')
-      .setDescription(truncateCommandDescription('Clear all queued messages in this thread'))
-      .addIntegerOption((option) => {
-        option
-          .setName('position')
-          .setDescription(
-            truncateCommandDescription('1-based queued message position to clear (default: all)'),
-          )
-          .setMinValue(1)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('queue-command')
-      .setDescription(
-        truncateCommandDescription('Queue a user command to run after the current response finishes'),
-      )
-      .addStringOption((option) => {
-        option
-          .setName('command')
-          .setDescription(truncateCommandDescription('The command to run'))
-          .setRequired(true)
-          .setAutocomplete(true)
-        return option
-      })
-      .addStringOption((option) => {
-        option
-          .setName('arguments')
-          .setDescription(truncateCommandDescription('Arguments to pass to the command'))
-          .setRequired(false)
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('verbosity')
       .setDescription(truncateCommandDescription('Set output verbosity for this channel'))
       .setDMPermission(false)
@@ -420,7 +366,7 @@ export async function registerCommands({
   }
 
   // 2. User-defined commands, MCP prompts, and skills (ordered by priority)
-  // Also populate registeredUserCommands in the store for /queue-command autocomplete
+  // Also populate registeredUserCommands in the store for /command detection
   const newRegisteredCommands: RegisteredUserCommand[] = []
   // Sort: regular commands first, then MCP prompts, then skills last
   const sourceOrder: Record<string, number> = { config: 0, mcp: 1, skill: 2 }

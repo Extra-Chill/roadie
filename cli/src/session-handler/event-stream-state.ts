@@ -164,8 +164,8 @@ export type DerivedSubagentSession = {
 // Returns true if the latest lifecycle event for sessionId is session.status busy.
 // If status/idle were evicted from the bounded buffer, a delegation still in
 // flight (child_session_started without a matching finished event) also counts
-// as busy. That stops `. queue` from draining (and the 3s interrupt plugin from
-// aborting) while a subagent is in flight.
+// as busy. That stops the local command queue from draining while a subagent
+// is in flight.
 export function isSessionBusy({
   events,
   sessionId,
@@ -1641,7 +1641,7 @@ export function shouldBufferSessionEvent({
 
 // Child task sessions emit thousands of message.part.updated events. Those are
 // still handled live for Discord display, but they must not occupy the bounded
-// buffer or they evict parent session.status busy and `. queue` drains early.
+// buffer or they evict parent session.status busy and the local queue drains early.
 // That is what aborted ses_f3c07efdbffeHwbaQhsE7fIz5z: live buffer mixed in
 // child parts, persist dropped them, export still looked busy, drain fired.
 // Keep child session/message lifecycle so token tracking and subtask identity
