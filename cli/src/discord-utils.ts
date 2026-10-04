@@ -169,18 +169,29 @@ export async function resolveGuildMessageMember(
 ): Promise<GuildMemberType | null> {
   if (!message.guild) return null
   if (message.member) return message.member
+  // Webhook posts (GitHub, CI, alerts) have no guild member behind them, so
+  // they can never hold a role. Not a denial worth a warning.
+  if (message.webhookId) return null
 
   const fetchedMember = await message.guild.members
     .fetch(message.author.id)
     .catch((e) => new Error('Failed to fetch guild member', { cause: e }))
   if (fetchedMember instanceof Error) {
     discordLogger.warn(
-      `[PERMISSION] Denying message ${message.id}: ${fetchedMember.message}`,
+      `[PERMISSION] Denying message ${message.id}: ${fetchedMember.message} (${describeFetchError(fetchedMember.cause)})`,
     )
     return null
   }
 
   return fetchedMember
+}
+
+/** Status and code of a failed Discord REST call, so a transient failure is distinguishable from "not a member". */
+export function describeFetchError(cause: unknown): string {
+  if (!cause || typeof cause !== 'object') return String(cause)
+  const { status, code, message } = cause as { status?: unknown; code?: unknown; message?: unknown }
+  const parts = [status !== undefined && `status ${status}`, code !== undefined && `code ${code}`, typeof message === 'string' && message]
+  return parts.filter(Boolean).join(', ') || 'unknown error'
 }
 
 function hasRoleByName(

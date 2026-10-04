@@ -1,6 +1,7 @@
 import { PermissionsBitField, type APIInteractionGuildMember, type Guild, type Message } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  describeFetchError,
   hasRoadieAdminPermission,
   hasRoadieBotPermission,
   raceDiscordRename,
@@ -309,6 +310,31 @@ describe('resolveGuildMessageMember', () => {
     } as unknown as Message
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
+  })
+
+  test('webhook posts resolve to no member without a fetch', async () => {
+    const message = {
+      guild: {
+        members: {
+          fetch() {
+            throw new Error('should not fetch for a webhook')
+          },
+        },
+      },
+      member: null,
+      webhookId: 'webhook-id',
+      author: { id: 'webhook-id', bot: true },
+      id: 'message-id',
+    } as unknown as Message
+
+    await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
+  })
+
+  test('describeFetchError reports status and code', () => {
+    expect(describeFetchError({ status: 404, code: 10007, message: 'Unknown Member' })).toBe(
+      'status 404, code 10007, Unknown Member',
+    )
+    expect(describeFetchError(undefined)).toBe('undefined')
   })
 })
 
