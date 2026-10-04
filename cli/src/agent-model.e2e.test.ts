@@ -1210,6 +1210,12 @@ describe('agent model resolution', () => {
         .runSlashCommand({ name: 'plan-agent' })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'Switched to **plan** agent',
+        timeout: 4_000,
+      })
 
       // 4. Send a second message in the same thread
       await th.user(TEST_USER_ID).sendMessage({
@@ -1290,6 +1296,12 @@ describe('agent model resolution', () => {
       })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'Switched to **plan** agent',
+        timeout: 4_000,
+      })
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
@@ -1421,6 +1433,12 @@ describe('agent model resolution', () => {
         .runSlashCommand({ name: 'plan-agent' })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'Using **plan** agent for this session',
+        timeout: 4_000,
+      })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (agent-model-tester)
@@ -1473,6 +1491,13 @@ describe('agent model resolution', () => {
         .runSlashCommand({ name: 'plan-agent' })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'Switched to **plan** agent',
+        timeout: 4_000,
+      })
 
       const threadText = await th.text()
       expect(threadText).toMatchInlineSnapshot(`
@@ -1529,6 +1554,13 @@ describe('agent model resolution', () => {
         .runSlashCommand({ name: 'plain-agent' })
 
       await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'Switched to **plain** agent',
+        timeout: 4_000,
+      })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (agent-model-tester)
