@@ -124,64 +124,32 @@ export function getAssistantMessageKind({
   return 'unknown'
 }
 
-function getTaskChildSessionId({
-  part,
-}: {
-  part: Extract<AgentPart, { kind: 'tool' }>
-}): string | undefined {
-  // Event-shape reference:
-  // - cli/src/session-handler/event-stream-fixtures/real-session-task-three-parallel-sleeps.jsonl
-  // - In real task events, state.metadata.sessionId appears on running/completed
-  //   tool updates and is the canonical child-session identifier.
-  // We intentionally do not parse state.output because it is user-facing text
-  // and can change format across providers/versions.
-  const metadataValue = part.metadata
-  const metadataSessionId =
-    metadataValue && typeof metadataValue === 'object'
-      ? (metadataValue as { sessionId?: unknown }).sessionId
-      : undefined
-  if (typeof metadataSessionId === 'string' && metadataSessionId.length > 0) {
-    return metadataSessionId
-  }
-  return undefined
-}
-
-function getTaskCandidateFromEvent({
+// Delegation candidate: a child_session_started/finished event scoped to the
+// main session. The backend translator (../agent-backend) emits these from its
+// delegation tool calls, so derivation never inspects backend tool names.
+function getChildSessionCandidateFromEvent({
   event,
   mainSessionId,
 }: {
   event: EventBufferEvent
   mainSessionId: string
 }): {
-  assistantMessageId: string
+  assistantMessageId?: string
   childSessionId: string
-  subagentType?: string
+  agent?: string
   description?: string
 } | undefined {
-  if (event.type !== 'part') {
+  if (event.type !== 'child_session_started' && event.type !== 'child_session_finished') {
     return undefined
   }
-
-  const part = event.part
-  if (part.sessionId !== mainSessionId) {
+  if (event.parentSessionId !== mainSessionId) {
     return undefined
   }
-  if (part.kind !== 'tool' || part.tool !== 'task' || part.status === 'pending') {
-    return undefined
-  }
-
-  const childSessionId = getTaskChildSessionId({ part })
-  if (!childSessionId) {
-    return undefined
-  }
-
-  const subagentType = part.input?.subagent_type
-  const description = part.input?.description
   return {
-    assistantMessageId: part.messageId,
-    childSessionId,
-    subagentType: typeof subagentType === 'string' ? subagentType : undefined,
-    description: typeof description === 'string' ? description : undefined,
+    childSessionId: event.childSessionId,
+    ...(event.messageId && { assistantMessageId: event.messageId }),
+    ...(event.agent && { agent: event.agent }),
+    ...(event.description && { description: event.description }),
   }
 }
 
@@ -192,29 +160,12 @@ export type DerivedSubagentSession = {
   timestamp: number
 }
 
-function getTaskPartStatus(
-  event: EventBufferEvent,
-  sessionId: string,
-): { callID: string; status: string } | undefined {
-  if (event.type !== 'part') {
-    return undefined
-  }
-  const part = event.part
-  if (part.sessionId !== sessionId || part.kind !== 'tool' || part.tool !== 'task') {
-    return undefined
-  }
-  const callID = part.callId || part.id
-  if (!callID) {
-    return undefined
-  }
-  return { callID, status: part.status }
-}
-
 // Scans backward for most recent session-scoped lifecycle event.
 // Returns true if the latest lifecycle event for sessionId is session.status busy.
-// If status/idle were evicted from the bounded buffer, a still-running task
-// tool on that session also counts as busy. That stops `. queue` from draining
-// (and the 3s interrupt plugin from aborting) while a subagent is in flight.
+// If status/idle were evicted from the bounded buffer, a delegation still in
+// flight (child_session_started without a matching finished event) also counts
+// as busy. That stops `. queue` from draining (and the 3s interrupt plugin from
+// aborting) while a subagent is in flight.
 export function isSessionBusy({
   events,
   sessionId,
@@ -225,7 +176,10 @@ export function isSessionBusy({
   upToIndex?: number
 }): boolean {
   const end = upToIndex ?? events.length - 1
-  const latestTaskStatusByCallId = new Map<string, string>()
+  // Latest status per delegation call. Read from the delegation tool part
+  // (part.subagent), not child_session_* events: a delegation queued behind
+  // others is `pending` with no child session yet, and must still count.
+  const latestDelegationStatusByCallId = new Map<string, string>()
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
@@ -242,14 +196,55 @@ export function isSessionBusy({
     if (e.type === 'status') {
       return e.status.state === 'busy'
     }
-    const taskPart = getTaskPartStatus(e, sessionId)
-    if (taskPart && !latestTaskStatusByCallId.has(taskPart.callID)) {
-      latestTaskStatusByCallId.set(taskPart.callID, taskPart.status)
+    const delegation = getDelegationPartStatus(e)
+    if (delegation && !latestDelegationStatusByCallId.has(delegation.callId)) {
+      latestDelegationStatusByCallId.set(delegation.callId, delegation.status)
     }
   }
-  return [...latestTaskStatusByCallId.values()].some((status) => {
+  return [...latestDelegationStatusByCallId.values()].some((status) => {
     return status === 'running' || status === 'pending'
   })
+}
+
+function getDelegationPartStatus(
+  event: EventBufferEvent,
+): { callId: string; status: string } | undefined {
+  if (event.type !== 'part') {
+    return undefined
+  }
+  const part = event.part
+  if (part.kind !== 'tool' || !part.subagent) {
+    return undefined
+  }
+  const callId = part.callId || part.id
+  if (!callId) {
+    return undefined
+  }
+  return { callId, status: part.status }
+}
+
+// Parent session reported to plugin actions (session_idle, session_error).
+// A delegated child reports the main session that spawned it; the thread's own
+// session reports the cross-thread parent it was started with
+// (`roadie send --parent-session`). Anything else has no parent.
+export function resolveActionParentSessionId({
+  eventSessionId,
+  mainSessionId,
+  threadParentSessionId,
+  isChildSession,
+}: {
+  eventSessionId: string | undefined
+  mainSessionId: string | undefined
+  threadParentSessionId: string | undefined
+  isChildSession: (sessionId: string) => boolean
+}): string | undefined {
+  if (!eventSessionId || !mainSessionId) {
+    return undefined
+  }
+  if (eventSessionId === mainSessionId) {
+    return threadParentSessionId
+  }
+  return isChildSession(eventSessionId) ? mainSessionId : undefined
 }
 
 export function didQuestionQueueHandoffSinceLatestQuestionAsked({
@@ -1443,7 +1438,7 @@ export function isSummaryAssistantMessage({
 }
 
 // Returns a stable 1-based subtask index for candidateSessionId.
-// Indexing scope is the parent assistant message that spawned the task tool calls,
+// Indexing scope is the parent assistant message that spawned the delegation,
 // so numbering restarts at 1 for each assistant message.
 export function getDerivedSubtaskIndex({
   events,
@@ -1464,14 +1459,11 @@ export function getDerivedSubtaskIndex({
     if (!entry) {
       continue
     }
-    const candidate = getTaskCandidateFromEvent({
+    const candidate = getChildSessionCandidateFromEvent({
       event: entry.event,
       mainSessionId,
     })
-    if (!candidate) {
-      continue
-    }
-    if (candidate.childSessionId !== candidateSessionId) {
+    if (!candidate || candidate.childSessionId !== candidateSessionId) {
       continue
     }
     parentAssistantMessageId = candidate.assistantMessageId
@@ -1488,7 +1480,7 @@ export function getDerivedSubtaskIndex({
     if (!entry) {
       continue
     }
-    const candidate = getTaskCandidateFromEvent({
+    const candidate = getChildSessionCandidateFromEvent({
       event: entry.event,
       mainSessionId,
     })
@@ -1506,8 +1498,8 @@ export function getDerivedSubtaskIndex({
   return indexByChildSessionId.get(candidateSessionId)
 }
 
-// Returns the subagent_type (e.g. "explore", "general") for a given child session.
-// Used to build labels like "explore-1" instead of generic "task-1".
+// Returns the delegated agent (e.g. "explore", "general") for a given child
+// session. Used to build labels like "explore-1" instead of generic "task-1".
 export function getDerivedSubtaskAgentType({
   events,
   mainSessionId,
@@ -1522,14 +1514,14 @@ export function getDerivedSubtaskAgentType({
     if (!entry) {
       continue
     }
-    const candidate = getTaskCandidateFromEvent({
+    const candidate = getChildSessionCandidateFromEvent({
       event: entry.event,
       mainSessionId,
     })
-    if (!candidate || candidate.childSessionId !== candidateSessionId || !candidate.subagentType) {
+    if (!candidate || candidate.childSessionId !== candidateSessionId || !candidate.agent) {
       continue
     }
-    return candidate.subagentType
+    return candidate.agent
   }
   return undefined
 }
@@ -1567,7 +1559,7 @@ export function getDerivedSubagentSessions({
     if (!entry) {
       continue
     }
-    const candidate = getTaskCandidateFromEvent({
+    const candidate = getChildSessionCandidateFromEvent({
       event: entry.event,
       mainSessionId,
     })
@@ -1578,7 +1570,7 @@ export function getDerivedSubagentSessions({
     seenChildSessionIds.add(candidate.childSessionId)
     sessions.push({
       childSessionId: candidate.childSessionId,
-      subagentType: candidate.subagentType,
+      subagentType: candidate.agent,
       description: candidate.description,
       timestamp: entry.timestamp,
     })
@@ -1697,8 +1689,9 @@ export function trimEventBuffer({
   return retained.slice(-max)
 }
 
-// Child sessions of the main thread: task tool metadata.sessionId, plus
-// session.created/updated parentID (available before task metadata lands).
+// Child sessions of the main thread: child_session_started/finished events
+// from the backend's delegation tool calls, plus session.created/updated
+// parentID (available before the delegation tool reports the child id).
 export function getDerivedChildSessionIds({
   events,
   mainSessionId,

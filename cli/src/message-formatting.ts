@@ -775,8 +775,8 @@ export function getToolSummaryText(part: AgentPart): string {
     return ''
   }
 
-  // Task tool display is handled via subtask part in session-handler (shows name + agent)
-  if (part.tool === 'task') {
+  // Delegated (subagent) tool display is handled via subtask part in session-handler (shows name + agent)
+  if (part.subagent) {
     return ''
   }
 
@@ -846,9 +846,9 @@ export function formatTodoList(part: AgentPart): string {
 
 export function formatTaskToolTitle(part: ToolPart): string {
   // Running only. The child session can be created later when many tasks queue.
-  if (part.tool !== 'task' || part.status !== 'running') return ''
+  if (!part.subagent || part.status !== 'running') return ''
 
-  const description = part.input?.description
+  const description = part.subagent.description
   const stateTitle = part.title
   const title = typeof description === 'string' && description
     ? description
@@ -857,8 +857,7 @@ export function formatTaskToolTitle(part: ToolPart): string {
       : ''
   if (!title) return ''
 
-  const subagentType = part.input?.subagent_type
-  const agent = typeof subagentType === 'string' ? subagentType : 'task'
+  const agent = part.subagent.agent ?? 'task'
   return asSubtext(`${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`)
 }
 
@@ -932,8 +931,8 @@ function formatPartBody(part: AgentPart, prefix?: string): string {
       return ''
     }
 
-    // Task tool display is handled in session-handler with proper label
-    if (part.tool === 'task') {
+    // Delegated (subagent) tool display is handled in session-handler with proper label
+    if (part.subagent) {
       return ''
     }
 

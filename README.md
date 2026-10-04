@@ -141,8 +141,12 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | Action | Context |
 |---|---|
 | `ready` | — |
-| `session_idle` | `{ sessionId, threadId }` |
-| `session_error` | `{ sessionId, threadId, message }` |
+| `session_idle` | `{ sessionId, threadId, parentSessionId? }` |
+| `session_error` | `{ sessionId, threadId, message, parentSessionId? }` |
+| `child_session_started` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
+| `child_session_finished` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
+
+**Subagents.** A session can delegate to a child session (OpenCode: the task tool). The agent backend reports this as `child_session_started` / `child_session_finished` (`status` is `completed` or `error`). `parentSessionId` on `session_idle` and `session_error` is the session that spawned this one: the main session for a delegated child, or the session passed to `roadie send --parent-session` for a thread started that way. Together these let an orchestrator plugin track delegated work without knowing which backend runs it.
 
 The flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider` keep working: they supply the starting value that filters then refine, so hosts that integrate through external commands need no code.
 

@@ -8,14 +8,15 @@ import { describe, expect, test } from 'vitest'
 import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
 import * as state from './event-stream-state.js'
 import { formatPromptCacheClearMessage } from './event-stream-state.js'
-import { toBufferEvent } from './persisted-events.js'
+import { toAgentEvents } from '../agent-backend/opencode-events.js'
 import { toAgentMessage } from '../agent-backend/opencode-events.js'
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 
 // These tests describe derivation in terms of what OpenCode actually sends.
 // The derivations consume Roadie agent events, so every call goes through the
 // real OpenCode translator first: the assertions cover translator + derivation
-// end to end, exactly as the runtime runs them.
+// end to end, exactly as the runtime runs them. One backend event can imply
+// several agent events (task tool updates also carry child-session lifecycle).
 type EventBufferEntry = {
   event: OpenCodeEvent | { type: 'queue.question-handoff-started'; properties: { sessionID: string } }
   timestamp: number
@@ -28,8 +29,12 @@ const INERT_EVENT: state.EventBufferEvent = {
   type: 'part.delta', sessionId: '', messageId: '', partId: '', field: 'text', delta: '',
 }
 
-function translateEvent(event: EventBufferEntry['event']): state.EventBufferEvent {
-  return toBufferEvent(event) ?? INERT_EVENT
+function translateEvents(event: EventBufferEntry['event']): state.EventBufferEvent[] {
+  if (event.type === 'queue.question-handoff-started') {
+    const sessionId = event.properties.sessionID
+    return typeof sessionId === 'string' ? [{ type: event.type, sessionId }] : []
+  }
+  return toAgentEvents(event as OpenCodeEvent)
 }
 
 function translateEntries(entries: EventBufferEntry[]): {
@@ -37,18 +42,28 @@ function translateEntries(entries: EventBufferEntry[]): {
   original: Map<state.EventBufferEntry, EventBufferEntry>
 } {
   const original = new Map<state.EventBufferEntry, EventBufferEntry>()
-  const translated = entries.map((entry) => {
-    const next = { ...entry, event: translateEvent(entry.event) }
-    original.set(next, entry)
-    return next
-  })
+  const translated: state.EventBufferEntry[] = []
+  for (const entry of entries) {
+    const events = translateEvents(entry.event)
+    const mapped = events.length > 0
+      ? events
+      : [INERT_EVENT]
+    for (const event of mapped) {
+      const next = { ...entry, event }
+      original.set(next, entry)
+      translated.push(next)
+    }
+  }
   return { translated, original }
 }
 
 function adaptArgs(args: Record<string, unknown>): Record<string, unknown> {
   const out = { ...args }
   if (Array.isArray(args.events)) out.events = translateEntries(args.events as EventBufferEntry[]).translated
-  if (args.event) out.event = translateEvent(args.event as EventBufferEntry['event'])
+  if (args.event) {
+    const [first] = translateEvents(args.event as EventBufferEntry['event'])
+    out.event = first ?? INERT_EVENT
+  }
   if (args.message) out.message = toAgentMessage(args.message as AssistantMessage)
   return out
 }
@@ -68,7 +83,7 @@ function adapt<A, R>(fn: (args: A) => R): (args: OpenCodeArgs<A>) => R {
 }
 
 function getEventBufferSessionId(event: EventBufferEntry['event']): string | undefined {
-  return state.getEventBufferSessionId(translateEvent(event))
+  return state.getEventBufferSessionId(translateEvents(event)[0] ?? INERT_EVENT)
 }
 
 function trimEventBuffer(args: Omit<Parameters<typeof state.trimEventBuffer>[0], 'events'> & { events: EventBufferEntry[] }): EventBufferEntry[] {
@@ -3382,6 +3397,30 @@ describe('event buffer trim and busy derivation during task children', () => {
     })).toBe(true)
   })
 
+  // A delegation queued behind parallel ones is pending with no child session
+  // yet, so it emits no child_session_started. It must still hold the queue.
+  test('isSessionBusy stays true for a pending task that has no child session yet', () => {
+    expect(isSessionBusy({
+      events: [
+        eventEntry({
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              id: 'prt_task_pending',
+              sessionID: mainSessionId,
+              messageID: 'msg_asst',
+              type: 'tool',
+              callID: 'call_task_pending',
+              tool: 'task',
+              state: { status: 'pending', input: { subagent_type: 'explore' }, raw: '' },
+            },
+          },
+        }),
+      ],
+      sessionId: mainSessionId,
+    })).toBe(true)
+  })
+
   test('isSessionBusy is false after the same task call completes without status events', () => {
     const events = [
       runningTaskPart(),
@@ -3490,5 +3529,36 @@ describe('event buffer trim and busy derivation during task children', () => {
       mainSessionId,
       isKnownChildSession: (sessionId) => sessionId === childSessionId,
     })).toBe(true)
+  })
+})
+
+describe('resolveActionParentSessionId', () => {
+  const isChildSession = (sessionId: string) => sessionId === 'child'
+
+  test('the thread session reports its cross-thread parent', () => {
+    expect(state.resolveActionParentSessionId({
+      eventSessionId: 'main', mainSessionId: 'main', threadParentSessionId: 'origin', isChildSession,
+    })).toBe('origin')
+  })
+
+  test('a thread session started without a parent reports none', () => {
+    expect(state.resolveActionParentSessionId({
+      eventSessionId: 'main', mainSessionId: 'main', threadParentSessionId: undefined, isChildSession,
+    })).toBeUndefined()
+  })
+
+  test('a delegated child reports the main session that spawned it', () => {
+    expect(state.resolveActionParentSessionId({
+      eventSessionId: 'child', mainSessionId: 'main', threadParentSessionId: 'origin', isChildSession,
+    })).toBe('main')
+  })
+
+  test('an unrelated or missing session has no parent', () => {
+    expect(state.resolveActionParentSessionId({
+      eventSessionId: 'other', mainSessionId: 'main', threadParentSessionId: undefined, isChildSession,
+    })).toBeUndefined()
+    expect(state.resolveActionParentSessionId({
+      eventSessionId: undefined, mainSessionId: 'main', threadParentSessionId: 'origin', isChildSession,
+    })).toBeUndefined()
   })
 })
