@@ -26,13 +26,9 @@ import {
   type TextChannel,
   MessageFlags,
 } from 'discord.js'
-import type { AuthHook } from '@opencode-ai/plugin'
 import crypto from 'node:crypto'
-import {
-  initializeOpencodeForDirectory,
-  getOpencodeServerPort,
-  getOpencodeServerAuthHeaders,
-} from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import type { AgentAuthMethod, AgentAuthPrompt } from '../agent-backend/types.js'
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import { clearModelListCache } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -41,45 +37,9 @@ import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
 // ── Types ───────────────────────────────────────────────────────
-// Derive prompt types from the plugin package so they stay in sync.
-// Strip runtime-only callback fields (validate, condition) that
-// aren't present in the REST response from the opencode server.
-// Add `when` rule — the server's zod schema includes it but the
-// published plugin package hasn't been updated yet.
 
-type WhenRule = { key: string; op: 'eq' | 'neq'; value: string }
-
-// Extract prompt option type from the plugin's select prompt
-type PluginMethod = AuthHook['methods'][number]
-type PluginSelectPrompt = Extract<
-  NonNullable<PluginMethod['prompts']>[number],
-  { type: 'select' }
->
-type PromptOption = PluginSelectPrompt['options'][number]
-
-type AuthPromptText = {
-  type: 'text'
-  key: string
-  message: string
-  placeholder?: string
-  when?: WhenRule
-}
-
-type AuthPromptSelect = {
-  type: 'select'
-  key: string
-  message: string
-  options: PromptOption[]
-  when?: WhenRule
-}
-
-type AuthPrompt = AuthPromptText | AuthPromptSelect
-
-type ProviderAuthMethod = {
-  type: 'oauth' | 'api'
-  label: string
-  prompts?: AuthPrompt[]
-}
+type AuthPrompt = AgentAuthPrompt
+type ProviderAuthMethod = AgentAuthMethod
 
 // ── Login step state machine ────────────────────────────────────
 // Each step describes what the next select menu should show.
@@ -156,20 +116,6 @@ const PROVIDER_POPULARITY_ORDER: string[] = [
 ]
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-function extractErrorMessage({
-  error,
-  fallback,
-}: {
-  error: unknown
-  fallback: string
-}): string {
-  if (!error || typeof error !== 'object') {
-    return fallback
-  }
-  const parsed = error as { message?: string; data?: { message?: string } }
-  return parsed.data?.message || parsed.message || fallback
-}
 
 function shouldShowPrompt(
   prompt: AuthPrompt,
@@ -258,22 +204,22 @@ export async function handleLoginCommand({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
     }
 
-    const providersResponse = await getClient().provider.list({
+    const providersResponse = await getClient().catalog.providers({
       directory: projectDirectory,
     })
 
-    if (!providersResponse.data) {
+    if (providersResponse instanceof Error) {
       await interaction.editReply({ content: 'Failed to fetch providers' })
       return
     }
 
-    const { all: allProviders, connected } = providersResponse.data
+    const { providers: allProviders, connected } = providersResponse
 
     if (allProviders.length === 0) {
       await interaction.editReply({ content: 'No providers available.' })
@@ -412,17 +358,17 @@ async function handleProviderStep(
     await interaction.deferUpdate()
     ctx.providerPage = navPage
 
-    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: ctx.dir })
-    if (!providersResponse.data) {
+    const providersResponse = await getClient().catalog.providers({ directory: ctx.dir })
+    if (providersResponse instanceof Error) {
       await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
       return
     }
-    const { all: allProviders, connected } = providersResponse.data
+    const { providers: allProviders, connected } = providersResponse
     const allProviderOptions = [...allProviders]
       .sort((a, b) => {
         const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
@@ -456,23 +402,23 @@ async function handleProviderStep(
     return
   }
 
-  const getClient = await initializeOpencodeForDirectory(ctx.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
   if (getClient instanceof Error) {
     await interaction.deferUpdate()
     await interaction.editReply({ content: getClient.message, components: [] })
     return
   }
 
-  const providersResponse = await getClient().provider.list({
+  const providersResponse = await getClient().catalog.providers({
     directory: ctx.dir,
   })
-  const provider = providersResponse.data?.all.find(
-    (p) => p.id === providerId,
-  )
+  const provider = providersResponse instanceof Error
+    ? undefined
+    : providersResponse.providers.find((p) => p.id === providerId)
   const providerName = provider?.name || providerId
 
-  const authResponse = await getClient().provider.auth({ directory: ctx.dir })
-  if (!authResponse.data) {
+  const authResponse = await getClient().auth.methods({ directory: ctx.dir })
+  if (authResponse instanceof Error) {
     await interaction.deferUpdate()
     await interaction.editReply({
       content: 'Failed to fetch authentication methods',
@@ -485,7 +431,7 @@ async function handleProviderStep(
   // version supports it (dev branch, not yet released as of v1.2.27).
   // Once released, plugin-defined prompts will be collected and passed
   // as inputs to the authorize call automatically.
-  const methods: ProviderAuthMethod[] = authResponse.data[providerId] || [
+  const methods: ProviderAuthMethod[] = authResponse[providerId] || [
     { type: 'api', label: 'API Key' },
   ]
 
@@ -909,7 +855,7 @@ export async function handleOAuthCodeModalSubmit(
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -923,23 +869,22 @@ export async function handleOAuthCodeModalSubmit(
       components: [],
     })
 
-    const callbackResponse = await getClient().provider.oauth.callback({
-      providerID: ctx.providerId,
+    const finished = await getClient().auth.finishOAuth({
+      directory: ctx.dir,
+      providerId: ctx.providerId,
       method: ctx.methodIndex,
       code,
-      directory: ctx.dir,
     })
 
-    if (callbackResponse.error) {
+    if (finished instanceof Error) {
       pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization code was invalid or expired' })}`,
+        content: `**Authentication Failed**\n${finished.message || 'Authorization code was invalid or expired'}`,
         components: [],
       })
       return
     }
 
-    await getClient().instance.dispose({ directory: ctx.dir })
     clearModelListCache()
     pendingLoginContexts.delete(hash)
 
@@ -984,19 +929,21 @@ export async function handleApiKeyModalSubmit(
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
     }
 
-    await getClient().auth.set({
-      providerID: ctx.providerId,
-      auth: { type: 'api', key: apiKey.trim() },
+    const saved = await getClient().auth.setApiKey({
+      directory: ctx.dir,
+      providerId: ctx.providerId,
+      key: apiKey.trim(),
     })
-
-    // Dispose to refresh provider state so new credentials are recognized
-    await getClient().instance.dispose({ directory: ctx.dir })
+    if (saved instanceof Error) {
+      await interaction.editReply({ content: `**Failed to save API key**\n${saved.message}`, components: [] })
+      return
+    }
     clearModelListCache()
 
     await interaction.editReply({
@@ -1028,7 +975,7 @@ async function startOAuthFlow(
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -1042,72 +989,20 @@ async function startOAuthFlow(
       components: [],
     })
 
-    // Direct fetch to the server because the SDK's buildClientParams drops
-    // unknown keys — `inputs` would be silently stripped. The server accepts
-    // `inputs` in the body (see opencode server/routes/provider.ts).
-    const port = getOpencodeServerPort()
-    if (!port) {
-      await interaction.editReply({
-        content: 'OpenCode server is not running. Please try again.',
-        components: [],
-      })
-      return
-    }
-
-    const hasInputs = Object.keys(ctx.inputs).length > 0
-    const authorizeUrl = new URL(
-      `/provider/${encodeURIComponent(ctx.providerId)}/oauth/authorize`,
-      `http://127.0.0.1:${port}`,
-    )
-    authorizeUrl.searchParams.set('directory', ctx.dir)
-
-    const fetchHeaders: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-opencode-directory': ctx.dir,
-      ...getOpencodeServerAuthHeaders(),
-    }
-
-    const authorizeRes = await fetch(authorizeUrl, {
-      method: 'POST',
-      headers: fetchHeaders,
-      body: JSON.stringify({
-        method: ctx.methodIndex,
-        ...(hasInputs ? { inputs: ctx.inputs } : {}),
-      }),
+    const loginData = await getClient().auth.startOAuth({
+      directory: ctx.dir,
+      providerId: ctx.providerId,
+      method: ctx.methodIndex,
+      inputs: ctx.inputs,
     })
-
-    if (!authorizeRes.ok) {
-      const errorText = await authorizeRes.text().catch(() => '')
-      let errorMessage = 'Unknown error'
-      try {
-        const parsed = JSON.parse(errorText) as {
-          message?: string
-          data?: { message?: string }
-        }
-        errorMessage = parsed?.data?.message || parsed?.message || errorMessage
-      } catch {
-        errorMessage = errorText || errorMessage
-      }
+    if (loginData instanceof Error) {
       await interaction.editReply({
-        content: `Failed to start authorization: ${errorMessage}`,
+        content: `Failed to start authorization: ${loginData.message}`,
         components: [],
       })
       return
     }
-
-    const loginData = (await authorizeRes.json()) as {
-      url: string
-      method: 'auto' | 'code'
-      instructions: string
-    } | null
-    if (!loginData) {
-      await interaction.editReply({
-        content: 'Failed to parse authorization response',
-        components: [],
-      })
-      return
-    }
-    const { url, method, instructions } = loginData
+    const { url, mode: method, instructions } = loginData
 
     let message = `**Authenticating with ${ctx.providerName}**\n\n`
     message += `Open this URL to authorize:\n${url}\n\n`
@@ -1148,22 +1043,21 @@ async function startOAuthFlow(
     await interaction.editReply({ content: message, components: [] })
 
     // Auto mode: poll for completion (device flow / localhost callback)
-    const callbackResponse = await getClient().provider.oauth.callback({
-      providerID: ctx.providerId,
-      method: ctx.methodIndex,
+    const finished = await getClient().auth.finishOAuth({
       directory: ctx.dir,
+      providerId: ctx.providerId,
+      method: ctx.methodIndex,
     })
 
-    if (callbackResponse.error) {
+    if (finished instanceof Error) {
       pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization was not completed' })}`,
+        content: `**Authentication Failed**\n${finished.message || 'Authorization was not completed'}`,
         components: [],
       })
       return
     }
 
-    await getClient().instance.dispose({ directory: ctx.dir })
     clearModelListCache()
     pendingLoginContexts.delete(hash)
 
