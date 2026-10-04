@@ -7,17 +7,22 @@ import {
   cleanupOrphanedAgentServer,
   clearAgentServerPid,
   consumeInterruptedSessions,
+  hostUpgradeHandler,
   INTERRUPTED_TTL_MS,
   isManagedInstall,
   looksLikeAgentServer,
   recordAgentServerPid,
   recordInterruptedSessions,
+  runHostUpgrade,
 } from './service-lifecycle.js'
+import { addFilter, resetHooks } from './hooks.js'
+import { loadPlugins } from './plugins.js'
 
 const children: ChildProcess[] = []
 const savedEnv = { ...process.env }
 afterEach(() => {
   for (const child of children.splice(0)) child.kill('SIGKILL')
+  resetHooks()
   for (const key of ['ROADIE_MANAGED', 'ROADIE_RESUME_INTERRUPTED']) {
     if (savedEnv[key] === undefined) delete process.env[key]
     else process.env[key] = savedEnv[key]
@@ -52,6 +57,46 @@ describe('managed install', () => {
     expect(isManagedInstall()).toBe(true)
     process.env.ROADIE_MANAGED = '0'
     expect(isManagedInstall()).toBe(false)
+  })
+})
+
+describe('host upgrade', () => {
+  test('a managed install uses the handler a plugin registers', async () => {
+    process.env.ROADIE_MANAGED = '1'
+    expect(hostUpgradeHandler()).toBeNull()
+    const dir = tempDir()
+    const plugin = path.join(dir, 'host.mjs')
+    fs.writeFileSync(
+      plugin,
+      `export function register(roadie) {
+        roadie.addFilter('host_upgrade', () => async ({ trigger }) => ({ ok: true, message: 'started via ' + trigger }))
+      }`,
+    )
+    expect(await loadPlugins([plugin])).toEqual([plugin])
+    const handler = hostUpgradeHandler()
+    expect(handler).not.toBeNull()
+    expect(await runHostUpgrade(handler!, 'command')).toEqual({ ok: true, message: 'started via command' })
+  })
+
+  test('an unmanaged install never uses a host handler', () => {
+    delete process.env.ROADIE_MANAGED
+    addFilter('host_upgrade', () => async () => ({ ok: true, message: 'x' }))
+    expect(hostUpgradeHandler()).toBeNull()
+  })
+
+  test('a non-function filter value means no handler', () => {
+    process.env.ROADIE_MANAGED = '1'
+    addFilter('host_upgrade', () => 'not a handler' as never)
+    expect(hostUpgradeHandler()).toBeNull()
+  })
+
+  test('a throwing or malformed handler becomes a failed result', async () => {
+    const thrown = await runHostUpgrade(async () => {
+      throw new Error('sudo: a password is required')
+    }, 'cli')
+    expect(thrown).toEqual({ ok: false, message: 'Host upgrade failed: sudo: a password is required' })
+    const empty = await runHostUpgrade((async () => undefined) as never, 'cli')
+    expect(empty.ok).toBe(false)
   })
 })
 

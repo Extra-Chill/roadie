@@ -7,13 +7,15 @@
 //   had a run in progress. The next start resumes them, so a restart (service
 //   update, host-triggered restart) does not silently drop work.
 // - Managed install: the host owns installation and upgrades, so Roadie never
-//   upgrades itself.
+//   upgrades itself. A host can register a `host_upgrade` handler; Roadie's
+//   upgrade command then triggers it instead of refusing.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { getDataDir } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { applyFilters } from './hooks.js'
 
 const logger = createLogger(LogPrefix.CLI)
 
@@ -43,6 +45,40 @@ export function isManagedInstall(): boolean {
 
 export const MANAGED_UPGRADE_MESSAGE =
   'This Roadie install is managed by its host (ROADIE_MANAGED). Upgrade it through the host tooling.'
+
+/** Outcome of a host upgrade, shown to whoever asked for it. */
+export type HostUpgradeResult = { ok: boolean; message: string }
+
+/**
+ * Upgrades a managed install. The host decides what runs and restarts Roadie
+ * itself when needed; Roadie only triggers it and reports the result. A handler
+ * that starts a background job should return once it is started.
+ */
+export type HostUpgradeHandler = (request: { trigger: 'command' | 'cli' }) => Promise<HostUpgradeResult>
+
+/** The host's upgrade handler for a managed install, or null when there is none. */
+export function hostUpgradeHandler(): HostUpgradeHandler | null {
+  if (!isManagedInstall()) return null
+  const handler = applyFilters('host_upgrade', null, {})
+  return typeof handler === 'function' ? handler : null
+}
+
+/** Run a host upgrade handler. Never throws: failures come back as a result. */
+export async function runHostUpgrade(
+  handler: HostUpgradeHandler,
+  trigger: 'command' | 'cli',
+): Promise<HostUpgradeResult> {
+  try {
+    const result = await handler({ trigger })
+    if (!result || typeof result.ok !== 'boolean' || typeof result.message !== 'string') {
+      return { ok: false, message: 'The host upgrade handler returned no result.' }
+    }
+    return result
+  } catch (error) {
+    logger.error('[UPGRADE] host upgrade handler threw:', error)
+    return { ok: false, message: `Host upgrade failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
 
 function writeFileAtomic(file: string, content: string): void {
   const tmp = `${file}.${process.pid}.tmp`

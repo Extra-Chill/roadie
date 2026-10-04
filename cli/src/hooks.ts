@@ -20,6 +20,7 @@ import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
+import type { HostUpgradeHandler } from './service-lifecycle.js'
 
 const logger = createLogger(LogPrefix.CLI)
 
@@ -43,6 +44,8 @@ export interface RoadieFilters {
   agent_definitions: [AgentDefinition[], { directory?: string }]
   /** Permission rules for a session; the last matching rule wins. */
   permission_rules: [AgentPermissionRule[], PermissionRulesContext]
+  /** How a managed install (ROADIE_MANAGED) upgrades; null = the host has no upgrade path. */
+  host_upgrade: [HostUpgradeHandler | null, Record<string, never>]
 }
 
 /** Action name -> context. */

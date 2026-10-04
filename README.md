@@ -103,7 +103,7 @@ The contract a service manager (systemd, launchd, a container) can rely on:
 | Health | `GET http://127.0.0.1:<lock port>/health` returns `{"status":"ok","pid":…,"discordReady":true}`. No auth. `discordReady` is false until the Discord connection is up. |
 | Stop | `SIGTERM` (or `SIGINT`). Shutdown is bounded at 15 seconds. |
 | Graceful restart | `SIGUSR2` restarts in place under the `roadie` wrapper; a supervisor restart (`systemctl restart`) works the same way. |
-| Managed install | `ROADIE_MANAGED=1`: the host owns installation. Roadie never upgrades itself, `roadie upgrade` refuses, and `/upgrade-and-restart` is not registered. |
+| Managed install | `ROADIE_MANAGED=1`: the host owns installation. Roadie never upgrades itself. If a plugin registers a `host_upgrade` handler, `roadie upgrade` and `/upgrade-and-restart` trigger the host's upgrade and report its result; otherwise `roadie upgrade` refuses and `/upgrade-and-restart` is not registered. |
 
 Restart behavior is built in, so the unit needs no pre- or post-start scripts:
 
@@ -137,6 +137,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `agent_providers` | providers and models offered to users (hide, rename, reorder) | `{ directory }` |
 | `agent_definitions` | agents offered to users and validated against | `{ directory }` |
 | `permission_rules` | a session's permission rules (`{ permission, pattern, action }`, last match wins) | `{ directory, phase }` |
+| `host_upgrade` | managed installs only: `null`, or `async ({ trigger }) => ({ ok, message })` that upgrades the install (the host restarts Roadie itself) | `{}` |
 
 | Action | Context |
 |---|---|
@@ -195,6 +196,6 @@ The "Roadie" role is the recommended approach for team access. Messages from use
 
 If sessions stop responding, fail to start, or the bot behaves unexpectedly, run `/restart-opencode-server` in any channel. This restarts the backend OpenCode server while keeping the bot connected to Discord. It fixes most transient issues.
 
-If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update to the latest release and do a full restart. On managed installs (`ROADIE_MANAGED=1`), restart through the host's service manager instead.
+If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update to the latest release and do a full restart. On managed installs (`ROADIE_MANAGED=1`), `/upgrade-and-restart` is available only when the host registered an upgrade handler; otherwise restart through the host's service manager.
 
 Logs are in `roadie.log` in the data directory (`~/.roadie` by default).
