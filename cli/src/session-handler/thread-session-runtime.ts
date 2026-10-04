@@ -2486,7 +2486,12 @@ export class ThreadSessionRuntime {
       await this.maybeNotifyPromptCacheClear({ sessionId, messageId: msg.id })
     }
 
-    // Context usage notice.
+    // Context usage notice. Only while a run is in progress: once the run has
+    // ended, its footer already reports the final context percentage, and a
+    // late message update would post the same number again under it.
+    if (!this.isBusy()) {
+      return
+    }
     // Skip the final assistant update for a run: by the time the last
     // message.updated arrives, the final text part has already ended and the
     // buffered parts usually include step-finish, so a notice here would land

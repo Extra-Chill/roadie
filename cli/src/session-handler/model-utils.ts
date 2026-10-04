@@ -156,8 +156,21 @@ export function displayedModelLabel({
   modelID: string
   name?: string
 }): string {
-  if (name && (name === modelID || name.startsWith(`${modelID} (`))) return name
+  if (!name) return modelID
+  if (name === modelID) return name
+  if (name.startsWith(`${modelID} (`) && name.endsWith(')')) {
+    // A subrouter preset named after its own live model ("anthropic-claude-
+    // opus-5-5 (anthropic/claude-opus-5-5)") says the same thing twice. Show
+    // the live model once. A preset with its own name, or one that fell back
+    // to a different model, keeps both parts.
+    const live = name.slice(modelID.length + 2, -1)
+    return modelNameSlug(live) === modelNameSlug(modelID) ? live : name
+  }
   return modelID
+}
+
+function modelNameSlug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
 export function formatDisplayedModelId({
