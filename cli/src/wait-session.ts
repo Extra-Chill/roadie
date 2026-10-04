@@ -5,7 +5,7 @@
 // tool never completes on its own, so it is treated as done for automation.
 
 import { toAgentMessage } from './agent-backend/opencode-events.js'
-import { parsePersistedEvent } from './session-handler/persisted-events.js'
+import { parsePersistedEvents } from './session-handler/persisted-events.js'
 import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
@@ -206,19 +206,16 @@ async function loadPersistedSessionEvents({
 }): Promise<EventBufferEntry[]> {
   const rows = await getSessionEventSnapshot({ sessionId })
   return rows.flatMap((row) => {
-    const event = parsePersistedEvent(row.event_json)
-    if (event instanceof Error) {
-      waitLogger.warn(`Skipping invalid persisted session event for ${sessionId}: ${event.message}`)
+    const events = parsePersistedEvents(row.event_json)
+    if (events instanceof Error) {
+      waitLogger.warn(`Skipping invalid persisted session event for ${sessionId}: ${events.message}`)
       return []
     }
-    if (!event) {
-      return []
-    }
-    return [{
+    return events.map((event) => ({
       event,
       timestamp: Number(row.timestamp),
       eventIndex: Number(row.event_index),
-    }]
+    }))
   })
 }
 

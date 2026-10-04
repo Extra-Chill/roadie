@@ -17,8 +17,10 @@ import type {
   AgentPart,
   AgentSession,
   AgentStatus,
+  AgentSubagentInfo,
   AgentUsage,
 } from './events.js'
+import { childSessionEventsForPart } from './events.js'
 
 type OpenCodeTokens = {
   total?: number
@@ -132,6 +134,24 @@ export function toAgentMessage(info: UserMessage | AssistantMessage): AgentMessa
   }
 }
 
+// OpenCode task tool parts carry delegation info in state: the spawned child
+// session id lands in state.metadata.sessionId once the child exists, and the
+// agent/description inputs name the delegation. In real streams the inputs are
+// often dropped after the tool starts, so every field is optional.
+function toTaskSubagentInfo(state: {
+  input?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}): AgentSubagentInfo {
+  const metadataSessionId = state.metadata?.sessionId
+  const agent = state.input?.subagent_type
+  const description = state.input?.description
+  return {
+    ...(typeof metadataSessionId === 'string' && metadataSessionId && { childSessionId: metadataSessionId }),
+    ...(typeof agent === 'string' && agent && { agent }),
+    ...(typeof description === 'string' && description && { description }),
+  }
+}
+
 export function toAgentPart(part: OpenCodePart): AgentPart {
   const base = { id: part.id, sessionId: part.sessionID, messageId: part.messageID }
   switch (part.type) {
@@ -167,6 +187,7 @@ export function toAgentPart(part: OpenCodePart): AgentPart {
         ...(state.status === 'completed' && { output: state.output }),
         ...(state.status === 'error' && { error: state.error }),
         ...('metadata' in state && state.metadata && { metadata: state.metadata }),
+        ...(part.tool === 'task' && { subagent: toTaskSubagentInfo(state) }),
         ...('time' in state && { startedAt: state.time.start }),
         ...('time' in state && 'end' in state.time && { endedAt: state.time.end }),
         ...('time' in state && 'compacted' in state.time && typeof state.time.compacted === 'number' && {
@@ -306,4 +327,35 @@ export function toAgentEvent(event: OpenCodeEvent): AgentEvent | undefined {
     default:
       return undefined
   }
+}
+
+// Translate one OpenCode event into every Roadie agent event it implies:
+// the direct translation plus child-session lifecycle events for task tool
+// part updates. The runtime's event pump consumes this.
+export function toAgentEvents(event: OpenCodeEvent): AgentEvent[] {
+  const primary = toAgentEvent(event)
+  if (!primary) {
+    return []
+  }
+  if (primary.type !== 'part') {
+    return [primary]
+  }
+  return [primary, ...childSessionEventsForPart(primary.part)]
+}
+
+// Persisted rows written before child-session events existed hold agent part
+// events whose task tool part has no `subagent` field. Fill it in and emit the
+// child-session events the row implies, so /fork-subagent, subtask labels and
+// the busy check see delegations in older history. Rows already carrying
+// `subagent` were written alongside their own child-session events and pass
+// through unchanged.
+export function upgradeLegacyAgentEvent(event: AgentEvent): AgentEvent[] {
+  if (event.type !== 'part' || event.part.kind !== 'tool' || event.part.tool !== 'task' || event.part.subagent) {
+    return [event]
+  }
+  const part: AgentPart = {
+    ...event.part,
+    subagent: toTaskSubagentInfo({ input: event.part.input, metadata: event.part.metadata }),
+  }
+  return [{ ...event, part }, ...childSessionEventsForPart(part)]
 }

@@ -14,6 +14,7 @@
 
 import { createLogger, LogPrefix } from './logger.js'
 import type { AgentBackendProvider, AgentDefinition, AgentPermissionRule, AgentProviderCatalog } from './agent-backend/types.js'
+import type { AgentChildSessionStatus } from './agent-backend/events.js'
 import type { PermissionRulesContext } from './permission-policy.js'
 import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
@@ -46,10 +47,28 @@ export interface RoadieFilters {
 
 /** Action name -> context. */
 export interface RoadieActions {
-  /** A session finished its run. */
-  session_idle: { sessionId: string; threadId: string }
-  /** A session's run failed. */
-  session_error: { sessionId?: string; threadId: string; message: string }
+  /** A session finished its run. `parentSessionId` is set when the session is a delegation child or was started with `--parent-session`. */
+  session_idle: { sessionId: string; threadId: string; parentSessionId?: string }
+  /** A session's run failed. `parentSessionId` follows the same lineage rule as `session_idle`. */
+  session_error: { sessionId?: string; threadId: string; message: string; parentSessionId?: string }
+  /** A session spawned a delegated child session (subagent). */
+  child_session_started: {
+    parentSessionId: string
+    childSessionId: string
+    agent?: string
+    description?: string
+    status?: AgentChildSessionStatus
+    threadId: string
+  }
+  /** A delegated child session finished (or its delegation errored). */
+  child_session_finished: {
+    parentSessionId: string
+    childSessionId: string
+    agent?: string
+    description?: string
+    status?: AgentChildSessionStatus
+    threadId: string
+  }
   /** Startup finished: plugins are loaded and the backend is resolved. */
   ready: Record<string, never>
 }

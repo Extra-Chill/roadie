@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { agentEventSessionId } from './events.js'
-import { toAgentEvent, toAgentError } from './opencode-events.js'
+import { toAgentEvent, toAgentEvents, toAgentError } from './opencode-events.js'
 
 const fixturesDir = path.join(import.meta.dirname, '..', 'session-handler', 'event-stream-fixtures')
 
@@ -167,5 +167,48 @@ describe('toAgentEvent edge cases', () => {
     })
     expect(toAgentError({ name: 'MessageAbortedError', data: {} })).toEqual({ name: 'MessageAbortedError', message: 'MessageAbortedError' })
     expect(toAgentError(undefined)).toBeUndefined()
+  })
+})
+
+describe('child-session events from delegation', () => {
+  function loadFixture(name: string): OpenCodeEvent[] {
+    return fs
+      .readFileSync(path.join(fixturesDir, name), 'utf8')
+      .split('\n')
+      .filter((line) => line.trim())
+      .map((line) => (JSON.parse(line) as { event: OpenCodeEvent }).event)
+  }
+
+  test('three parallel tasks start and finish three children under the parent', () => {
+    const events = loadFixture('real-session-task-three-parallel-sleeps.jsonl').flatMap(toAgentEvents)
+    const started = events.filter((e) => e.type === 'child_session_started')
+    const finished = events.filter((e) => e.type === 'child_session_finished')
+    const startedChildren = new Set(started.map((e) => e.childSessionId))
+    const finishedChildren = new Set(finished.map((e) => e.childSessionId))
+    expect(startedChildren.size).toBe(3)
+    expect(finishedChildren).toEqual(startedChildren)
+    const parents = new Set([...started, ...finished].map((e) => e.parentSessionId))
+    expect(parents.size).toBe(1)
+    expect(startedChildren.has([...parents][0]!)).toBe(false)
+    for (const event of finished) {
+      expect(event.status).toBe('completed')
+      // Scoped to the parent so it lands in the parent thread's buffer.
+      expect(agentEventSessionId(event)).toBe(event.parentSessionId)
+    }
+  })
+
+  test('delegation parts carry subagent; a pending part has no child yet and emits nothing', () => {
+    const events = loadFixture('real-session-task-three-parallel-sleeps.jsonl').flatMap(toAgentEvents)
+    const delegationParts = events.flatMap((e) => (e.type === 'part' && e.part.kind === 'tool' && e.part.subagent ? [e.part] : []))
+    expect(delegationParts.length).toBeGreaterThan(0)
+    for (const part of delegationParts) {
+      if (part.kind !== 'tool') continue
+      if (part.status === 'pending') expect(part.subagent?.childSessionId).toBeUndefined()
+    }
+  })
+
+  test('non-delegation tools never imply child-session events', () => {
+    const nonTaskOnly = loadFixtureEvents().filter((e) => !(e.type === 'message.part.updated' && e.properties.part.type === 'tool' && e.properties.part.tool === 'task'))
+    expect(nonTaskOnly.flatMap(toAgentEvents).some((e) => e.type === 'child_session_started' || e.type === 'child_session_finished')).toBe(false)
   })
 })

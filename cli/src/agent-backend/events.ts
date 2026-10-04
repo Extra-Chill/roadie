@@ -14,6 +14,7 @@
 //   part (tool)               tool_execution_start / _update / _end
 //   part (step-finish)        turn_end (usage per turn)
 //   part.delta                message_update assistantMessageEvent text_delta
+//   child_session_*           task tool part updates (OpenCode: ./opencode-events.ts)
 //   status busy/idle          agent_start / agent_end
 //   status retry              auto_retry_start / auto_retry_end
 //   idle                      agent_end
@@ -24,8 +25,7 @@
 //   notice                    extension_ui_request notify
 //   session.diff              no Pi equivalent; optional
 //
-// Gaps: Pi has no session-tree "parent session" for forks the way OpenCode
-// task sessions do, and no server-side diff summary. Both are optional here.
+// Gaps: Pi has no server-side diff summary. Both are optional here.
 
 export type AgentUsage = {
   input: number
@@ -89,6 +89,19 @@ export type AgentMessage = {
 
 export type AgentToolStatus = 'pending' | 'running' | 'completed' | 'error'
 
+/**
+ * Backend-normalized delegation info on a tool part: this call spawned a child
+ * session (OpenCode: the task tool). Presence of the field marks the part as a
+ * delegation regardless of how far the call has progressed; childSessionId
+ * only appears once the backend reports which session it spawned.
+ */
+export type AgentSubagentInfo = {
+  childSessionId?: string
+  /** The delegated agent, e.g. "explore". */
+  agent?: string
+  description?: string
+}
+
 type PartBase = {
   id: string
   sessionId: string
@@ -118,6 +131,8 @@ export type AgentPart = PartBase & (
       output?: string
       error?: string
       metadata?: Record<string, unknown>
+      /** Set when the tool call delegates to a child session. */
+      subagent?: AgentSubagentInfo
       startedAt?: number
       endedAt?: number
       /** When the backend pruned this tool's output from the model context. */
@@ -134,6 +149,9 @@ export type AgentStatus =
   | { state: 'idle' }
   | { state: 'busy' }
   | { state: 'retry'; attempt: number; message: string; nextAt: number }
+
+/** How a delegated child session last progressed. */
+export type AgentChildSessionStatus = 'running' | 'completed' | 'error'
 
 export type AgentPermissionRequest = {
   id: string
@@ -181,6 +199,30 @@ export type AgentEvent =
   | { type: 'status'; sessionId: string; status: AgentStatus }
   | { type: 'idle'; sessionId: string }
   | { type: 'error'; sessionId?: string; error?: AgentError }
+  /**
+   * A session spawned a child session (delegation). Scoped to the parent:
+   * agentEventSessionId returns parentSessionId so the event lands in the
+   * parent thread's buffer next to the delegation tool part.
+   */
+  | {
+      type: 'child_session_started'
+      parentSessionId: string
+      childSessionId: string
+      agent?: string
+      description?: string
+      status?: AgentChildSessionStatus
+      /** Parent assistant message carrying the delegation tool call, when reported. */
+      messageId?: string
+    }
+  | {
+      type: 'child_session_finished'
+      parentSessionId: string
+      childSessionId: string
+      agent?: string
+      description?: string
+      status?: AgentChildSessionStatus
+      messageId?: string
+    }
   | { type: 'session.diff'; sessionId: string }
   | { type: 'permission.asked'; request: AgentPermissionRequest }
   | { type: 'permission.replied'; sessionId: string; requestId: string; reply: 'once' | 'always' | 'reject' }
@@ -191,6 +233,36 @@ export type AgentEvent =
   | { type: 'notice'; title?: string; message: string; level: 'info' | 'success' | 'warning' | 'error' }
 
 export type AgentEventType = AgentEvent['type']
+
+/** Delegation lifecycle events, for consumers that only handle those. */
+export type AgentChildSessionEvent = Extract<AgentEvent, { type: 'child_session_started' | 'child_session_finished' }>
+
+/**
+ * Child-session lifecycle implied by one delegation tool part update. Backend
+ * neutral: it reads only the normalized `subagent` field, so any translator
+ * that fills it gets child_session_* events for free. A running update with a
+ * known child starts the delegation; completed/error finishes it. Stateless per
+ * update: a part that jumps straight to completed emits only the finish.
+ */
+export function childSessionEventsForPart(part: AgentPart): AgentChildSessionEvent[] {
+  if (part.kind !== 'tool' || !part.subagent?.childSessionId) {
+    return []
+  }
+  const base = {
+    parentSessionId: part.sessionId,
+    childSessionId: part.subagent.childSessionId,
+    ...(part.subagent.agent && { agent: part.subagent.agent }),
+    ...(part.subagent.description && { description: part.subagent.description }),
+    messageId: part.messageId,
+  }
+  if (part.status === 'running') {
+    return [{ type: 'child_session_started', ...base, status: 'running' }]
+  }
+  if (part.status === 'completed' || part.status === 'error') {
+    return [{ type: 'child_session_finished', ...base, status: part.status }]
+  }
+  return []
+}
 
 /** The session an event belongs to, if any. */
 export function agentEventSessionId(event: AgentEvent): string | undefined {
@@ -208,6 +280,9 @@ export function agentEventSessionId(event: AgentEvent): string | undefined {
       return event.request.sessionId
     case 'error':
       return event.sessionId
+    case 'child_session_started':
+    case 'child_session_finished':
+      return event.parentSessionId
     case 'notice':
       return undefined
     default:

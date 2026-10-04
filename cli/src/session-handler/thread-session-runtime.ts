@@ -8,8 +8,8 @@
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
 import { doAction } from '../hooks.js'
-import { toAgentEvent, toAgentMessage } from '../agent-backend/opencode-events.js'
-import { parsePersistedEvent } from './persisted-events.js'
+import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
+import { parsePersistedEvents } from './persisted-events.js'
 import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -22,7 +22,9 @@ import type {
 } from '@opencode-ai/sdk/v2'
 import {
   agentEventSessionId,
+  type AgentChildSessionEvent,
   type AgentError,
+  type AgentEvent,
   type AgentMessage,
   type AgentPart,
   type AgentPermissionRequest,
@@ -169,6 +171,7 @@ import {
   getAssistantMessageIdsForLatestUserTurn,
   getCurrentTurnStartTime,
   isSessionBusy,
+  resolveActionParentSessionId,
   getLatestRunInfo,
   getPromptCacheClear,
   formatPromptCacheClearMessage,
@@ -1235,23 +1238,18 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = parsePersistedEvent(row.event_json)
+      const eventResult = parsePersistedEvents(row.event_json)
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
         )
         return []
       }
-      if (!eventResult) {
-        return []
-      }
-      return [
-        {
-          event: eventResult,
+      return eventResult.map((event) => ({
+          event,
           timestamp: Number(row.timestamp),
           eventIndex: Number(row.event_index),
-        },
-      ]
+        }))
     })
 
     this.eventBuffer = trimEventBuffer({
@@ -1565,14 +1563,9 @@ export class ThreadSessionRuntime {
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    // Preserve subagent_type for task tools so derivation can build labels
-    // like "explore-1" instead of generic "task-1" after compaction strips input
-    const taskSubagentType =
-      part.tool === 'task' ? part.input?.subagent_type : undefined
+    // Subagent identity lives on part.subagent and child_session_* events,
+    // which survive compaction; the delegation inputs do not.
     part.input = {}
-    if (typeof taskSubagentType === 'string') {
-      part.input.subagent_type = taskSubagentType
-    }
     if (part.output !== undefined) {
       part.output = this.compactTextForEventBuffer(part.output)
     }
@@ -1694,13 +1687,28 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
-    const sessionId = this.state?.sessionId
-    // Everything below speaks Roadie agent events. The raw backend event is
-    // kept only for the opt-in backend event log.
-    const agentEvent = toAgentEvent(event)
-    if (!agentEvent) {
-      return
+    // One backend event can imply several Roadie agent events (a task tool
+    // part update also carries child-session lifecycle). Each runs the full
+    // pipeline: buffer check, append, log, and its own switch case. The raw
+    // backend event is logged once, with the first implied agent event.
+    const agentEvents = toAgentEvents(event)
+    for (let i = 0; i < agentEvents.length; i++) {
+      await this.handleAgentEvent({
+        agentEvent: agentEvents[i]!,
+        ...(i === 0 && { rawBackendEvent: event }),
+      })
     }
+  }
+
+  private async handleAgentEvent({
+    agentEvent,
+    rawBackendEvent,
+  }: {
+    agentEvent: AgentEvent
+    /** Present on the first agent event derived from one backend event; the opt-in jsonl log writes it. */
+    rawBackendEvent?: OpenCodeEvent
+  }): Promise<void> {
+    const sessionId = this.state?.sessionId
     if (!shouldBufferSessionEvent({
       event: agentEvent,
       mainSessionId: sessionId,
@@ -1719,6 +1727,13 @@ export class ThreadSessionRuntime {
     // actually still busy. This was the root cause of "? queue" messages
     // interrupting instead of queuing.
     // Child task part floods are also dropped at retain time for the same reason.
+    // Duplicate delegation starts are detected before this append lands.
+    const isDuplicateChildSessionStart = agentEvent.type === 'child_session_started'
+      && this.eventBuffer.some((entry) => {
+        return entry.event.type === 'child_session_started'
+          && entry.event.parentSessionId === agentEvent.parentSessionId
+          && entry.event.childSessionId === agentEvent.childSessionId
+      })
     if (agentEvent.type !== 'part.delta') {
       this.appendEventToBuffer(agentEvent)
     }
@@ -1769,11 +1784,11 @@ export class ThreadSessionRuntime {
       }
     }
 
-    if (isOpencodeSessionEventLogEnabled()) {
+    if (rawBackendEvent && isOpencodeSessionEventLogEnabled()) {
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
-        event,
+        event: rawBackendEvent,
       })
       if (eventLogResult instanceof Error) {
         logger.error(
@@ -1790,13 +1805,19 @@ export class ThreadSessionRuntime {
       case 'part':
         await this.handlePartUpdated(agentEvent.part)
         break
-      case 'idle':
+      case 'idle': {
         await completeScheduledTaskRunsForSession(agentEvent.sessionId)
         await this.handleSessionIdle(agentEvent.sessionId)
         // Not awaited: plugins never hold up the event stream.
-        void doAction('session_idle', { sessionId: agentEvent.sessionId, threadId: this.threadId })
+        const idleParentSessionId = this.getActionParentSessionId(agentEvent.sessionId)
+        void doAction('session_idle', {
+          sessionId: agentEvent.sessionId,
+          threadId: this.threadId,
+          ...(idleParentSessionId && { parentSessionId: idleParentSessionId }),
+        })
         break
-      case 'error':
+      }
+      case 'error': {
         if (agentEvent.sessionId) {
           await failScheduledTaskRunsForSession({
             sessionId: agentEvent.sessionId,
@@ -1805,12 +1826,22 @@ export class ThreadSessionRuntime {
         }
         await this.handleSessionError(agentEvent)
         if (agentEvent.error?.name !== 'MessageAbortedError') {
+          const errorParentSessionId = this.getActionParentSessionId(agentEvent.sessionId)
           void doAction('session_error', {
             ...(agentEvent.sessionId && { sessionId: agentEvent.sessionId }),
+            ...(errorParentSessionId && { parentSessionId: errorParentSessionId }),
             threadId: this.threadId,
             message: agentEvent.error?.message || 'Session failed',
           })
         }
+        break
+      }
+      case 'child_session_started':
+      case 'child_session_finished':
+        if (agentEvent.type === 'child_session_started' && isDuplicateChildSessionStart) {
+          break
+        }
+        this.handleChildSessionEvent(agentEvent)
         break
       case 'permission.asked':
         await this.handlePermissionAsked(agentEvent.request)
@@ -1836,6 +1867,28 @@ export class ThreadSessionRuntime {
       default:
         break
     }
+  }
+
+  private getActionParentSessionId(eventSessionId: string | undefined): string | undefined {
+    return resolveActionParentSessionId({
+      eventSessionId,
+      mainSessionId: this.state?.sessionId,
+      threadParentSessionId: this.state?.parentSessionId,
+      isChildSession: (candidate) => Boolean(this.getSubtaskInfoForSession(candidate)),
+    })
+  }
+
+  // Delegation lifecycle surfaced to plugins. Duplicate started events were
+  // detected before the event entered the buffer, so only the first fires.
+  private handleChildSessionEvent(event: AgentChildSessionEvent): void {
+    void doAction(event.type, {
+      parentSessionId: event.parentSessionId,
+      childSessionId: event.childSessionId,
+      ...(event.agent && { agent: event.agent }),
+      ...(event.description && { description: event.description }),
+      ...(event.status && { status: event.status }),
+      threadId: this.threadId,
+    })
   }
 
 
@@ -2161,7 +2214,9 @@ export class ThreadSessionRuntime {
       if (!this.shouldSendPlannedPart({ part, mode })) {
         continue
       }
-      if (part.kind === 'tool' && part.tool === 'task') {
+      // Delegation parts render through the dedicated subtask display in
+      // handleMainPart, never as generic tool lines.
+      if (part.kind === 'tool' && part.subagent) {
         continue
       }
       const pulseTyping =
@@ -2474,11 +2529,11 @@ export class ThreadSessionRuntime {
       if (held) {
         return
       }
-      if (!this.state?.sentPartIds.has(part.id) && part.tool !== 'task') {
+      if (!this.state?.sentPartIds.has(part.id) && !part.subagent) {
         await this.sendPartMessage({ part })
       }
 
-      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
+      if (part.subagent && !this.state?.sentPartIds.has(part.id)) {
         const taskDisplay = formatTaskToolTitle(part)
         if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
           threadState.updateThread(this.threadId, (t) => {
