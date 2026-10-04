@@ -7,17 +7,20 @@
     <br/>
 </div>
 
-Roadie is a **collaborative agent orchestrator** that lets you drive every feature of [OpenCode](https://opencode.ai) from Discord. Each Discord **channel is a project**, each **thread is a coding session**. Send a message, an AI agent edits code on your machine.
+Roadie is a **collaborative agent orchestrator** that lets you drive [OpenCode](https://opencode.ai) from Discord. Each Discord **channel is a project**, each **thread is a coding session**. Send a message, an AI agent works in the project on your machine.
 
-You can try the bot in the [Roadie Discord Server](https://discord.gg/qz3hapKcMM) to see what it can do.
+Roadie is a fork of [Kimaki](https://github.com/remorses/kimaki), reshaped into a bridge that hosts can configure and extend.
 
 ## Quick Start
 
+Install the latest release (Node 22+):
+
 ```bash
-npx -y roadie@latest
+npm i -g https://github.com/Extra-Chill/roadie/releases/latest/download/extrachill-roadie-<version>.tgz
+roadie
 ```
 
-The CLI walks you through everything. Setup takes about 1 minute: you install the Roadie bot to your Discord server with one click, pick your projects, and you're done.
+Replace `<version>` with the version on the [latest release](https://github.com/Extra-Chill/roadie/releases/latest). The CLI walks you through connecting your Discord bot and picking projects.
 
 ## What is Roadie?
 
@@ -44,45 +47,32 @@ This separation is the whole point. Other Discord/iMessage agent tools cram **ev
 
 Think of it as texting your codebase: you describe what you want, the agent does it, and the conversation lives in a thread you can return to.
 
-## Battle tested every day
-
-I'm Tommy, the creator of Roadie. I do **all of my development** through it: every project, every session, straight from Discord. I built Roadie because I wanted one place to start agents, watch them work, jump between projects, and pick things back up from my phone. It is the tool I actually use every day.
-
 ## All your models, including subscriptions
 
 Roadie gives you access to **every model OpenCode supports**: Anthropic, OpenAI, Google, and more. The best part: you can use your existing **Claude Pro/Max** and **ChatGPT/Codex** subscriptions instead of paying per token.
 
-Run `/login`, pick a provider, choose OAuth, and authenticate with your subscription. Roadie authenticates against the provider the same way the native CLIs do, so subscription inference works and per-token costs show as zero. You can even add multiple accounts and Roadie rotates between them on rate limits.
-
-See [Models & Subscriptions](https://kimaki.dev/docs/getting-started/subscriptions) and [Model & Agent Switching](https://kimaki.dev/docs/getting-started/model-switching).
+Run `/login`, pick a provider, choose OAuth, and authenticate with your subscription. Roadie authenticates against the provider the same way the native CLIs do, so subscription inference works and per-token costs show as zero. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
 
 ## Core Features
 
 Roadie adds a layer of orchestration features on top of OpenCode. The ones worth knowing first:
 
-- **[Scheduled tasks](https://kimaki.dev/docs/features/scheduled-tasks)** — run the bot on a schedule (cron or a future time). For example, every morning read your inbox with a CLI like [Zele](https://github.com/remorses/zele) and post an email digest thread; then reply to mark some read or unsubscribe.
-- **[The queue](https://kimaki.dev/docs/features/queue)** — queue a message to send when the current run finishes (impossible in plain OpenCode). Great for "review this when you're done" or "commit at the end". End any message with `. queue` and even edit it later to update the queued text.
-- **Fork** — `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something right away, or `from:` to branch from an earlier message.
-- **[Worktrees](https://kimaki.dev/docs/features/worktrees)** — `/new-worktree` moves a session into an isolated folder mid-plan so it never touches your main checkout; `/merge-worktree` rebases the commits back and lets you preserve or squash them (and asks the agent to resolve conflicts).
-- **[Diff viewer](https://kimaki.dev/docs/features/diff-viewer)** — `/diff` generates a shareable URL to review changes in a real diff viewer from your phone or browser.
-- **[Voice messages](https://kimaki.dev/docs/features/voice)** — record a voice note; Roadie transcribes it using your project's file tree for accuracy.
-- **[Images](https://kimaki.dev/docs/features/images)** — attach images to your message and see images the agent produces, displayed inline in Discord.
-- **[OpenCode commands](https://kimaki.dev/docs/features/opencode-commands)** — your OpenCode commands, skills, and MCP prompts become Discord slash commands.
-- **[Shell commands](https://kimaki.dev/docs/features/shell-commands)** — prefix any message with `!` to run a shell command in the project directory.
-- **[Tunnels](https://kimaki.dev/docs/remote-access/tunnels)** — expose a local dev server to a public URL so you can view it on your phone or another machine.
-- **[Quick agent switching](https://kimaki.dev/docs/getting-started/model-switching)** — instantly change model or system prompt with a `/<name>-agent` command.
+- **Scheduled tasks**: run the bot on a schedule (cron or a future time) with `roadie send --send-at`. Manage them with `/tasks` or `roadie task list`.
+- **The queue**: queue a message to send when the current run finishes. Use `/queue`, or end any message with `. queue`.
+- **Fork**: `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something right away, or `from:` to branch from an earlier message.
+- **Thread working directories**: `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree. Roadie remembers the folder for that thread; creating and merging checkouts is left to your own tooling.
+- **Images and files**: attach images or files to your message, and see images the agent produces inline in Discord.
+- **OpenCode commands**: your OpenCode commands, skills, and MCP prompts become Discord slash commands.
+- **Shell commands**: prefix any message with `!` to run a shell command in the thread's working directory.
+- **Quick agent switching**: change agent with a `/<name>-agent` command.
 
 ## How messages reach a session
 
-When you send a message during an active run, OpenCode normally queues it to run **after the current tool call**. Roadie adds an interrupt: if the current step is still going after ~3 seconds, Roadie **aborts it and force-sends your message**, then resumes. So a message acts as an interrupt instead of waiting forever behind a long-running command. See [Message Handling](https://kimaki.dev/docs/core-concepts/message-handling).
+When you send a message during an active run, OpenCode normally queues it to run **after the current tool call**. Roadie adds an interrupt: if the current step is still going after ~3 seconds, Roadie **aborts it and force-sends your message**, then resumes. So a message acts as an interrupt instead of waiting forever behind a long-running command.
 
 ## Setup
 
-Create a Discord bot at [discord.com/developers](https://discord.com/developers/applications), then run the CLI and follow the interactive prompts:
-
-```bash
-npx -y roadie@latest
-```
+Create a Discord bot at [discord.com/developers](https://discord.com/developers/applications), install Roadie (see Quick Start), then run `roadie` and follow the interactive prompts.
 
 Keep the CLI running; it's the bridge between Discord and your machine.
 
@@ -122,7 +112,7 @@ Restart behavior is built in, so the unit needs no pre- or post-start scripts:
 
 ## Plugins and hooks
 
-Roadie extends the way WordPress does: plugins add **filters** (change a value) and **actions** (react to an event). Load plugins with `--plugin <path-or-package>` (repeatable) or `ROADIE_PLUGINS` (comma-separated). Each plugin exports `register(roadie)`:
+Roadie is extended with plugins, which add **filters** (change a value) and **actions** (react to an event). Load plugins with `--plugin <path-or-package>` (repeatable) or `ROADIE_PLUGINS` (comma-separated). Each plugin exports `register(roadie)`:
 
 ```js
 export function register(roadie) {
@@ -167,12 +157,14 @@ Roadie ships a full set of slash commands and a CLI. The most common slash comma
 | `/login` | Authenticate a provider (OAuth subscription or API key) |
 | `/queue <message>` | Queue a message to send after the current response finishes |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
-| `/new-worktree <name>` | Move the session into an isolated git worktree |
-| `/merge-worktree` | Merge the worktree branch back into the default branch |
-| `/diff` | Generate a shareable diff URL |
-| `/share` | Generate a public URL to share the current session |
+| `/new-session` | Start a session in this project |
+| `/last-sessions` | List recent sessions |
+| `/compact` | Compact the session's context |
+| `/context-usage` | Show how much of the context window is in use |
+| `/run-shell-command` | Run a shell command in the thread's working directory |
+| `/mcp` | List and manage MCP servers for this project |
 
-See the full [Commands reference](https://kimaki.dev/docs/reference/commands) for every slash command and CLI subcommand.
+The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-discord`. Run `roadie --help` or `roadie <command> --help` for the details.
 
 ## Access Control
 
@@ -198,16 +190,6 @@ The "Roadie" role is the recommended approach for team access. Messages from use
 
 If sessions stop responding, fail to start, or the bot behaves unexpectedly, run `/restart-opencode-server` in any channel. This restarts the backend OpenCode server while keeping the bot connected to Discord. It fixes most transient issues.
 
-If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update Roadie to the latest version and do a full restart.
+If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update to the latest release and do a full restart. On managed installs (`ROADIE_MANAGED=1`), restart through the host's service manager instead.
 
-See the full [Troubleshooting guide](https://kimaki.dev/docs/guides/troubleshooting).
-
-## Advanced Topics
-
-- [**Channels & Threads**](https://kimaki.dev/docs/core-concepts/channels-threads): the orchestration model in depth
-- [**Models & Subscriptions**](https://kimaki.dev/docs/getting-started/subscriptions): use your Claude and Codex subscriptions
-- [**CI & Automation**](https://kimaki.dev/docs/guides/ci-automation): programmatic sessions, GitHub Actions, per-session permissions
-- [**Scheduled Tasks**](https://kimaki.dev/docs/features/scheduled-tasks): cron and one-time tasks, email digests
-- [**Advanced Setup**](https://kimaki.dev/docs/guides/advanced-setup): multiple instances, multiple Discord servers
-- [**Docker**](https://kimaki.dev/docs/guides/docker): run Roadie on a VPS
-- [**Internals**](https://kimaki.dev/docs/reference/internals): how Roadie works under the hood
+Logs are in `roadie.log` in the data directory (`~/.roadie` by default).

@@ -166,7 +166,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Whitelist a built-in skill by name. Only the listed skills are injected into the model (all others are hidden via an opencode permission.skill deny-all rule). Repeatable: pass --enable-skill multiple times. Mutually exclusive with --disable-skill. See https://github.com/remorses/kimaki/tree/main/skills for available skills.',
+        'Allow only the named skills. Skills come from your OpenCode setup (skills directories and plugins); all others are hidden from the model and are not registered as slash commands. Repeatable. Mutually exclusive with --disable-skill.',
       ),
   )
   .option(
@@ -175,7 +175,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/kimaki/tree/main/skills for available skills.',
+        'Hide the named skills from the model and from slash commands. Skills come from your OpenCode setup (skills directories and plugins). Repeatable. Mutually exclusive with --enable-skill.',
       ),
   )
   .action(
