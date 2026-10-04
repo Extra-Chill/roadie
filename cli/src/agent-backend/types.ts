@@ -124,8 +124,60 @@ export type AgentCatalogOperations = {
 
 export type AgentCatalog = { catalog: AgentCatalogOperations }
 
+/** A question asked before an OAuth sign-in starts (e.g. which account type). */
+export type AgentAuthPrompt =
+  | {
+      type: 'text'
+      key: string
+      message: string
+      placeholder?: string
+      when?: { key: string; op: 'eq' | 'neq'; value: string }
+    }
+  | {
+      type: 'select'
+      key: string
+      message: string
+      options: Array<{ label: string; value: string; hint?: string }>
+      when?: { key: string; op: 'eq' | 'neq'; value: string }
+    }
+
+/** One way to sign in to a provider. */
+export type AgentAuthMethod = {
+  type: 'oauth' | 'api'
+  label: string
+  prompts?: AgentAuthPrompt[]
+}
+
+/** A started OAuth sign-in: the user opens `url`. */
+export type AgentOAuthStart = {
+  url: string
+  /** "auto": the backend sees the callback itself; "code": the user pastes a code or callback URL. */
+  mode: 'auto' | 'code'
+  instructions: string
+}
+
+/**
+ * Provider sign-in. Completing a sign-in makes the new credentials take
+ * effect for subsequent sessions.
+ */
+export type AgentAuthOperations = {
+  /** Sign-in methods per provider id. A provider absent here accepts an API key. */
+  methods(input: { directory: string }): Promise<Record<string, AgentAuthMethod[]> | Error>
+  startOAuth(input: {
+    directory: string
+    providerId: string
+    /** Index into the provider's methods. */
+    method: number
+    inputs?: Record<string, string>
+  }): Promise<AgentOAuthStart | Error>
+  /** Finish an OAuth sign-in. Without `code`, waits for an "auto" callback. */
+  finishOAuth(input: { directory: string; providerId: string; method: number; code?: string }): Promise<void | Error>
+  setApiKey(input: { directory: string; providerId: string; key: string }): Promise<void | Error>
+}
+
 export type AgentBackend = AgentCatalog & {
   sessions: AgentSessionOperations
+  auth: AgentAuthOperations
 }
 
 /**

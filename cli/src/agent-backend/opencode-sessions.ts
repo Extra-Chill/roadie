@@ -6,11 +6,13 @@
 
 import type { OpencodeClient, Part as OpenCodePart, Provider as OpenCodeProvider } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
-import { extractSdkErrorMessage } from '../opencode.js'
+import { extractSdkErrorMessage, getOpencodeServerAuthHeaders, getOpencodeServerPort } from '../opencode.js'
 import { toAgentMessage, toAgentPart, toAgentSession } from './opencode-events.js'
 import type { AgentStatus } from './events.js'
 import {
   AgentRequestError,
+  type AgentAuthMethod,
+  type AgentAuthOperations,
   type AgentBackend,
   type AgentCatalogOperations,
   type AgentProviderInfo,
@@ -174,6 +176,69 @@ export function openCodeCatalogOperations(client: OpencodeClient): AgentCatalogO
   }
 }
 
+export function openCodeAuthOperations(client: OpencodeClient): AgentAuthOperations {
+  // New credentials only apply after OpenCode reloads its instance.
+  const reload = async (directory: string) => {
+    await client.instance.dispose({ directory }).catch(() => undefined)
+  }
+  return {
+    async methods({ directory }) {
+      const data = await call('provider.auth', () => client.provider.auth({ directory }))
+      if (data instanceof Error) return data
+      return (data ?? {}) as Record<string, AgentAuthMethod[]>
+    },
+    async startOAuth({ directory, providerId, method, inputs }) {
+      // Direct request: the SDK drops the `inputs` body field the server accepts.
+      const port = getOpencodeServerPort()
+      if (!port) return new AgentRequestError({ detail: 'OpenCode server is not running. Please try again.' })
+      const url = new URL(`/provider/${encodeURIComponent(providerId)}/oauth/authorize`, `http://127.0.0.1:${port}`)
+      url.searchParams.set('directory', directory)
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-opencode-directory': directory,
+          ...getOpencodeServerAuthHeaders(),
+        },
+        body: JSON.stringify({
+          method,
+          ...(inputs && Object.keys(inputs).length > 0 ? { inputs } : {}),
+        }),
+      }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.oauth.authorize', cause: e }))
+      if (response instanceof Error) return response
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        let detail = text || 'Unknown error'
+        try {
+          const parsed = JSON.parse(text) as { message?: string; data?: { message?: string } }
+          detail = parsed?.data?.message || parsed?.message || detail
+        } catch {}
+        return new AgentRequestError({ detail })
+      }
+      const body = (await response.json().catch(() => null)) as
+        | { url: string; method: 'auto' | 'code'; instructions: string }
+        | null
+      if (!body) return new AgentRequestError({ detail: 'Failed to parse authorization response' })
+      return { url: body.url, mode: body.method, instructions: body.instructions }
+    },
+    async finishOAuth({ directory, providerId, method, code }) {
+      const result = await call('provider.oauth.callback', () => client.provider.oauth.callback({
+        providerID: providerId,
+        method,
+        ...(code !== undefined && { code }),
+        directory,
+      }))
+      if (result instanceof Error) return result
+      await reload(directory)
+    },
+    async setApiKey({ directory, providerId, key }) {
+      const result = await call('auth.set', () => client.auth.set({ providerID: providerId, auth: { type: 'api', key } }))
+      if (result instanceof Error) return result
+      await reload(directory)
+    },
+  }
+}
+
 const backends = new WeakMap<OpencodeClient, AgentBackend>()
 
 /** The Roadie backend for an OpenCode client. Cached per client. */
@@ -183,6 +248,7 @@ export function toOpenCodeBackend(client: OpencodeClient): AgentBackend {
   const backend: AgentBackend = {
     sessions: openCodeSessionOperations(client),
     catalog: openCodeCatalogOperations(client),
+    auth: openCodeAuthOperations(client),
   }
   backends.set(client, backend)
   return backend

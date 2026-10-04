@@ -4,7 +4,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
-import { openCodeCatalogOperations, openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
+import { openCodeAuthOperations, openCodeCatalogOperations, openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
 import { AgentRequestError } from './types.js'
 
 function fakeClient(session: Record<string, unknown>, permission: Record<string, unknown> = {}) {
@@ -186,5 +186,51 @@ describe('openCodeCatalogOperations', () => {
       { name: 'build', mode: 'primary', model: { providerId: 'a', modelId: 'b' } },
       { name: 'explore', description: 'look', mode: 'subagent', hidden: true },
     ])
+  })
+})
+
+describe('openCodeAuthOperations', () => {
+  function authClient(parts: Record<string, unknown>, dispose = vi.fn(async () => ({ data: true }))) {
+    return {
+      client: { session: {}, permission: {}, provider: {}, config: {}, app: {}, auth: {}, instance: { dispose }, ...parts } as unknown as OpencodeClient,
+      dispose,
+    }
+  }
+
+  test('methods pass through per provider', async () => {
+    const { client } = authClient({
+      provider: { auth: async () => ({ data: { anthropic: [{ type: 'oauth', label: 'Claude Pro' }, { type: 'api', label: 'API key' }] } }) },
+    })
+    expect(await openCodeAuthOperations(client).methods({ directory: '/p' })).toEqual({
+      anthropic: [{ type: 'oauth', label: 'Claude Pro' }, { type: 'api', label: 'API key' }],
+    })
+  })
+
+  test('setApiKey saves the key and reloads so it takes effect', async () => {
+    const set = vi.fn(async () => ({ data: true }))
+    const { client, dispose } = authClient({ auth: { set } })
+    expect(await openCodeAuthOperations(client).setApiKey({ directory: '/p', providerId: 'openai', key: 'sk' })).toBeUndefined()
+    expect(set).toHaveBeenCalledWith({ providerID: 'openai', auth: { type: 'api', key: 'sk' } })
+    expect(dispose).toHaveBeenCalledWith({ directory: '/p' })
+  })
+
+  test('finishOAuth forwards the code; a rejected code is an error and does not reload', async () => {
+    const callback = vi.fn(async ({ code }: { code?: string }) => (
+      code === 'bad' ? { error: { data: { message: 'invalid code' } } } : { data: true }
+    ))
+    const { client, dispose } = authClient({ provider: { oauth: { callback } } })
+    const ops = openCodeAuthOperations(client)
+    expect(await ops.finishOAuth({ directory: '/p', providerId: 'a', method: 0, code: 'ok' })).toBeUndefined()
+    expect(callback).toHaveBeenCalledWith({ providerID: 'a', method: 0, code: 'ok', directory: '/p' })
+    expect(dispose).toHaveBeenCalledTimes(1)
+    const failed = await ops.finishOAuth({ directory: '/p', providerId: 'a', method: 0, code: 'bad' })
+    expect(failed).toBeInstanceOf(AgentRequestError)
+    expect((failed as Error).message).toBe('invalid code')
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  test('startOAuth without a running server is an error', async () => {
+    const { client } = authClient({})
+    expect(await openCodeAuthOperations(client).startOAuth({ directory: '/p', providerId: 'a', method: 0 })).toBeInstanceOf(AgentRequestError)
   })
 })
