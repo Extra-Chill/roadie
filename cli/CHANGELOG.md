@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.38.0] - 2026-10-04
+
+### Changed
+- busy threads take messages at the next step boundary; remove /queue and the interrupt
+
 ## [0.37.0] - 2026-10-04
 
 ### Added
