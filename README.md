@@ -144,6 +144,8 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
 | `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |
 | `context_sections` | host context sections for a session start or turn | the context request |
+| `agent_providers` | providers and models offered to users (hide, rename, reorder) | `{ directory }` |
+| `agent_definitions` | agents offered to users and validated against | `{ directory }` |
 
 | Action | Context |
 |---|---|

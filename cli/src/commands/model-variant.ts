@@ -7,6 +7,7 @@
 // select menus in the same message. We track partial selections in the context
 // Map. Whichever menu fires second sees the first selection stored and applies.
 
+import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -177,7 +178,7 @@ export async function showModelVariantPicker({
       sessionId,
       channelId: targetChannelId,
       appId,
-      getClient,
+      getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
       directory: projectDirectory,
     })
   }
@@ -188,7 +189,7 @@ export async function showModelVariantPicker({
         sessionId,
         channelId: targetChannelId,
         appId,
-        getClient,
+        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
         directory: projectDirectory,
       }),
       getVariantCascade({

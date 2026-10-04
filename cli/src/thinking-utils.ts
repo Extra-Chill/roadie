@@ -13,6 +13,9 @@ function getModelVariants(model: unknown): Record<string, unknown> | undefined {
   }
 
   const variants = (model as { variants?: unknown }).variants
+  if (Array.isArray(variants)) {
+    return Object.fromEntries(variants.filter((v) => typeof v === 'string').map((v) => [v, true]))
+  }
   if (!variants || typeof variants !== 'object') {
     return undefined
   }

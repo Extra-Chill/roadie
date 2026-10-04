@@ -1,5 +1,7 @@
 // Tests for model ID parsing, cached provider.list wrapping, and validation.
 
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { toOpenCodeBackend } from '../agent-backend/opencode-sessions.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -365,7 +367,7 @@ function fakeGetClient(options?: {
   failOnce?: boolean
 }) {
   let failed = false
-  return () => ({
+  const client = {
     provider: {
       list: async () => {
         if (options?.calls) options.calls.count += 1
@@ -389,7 +391,9 @@ function fakeGetClient(options?: {
         }
       },
     },
-  })
+  }
+  const backend = toOpenCodeBackend(client as unknown as OpencodeClient)
+  return () => backend
 }
 
 describe('listModels', () => {
@@ -451,7 +455,7 @@ describe('listModels', () => {
         default: Record<string, string>
       }
     }>()
-    const getClient = (() => ({
+    const backend = toOpenCodeBackend({
       provider: {
         list: () => {
           calls.count += 1
@@ -465,7 +469,8 @@ describe('listModels', () => {
           })
         },
       },
-    })) as never
+    } as unknown as OpencodeClient)
+    const getClient = () => backend
 
     const pending = listModels({ getClient, directory: '/tmp/project-a' })
     clearModelListCache()
