@@ -85,6 +85,8 @@ export type AgentModelInfo = {
   contextLimit?: number
   /** Thinking levels / variants the model accepts, e.g. "low", "high". */
   variants: string[]
+  /** Release date as reported by the backend (shown in pickers). */
+  releaseDate?: string
 }
 
 /** A model provider and its models, keyed by model id. */

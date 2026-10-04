@@ -993,12 +993,6 @@ export async function getSessionTurnAttribution(
   }
 }
 
-export async function getAllThreadSessionIds() {
-  const db = await getDb()
-  const rows = await db.query.thread_sessions.findMany({ columns: { session_id: true } })
-  return rows.map((row) => row.session_id).filter((id) => id !== '')
-}
-
 export async function appendSessionEventsSinceLastTimestamp({ sessionId, events }: { sessionId: string; events: Array<typeof schema.session_events.$inferInsert> }) {
   if (events.length === 0) return 0
   const db = await getDb()

@@ -1,6 +1,6 @@
 // /model command - Set the preferred model for this channel or session.
 
-import { openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   ButtonBuilder,
   ButtonStyle,
@@ -27,7 +27,6 @@ import {
   setGlobalModel,
   getVariantCascade,
 } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import type { AgentCatalog, AgentCatalogGetter } from '../agent-backend/types.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 
@@ -554,7 +553,7 @@ export async function handleModelCommand({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
@@ -567,7 +566,7 @@ export async function handleModelCommand({
         sessionId,
         channelId: targetChannelId,
         appId: effectiveAppId,
-        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+        getClient,
         directory: projectDirectory,
       })
     }
@@ -581,12 +580,12 @@ export async function handleModelCommand({
       sessionPref,
       channelPref,
     ] = await Promise.all([
-      getClient().provider.list({ directory: projectDirectory }),
+      getClient().catalog.providers({ directory: projectDirectory }),
       getCurrentModelInfo({
         sessionId,
         channelId: targetChannelId,
         appId: effectiveAppId,
-        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+        getClient,
         directory: projectDirectory,
       }),
       getVariantCascade({
@@ -598,14 +597,14 @@ export async function handleModelCommand({
       getChannelModel(targetChannelId),
     ])
 
-    if (!providersResponse.data) {
+    if (providersResponse instanceof Error) {
       await interaction.editReply({
         content: 'Failed to fetch providers',
       })
       return
     }
 
-    const { all: allProviders, connected } = providersResponse.data
+    const { providers: allProviders, connected } = providersResponse
 
     // Filter to only connected providers (have credentials)
     const availableProviders = allProviders.filter((p) => {
@@ -850,17 +849,17 @@ export async function handleProviderSelectMenu(
     context.providerPage = providerNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await initializeOpencodeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
-    if (!providersResponse.data) {
+    const providersResponse = await getClient().catalog.providers({ directory: context.dir })
+    if (providersResponse instanceof Error) {
       await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
       return
     }
-    const { all: allProviders, connected } = providersResponse.data
+    const { providers: allProviders, connected } = providersResponse
     const availableProviders = allProviders.filter((p) => connected.includes(p.id))
     const allProviderOptions = [...availableProviders]
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
@@ -887,7 +886,7 @@ export async function handleProviderSelectMenu(
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -896,11 +895,11 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const providersResponse = await getClient().provider.list({
+    const providersResponse = await getClient().catalog.providers({
       directory: context.dir,
     })
 
-    if (!providersResponse.data) {
+    if (providersResponse instanceof Error) {
       await interaction.editReply({
         content: 'Failed to fetch providers',
         components: [],
@@ -908,7 +907,7 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const provider = providersResponse.data.all.find(
+    const provider = providersResponse.providers.find(
       (p) => p.id === selectedProviderId,
     )
 
@@ -924,7 +923,7 @@ export async function handleProviderSelectMenu(
       .map(([modelId, model]) => ({
         id: modelId,
         name: model.name || modelId,
-        releaseDate: model.release_date,
+        releaseDate: model.releaseDate,
       }))
       .filter((model) => model.id && model.name)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
@@ -1024,13 +1023,15 @@ export async function handleModelSelectMenu(
     context.modelPage = modelNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await initializeOpencodeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
-    const provider = providersResponse.data?.all.find((p) => p.id === context.providerId)
+    const providersResponse = await getClient().catalog.providers({ directory: context.dir })
+    const provider = providersResponse instanceof Error
+      ? undefined
+      : providersResponse.providers.find((p) => p.id === context.providerId)
     if (!provider) {
       await interaction.editReply({ content: 'Provider not found', components: [] })
       return
@@ -1040,8 +1041,8 @@ export async function handleModelSelectMenu(
         buildSafeSelectOption({
           label: model.name || modelId,
           value: modelId,
-          description: model.release_date
-            ? new Date(model.release_date).toLocaleDateString()
+          description: model.releaseDate
+            ? new Date(model.releaseDate).toLocaleDateString()
             : 'Unknown date',
         }),
       )
@@ -1068,14 +1069,14 @@ export async function handleModelSelectMenu(
     setModelContext(contextHash, context)
 
     // Check if model has variants (thinking levels) - if so, show variant picker first
-    const getClient = await initializeOpencodeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
     if (!(getClient instanceof Error)) {
-      const providersResponse = await getClient().provider.list({
+      const providersResponse = await getClient().catalog.providers({
         directory: context.dir,
       })
-      if (providersResponse.data) {
+      if (!(providersResponse instanceof Error)) {
         const variants = getThinkingValuesForModel({
-          providers: providersResponse.data.all,
+          providers: providersResponse.providers,
           providerId: context.providerId!,
           modelId: selectedModelId,
         })

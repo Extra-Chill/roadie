@@ -107,20 +107,6 @@ export async function registerCommands({
 }) {
   const commands = [
     new SlashCommandBuilder()
-      .setName('resume')
-      .setDescription(truncateCommandDescription('Resume an existing OpenCode session'))
-      .addStringOption((option) => {
-        option
-          .setName('session')
-          .setDescription(truncateCommandDescription('The session to resume'))
-          .setRequired(true)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('new-session')
       .setDescription(truncateCommandDescription('Start a new OpenCode session'))
       .addStringOption((option) => {
