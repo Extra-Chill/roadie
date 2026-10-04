@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.35.0] - 2026-10-04
+
+### Added
+- backend-neutral subagent primitive with child-session events
+
+### Changed
+- disable OpenCode per-step snapshots
+
 ## [0.34.1] - 2026-10-04
 
 ### Fixed
