@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.33.1] - 2026-10-04
+
+### Changed
+- Roadie-owned model and agent catalog on the backend seam
+
 ## [0.33.0] - 2026-10-03
 
 ### Added
