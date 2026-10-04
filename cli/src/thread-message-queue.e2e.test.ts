@@ -828,7 +828,15 @@ e2eTest('thread message queue ordering', () => {
         afterAuthorId: discord.botUserId,
       })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      // The reported position is the number of items waiting at enqueue time
+      // (queueItems.length + 1). Whether race-final has already left the queue
+      // for its run when the second /queue lands depends on how fast that turn
+      // starts, so the exact number is timing, not contract (#63).
+      const threadText = (await th.text()).replace(
+        /Queued message \(position \d+\)/,
+        'Queued message (position N)',
+      )
+      expect(threadText).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
@@ -836,7 +844,7 @@ e2eTest('thread message queue ordering', () => {
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
-        -# Queued message (position 2)
+        -# Queued message (position N)
         race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         -# Executing queued prompt
