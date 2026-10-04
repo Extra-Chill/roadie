@@ -98,27 +98,17 @@ there is no interruption or abort involved.
   responses take time due to Discord message routing, opencode session
   creation, and tool execution.
 
-## Test structure for interrupt/abort scenarios
+## Messages to a busy session
 
-The pattern for testing message interrupts:
+Roadie no longer interrupts a busy session (#83). A message sent during a run
+reaches OpenCode, which takes it at the next step boundary; only `/abort`
+stops a run. `busy-thread-boundary-delivery.e2e.test.ts` covers this: a
+message sent during a slow bash tool must not produce a `MessageAbortedError`
+in the session event log, and the step after the tool must already answer it.
 
-1. **Setup**: send initial message to create thread, wait for bot reply
-2. **Count baseline**: count bot messages before the test action
-3. **Send message B** (the one that will be interrupted)
-4. **Brief delay** (200ms is enough — B just needs to enter processing)
-5. **Send message C** (triggers `signalThreadInterrupt`)
-6. **Poll with content-aware check** until C's user message has a bot
-   reply after it
-7. **Assert ordering**: user messages appear before their bot replies
-
-The interrupt mechanism has two paths:
-- `reason=next-step`: B hits a `step-finish` event and sees the pending
-  interrupt, aborts gracefully
-- `reason=next-step-timeout`: 2s `STEP_ABORT_TIMEOUT_MS` fires when no
-  step-finish arrives (e.g. during long tool calls like `sleep 400`)
-
-Both paths should be tested. The timeout path is especially important
-for tool calls where the model is waiting on external processes.
+Rapid messages to a busy session share one run, so wait for that run's footer
+before snapshotting the thread; the final text part is still quoted until the
+run completes.
 
 ## Bot replies can be error messages
 

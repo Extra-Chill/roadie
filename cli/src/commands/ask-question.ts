@@ -318,7 +318,7 @@ export async function handleAskQuestionSelectMenu(
  * Format collected answers as a plain-text summary the model can read when
  * the run is resumed after an abort (e.g. `"Which option?"="Alpha"`).
  *
- * Known limitation: if the user had queued items via /queue during the pending
+ * Known limitation: if the user had queued items (slash commands) during the pending
  * question AND aborted the run from another opencode client, the first queued
  * item may have already been handed off to opencode and can lose its ordering
  * on resume. That rare combination needs a queue-handoff redesign; the common

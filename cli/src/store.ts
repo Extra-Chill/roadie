@@ -147,7 +147,7 @@ export type RoadieState = {
   // registerCommands() completes during startup. Maps sanitized Discord
   // command names back to original OpenCode command names.
   // Changes: set once during startup after Discord API registration.
-  // Read by: /queue-command autocomplete, user-command handler dispatch.
+  // Read by: user-command handler dispatch and /command detection.
   registeredUserCommands: RegisteredUserCommand[]
 
   // ── Per-thread runtime state ────────────────────────────────────────

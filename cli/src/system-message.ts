@@ -684,15 +684,9 @@ roadie thread list --channel <channel_id> --json
 roadie send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
 \`\`\`
 
-### prompt suffix: queue
+### messages to a busy thread
 
-A plain message to a busy thread **interrupts** its current run. \`roadie send\` has no queue flag. Instead, end the prompt with \`. queue\` (after punctuation, or on its own last line; case does not matter). Roadie waits until the current run finishes, then sends the prompt to the same session. The suffix works in Discord messages and in \`roadie send --thread/--session\` prompts, and Roadie strips it before sending.
-
-\`\`\`bash
-roadie send --thread <thread_id> --prompt 'Run the tests after your current work. queue' --agent <current_agent>
-\`\`\`
-
-When sending a follow-up to a thread that may be busy, use \`. queue\` unless you mean to interrupt it.
+A message to a busy thread never interrupts it. The agent picks the message up at its next step boundary (after the current tool call finishes) and continues with it in context. Only \`/abort\` stops a run. To have something done after the current task, say so in the message (for example "after you finish, run the tests").
 
 ### opencode commands and agent switching
 

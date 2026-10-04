@@ -26,7 +26,6 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { DiscordOperationError } from '../errors.js'
-import { extractQueueSuffix } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -80,9 +79,7 @@ export async function handleSessionCommand({
 }: CommandContext): Promise<void> {
   await command.deferReply()
 
-  const { prompt, forceQueue } = extractQueueSuffix(
-    command.options.getString('prompt', true),
-  )
+  const prompt = command.options.getString('prompt', true)
   const filesString = command.options.getString('files') || ''
   const agent = command.options.getString('agent') || undefined
   const channel = command.channel
@@ -178,7 +175,7 @@ export async function handleSessionCommand({
     username: command.user.displayName,
     agent,
     appId,
-    mode: forceQueue ? 'local-queue' : 'opencode',
+    mode: 'opencode',
   }).catch(async (error) => {
     logger.error('New session dispatch failed:', error)
     await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')

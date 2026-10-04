@@ -229,6 +229,8 @@ import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
+/** Reaction on a chat message that is waiting for the agent's next step boundary. */
+const PENDING_DELIVERY_REACTION = '⏳'
 const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
 
 function extractToastSessionId({ message }: { message: string }): string | undefined {
@@ -892,7 +894,7 @@ export type IngressInput = {
   /**
    * `opencode` (default): send via session.promptAsync and let opencode
    * serialize pending user turns internally.
-   * `local-queue`: keep in roadie's local queue (used by /queue flows).
+   * `local-queue`: keep in roadie's local queue (used by slash commands).
    */
   mode?: 'opencode' | 'local-queue'
   // Force a new assistant-part routing window by resetting run-state to
@@ -1093,6 +1095,10 @@ export class ThreadSessionRuntime {
   // resolved input is then routed through the normal enqueue paths which
   // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
+  // Chat messages sent while the session was busy, oldest first. Each carries
+  // a pending reaction until the agent picks it up at a step boundary.
+  private pendingDeliveryMessageIds: string[] = []
+  private seenUserMessageIds = new Set<string>()
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -2372,8 +2378,51 @@ export class ThreadSessionRuntime {
   // Extracted from session-handler.ts eventHandler closure.
   // These operate on runtime instance state + global store transitions.
 
+  private markPendingDelivery(messageId: string): void {
+    this.pendingDeliveryMessageIds.push(messageId)
+    void this.setPendingReaction(messageId, true)
+  }
+
+  /** The agent took the oldest pending message into the conversation. */
+  private resolveOldestPendingDelivery(): void {
+    const messageId = this.pendingDeliveryMessageIds.shift()
+    if (messageId) {
+      void this.setPendingReaction(messageId, false)
+    }
+  }
+
+  private clearPendingDeliveries(): void {
+    const messageIds = this.pendingDeliveryMessageIds
+    this.pendingDeliveryMessageIds = []
+    for (const messageId of messageIds) {
+      void this.setPendingReaction(messageId, false)
+    }
+  }
+
+  private async setPendingReaction(messageId: string, on: boolean): Promise<void> {
+    const result = await this.chat.setOwnReaction(messageId, PENDING_DELIVERY_REACTION, on)
+    if (result instanceof Error) {
+      logger.warn(
+        `[PENDING] Failed to ${on ? 'add' : 'remove'} pending reaction on ${messageId} in thread ${this.threadId}: ${result.message}`,
+      )
+    }
+  }
+
   private async handleMessageUpdated(msg: AgentMessage): Promise<void> {
     const sessionId = this.state?.sessionId
+
+    // A user message appearing in the main session while messages are pending
+    // means OpenCode promoted the oldest one at a step boundary.
+    if (
+      msg.role === 'user' &&
+      msg.sessionId === sessionId &&
+      !this.seenUserMessageIds.has(msg.id)
+    ) {
+      this.seenUserMessageIds.add(msg.id)
+      if (this.pendingDeliveryMessageIds.length > 0) {
+        this.resolveOldestPendingDelivery()
+      }
+    }
 
     if (msg.role !== 'assistant') {
       return
@@ -2788,6 +2837,8 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
+      // The run ended; anything still marked pending was taken or dropped.
+      this.clearPendingDeliveries()
       const shouldDrainQueuedMessages = doesLatestUserTurnHaveNaturalCompletion({
         events: this.eventBuffer,
         sessionId: idleSessionId,
@@ -3144,7 +3195,7 @@ export class ThreadSessionRuntime {
 
   // Detached helper promise for the "question blocks while local queue has
   // items" flow. Prevents overlapping single-item handoffs when the question is
-  // shown, answered, and new /queue items arrive close together.
+  // shown, answered, and new queued items arrive close together.
   private questionQueueHandoffPromise: Promise<void> | null = null
 
   private maybeHandoffQueuedItemForPendingQuestion({
@@ -3644,6 +3695,13 @@ export class ThreadSessionRuntime {
 
       await this.recordTurnAttribution({ sessionId: session.id, input })
       await waitForGlobalEventListener()
+      // A busy session takes this prompt at its next step boundary; the
+      // running step is never aborted. Only /abort stops a run.
+      // Marked before sending so a fast pickup event can't arrive first.
+      const pendingMessageId = this.isBusy() && !input.noReply ? input.sourceMessageId : undefined
+      if (pendingMessageId) {
+        this.markPendingDelivery(pendingMessageId)
+      }
       const promptResult = await getClient().sessions.prompt({
         sessionId: session.id,
         directory: this.sdkDirectory,
@@ -3655,6 +3713,10 @@ export class ThreadSessionRuntime {
         ...(input.noReply ? { noReply: true } : {}),
       })
       if (promptResult instanceof Error) {
+        if (pendingMessageId) {
+          this.pendingDeliveryMessageIds = this.pendingDeliveryMessageIds.filter((id) => id !== pendingMessageId)
+          void this.setPendingReaction(pendingMessageId, false)
+        }
         void notifyError(promptResult, 'promptAsync failed in submitViaOpencodeQueue')
         await cleanupOnError(`✗ OpenCode API error: ${promptResult.message}`)
         return
@@ -3686,7 +3748,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Enqueue in roadie's local per-thread queue.
-   * Used for explicit queue workflows (/queue, queueMessage=true).
+   * Used for explicit queue workflows (slash commands, queueMessage=true).
    */
   /**
    * A new turn supersedes a pending sleep.
@@ -3811,14 +3873,14 @@ export class ThreadSessionRuntime {
     // If the prompt starts with `/cmdname ...` (and no explicit command is
     // already set), rewrite it into a command invocation so it goes through
     // opencode's session.command API instead of being sent to the model as
-    // plain text. Covers Discord chat messages, /new-session, /queue, CLI
+    // plain text. Covers Discord chat messages, /new-session, CLI
     // `roadie send --prompt`, and scheduled tasks — all funnel through here.
     input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
     }
     if (input.command) {
-      // Commands keep using local queue so they still support /queue-command.
+      // Commands wait in the local queue until the current run finishes.
       return this.enqueueViaLocalQueue(input)
     }
     return this.submitViaOpencodeQueue(input)

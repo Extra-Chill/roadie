@@ -1003,7 +1003,6 @@ export function setupQueueAdvancedSuite({
     fs.mkdirSync(sessionEventsDir, { recursive: true })
 
     process.env['ROADIE_LOCK_PORT'] = String(lockPort)
-    process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS'] = '500'
     process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS'] = '1'
     process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
@@ -1110,7 +1109,6 @@ export function setupQueueAdvancedSuite({
 
     delete process.env['ROADIE_LOCK_PORT']
     delete process.env['ROADIE_DB_URL']
-    delete process.env['ROADIE_INTERRUPT_STEP_TIMEOUT_MS']
     delete process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS']
     delete process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR']
     if (previousDefaultVerbosity) {

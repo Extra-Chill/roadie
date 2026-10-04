@@ -1,7 +1,7 @@
 // Discord implementation of the chat platform seam. Each method performs the
 // exact Discord call the session runtime made before the seam existed.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import { ChannelType, Routes, type ThreadChannel } from 'discord.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
@@ -91,6 +91,13 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
     async editMessageText(messageId, content) {
       const result = await thread.messages.edit(messageId, { content })
         .catch((e) => new DiscordOperationError({ operation: 'editMessage', cause: e }))
+      return result instanceof Error ? result : undefined
+    },
+
+    async setOwnReaction(messageId, emoji, on) {
+      const route = Routes.channelMessageOwnReaction(thread.id, messageId, encodeURIComponent(emoji))
+      const result = await (on ? thread.client.rest.put(route) : thread.client.rest.delete(route))
+        .catch((e) => new DiscordOperationError({ operation: on ? 'addReaction' : 'removeReaction', cause: e }))
       return result instanceof Error ? result : undefined
     },
 

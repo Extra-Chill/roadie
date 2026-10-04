@@ -19,7 +19,6 @@ import {
   serializeMessageExtras,
   getFileAttachments,
   getTextAttachments,
-  extractQueueSuffix,
 } from './message-formatting.js'
 import { getThreadSession } from './database.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -33,32 +32,27 @@ const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
 /**
  * Shared ingress step for every Discord message that becomes a prompt: user
  * messages, `roadie send --thread` injections and `roadie send --channel`
- * starter messages. Strips the queue suffix, appends embeds and text
- * attachments, and picks the ingress mode.
+ * starter messages. Appends embeds and text attachments. Every message goes
+ * to the agent directly; a busy session takes it at its next step boundary.
  *
- * `text` must not contain embeds or attachments yet. The suffix is read from
- * it first; anything appended before would push "? queue" away from the end.
+ * `text` must not contain embeds or attachments yet.
  */
 export async function resolveMessagePrompt({
   message,
   text,
-  forceQueue = false,
   includeExtras = true,
 }: {
   message: Message
   text: string
-  /** Queue even without a suffix. */
-  forceQueue?: boolean
   /** Append serialized embeds, polls and forwards of `message`. */
   includeExtras?: boolean
 }): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
-  const qs = extractQueueSuffix(text)
   const [images, textAttachments] = await Promise.all([
     getFileAttachments(message),
     getTextAttachments(message),
   ])
   const prompt = [
-    qs.prompt,
+    text,
     includeExtras ? serializeMessageExtras(message) : '',
     textAttachments,
   ]
@@ -67,7 +61,7 @@ export async function resolveMessagePrompt({
   return {
     prompt,
     images: images.length > 0 ? images : undefined,
-    mode: qs.forceQueue || forceQueue ? 'local-queue' : 'opencode',
+    mode: 'opencode',
   }
 }
 

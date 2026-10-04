@@ -6,28 +6,12 @@ import {
   isTransientNetworkError,
   resolveDiscordUserOption,
 } from './cli-runner.js'
-import { extractQueueSuffix } from './message-formatting.js'
 
-// Regression: a long queued prompt lost its suffix and interrupted the source session.
-test('long prompts keep the queue suffix in the visible message', () => {
+test('long prompts move the full text into the attachment', () => {
   const body = 'x'.repeat(2100)
-  expect(
-    ['queue', ''].map((suffix) => {
-      const { content, fileText } = buildLongPromptMessage(suffix ? `${body}. ${suffix}` : body)
-      return { fileText: fileText === body, forceQueue: extractQueueSuffix(content).forceQueue }
-    }),
-  ).toMatchInlineSnapshot(`
-    [
-      {
-        "fileText": true,
-        "forceQueue": true,
-      },
-      {
-        "fileText": true,
-        "forceQueue": false,
-      },
-    ]
-  `)
+  const { content, fileText } = buildLongPromptMessage(body)
+  expect(fileText).toBe(body)
+  expect(content).toContain('Prompt attached as file (2100 chars)')
 })
 
 test('raw Discord user ID does not invent a username', async () => {

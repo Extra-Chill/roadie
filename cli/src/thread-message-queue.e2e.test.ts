@@ -601,8 +601,8 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Rapidly send messages B and C. With opencode queue mode,
-      // both messages are serialized by opencode's per-session loop.
+      // 2. Rapidly send messages B and C. Neither interrupts: C reaches the
+      // busy session at its next step boundary, so B and C share one run.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: two',
       })
@@ -617,6 +617,15 @@ e2eTest('thread message queue ordering', () => {
         userId: TEST_USER_ID,
         userMessageIncludes: 'three',
         timeout: 4_000,
+      })
+
+      // The shared run ends with one footer once C has been answered.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'three',
+        afterAuthorId: TEST_USER_ID,
       })
 
       // 4. Verify the latest user message got a bot reply.
@@ -636,7 +645,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -732,265 +742,6 @@ e2eTest('thread message queue ordering', () => {
       expect(markerContents).toBe('created')
     },
     8_000,
-  )
-
-  test(
-    '/queue shows queued status first, then dispatch indicator when dequeued',
-    async () => {
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: queue-slash-setup',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: queue-slash-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
-
-      // Ensure the setup run is fully settled before slash-queue checks.
-      // Otherwise the first /queue call can race with a still-busy run window.
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-      })
-
-      // Start a non-interrupting queued slash message while idle so it
-      // dispatches immediately and keeps the runtime active.
-      const { id: firstQueueInteractionId } = await th.user(TEST_USER_ID)
-        .runSlashCommand({
-          name: 'queue',
-          options: [{ name: 'message', type: 3, value: 'Reply with exactly: race-final' }],
-        })
-
-      const firstQueueAck = await th.waitForInteractionAck({
-        interactionId: firstQueueInteractionId,
-        timeout: 4_000,
-      })
-      if (!firstQueueAck.messageId) {
-        throw new Error('Expected first /queue response message id')
-      }
-
-      const firstQueueAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: firstQueueAck.messageId,
-        timeout: 4_000,
-      })
-      expect(firstQueueAckMessage.content).toContain('» **queue-tester:** Reply with exactly: race-final')
-
-      const queuedPrompt = 'Reply with exactly: queued-from-slash'
-      const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
-        name: 'queue',
-        options: [{ name: 'message', type: 3, value: queuedPrompt }],
-      })
-
-      const queuedAck = await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
-      if (!queuedAck.messageId) {
-        throw new Error('Expected queued /queue response message id')
-      }
-
-      const queuedStatusMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: queuedAck.messageId,
-        timeout: 4_000,
-      })
-      expect(queuedStatusMessage.content.startsWith('-# Queued message')).toBe(true)
-
-      // The drain indicator is a silent reply to the /queue ack.
-      const dispatchIndicatorMessage = await waitForBotReplyTo({
-        discord,
-        threadId: thread.id,
-        replyToMessageId: queuedStatusMessage.id,
-        timeout: 8_000,
-      })
-      expect(dispatchIndicatorMessage.content).toBe('-# Executing queued prompt')
-
-      await waitForBotMessageContaining({
-        discord,
-        threadId: thread.id,
-        text: 'ok',
-        afterMessageId: dispatchIndicatorMessage.id,
-        timeout: 8_000,
-      })
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 8_000,
-        afterMessageIncludes: 'ok',
-        afterAuthorId: discord.botUserId,
-      })
-
-      // The reported position is the number of items waiting at enqueue time
-      // (queueItems.length + 1). Whether race-final has already left the queue
-      // for its run when the second /queue lands depends on how fast that turn
-      // starts, so the exact number is timing, not contract (#63).
-      const threadText = (await th.text()).replace(
-        /Queued message \(position \d+\)/,
-        'Queued message (position N)',
-      )
-      expect(threadText).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        Reply with exactly: queue-slash-setup
-        --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: race-final
-        -# Queued message (position N)
-        race-final
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        -# Executing queued prompt
-        ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-    },
-    12_000,
-  )
-
-  test(
-    'Remove from queue button clears only that queued message',
-    async () => {
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: clear-queue-setup',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: clear-queue-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-      await th.waitForBotReply({ timeout: 4_000 })
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-      })
-
-      await th.user(TEST_USER_ID).runSlashCommand({
-        name: 'queue',
-        options: [{ name: 'message', type: 3, value: 'Reply with exactly: race-final' }],
-      })
-
-      const { id: secondQueueInteractionId } = await th.user(TEST_USER_ID)
-        .runSlashCommand({
-          name: 'queue',
-          options: [{ name: 'message', type: 3, value: 'Reply with exactly: removed-queued-message' }],
-        })
-      const secondQueueAck = await th.waitForInteractionAck({
-        interactionId: secondQueueInteractionId,
-        timeout: 4_000,
-      })
-      if (!secondQueueAck.messageId) {
-        throw new Error('Expected second /queue response message id')
-      }
-
-      const secondQueueAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: secondQueueAck.messageId,
-        timeout: 4_000,
-      })
-      // The first /queue item is still in flight, so it holds position 1.
-      expect(secondQueueAckMessage.content).toContain('Queued message (position 2)')
-
-      const { id: thirdQueueInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
-        name: 'queue',
-        options: [{ name: 'message', type: 3, value: 'Reply with exactly: kept-queued-message' }],
-      })
-      const thirdQueueAck = await th.waitForInteractionAck({
-        interactionId: thirdQueueInteractionId,
-        timeout: 4_000,
-      })
-      if (!thirdQueueAck.messageId) {
-        throw new Error('Expected third /queue response message id')
-      }
-
-      const thirdQueueAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: thirdQueueAck.messageId,
-        timeout: 4_000,
-      })
-      expect(thirdQueueAckMessage.content).toContain('Queued message (position 3)')
-
-      const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
-      const customIdMatch = serializedComponents.match(
-        /"custom_id"\s*:\s*"(queue_remove:[^"]+)"/,
-      )
-      if (!customIdMatch?.[1]) {
-        throw new Error(
-          `Expected Remove from queue button on queue ack: ${serializedComponents}`,
-        )
-      }
-
-      const removeInteraction = await th.user(TEST_USER_ID).clickButton({
-        messageId: secondQueueAckMessage.id,
-        customId: customIdMatch[1],
-      })
-      await th.waitForInteractionAck({
-        interactionId: removeInteraction.id,
-        timeout: 4_000,
-      })
-
-      const removeAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: secondQueueAckMessage.id,
-        timeout: 4_000,
-      })
-      expect(removeAckMessage.content).toContain('Removed queued message')
-      expect(removeAckMessage.content).toContain('removed-queued-message')
-
-      const indicator = await waitForBotReplyTo({
-        discord,
-        threadId: thread.id,
-        replyToMessageId: thirdQueueAckMessage.id,
-        timeout: 8_000,
-      })
-      expect(indicator.content).toBe('-# Executing queued prompt')
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 8_000,
-        afterMessageId: indicator.id,
-      })
-
-      const threadText = await th.text()
-      expect(threadText).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        Reply with exactly: clear-queue-setup
-        --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        -# Removed queued message: Reply with exactly: removed-queued-message
-        » **queue-tester:** Reply with exactly: race-final
-        -# Queued message (position 3)
-        race-final
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        -# Executing queued prompt
-        ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-      // The removed item never drained, so nothing replies to its ack.
-      const finalMessages = await th.getMessages()
-      expect(finalMessages.some((message) => {
-        return message.message_reference?.message_id === secondQueueAckMessage.id
-      })).toBe(false)
-    },
-    12_000,
   )
 
   test(
@@ -1137,6 +888,14 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'mike',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       // 4. Queue should be clean — send E and verify it also gets processed
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: november',
@@ -1148,6 +907,13 @@ e2eTest('thread message queue ordering', () => {
         userId: TEST_USER_ID,
         userMessageIncludes: 'november',
         timeout: 4_000,
+      })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'november',
+        afterAuthorId: TEST_USER_ID,
       })
 
       const textWithoutFooters = (await th.text())
@@ -1183,7 +949,8 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         --- from: user (queue-tester)
         Reply with exactly: november
-        --- from: assistant (TestBot)"
+        --- from: assistant (TestBot)
+        ok"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
@@ -1196,211 +963,6 @@ e2eTest('thread message queue ordering', () => {
       expect(userNovemberIndex).toBeLessThan(lastBotIndex)
     },
     8_000,
-  )
-
-  test(
-    'editing a queued message updates its prompt before dispatch',
-    async () => {
-      // 1. Start a session with a slow matcher (2s busy) to keep it busy.
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-
-      // 2. Wait until the bot has replied, then queue while the slow stream is busy.
-      await th.waitForBotReply({ timeout: 4_000 })
-      const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: original-queued. queue',
-      })
-
-      // 3. Verify the message landed in the local queue.
-      const queuedState = await waitForThreadState({
-        threadId: thread.id,
-        predicate: (state) => {
-          return state.queueItems.length > 0
-        },
-        timeout: 4_000,
-        description: 'queue has item from suffix message',
-      })
-      expect(queuedState.queueItems.length).toBeGreaterThanOrEqual(1)
-      const queueItem = queuedState.queueItems.find((item) => {
-        return item.sourceMessageId === queuedMsg.id
-      })
-      expect(queueItem).toBeTruthy()
-      expect(queueItem!.prompt).toContain('original-queued')
-
-      // 4. Edit the message while it's still in the queue.
-      await th.user(TEST_USER_ID).editMessage({
-        messageId: queuedMsg.id,
-        content: 'Reply with exactly: edited-queued. queue',
-      })
-
-      // 5. Verify the queue item was updated.
-      const updatedState = await waitForThreadState({
-        threadId: thread.id,
-        predicate: (state) => {
-          return state.queueItems.some((item) => {
-            return item.prompt.includes('edited-queued')
-          })
-        },
-        timeout: 4_000,
-        description: 'queue item updated after edit',
-      })
-      const updatedItem = updatedState.queueItems.find((item) => {
-        return item.sourceMessageId === queuedMsg.id
-      })
-      expect(updatedItem).toBeTruthy()
-      expect(updatedItem!.prompt).toContain('edited-queued')
-      expect(updatedItem!.prompt).not.toContain('original-queued')
-
-      // 6. Wait for the queue to drain and verify the edited prompt was dispatched.
-      // The drain indicator is a silent reply to the user's queued message.
-      const indicator = await waitForBotReplyTo({
-        discord,
-        threadId: thread.id,
-        replyToMessageId: queuedMsg.id,
-        timeout: 8_000,
-      })
-      expect(indicator.content).toBe('-# Executing queued prompt')
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 8_000,
-        afterMessageId: indicator.id,
-      })
-
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        SLOW_BUSY_MARKER Reply with exactly: edit-queue-setup
-        --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        --- from: user (queue-tester)
-        Reply with exactly: edited-queued. queue
-        --- from: assistant (TestBot)
-        -# Queued at position 1. Edit or delete your message to update the queue
-        -# **queue-tester** edited queued message
-        slow-busy-reply
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        -# Executing queued prompt
-        ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-
-      const finalText = await th.text()
-      expect(finalText).toContain('edited-queued')
-      expect(finalText).not.toContain('original-queued')
-    },
-    12_000,
-  )
-
-  test(
-    'editing a queued message to remove queue suffix removes it from queue',
-    async () => {
-      // 1. Start a session with a slow matcher (2s busy) to keep it busy.
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-
-      // Wait for the bot to start replying so the session is busy and
-      // the user message appears after the first bot message in the thread.
-      await th.waitForBotReply({ timeout: 4_000 })
-
-      // 2. Queue a message with queue suffix while session is busy.
-      const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: will-be-removed. queue',
-      })
-
-      // 3. Verify the message is in the queue.
-      await waitForThreadState({
-        threadId: thread.id,
-        predicate: (state) => {
-          return state.queueItems.some((item) => {
-            return item.sourceMessageId === queuedMsg.id
-          })
-        },
-        timeout: 4_000,
-        description: 'queue has item to be removed',
-      })
-
-      // 4. Edit the message to remove the queue suffix.
-      await th.user(TEST_USER_ID).editMessage({
-        messageId: queuedMsg.id,
-        content: 'Reply with exactly: will-be-removed',
-      })
-
-      // 5. Verify the item was removed from the queue.
-      // Poll briefly since the MessageUpdate event is async.
-      for (let i = 0; i < 20; i++) {
-        const state = await waitForThreadState({
-          threadId: thread.id,
-          predicate: () => true,
-          timeout: 100,
-          description: 'check queue after edit',
-        })
-        const stillQueued = state.queueItems.some((item) => {
-          return item.sourceMessageId === queuedMsg.id
-        })
-        if (!stillQueued) break
-        await new Promise((r) => setTimeout(r, 50))
-      }
-
-      const finalState = await waitForThreadState({
-        threadId: thread.id,
-        predicate: () => true,
-        timeout: 100,
-        description: 'final queue check',
-      })
-      const removedItem = finalState.queueItems.find((item) => {
-        return item.sourceMessageId === queuedMsg.id
-      })
-      expect(removedItem).toBeUndefined()
-
-      // 6. Wait for the slow session to finish and verify the removed
-      // message was never dispatched as a queue drain (no drain indicator).
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 8_000,
-      })
-
-      const finalText = await th.text()
-      // The user message text appears in the thread, but the queue dispatch
-      // indicator should NOT appear because the item was removed from the
-      // queue before drain.
-      expect(finalText).not.toContain('Executing queued prompt')
-      expect(finalText).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup
-        --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        --- from: user (queue-tester)
-        Reply with exactly: will-be-removed
-        --- from: assistant (TestBot)
-        -# Queued at position 1. Edit or delete your message to update the queue
-        -# **queue-tester** removed message from queue
-        slow-busy-reply
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-    },
-    12_000,
   )
 
 })

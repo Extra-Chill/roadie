@@ -175,25 +175,6 @@ export function resolveContentMentions(message: Message): string {
   return content
 }
 
-// Matches explicit queue markers at the end of a message (case-insensitive).
-// Supported forms:
-// - punctuation + queue: ". queue", "! queue", ". queue.", "!queue."
-// - queue as its own final line: "text\nqueue" or just "queue"
-// When present the suffix is stripped and the message is routed through
-// roadie's local queue (same as /queue command).
-const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
-
-/**
- * Only for code that builds or reads raw prompt text. Discord message ingress
- * must go through `resolveMessagePrompt()` in message-preprocessing.ts.
- */
-export function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
-  if (!QUEUE_SUFFIX_RE.test(prompt)) {
-    return { prompt, forceQueue: false }
-  }
-  return { prompt: prompt.replace(QUEUE_SUFFIX_RE, '').trimEnd(), forceQueue: true }
-}
-
 /** Non-text message content (embeds, poll, forwards) serialized for the model. */
 export function serializeMessageExtras(message: Message): string {
   return [
