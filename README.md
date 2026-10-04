@@ -2,127 +2,155 @@
     <br/>
     <br/>
     <h3>roadie</h3>
-    <p>A collaborative agent orchestrator, inside Discord</p>
+    <p>Run coding agents from your team chat</p>
     <br/>
     <br/>
 </div>
 
-Roadie is a **collaborative agent orchestrator** that lets you drive [OpenCode](https://opencode.ai) from Discord. Each Discord **channel is a project**, each **thread is a coding session**. Send a message, an AI agent works in the project on your machine.
+Roadie is a **chat-to-agent bridge**. It connects a team chat (**Discord** or **Slack**) to a coding agent ([OpenCode](https://opencode.ai)) running on your machine or server. Each **channel is a project**, each **thread is a session**: send a message and an agent works in that project, streaming its progress back into the thread.
 
-Roadie is a fork of [Kimaki](https://github.com/remorses/kimaki), reshaped into a bridge that hosts can configure and extend.
+Roadie is built to be run by a host. Everything a deployment needs to decide (who may talk to the bot, which channels map to which directories, what context and permissions each session gets, how the install is upgraded) is configurable through files, environment variables and plugins, without patching Roadie.
 
-## Quick Start
+Roadie is a fork of [Kimaki](https://github.com/remorses/kimaki).
 
-Install the latest release (Node 22+):
-
-```bash
-npm i -g https://github.com/Extra-Chill/roadie/releases/latest/download/extrachill-roadie-<version>.tgz
-roadie
-```
-
-Replace `<version>` with the version on the [latest release](https://github.com/Extra-Chill/roadie/releases/latest). The CLI walks you through connecting your Discord bot and picking projects.
-
-## What is Roadie?
-
-Roadie turns Discord into the control surface for your coding agents. It connects to [OpenCode](https://opencode.ai), a coding agent similar to Claude Code, and maps your work onto Discord's natural structure:
-
-- **Channels are projects.** Each channel is linked to a project directory on your machine.
-- **Threads are sessions.** Every message you send starts a thread that maps to one OpenCode session.
-
-This separation is the whole point. Other Discord/iMessage agent tools cram **everything into a single channel**, so sessions pile on top of each other with no clean way to partition them. Roadie splits **projects into channels** and **sessions into threads**, so each piece of work has its own place. Switch projects by switching channels. Switch tasks by switching threads. Search, resume, and fork any of them later.
+## How it works
 
 ```diagram
                             ┌──────────────────────────────────────────────────┐
-   Discord server           │  Your machine                                    │
+   Discord or Slack         │  Your machine                                    │
   ┌──────────────────┐      │                                                  │
-  │ #web-app ────────┼──────┼──▶ /code/web-app   ──▶ OpenCode session (thread) │
-  │ #api ────────────┼──────┼──▶ /code/api       ──▶ OpenCode session (thread) │
-  │ #docs ───────────┼──────┼──▶ /code/docs      ──▶ OpenCode session (thread) │
+  │ #web-app ────────┼──────┼──▶ /code/web-app   ──▶ agent session (thread)    │
+  │ #api ────────────┼──────┼──▶ /code/api       ──▶ agent session (thread)    │
+  │ #docs ───────────┼──────┼──▶ /code/docs      ──▶ agent session (thread)    │
   └──────────────────┘      │        ▲                                         │
         │ thread = session  │        │  reads, edits, runs commands            │
         ▼                   │        ▼  in the project directory               │
-     agent replies  ◀───────┼──── AI agent (any model, your subscriptions)     │
+     agent replies  ◀───────┼──── coding agent (any model, your subscriptions) │
   └──────────────────┘      └──────────────────────────────────────────────────┘
 ```
 
-Think of it as texting your codebase: you describe what you want, the agent does it, and the conversation lives in a thread you can return to.
+- **Channels are projects.** A channel is bound to a project directory. Several channels can share one project and still keep their own audience, response rules and sessions.
+- **Threads are sessions.** A message in a project channel starts a thread and an agent session; replies continue it. Search, resume and fork any session later.
+- **Two seams keep it generic.** The session runtime talks to an *agent backend* (OpenCode today) and a *chat platform* (Discord, Slack) through interfaces, so neither is hard-wired into the core.
 
-## All your models, including subscriptions
+## Quick start
 
-Roadie gives you access to **every model OpenCode supports**: Anthropic, OpenAI, Google, and more. The best part: you can use your existing **Claude Pro/Max** and **ChatGPT/Codex** subscriptions instead of paying per token.
+Install the latest release (Node 22+). Replace `<version>` with the version on the [latest release](https://github.com/Extra-Chill/roadie/releases/latest):
 
-Run `/login`, pick a provider, choose OAuth, and authenticate with your subscription. Roadie authenticates against the provider the same way the native CLIs do, so subscription inference works and per-token costs show as zero. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
+```bash
+npm i -g https://github.com/Extra-Chill/roadie/releases/latest/download/extrachill-roadie-<version>.tgz
+```
 
-## Core Features
+**Discord:** create a bot at [discord.com/developers](https://discord.com/developers/applications), then run `roadie`. The CLI walks you through connecting the bot and picking projects. Keep it running; it is the bridge between Discord and your machine.
 
-Roadie adds a layer of orchestration features on top of OpenCode. The ones worth knowing first:
+**Slack:** run `roadie --platform slack` with a Slack app's credentials. See [Native Slack](docs/native-slack.md) for the app setup, scopes and receiver.
 
-- **Scheduled tasks**: run the bot on a schedule (cron or a future time) with `roadie send --send-at`. Manage them with `/tasks` or `roadie task list`.
-- **The queue**: queue a message to send when the current run finishes. Use `/queue`, or end any message with `. queue`.
-- **Fork**: `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something right away, or `from:` to branch from an earlier message.
-- **Thread working directories**: `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree. Roadie remembers the folder for that thread; creating and merging checkouts is left to your own tooling.
-- **Images and files**: attach images or files to your message, and see images the agent produces inline in Discord.
-- **OpenCode commands**: your OpenCode commands, skills, and MCP prompts become Discord slash commands.
-- **Shell commands**: prefix any message with `!` to run a shell command in the thread's working directory.
-- **Quick agent switching**: change agent with a `/<name>-agent` command.
+For a long-running install, see [Running as a service](#running-as-a-service).
 
-## How messages reach a session
+## Features
 
-When you send a message during an active run, OpenCode normally queues it to run **after the current tool call**. Roadie adds an interrupt: if the current step is still going after ~3 seconds, Roadie **aborts it and force-sends your message**, then resumes. So a message acts as an interrupt instead of waiting forever behind a long-running command.
+- **All your models, including subscriptions.** Every model OpenCode supports. Run `/login` to authenticate a provider with an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
+- **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
+- **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
+- **The queue.** Queue a message to run when the current turn finishes: `/queue`, or end a message with `. queue`.
+- **Fork.** `/fork` branches the session into a new thread while the original keeps working. Add `prompt:` to start the fork on something, or `from:` to branch from an earlier message.
+- **Subagents.** When a session delegates to a child session, Roadie tracks it and reports it to plugins (see [Subagents](#subagents)).
+- **Scheduled tasks.** Run a prompt at a future time or on a cron schedule with `roadie send --send-at`; manage them with `/tasks` or `roadie task list`. Sessions can also sleep and wake themselves later.
+- **Thread working directories.** `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree, and the thread keeps that folder across restarts. Creating and merging checkouts is left to your own tooling.
+- **Images and files** in both directions.
+- **OpenCode commands, skills and MCP prompts** become slash commands. Switch agents with `/<name>-agent`.
+- **Shell commands.** Prefix a message with `!` to run it in the thread's working directory.
 
-## Setup
+### How messages reach a busy session
 
-### Native Slack and shared project context
+When you send a message during an active run, OpenCode normally queues it until the current tool call finishes. Roadie adds an interrupt: if the current step is still running after about 3 seconds, Roadie aborts it, sends your message, and the agent continues from there. End the message with `. queue` to wait for the turn to finish instead.
 
-Run `roadie --platform slack` for direct Slack Events API, Web API and Block Kit
-integration. Multiple Discord or Slack channels can share a named project and
-host context while retaining independent policies and sessions. See
-[Native Slack and shared project context](docs/native-slack.md) for setup,
-commands, host ingress, tested behavior and the remaining parity work in #14.
+## Platforms
 
 ### Discord
 
-Create a Discord bot at [discord.com/developers](https://discord.com/developers/applications), install Roadie (see Quick Start), then run `roadie` and follow the interactive prompts.
+Roadie registers its slash commands in each server it is invited to. Channels are linked to projects with `/add-project`, `/create-new-project` or `roadie project add`, or through a [channel configuration file](#channels-and-projects). Long prompts can be sent as a file attachment ("Send message as file"); Roadie reads attachments as the message.
 
-Keep the CLI running; it's the bridge between Discord and your machine.
+Without a channel configuration file, Discord access works like this. A user needs **one** of:
 
-### Headless setup
+- **Server Owner**, **Manage Server** or **Administrator**
+- **A role named "Roadie"** (case-insensitive), the recommended way to grant team access
 
-Service installs configure Roadie entirely through the environment; nothing needs to touch the data directory or Roadie's internal modules.
+A role named **"no-roadie"** blocks a user, even a server owner. Other bots are ignored unless they have the "Roadie" role. A dedicated Discord server for your agents keeps sessions and permissions separate from everything else.
+
+### Slack
+
+The Slack path talks directly to Slack's Events API, Web API and Block Kit and shares the same runtime, queue, scheduler, permission policy and host hooks as Discord. Sessions are Slack threads; the `/roadie` slash command covers session commands (`new`, `abort`, `queue`, `model`, `agent`, `session`, `fork`). Access is governed by the [channel configuration](#channels-and-projects) and the host's identity layer.
+
+Some Discord features have no direct Slack equivalent yet (thread titles, a bot typing indicator, native login dialogs). [docs/native-slack.md](docs/native-slack.md) covers setup, the receiver endpoints, scopes and the remaining differences.
+
+## Channels and projects
+
+A deployment can describe its channels in one file, passed with `--channels-config` or `ROADIE_CHANNELS_CONFIG` (YAML or JSON). It works the same for Discord and Slack:
+
+```yaml
+projects:
+  shared-site:
+    directory: /srv/shared-site
+    context: shared-site-agent   # opaque id handed to your context hook
+    agent: build
+channels:
+  "123456789012345678":          # channel id, category id, or "*"
+    project: shared-site
+    who: [owner, "role:team", "person:<host id>"]   # or "everyone"
+    respond: always              # always | mention | never
+    threads: per-message         # per-message | existing-only
+  "*":
+    respond: never
+```
+
+Channels can also set `directory`, `agent`, `model`, `verbosity`, `capabilities` and `permissions` directly. Resolution walks thread → channel → category → `"*"`, the most specific value winning. With a config file, a channel that resolves to no policy is not answered, and an invalid file keeps the last valid one in effect (or answers nothing). The file is reloaded when it changes.
+
+## Running as a service
+
+### Configuration
+
+Service installs configure Roadie through the environment; nothing needs to touch the data directory or Roadie's internal modules. Every secret also accepts a `_FILE` variant holding the value, so it can live in a file with restricted permissions instead of a unit file. An unreadable or empty `_FILE` is a startup error.
 
 | Variable | Purpose |
 |---|---|
-| `ROADIE_BOT_TOKEN` / `ROADIE_BOT_TOKEN_FILE` | Discord bot token. Saved on startup; the application ID is derived from it. |
-| `ROADIE_SERVICE_TOKEN` / `ROADIE_SERVICE_TOKEN_FILE` | Send token: any secret string. Lets other OS users run `roadie send` through the running bot. Unset, the send endpoint is off. |
-| `ROADIE_LOCK_PORT` | Port of that local endpoint (bound to `127.0.0.1`). |
+| `ROADIE_PLATFORM` | `discord` (default) or `slack`. Same as `--platform`. |
+| `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
+| `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
+| `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
+| `ROADIE_SERVICE_TOKEN` | Send token (any secret string). Lets other OS users send through the running bot. Unset, the send endpoint is off. |
+| `ROADIE_DATA_DIR` | Data directory (default `~/.roadie`). Same as `--data-dir`. |
+| `ROADIE_LOCK_PORT` | Port of the local endpoint (bound to `127.0.0.1`). |
+| `ROADIE_MANAGED` | `1`: the host owns installation and upgrades. |
+| `ROADIE_PLUGINS` | Plugins to load (comma-separated). Same as `--plugin`. |
 
-Every secret accepts a `_FILE` variant holding the value, so it can live in a file with restricted permissions instead of a unit file. An unreadable or empty `_FILE` is a startup error.
+### Sending from other users and processes
 
-A user that holds the send token but cannot open the data directory can still run `roadie send`: it posts the options to the running bot (`POST /roadie/send` on the local endpoint), which runs the send itself as the bot user and streams the output back. Attachments (`--file`) are uploaded with the request. No shared file permissions or privilege escalation are needed; grant access by sharing the token file, for example through a group with read permission.
+A user that holds the send token but cannot open the data directory can still run `roadie send`. It posts the options to the running bot (`POST /roadie/send` on the local endpoint), which runs the send as the bot user and streams the output back; `--file` attachments are uploaded with the request. Grant access by sharing the token file, for example through a group with read permission.
 
-The send token only sends. It does not open the bot's database, so it cannot read stored credentials such as the Discord bot token. Sending a prompt still drives the agent and its tools, so share it as deliberately as shell access. `--pre-run`, which runs a shell command directly, is not available over the endpoint.
+The send token only sends. It cannot open the bot's database, so it cannot read stored credentials. A prompt still drives the agent and its tools, so share it as deliberately as shell access. `--pre-run`, which runs a shell command directly, is not available over the endpoint.
 
-### Running as a service
-
-The contract a service manager (systemd, launchd, a container) can rely on:
+### Service contract
 
 | | |
 |---|---|
-| Data directory | `--data-dir` or `ROADIE_DATA_DIR` (default `~/.roadie`). Owned by the service user. |
-| Single instance | The bot binds `127.0.0.1:<lock port>` (`ROADIE_LOCK_PORT`). A second bot on the same data directory takes over from the first. |
-| Health | `GET http://127.0.0.1:<lock port>/health` returns `{"status":"ok","pid":…,"discordReady":true}`. No auth. `discordReady` is false until the Discord connection is up. |
+| Single instance | The bot binds `127.0.0.1:<lock port>`. A second bot on the same data directory takes over from the first. |
+| Health | `GET http://127.0.0.1:<lock port>/health` returns `{"status":"ok","pid":…,"chatPlatform":"discord","chatReady":true,…}`. No auth. `chatReady` is false until the chat connection is up. |
 | Stop | `SIGTERM` (or `SIGINT`). Shutdown is bounded at 15 seconds. |
 | Graceful restart | `SIGUSR2` restarts in place under the `roadie` wrapper; a supervisor restart (`systemctl restart`) works the same way. |
-| Managed install | `ROADIE_MANAGED=1`: the host owns installation. Roadie never upgrades itself. If a plugin registers a `host_upgrade` handler, `roadie upgrade` and `/upgrade-and-restart` trigger the host's upgrade and report its result; otherwise `roadie upgrade` refuses and `/upgrade-and-restart` is not registered. |
+| Managed install | With `ROADIE_MANAGED=1`, Roadie never upgrades itself. If a plugin registers a `host_upgrade` handler, `roadie upgrade` and `/upgrade-and-restart` run the host's upgrade and report its result; otherwise `roadie upgrade` refuses and `/upgrade-and-restart` is not registered. |
+| Logs | `roadie.log` in the data directory. |
 
 Restart behavior is built in, so the unit needs no pre- or post-start scripts:
 
-- **Orphan cleanup.** The bot records the pid of the agent server it spawns. If a previous run died without cleaning up, the next start stops that leftover server first. A recorded pid that now belongs to some other program is left alone.
+- **Orphan cleanup.** The bot records the pid of the agent server it spawns. If a previous run died without cleaning up, the next start stops that leftover server first. A recorded pid that now belongs to another program is left alone.
 - **Restart continuation.** On shutdown the bot records which threads had a run in progress. The next start posts a notice in each one and gives the session a continuation turn. Records older than 15 minutes only get the notice. Disable with `ROADIE_RESUME_INTERRUPTED=0`.
 
-## Plugins and hooks
+## Extending Roadie
 
-Roadie is extended with plugins, which add **filters** (change a value) and **actions** (react to an event). Load plugins with `--plugin <path-or-package>` (repeatable) or `ROADIE_PLUGINS` (comma-separated). Each plugin exports `register(roadie)`:
+### Plugins and hooks
+
+Plugins add **filters** (change a value) and **actions** (react to an event). Load them with `--plugin <path-or-package>` (repeatable) or `ROADIE_PLUGINS`. Each plugin exports `register(roadie)`:
 
 ```js
 export function register(roadie) {
@@ -157,55 +185,35 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `child_session_started` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
 | `child_session_finished` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
 
-**Subagents.** A session can delegate to a child session (OpenCode: the task tool). The agent backend reports this as `child_session_started` / `child_session_finished` (`status` is `completed` or `error`). `parentSessionId` on `session_idle` and `session_error` is the session that spawned this one: the main session for a delegated child, or the session passed to `roadie send --parent-session` for a thread started that way. Together these let an orchestrator plugin track delegated work without knowing which backend runs it.
+Hosts that prefer external commands to code can use the flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 
-The flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider` keep working: they supply the starting value that filters then refine, so hosts that integrate through external commands need no code.
+Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROADIE_CHANNEL_ID` and `ROADIE_PERSON_ID`, so scripts the agent runs know who they are acting for.
+
+### Subagents
+
+A session can delegate to a child session (in OpenCode, the task tool). The agent backend reports this as `child_session_started` / `child_session_finished` (`status` is `completed` or `error`). `parentSessionId` on `session_idle` and `session_error` is the session that spawned this one: the main session for a delegated child, or the session passed to `roadie send --parent-session` for a thread started that way. Together these let an orchestrator plugin track delegated work without knowing which backend runs it.
 
 ## Commands
 
-Roadie ships a full set of slash commands and a CLI. The most common slash commands:
+The most common Discord slash commands (Slack exposes the session commands through `/roadie <command>`):
 
 | Command | Description |
 |---|---|
-| `/abort` | Stop the current running session |
-| `/model` | Change the AI model for this channel or session |
-| `/agent` | Change the agent for this channel or session |
-| `/login` | Authenticate a provider (OAuth subscription or API key) |
-| `/queue <message>` | Queue a message to send after the current response finishes |
+| `/abort` | Stop the current run |
+| `/queue <message>` | Queue a message for after the current turn |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
-| `/new-session` | Start a session in this project |
-| `/last-sessions` | List recent sessions |
-| `/compact` | Compact the session's context |
-| `/context-usage` | Show how much of the context window is in use |
+| `/model`, `/agent` | Change the model or agent for this channel or session |
+| `/login` | Authenticate a provider (subscription or API key) |
+| `/new-session`, `/last-sessions` | Start a session in this project; list recent ones |
+| `/compact`, `/context-usage` | Compact the context; show how much is in use |
 | `/run-shell-command` | Run a shell command in the thread's working directory |
 | `/mcp` | List and manage MCP servers for this project |
+| `/restart-opencode-server` | Restart the agent backend while staying connected to chat |
 
-The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-discord`. Run `roadie --help` or `roadie <command> --help` for the details.
-
-## Access Control
-
-Roadie checks Discord permissions before processing any message. Users need **one** of:
-
-- **Server Owner**
-- **Manage Server** permission
-- **Administrator** permission
-- **"Roadie" role** — create a role with this name (case-insensitive) and assign it to trusted users
-
-The "Roadie" role is the recommended approach for team access. Messages from users without any of these are ignored.
-
-- **Blocking access**: create a role named **"no-roadie"** (case-insensitive) to block specific users, even server owners.
-- **Multi-agent orchestration**: other Discord bots are ignored by default. Assign the "Roadie" role to another bot to let it trigger Roadie sessions.
-
-## Best Practices
-
-- **Create a dedicated Discord server** for your agents. This keeps coding sessions separate and gives you full control over permissions.
-- **Use the "Roadie" role** for team access.
-- **Send long prompts as file attachments.** Tap the plus icon and use "Send message as file" for longer prompts. Roadie reads file attachments as your message.
+The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
 
 ## Troubleshooting
 
-If sessions stop responding, fail to start, or the bot behaves unexpectedly, run `/restart-opencode-server` in any channel. This restarts the backend OpenCode server while keeping the bot connected to Discord. It fixes most transient issues.
+If sessions stop responding or fail to start, run `/restart-opencode-server`. It restarts the agent backend while keeping the bot connected, which fixes most transient issues.
 
-If the problem persists, or if the issue is with the bot itself (crashes, messages not picked up, threads not created), run `/upgrade-and-restart` to update to the latest release and do a full restart. On managed installs (`ROADIE_MANAGED=1`), `/upgrade-and-restart` is available only when the host registered an upgrade handler; otherwise restart through the host's service manager.
-
-Logs are in `roadie.log` in the data directory (`~/.roadie` by default).
+If the bot itself misbehaves (crashes, messages not picked up, threads not created), restart it: `/upgrade-and-restart` on a self-managed install, or the service manager on a managed one. Check `roadie.log` in the data directory for the cause.
