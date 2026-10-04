@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.34.1] - 2026-10-04
+
+### Fixed
+- derive custom-dir lock ports below the OS ephemeral range
+
 ## [0.34.0] - 2026-10-04
 
 ### Added
