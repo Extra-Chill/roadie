@@ -1777,3 +1777,87 @@ export function getTokenUsageSessionIdsForIdle({
     }),
   ]
 }
+
+/**
+ * How the latest user turn ended, judged when the session goes idle after a
+ * restart continuation prompt was sent.
+ * - `pending`: the continuation prompt is not in the event stream yet.
+ * - `superseded`: a later user message replaced it; its own turn replies.
+ * - `answered`: the agent produced output (text, tools, reasoning).
+ * - `aborted-empty`: every assistant message was aborted, or none was
+ *   created, and nothing was produced. The thread would stay silent.
+ * - `failed`: the turn ended with a non-abort error, which is shown already.
+ */
+export type ContinuationTurnOutcome = 'pending' | 'superseded' | 'answered' | 'aborted-empty' | 'failed'
+
+export function getContinuationTurnOutcome({
+  events,
+  sessionId,
+  promptText,
+  priorUserMessageIds,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  promptText: string
+  /** User messages that existed before the continuation was sent. */
+  priorUserMessageIds: ReadonlySet<string>
+}): ContinuationTurnOutcome {
+  const continuationIds = new Set<string>()
+  for (const entry of events) {
+    const event = entry.event
+    if (event.type !== 'part') continue
+    const part = event.part
+    if (part.sessionId !== sessionId || priorUserMessageIds.has(part.messageId)) continue
+    // Long texts can be pruned from the buffer, so text may be missing here.
+    if (part.kind === 'text' && typeof part.text === 'string' && part.text.includes(promptText)) {
+      continuationIds.add(part.messageId)
+    }
+  }
+  const latestUser = getLatestUserMessage({ events, sessionId })
+  if (!latestUser || !continuationIds.has(latestUser.id)) {
+    // An idle from the turn before the continuation, or a newer message.
+    return continuationIds.size > 0 ? 'superseded' : 'pending'
+  }
+
+  const assistantIds = getAssistantMessageIdsForLatestUserTurn({ events, sessionId })
+  const latestById = new Map<string, AgentMessage>()
+  let producedOutput = false
+  let seenContinuation = false
+  // OpenCode can report the abort as a session error before the aborted
+  // assistant message update arrives, sometimes only after the idle.
+  let abortErrorAfterContinuation = false
+  for (const entry of events) {
+    const event = entry.event
+    if (event.type === 'message' && event.message.id === latestUser.id) {
+      seenContinuation = true
+      continue
+    }
+    if (event.type === 'error') {
+      if (seenContinuation && event.sessionId === sessionId && event.error?.name === 'MessageAbortedError') {
+        abortErrorAfterContinuation = true
+      }
+      continue
+    }
+    if (event.type === 'message' && assistantIds.has(event.message.id)) {
+      latestById.set(event.message.id, event.message)
+      continue
+    }
+    if (event.type !== 'part' || !assistantIds.has(event.part.messageId)) continue
+    if (event.part.kind !== 'step-start' && event.part.kind !== 'step-finish') {
+      producedOutput = true
+    }
+  }
+  if (producedOutput) {
+    return 'answered'
+  }
+  const messages = [...latestById.values()]
+  if (messages.some((message) => message.error && message.error.name !== 'MessageAbortedError')) {
+    return 'failed'
+  }
+  const abortedOrUnfinished = (message: AgentMessage) =>
+    message.error?.name === 'MessageAbortedError' || (abortErrorAfterContinuation && !message.finish)
+  if (messages.every(abortedOrUnfinished)) {
+    return 'aborted-empty'
+  }
+  return 'answered'
+}

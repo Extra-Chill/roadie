@@ -273,3 +273,9 @@ export function consumeInterruptedSessions({
 export const RESTART_CONTINUATION_PROMPT =
   'Roadie restarted while you were working on this, which interrupted your last turn. ' +
   'Continue where you left off. If the work was already finished, say so briefly.'
+
+/** The continuation prompt is sent at most this many times per restart. */
+export const RESTART_CONTINUATION_MAX_ATTEMPTS = 2
+
+export const RESTART_CONTINUATION_FAILED_NOTICE =
+  "Roadie restarted and couldn't resume this run; send a message to continue."

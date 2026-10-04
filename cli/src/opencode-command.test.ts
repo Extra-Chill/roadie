@@ -108,7 +108,7 @@ describe('selectResolvedCommand', () => {
 describe('buildOpencodeServeArgs', () => {
   test('always passes --hostname so opencode.json cannot bind 0.0.0.0', async () => {
     const { buildOpencodeServeArgs } = await import('./opencode.js')
-    expect(buildOpencodeServeArgs({ port: 4096 })).toEqual([
+    expect(buildOpencodeServeArgs({ port: 4096, logLevel: 'WARN' })).toEqual([
       'serve',
       '--port',
       '4096',
@@ -123,7 +123,7 @@ describe('buildOpencodeServeArgs', () => {
   test('passes --hostname when set', async () => {
     const { buildOpencodeServeArgs } = await import('./opencode.js')
     expect(
-      buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0' }),
+      buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0', logLevel: 'WARN' }),
     ).toEqual([
       'serve',
       '--port',
@@ -134,6 +134,33 @@ describe('buildOpencodeServeArgs', () => {
       '--log-level',
       'WARN',
     ])
+  })
+})
+
+describe('OpenCode server log level', () => {
+  test('defaults to INFO so cancelled runs keep their cause', async () => {
+    const { buildOpencodeServeArgs, getOpencodeLogLevel } = await import('./opencode.js')
+    expect(getOpencodeLogLevel({})).toBe('INFO')
+    expect(buildOpencodeServeArgs({ port: 4096, logLevel: getOpencodeLogLevel({}) }).slice(-2)).toEqual([
+      '--log-level',
+      'INFO',
+    ])
+  })
+
+  test('ROADIE_OPENCODE_LOG_LEVEL overrides it; unknown values fall back to INFO', async () => {
+    const { getOpencodeLogLevel } = await import('./opencode.js')
+    expect(getOpencodeLogLevel({ ROADIE_OPENCODE_LOG_LEVEL: 'warn' })).toBe('WARN')
+    expect(getOpencodeLogLevel({ ROADIE_OPENCODE_LOG_LEVEL: 'debug' })).toBe('DEBUG')
+    expect(getOpencodeLogLevel({ ROADIE_OPENCODE_LOG_LEVEL: 'loud' })).toBe('INFO')
+  })
+
+  test('only structured INFO and DEBUG lines are kept out of roadie.log', async () => {
+    const { isVerboseOpencodeLogLine } = await import('./opencode.js')
+    expect(isVerboseOpencodeLogLine('timestamp=2026-10-04T19:45:37.700Z level=INFO run=ab message=cancel session.id=ses_1')).toBe(true)
+    expect(isVerboseOpencodeLogLine('timestamp=2026-10-04T19:45:37.700Z level=DEBUG run=ab message=x')).toBe(true)
+    expect(isVerboseOpencodeLogLine('timestamp=2026-10-04T19:45:37.700Z level=WARN run=ab message=x')).toBe(false)
+    expect(isVerboseOpencodeLogLine('timestamp=2026-10-04T19:45:37.700Z level=ERROR run=ab message=process error=Aborted')).toBe(false)
+    expect(isVerboseOpencodeLogLine('[dm-agent-sync] refreshed Data Machine memory in 1171ms')).toBe(false)
   })
 })
 
