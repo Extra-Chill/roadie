@@ -229,8 +229,6 @@ import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
-/** Reaction on a chat message that is waiting for the agent's next step boundary. */
-const PENDING_DELIVERY_REACTION = '⏳'
 const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
 
 function extractToastSessionId({ message }: { message: string }): string | undefined {
@@ -1096,7 +1094,7 @@ export class ThreadSessionRuntime {
   // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
   // Chat messages sent while the session was busy, oldest first. Each carries
-  // a pending reaction until the agent picks it up at a step boundary.
+  // a pending marker until the agent picks it up at a step boundary.
   private pendingDeliveryMessageIds: string[] = []
   private seenUserMessageIds = new Set<string>()
 
@@ -2400,10 +2398,10 @@ export class ThreadSessionRuntime {
   }
 
   private async setPendingReaction(messageId: string, on: boolean): Promise<void> {
-    const result = await this.chat.setOwnReaction(messageId, PENDING_DELIVERY_REACTION, on)
+    const result = await this.chat.setPendingMarker(messageId, on)
     if (result instanceof Error) {
       logger.warn(
-        `[PENDING] Failed to ${on ? 'add' : 'remove'} pending reaction on ${messageId} in thread ${this.threadId}: ${result.message}`,
+        `[PENDING] Failed to ${on ? 'add' : 'remove'} pending marker on ${messageId} in thread ${this.threadId}: ${result.message}`,
       )
     }
   }

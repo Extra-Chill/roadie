@@ -308,6 +308,14 @@ export class SlackChatThread implements ChatThread {
   editMessageText(messageId: string, content: string) {
     return this.options.api.edit({ channel: this.parentId, ts: messageId, text: content })
   }
+  async setPendingMarker(messageId: string, on: boolean) {
+    const result = await this.options.api.call(
+      on ? 'reactions.add' : 'reactions.remove',
+      { channel: this.parentId, timestamp: messageId, name: 'hourglass_flowing_sand' },
+      z.object({}),
+    )
+    return result instanceof Error ? result : undefined
+  }
   async sendTyping() {}
   async rename() {}
   async channelTopic() {

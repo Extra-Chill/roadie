@@ -94,8 +94,8 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       return result instanceof Error ? result : undefined
     },
 
-    async setOwnReaction(messageId, emoji, on) {
-      const route = Routes.channelMessageOwnReaction(thread.id, messageId, encodeURIComponent(emoji))
+    async setPendingMarker(messageId, on) {
+      const route = Routes.channelMessageOwnReaction(thread.id, messageId, encodeURIComponent('⏳'))
       const result = await (on ? thread.client.rest.put(route) : thread.client.rest.delete(route))
         .catch((e) => new DiscordOperationError({ operation: on ? 'addReaction' : 'removeReaction', cause: e }))
       return result instanceof Error ? result : undefined
