@@ -1,6 +1,7 @@
 // Clear model overrides (session first, else channel).
 // Invoked from the /model UI via a "Clear override" button.
 
+import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import {
   ChannelType,
   type TextChannel,
@@ -116,7 +117,7 @@ export async function clearModelOverride({
       sessionId,
       channelId: targetChannelId,
       appId,
-      getClient,
+      getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
       directory: projectDirectory,
     })
 

@@ -1,5 +1,6 @@
 // /model command - Set the preferred model for this channel or session.
 
+import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import {
   ButtonBuilder,
   ButtonStyle,
@@ -438,16 +439,16 @@ export async function getCurrentModelInfo({
         ? await getChannelAgent(channelId)
         : undefined)
   if (effectiveAgent) {
-    const agentsResponse = await getClient().app.agents({ directory })
-    if (agentsResponse.data) {
-      const agent = agentsResponse.data.find((a) => a.name === effectiveAgent)
+    const agentsResponse = await getClient().catalog.agents({ directory })
+    if (!(agentsResponse instanceof Error)) {
+      const agent = agentsResponse.find((a) => a.name === effectiveAgent)
       if (agent?.model) {
-        const model = `${agent.model.providerID}/${agent.model.modelID}`
+        const model = `${agent.model.providerId}/${agent.model.modelId}`
         return {
           type: 'agent',
           model,
-          providerID: agent.model.providerID,
-          modelID: agent.model.modelID,
+          providerID: agent.model.providerId,
+          modelID: agent.model.modelId,
           agentName: effectiveAgent,
         }
       }
@@ -566,7 +567,7 @@ export async function handleModelCommand({
         sessionId,
         channelId: targetChannelId,
         appId: effectiveAppId,
-        getClient,
+        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
         directory: projectDirectory,
       })
     }
@@ -585,7 +586,7 @@ export async function handleModelCommand({
         sessionId,
         channelId: targetChannelId,
         appId: effectiveAppId,
-        getClient,
+        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
         directory: projectDirectory,
       }),
       getVariantCascade({

@@ -4,7 +4,7 @@
 // or errors. A thrown/transport failure becomes OpenCodeSdkError; a request
 // OpenCode answered with an error becomes AgentRequestError.
 
-import type { OpencodeClient, Part as OpenCodePart } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient, Part as OpenCodePart, Provider as OpenCodeProvider } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
 import { extractSdkErrorMessage } from '../opencode.js'
 import { toAgentMessage, toAgentPart, toAgentSession } from './opencode-events.js'
@@ -12,6 +12,8 @@ import type { AgentStatus } from './events.js'
 import {
   AgentRequestError,
   type AgentBackend,
+  type AgentCatalogOperations,
+  type AgentProviderInfo,
   type AgentModelSelection,
   type AgentPromptPart,
   type AgentSessionOperations,
@@ -124,6 +126,53 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
   }
 }
 
+export function toAgentProvider(provider: OpenCodeProvider): AgentProviderInfo {
+  return {
+    id: provider.id,
+    name: provider.name,
+    models: Object.fromEntries(Object.entries(provider.models ?? {}).map(([id, model]) => [id, {
+      id,
+      name: model.name || id,
+      ...(model.limit?.context ? { contextLimit: model.limit.context } : {}),
+      variants: Object.keys(model.variants ?? {}).filter((v) => v.trim().length > 0),
+    }])),
+  }
+}
+
+export function openCodeCatalogOperations(client: OpencodeClient): AgentCatalogOperations {
+  return {
+    async providers({ directory }) {
+      const data = await call('provider.list', () => client.provider.list({ directory }))
+      if (data instanceof Error) return data
+      if (!data) return new AgentRequestError({ detail: 'OpenCode returned no providers' })
+      return {
+        providers: data.all.map(toAgentProvider),
+        connected: data.connected,
+        defaults: data.default,
+      }
+    },
+    async config({ directory }) {
+      const data = await call('config.get', () => client.config.get({ directory }))
+      if (data instanceof Error) return data
+      return {
+        ...(data?.model && { model: data.model }),
+        ...(data?.small_model && { smallModel: data.small_model }),
+      }
+    },
+    async agents({ directory }) {
+      const data = await call('app.agents', () => client.app.agents({ directory }))
+      if (data instanceof Error) return data
+      return (data ?? []).map((agent) => ({
+        name: agent.name,
+        ...(agent.description && { description: agent.description }),
+        mode: agent.mode,
+        ...(agent.hidden && { hidden: true }),
+        ...(agent.model && { model: { providerId: agent.model.providerID, modelId: agent.model.modelID } }),
+      }))
+    },
+  }
+}
+
 const backends = new WeakMap<OpencodeClient, AgentBackend>()
 
 /** The Roadie backend for an OpenCode client. Cached per client. */
@@ -132,9 +181,7 @@ export function toOpenCodeBackend(client: OpencodeClient): AgentBackend {
   if (cached) return cached
   const backend: AgentBackend = {
     sessions: openCodeSessionOperations(client),
-    provider: client.provider,
-    config: client.config,
-    app: client.app,
+    catalog: openCodeCatalogOperations(client),
   }
   backends.set(client, backend)
   return backend

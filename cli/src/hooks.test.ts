@@ -13,7 +13,7 @@ import {
   resetHooks,
 } from './hooks.js'
 import { loadPlugins, resolvePluginSpecs } from './plugins.js'
-import { getAgentBackendProvider, resolveAgentBackendProvider } from './agent-backend/registry.js'
+import { getAgentBackendProvider, resolveAgentBackendProvider, withCatalogFilters } from './agent-backend/registry.js'
 import { openCodeBackendProvider } from './agent-backend/opencode.js'
 import type { AgentBackendProvider } from './agent-backend/types.js'
 import { isChannelPolicyConfigured, resolveChannelPolicy, setChannelsConfigPath } from './channel-policy.js'
@@ -116,7 +116,7 @@ describe('built-in seams honor their filters', () => {
     addFilter('agent_backend', () => fake)
     expect(getAgentBackendProvider().id).toBe('opencode')
     resolveAgentBackendProvider()
-    expect(getAgentBackendProvider()).toBe(fake)
+    expect(getAgentBackendProvider().id).toBe('fake')
   })
 
   test('channel_policy can supply a policy without a config file', () => {
@@ -170,5 +170,26 @@ describe('built-in seams honor their filters', () => {
     const after = getOpencodeSystemMessage({ sessionId: 's1' })
     expect(after).not.toContain('## diagrams')
     expect(after).toContain('## house rules')
+  })
+
+  test('agent_providers and agent_definitions filter any backend catalog', async () => {
+    const catalog = withCatalogFilters({
+      providers: async () => ({
+        providers: [{ id: 'a', name: 'A', models: { keep: { id: 'keep', name: 'Keep', variants: [] }, drop: { id: 'drop', name: 'Drop', variants: [] } } }],
+        connected: ['a'],
+        defaults: {},
+      }),
+      config: async () => ({}),
+      agents: async () => [{ name: 'build', mode: 'primary' }, { name: 'secret', mode: 'primary' }],
+    })
+    addFilter('agent_providers', (value) => ({
+      ...value,
+      providers: value.providers.map((p) => ({ ...p, models: { keep: p.models.keep! } })),
+    }))
+    addFilter('agent_definitions', (agents) => agents.filter((a) => a.name !== 'secret'))
+    const providers = await catalog.providers({})
+    if (providers instanceof Error) throw providers
+    expect(Object.keys(providers.providers[0]!.models)).toEqual(['keep'])
+    expect(await catalog.agents({})).toEqual([{ name: 'build', mode: 'primary' }])
   })
 })

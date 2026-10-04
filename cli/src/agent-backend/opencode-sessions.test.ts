@@ -4,7 +4,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
-import { openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
+import { openCodeCatalogOperations, openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
 import { AgentRequestError } from './types.js'
 
 function fakeClient(session: Record<string, unknown>, permission: Record<string, unknown> = {}) {
@@ -131,4 +131,60 @@ describe('openCodeSessionOperations', () => {
 test('toOpenCodeBackend caches one backend per client', () => {
   const client = fakeClient({})
   expect(toOpenCodeBackend(client)).toBe(toOpenCodeBackend(client))
+})
+
+describe('openCodeCatalogOperations', () => {
+  function catalogClient(parts: Record<string, unknown>) {
+    return { session: {}, permission: {}, provider: {}, config: {}, app: {}, ...parts } as unknown as OpencodeClient
+  }
+
+  test('providers translate models, context limits and variants', async () => {
+    const ops = openCodeCatalogOperations(catalogClient({
+      provider: {
+        list: async () => ({
+          data: {
+            all: [{
+              id: 'anthropic', name: 'Anthropic',
+              models: {
+                claude: { name: 'Claude', limit: { context: 200000 }, variants: { low: {}, high: {}, ' ': {} } },
+                plain: { name: '' },
+              },
+            }],
+            connected: ['anthropic'],
+            default: { anthropic: 'claude' },
+          },
+        }),
+      },
+    }))
+    expect(await ops.providers({ directory: '/p' })).toEqual({
+      providers: [{
+        id: 'anthropic', name: 'Anthropic',
+        models: {
+          claude: { id: 'claude', name: 'Claude', contextLimit: 200000, variants: ['low', 'high'] },
+          plain: { id: 'plain', name: 'plain', variants: [] },
+        },
+      }],
+      connected: ['anthropic'],
+      defaults: { anthropic: 'claude' },
+    })
+  })
+
+  test('config and agents translate to Roadie shape', async () => {
+    const ops = openCodeCatalogOperations(catalogClient({
+      config: { get: async () => ({ data: { model: 'a/b', small_model: 'a/c' } }) },
+      app: {
+        agents: async () => ({
+          data: [
+            { name: 'build', mode: 'primary', model: { providerID: 'a', modelID: 'b' } },
+            { name: 'explore', mode: 'subagent', hidden: true, description: 'look' },
+          ],
+        }),
+      },
+    }))
+    expect(await ops.config({})).toEqual({ model: 'a/b', smallModel: 'a/c' })
+    expect(await ops.agents({})).toEqual([
+      { name: 'build', mode: 'primary', model: { providerId: 'a', modelId: 'b' } },
+      { name: 'explore', description: 'look', mode: 'subagent', hidden: true },
+    ])
+  })
 })

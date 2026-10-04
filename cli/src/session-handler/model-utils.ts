@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
-import type { Provider } from '@opencode-ai/sdk/v2'
+import type { AgentProviderInfo } from '../agent-backend/types.js'
 import type { AgentCatalogGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
@@ -234,7 +234,7 @@ function flattenProviderModels({
   providers,
   connected,
 }: {
-  providers: Provider[]
+  providers: AgentProviderInfo[]
   connected: string[]
 }): ListedModel[] {
   const connectedSet = new Set(connected)
@@ -266,16 +266,11 @@ export async function listModels({
   if (cached?.status === 'pending') return cached.promise
 
   const promise = (async () => {
-    const providersResponse = await getClient()
-      .provider.list({ directory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error) return providersResponse
-    if (!providersResponse.data) {
-      return new OpenCodeSdkError({ operation: 'provider.list' })
-    }
+    const catalog = await getClient().catalog.providers({ directory })
+    if (catalog instanceof Error) return new OpenCodeSdkError({ operation: 'provider.list', cause: catalog })
     return flattenProviderModels({
-      providers: providersResponse.data.all,
-      connected: providersResponse.data.connected,
+      providers: catalog.providers,
+      connected: catalog.connected,
     })
   })()
 
@@ -413,34 +408,25 @@ export async function getDefaultModel({
   }
 
   // Fetch connected providers to validate any model we return
-  const providersResponse = await getClient().provider.list({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-  if (providersResponse instanceof Error) {
+  const catalog = await getClient().catalog.providers({ directory })
+  if (catalog instanceof Error) {
     sessionLogger.log(
       `[MODEL] Failed to fetch providers for default model:`,
-      providersResponse.message,
+      catalog.message,
     )
     return undefined
   }
-  if (!providersResponse.data) {
-    return undefined
-  }
 
-  const {
-    connected,
-    default: defaults,
-    all: providers,
-  } = providersResponse.data
+  const { connected, defaults, providers } = catalog
   if (connected.length === 0) {
     sessionLogger.log(`[MODEL] No connected providers found`)
     return undefined
   }
 
   // 1. Check OpenCode config.model setting (highest priority after user preference)
-  const configResponse = await getClient().config.get({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
-  if (!(configResponse instanceof Error) && configResponse.data?.model) {
-    const configModel = parseModelId(configResponse.data.model)
+  const configResponse = await getClient().catalog.config({ directory })
+  if (!(configResponse instanceof Error) && configResponse.model) {
+    const configModel = parseModelId(configResponse.model)
     if (configModel && isModelValid(configModel, connected, providers)) {
       sessionLogger.log(
         `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,
@@ -449,7 +435,7 @@ export async function getDefaultModel({
     }
     if (configModel) {
       sessionLogger.log(
-        `[MODEL] Config model ${configResponse.data.model} not available, checking recent`,
+        `[MODEL] Config model ${configResponse.model} not available, checking recent`,
       )
     }
   }

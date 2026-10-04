@@ -7,6 +7,7 @@
 // The source session keeps running. The fork runs with the source agent,
 // model and pinned system prompt so its requests reuse the source prompt cache.
 
+import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import { parsePersistedEvent } from '../session-handler/persisted-events.js'
 import type { EventBufferEntry } from '../session-handler/event-stream-state.js'
 import {
@@ -218,7 +219,7 @@ export async function forkSessionToThread({
       targetSessionId: forkedSession.id,
       channelId,
       appId,
-      getClient: getClientResult,
+      getClient: () => ({ ...openCodeCatalogGetter(getClientResult)(), session: getClientResult().session }),
       directory: sdkDirectory,
     }),
     copySessionSystemPrompt({

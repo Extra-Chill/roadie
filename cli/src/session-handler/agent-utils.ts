@@ -64,8 +64,7 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: undefined, agents: [] }
   }
 
-  const agentsResponse = await getClient().app.agents({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
+  const agentsResponse = await getClient().catalog.agents({ directory })
   if (agentsResponse instanceof Error) {
     if (agentPreference) {
       throw new Error(`Failed to validate agent "${agentPreference}"`, {
@@ -75,7 +74,7 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: undefined, agents: [] }
   }
 
-  const availableAgents = agentsResponse.data || []
+  const availableAgents = agentsResponse
   // Non-hidden primary/all agents for system message context
   const agents: AgentInfo[] = availableAgents
     .filter((a) => {

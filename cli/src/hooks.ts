@@ -13,7 +13,7 @@
 // merging; any string name works at runtime.
 
 import { createLogger, LogPrefix } from './logger.js'
-import type { AgentBackendProvider } from './agent-backend/types.js'
+import type { AgentBackendProvider, AgentDefinition, AgentProviderCatalog } from './agent-backend/types.js'
 import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
@@ -35,6 +35,10 @@ export interface RoadieFilters {
   system_prompt_sections: [PromptSection[], { sessionId?: string }]
   /** Host context (memory) for a session start or a turn. */
   context_sections: [ContextSection[], ContextRequest]
+  /** Providers and models offered to users (e.g. hide or rename models). */
+  agent_providers: [AgentProviderCatalog, { directory?: string }]
+  /** Agents offered to users and validated against. */
+  agent_definitions: [AgentDefinition[], { directory?: string }]
 }
 
 /** Action name -> context. */

@@ -1358,14 +1358,12 @@ export class ThreadSessionRuntime {
       directory: this.sdkDirectory,
     })
     if (variantModelInfo.type === 'none') return
-    const providersResponse = await getClient()
-      .provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error || !providersResponse.data) return
+    const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
+    if (catalog instanceof Error) return
     const matchedVariant = matchThinkingValue({
       requestedValue: variant,
       availableValues: getThinkingValuesForModel({
-        providers: providersResponse.data.all,
+        providers: catalog.providers,
         providerId: variantModelInfo.providerID,
         modelId: variantModelInfo.modelID,
       }),
@@ -2279,22 +2277,17 @@ export class ThreadSessionRuntime {
     if (!client) {
       return
     }
-    const providersResponse = await client.provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error) {
+    const catalog = await client.catalog.providers({ directory: this.sdkDirectory })
+    if (catalog instanceof Error) {
       logger.error(
         'Failed to fetch provider info for context limit:',
-        providersResponse,
+        catalog,
       )
       return
     }
-    const provider = providersResponse.data?.all?.find(
-      (p) => {
-        return p.id === providerID
-      },
-    )
-    const model = provider?.models?.[modelID]
-    const contextLimit = model?.limit?.context || getFallbackContextLimit({
+    const provider = catalog.providers.find((p) => p.id === providerID)
+    const model = provider?.models[modelID]
+    const contextLimit = model?.contextLimit || getFallbackContextLimit({
       providerID,
     })
     if (!contextLimit) {
@@ -3491,13 +3484,12 @@ export class ThreadSessionRuntime {
         if (!preferredVariant) {
           return undefined
         }
-        const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-          .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-        if (providersResponse instanceof Error || !providersResponse.data) {
+        const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
+        if (catalog instanceof Error) {
           return undefined
         }
         const availableValues = getThinkingValuesForModel({
-          providers: providersResponse.data.all,
+          providers: catalog.providers,
           providerId: modelField.providerID,
           modelId: modelField.modelID,
         })
@@ -4491,13 +4483,12 @@ export class ThreadSessionRuntime {
       if (!preferredVariant) {
         return undefined
       }
-      const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-        .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-      if (providersResponse instanceof Error || !providersResponse.data) {
+      const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
+      if (catalog instanceof Error) {
         return undefined
       }
       const availableValues = getThinkingValuesForModel({
-        providers: providersResponse.data.all,
+        providers: catalog.providers,
         providerId: earlyModelParam.providerID,
         modelId: earlyModelParam.modelID,
       })
@@ -5124,9 +5115,9 @@ export class ThreadSessionRuntime {
                 directory: this.sdkDirectory,
               })
             : null,
-          client.provider.list({
+          client.catalog.providers({
             directory: this.sdkDirectory,
-          }).catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+          }),
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
@@ -5153,15 +5144,15 @@ export class ThreadSessionRuntime {
           : undefined
 
         const providers = providersResult && !(providersResult instanceof Error)
-          ? providersResult.data?.all ?? []
+          ? providersResult.providers
           : []
         let contextLimit = fallbackLimit
         if (providers.length > 0) {
           const provider = providers.find((p) => {
             return p.id === runInfo.providerID
           })
-          const model = provider?.models?.[runInfo.model || '']
-          contextLimit = model?.limit?.context || contextLimit
+          const model = provider?.models[runInfo.model || '']
+          contextLimit = model?.contextLimit || contextLimit
         }
 
         if (contextLimit) {

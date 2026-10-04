@@ -4,6 +4,7 @@
 // the prompt is sent with that agent and the session keeps that agent afterwards.
 // Optional last `variant` option sets the model thinking level for that agent.
 
+import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -388,7 +389,7 @@ async function resolveAgentModelInfo({
     channelId: context.channelId,
     appId: context.appId,
     agentPreference: agentName,
-    getClient,
+    getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
     directory: context.workingDirectory,
   })
 }

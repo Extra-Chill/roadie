@@ -4,14 +4,16 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { getAgentBackendProvider, setAgentBackendProvider } from './registry.js'
 import { openCodeBackendProvider } from './opencode.js'
-import type { AgentBackend, AgentBackendProvider } from './types.js'
+import type { AgentBackendProvider } from './types.js'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { toOpenCodeBackend } from './opencode-sessions.js'
 import {
   clearModelListCache,
   validateCliModelOption,
 } from '../session-handler/model-utils.js'
 
 function fakeProvider(calls: string[]): AgentBackendProvider {
-  const backend = {
+  const backend = toOpenCodeBackend({
     provider: {
       list: async ({ directory }: { directory?: string }) => {
         calls.push(`provider.list:${directory}`)
@@ -30,7 +32,7 @@ function fakeProvider(calls: string[]): AgentBackendProvider {
         }
       },
     },
-  } as unknown as AgentBackend
+  } as unknown as OpencodeClient)
   return {
     id: 'fake',
     getBackend: () => backend,
@@ -53,8 +55,7 @@ describe('agent backend registry', () => {
   })
 
   test('defaults to the OpenCode provider', () => {
-    expect(getAgentBackendProvider()).toBe(openCodeBackendProvider)
-    expect(getAgentBackendProvider().id).toBe('opencode')
+    expect(getAgentBackendProvider().id).toBe(openCodeBackendProvider.id)
   })
 
   test('session runtime model validation goes through the injected backend', async () => {
@@ -77,6 +78,6 @@ describe('agent backend registry', () => {
     const undo = setAgentBackendProvider(fakeProvider([]))
     expect(getAgentBackendProvider().id).toBe('fake')
     undo()
-    expect(getAgentBackendProvider()).toBe(openCodeBackendProvider)
+    expect(getAgentBackendProvider().id).toBe(openCodeBackendProvider.id)
   })
 })

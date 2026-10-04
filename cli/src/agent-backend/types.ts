@@ -1,14 +1,13 @@
 // Agent backend seam for the session runtime.
 //
-// Session operations (`sessions`) are defined in Roadie's own terms and return
-// Roadie types (./events.ts) or an Error, so a second backend implements them
-// directly. The catalog (providers/models, config, agents) is still
-// OpenCode-shaped; it moves to Roadie types in a follow-up step of #5.
+// Session operations (`sessions`) and listings (`catalog`) are defined in
+// Roadie's own terms and return Roadie types or an Error, so a second backend
+// implements them directly. Ids (providers, models, agents) are open strings.
 //
 // Keep this list in sync with real call sites. Add an operation only when the
 // runtime starts using it.
 
-import type { Event as OpenCodeEvent, OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
 import type { AgentMessage, AgentPart, AgentSession, AgentStatus } from './events.js'
 
@@ -78,12 +77,50 @@ export type AgentSessionOperations = {
   }): Promise<void | Error>
 }
 
-/** Model/provider, config and agent listings. Still OpenCode-shaped (#5). */
-export type AgentCatalog = {
-  provider: Pick<OpencodeClient['provider'], 'list'>
-  config: Pick<OpencodeClient['config'], 'get'>
-  app: Pick<OpencodeClient['app'], 'agents'>
+/** A model a provider offers. */
+export type AgentModelInfo = {
+  id: string
+  name: string
+  /** Context window in tokens, when known. */
+  contextLimit?: number
+  /** Thinking levels / variants the model accepts, e.g. "low", "high". */
+  variants: string[]
 }
+
+/** A model provider and its models, keyed by model id. */
+export type AgentProviderInfo = {
+  id: string
+  name: string
+  models: Record<string, AgentModelInfo>
+}
+
+export type AgentProviderCatalog = {
+  providers: AgentProviderInfo[]
+  /** Ids of providers that are authenticated and usable. */
+  connected: string[]
+  /** Default model id per provider id. */
+  defaults: Record<string, string>
+}
+
+/** An agent the backend can run a session as. */
+export type AgentDefinition = {
+  name: string
+  description?: string
+  /** "primary" agents are user-selectable; "subagent" ones are delegated to; "all" are both. */
+  mode: string
+  hidden?: boolean
+  model?: AgentModelSelection
+}
+
+/** Model/provider, configuration and agent listings, in Roadie terms. */
+export type AgentCatalogOperations = {
+  providers(input: { directory?: string }): Promise<AgentProviderCatalog | Error>
+  /** Backend-configured default models, as "provider/model" ids. */
+  config(input: { directory?: string }): Promise<{ model?: string; smallModel?: string } | Error>
+  agents(input: { directory?: string }): Promise<AgentDefinition[] | Error>
+}
+
+export type AgentCatalog = { catalog: AgentCatalogOperations }
 
 export type AgentBackend = AgentCatalog & {
   sessions: AgentSessionOperations
