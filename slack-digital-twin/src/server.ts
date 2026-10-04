@@ -86,6 +86,8 @@ async function parseUnknownBody(request: Request): Promise<unknown> {
 export function createServer(config: ServerConfig): ServerComponents {
   const { prisma, workspaceId, botUserId, botToken, onViewOpen } = config
   const assistantThreadStatusByThread = new Map<string, string>()
+  const files = new Map<string, { id: string; name: string; mimetype: string; url_private: string; bytes: Buffer }>()
+  let fileSequence = 0
 
   const app = new Spiceflow({ basePath: '' }).onError(({ error }) => {
     if (error instanceof Response) {
@@ -625,35 +627,68 @@ export function createServer(config: ServerConfig): ServerComponents {
   })
 
   // --- files.getUploadURLExternal ---
-  // Stub: returns a fake upload URL
   app.post('/api/files.getUploadURLExternal', async ({ request }) => {
     const body = await parseBody(request)
     const filename = body['filename'] ?? 'file'
     const length = body['length'] ?? '0'
     const origin = new URL(request.url).origin
+    const id = `FUPLOAD${++fileSequence}`
+    files.set(id, { id, name: filename, mimetype: filename.endsWith('.png') ? 'image/png' : 'application/octet-stream', url_private: `${origin}/private-file/${id}`, bytes: Buffer.alloc(0) })
 
     return Response.json({
       ok: true,
-      upload_url: `${origin}/fake-upload/${filename}`,
-      file_id: `F${Date.now()}`,
+      upload_url: `${origin}/fake-upload/${id}`,
+      file_id: id,
     })
   })
 
   // --- fake upload target for files.getUploadURLExternal ---
   // Accepts both POST and PUT so bridge tests can exercise upload fallback logic.
-  app.post('/fake-upload/:filename', async () => {
+  app.post('/fake-upload/:filename', async ({ request, params }) => {
+    const file = files.get(params.filename)
+    if (!file) return new Response(null, { status: 404 })
+    file.bytes = Buffer.from(await request.arrayBuffer())
     return new Response(null, { status: 200 })
   })
-  app.put('/fake-upload/:filename', async () => {
+  app.put('/fake-upload/:filename', async ({ request, params }) => {
+    const file = files.get(params.filename)
+    if (!file) return new Response(null, { status: 404 })
+    file.bytes = Buffer.from(await request.arrayBuffer())
     return new Response(null, { status: 200 })
   })
 
+  app.post('/api/files.info', async ({ request }) => {
+    const body = await parseBody(request)
+    const file = files.get(body.file ?? '')
+    if (!file) return Response.json({ ok: false, error: 'file_not_found' })
+    const { bytes, ...metadata } = file
+    return Response.json({ ok: true, file: { ...metadata, size: bytes.length } })
+  })
+
+  app.get('/private-file/:id', ({ request, params }) => {
+    if (request.headers.get('authorization') !== `Bearer ${botToken}`) return new Response(null, { status: 401 })
+    const file = files.get(params.id)
+    return file ? new Response(file.bytes, { headers: { 'content-type': file.mimetype } }) : new Response(null, { status: 404 })
+  })
+
   // --- files.completeUploadExternal ---
-  // Stub: acknowledges upload completion
   app.post('/api/files.completeUploadExternal', async ({ request }) => {
+    const body = await parseUnknownBody(request)
+    if (!isRecord(body)) return Response.json({ ok: false, error: 'invalid_arguments' })
+    const inputFiles: unknown = typeof body.files === 'string' ? JSON.parse(body.files) : body.files
+    const completed = Array.isArray(inputFiles) ? inputFiles.flatMap((item: unknown) => {
+      if (!isRecord(item) || typeof item.id !== 'string') return []
+      const file = files.get(item.id)
+      if (!file) return []
+      const { bytes, ...metadata } = file
+      return [{ ...metadata, size: bytes.length }]
+    }) : []
+    const channelId = readString(body, 'channel_id')
+    if (channelId && completed.length) await prisma.message.create({ data: { channelId, userId: botUserId, botId: botUserId,
+      ts: generateMessageTs(), threadTs: readString(body, 'thread_ts'), text: '', files: JSON.stringify(completed) } })
     return Response.json({
       ok: true,
-      files: [],
+      files: completed,
     })
   })
 

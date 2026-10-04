@@ -46,6 +46,7 @@ cli
     'upload-to-discord [...files]',
     'Upload files to a Discord thread for a session',
   )
+  .alias('upload-to-chat')
   .option('-s, --session <sessionId>', 'OpenCode session ID')
   .action(async (files: string[], options: { session?: string }) => {
     try {
@@ -69,6 +70,14 @@ cli
           cliLogger.error(`File not found: ${file}`)
           process.exit(EXIT_NO_RESTART)
         }
+      }
+
+      if (process.env.ROADIE_PLATFORM === 'slack') {
+        const { getSendToken, sendViaRunningBot } = await import('../remote-send.js')
+        const { getLockPort } = await import('../config.js')
+        const token = getSendToken()
+        if (!token) { cliLogger.error('Set ROADIE_SERVICE_TOKEN to upload through the running Slack bot'); process.exit(EXIT_NO_RESTART) }
+        process.exit(await sendViaRunningBot({ port: getLockPort(), token, options: { session: sessionId, notifyOnly: true }, filePaths: resolvedFiles }))
       }
 
       await initDatabase()

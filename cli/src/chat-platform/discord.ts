@@ -7,7 +7,12 @@ import {
   SILENT_MESSAGE_FLAGS,
   sendSessionPartMessage,
   sendThreadMessage,
+  resolveThreadFooterMentionUserId,
 } from '../discord-utils.js'
+import { showPermissionButtons, addPermissionRequestToContext, pendingPermissionContexts } from '../commands/permissions.js'
+import { showAskUserQuestionDropdowns, hasPendingQuestionForThread, cancelPendingQuestion } from '../commands/ask-question.js'
+import { showActionButtons, pendingActionButtonContexts } from '../commands/action-buttons.js'
+import { pendingFileUploadContexts, showFileUploadButton } from '../commands/file-upload.js'
 import { DiscordOperationError } from '../errors.js'
 import type { ChatThread } from './types.js'
 
@@ -17,6 +22,25 @@ function flagsFor(notify: boolean | undefined): number {
 
 export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
   return {
+    platform: 'discord',
+    capabilities: { rename: true, typing: true },
+    footerMentionUserId: (sessionUserId) => resolveThreadFooterMentionUserId({ thread, sessionUserId }),
+    interactions: {
+      permission: (input) => showPermissionButtons({ thread, ...input }),
+      addPermissionRequest: addPermissionRequestToContext,
+      clearPermission: (hash) => { pendingPermissionContexts.delete(hash) },
+      question: (input) => showAskUserQuestionDropdowns({ thread, ...input }),
+      actions: async (input) => { await showActionButtons({ thread, ...input }) },
+      upload: (input) => showFileUploadButton({ thread, ...input }),
+      hasQuestion: () => hasPendingQuestionForThread(thread.id),
+      hasPending: () => [
+        ...pendingActionButtonContexts.values(),
+        ...pendingFileUploadContexts.values(),
+        ...pendingPermissionContexts.values(),
+      ].some((context) => context.thread.id === thread.id),
+      cancelQuestion: async () => { await cancelPendingQuestion(thread.id) },
+      dispose: () => {},
+    },
     get id() {
       return thread.id
     },

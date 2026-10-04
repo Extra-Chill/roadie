@@ -47,6 +47,8 @@ const whoEntrySchema = z.union([
 
 const policySchema = z
   .object({
+    project: z.string().min(1).optional(),
+    context: z.string().min(1).optional(),
     respond: z.enum(['always', 'mention', 'never']).optional(),
     who: z.union([z.literal('everyone'), z.array(whoEntrySchema).min(1)]).optional(),
     threads: z.enum(['per-message', 'existing-only']).optional(),
@@ -60,7 +62,10 @@ const policySchema = z
   .strict()
 
 const configSchema = z
-  .object({ channels: z.record(z.string().min(1), policySchema) })
+  .object({
+    projects: z.record(z.string().min(1), policySchema.omit({ project: true })).optional(),
+    channels: z.record(z.string().min(1), policySchema),
+  })
   .strict()
 
 export type ChannelPolicy = z.infer<typeof policySchema>
@@ -114,6 +119,11 @@ export function parseChannelsConfig(text: string): ChannelsConfig | Error {
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
     return new Error(`${issue?.path.join('.') || 'config'}: ${issue?.message || 'invalid'}`)
+  }
+  for (const [channelId, policy] of Object.entries(parsed.data.channels)) {
+    if (policy.project && !parsed.data.projects?.[policy.project]) {
+      return new Error(`channels.${channelId}.project: unknown project "${policy.project}"`)
+    }
   }
   return parsed.data
 }
@@ -193,7 +203,30 @@ function configuredChannelPolicy(channelId: string): ChannelPolicy | null | unde
   if (matches.length === 0) return null
 
   // Least specific first so more specific entries override field by field.
-  return matches.reverse().reduce<ChannelPolicy>((acc, policy) => ({ ...acc, ...policy }), {})
+  const channel = matches.reverse().reduce<ChannelPolicy>((acc, policy) => ({ ...acc, ...policy }), {})
+  const project = channel.project ? config.projects?.[channel.project] : undefined
+  return { ...project, ...channel }
+}
+
+/** Opaque host context shared by every channel bound to the same project. */
+export function channelContextBinding(channelId: string): { projectId?: string; contextId?: string } {
+  const policy = resolveChannelPolicy(channelId)
+  if (!policy) return {}
+  return {
+    ...(policy.project ? { projectId: policy.project } : {}),
+    ...(policy.context ? { contextId: policy.context } : {}),
+  }
+}
+
+/** All explicit channel bindings for a named project or canonical directory. */
+export function channelsForProject(project: string): string[] {
+  const config = currentConfig()
+  if (!config) return []
+  return Object.keys(config.channels).filter((id) => {
+    if (id === '*') return false
+    const policy = configuredChannelPolicy(id)
+    return policy?.project === project || policy?.directory === project
+  })
 }
 
 // ── Decisions used by the message pipeline ─────────────────────────

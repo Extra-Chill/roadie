@@ -67,6 +67,24 @@ CREATE TABLE IF NOT EXISTS `channel_worktrees` (
 	CONSTRAINT `fk_channel_worktrees_channel_id_channel_directories_channel_id_fk` FOREIGN KEY (`channel_id`) REFERENCES `channel_directories`(`channel_id`) ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `chat_ingress_events` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`event_id` text NOT NULL UNIQUE,
+	`platform` text NOT NULL,
+	`payload_json` text NOT NULL,
+	`received_at` datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`handled_at` datetime
+);
+
+CREATE TABLE IF NOT EXISTS `chat_interactions` (
+	`id` text PRIMARY KEY,
+	`thread_id` text NOT NULL,
+	`kind` text NOT NULL,
+	`payload_json` text NOT NULL,
+	`message_id` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `forum_sync_configs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`app_id` text NOT NULL,

@@ -72,17 +72,6 @@ cli
 
       await initDatabase()
 
-      const existingChannel = await findRegisteredTextChannelForDirectory(absolutePath)
-      if (existingChannel) {
-        cliLogger.error(
-          formatProjectAlreadyRegisteredError({
-            channelId: existingChannel.channel_id,
-            directory: absolutePath,
-          }),
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
-
       const { token: botToken, appId } = await resolveBotCredentials({
         appIdOverride: options.appId,
       })

@@ -41,7 +41,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
-import { channelPolicyOverrides } from '../channel-policy.js'
+import { channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
   renderContextSections,
@@ -315,13 +315,12 @@ export function getRuntime(
 
 export type RuntimeOptions = {
   threadId: string
-  thread: ThreadChannel
   projectDirectory: string
   sdkDirectory: string
   channelId?: string
   appId?: string
   sessionId?: string
-}
+} & ({ thread: ThreadChannel; chat?: never } | { chat: ChatThread; thread?: never })
 
 export function getOrCreateRuntime(
   opts: RuntimeOptions,
@@ -372,11 +371,13 @@ function groupQueueRowsByThread(
 /** Existing runtime for a thread, or one rebuilt from Discord and the DB after a restart. */
 async function ensureRuntimeForThread({
   discordClient,
+  resolveRuntime,
   threadId,
   appId,
   purpose,
 }: {
-  discordClient: Client
+  discordClient?: Client
+  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
   threadId: string
   appId?: string
   purpose: string
@@ -385,6 +386,8 @@ async function ensureRuntimeForThread({
   if (existing) {
     return existing
   }
+  if (resolveRuntime) return resolveRuntime(threadId)
+  if (!discordClient) return undefined
   const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
     logger.warn(
       `[RUNTIME] Failed to fetch thread ${threadId} for ${purpose}: ${error instanceof Error ? error.message : String(error)}`,
@@ -436,10 +439,12 @@ export function snapshotBusyRuntimes(): InterruptedSession[] {
  */
 export async function resumeInterruptedSessions({
   discordClient,
+  resolveRuntime,
   appId,
   consume = consumeInterruptedSessions,
 }: {
-  discordClient: Client
+  discordClient?: Client
+  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
   appId?: string
   consume?: typeof consumeInterruptedSessions
 }): Promise<{ resumed: string[]; notified: string[] }> {
@@ -447,7 +452,14 @@ export async function resumeInterruptedSessions({
   const resumed: string[] = []
   const notified: string[] = []
   for (const entry of stale) {
-    const thread = await discordClient.channels.fetch(entry.threadId).catch(() => null)
+    if (resolveRuntime) {
+      const runtime = await resolveRuntime(entry.threadId)
+      if (!runtime) continue
+      await runtime.chat.sendNotice('Roadie restarted while this session was running. Send a message to continue.')
+      notified.push(entry.threadId)
+      continue
+    }
+    const thread = await discordClient?.channels.fetch(entry.threadId).catch(() => null)
     if (!thread?.isThread()) continue
     await thread.send({
       content: asSubtext('Roadie restarted while this session was running. It was too long ago to resume automatically; send a message to continue.'),
@@ -458,6 +470,7 @@ export async function resumeInterruptedSessions({
   for (const entry of resume) {
     const runtime = await ensureRuntimeForThread({
       discordClient,
+      resolveRuntime,
       threadId: entry.threadId,
       appId,
       purpose: 'restart continuation',
@@ -471,7 +484,7 @@ export async function resumeInterruptedSessions({
     await runtime.chat.sendNotice(asSubtext('Roadie restarted while this session was running. Resuming.'))
     const result = await runtime.enqueueIncoming({
       prompt: RESTART_CONTINUATION_PROMPT,
-      userId: entry.userId || discordClient.user?.id || '',
+      userId: entry.userId || discordClient?.user?.id || '',
       username: entry.username || 'Roadie',
       appId,
       expectedSessionId: entry.sessionId,
@@ -491,9 +504,11 @@ export async function resumeInterruptedSessions({
 
 export async function restorePersistedLocalQueues({
   discordClient,
+  resolveRuntime,
   appId,
 }: {
-  discordClient: Client
+  discordClient?: Client
+  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
   appId?: string
 }): Promise<void> {
   const rows = await listAllThreadQueueItems()
@@ -506,7 +521,7 @@ export async function restorePersistedLocalQueues({
     if (items.length === 0) {
       continue
     }
-    const runtime = await ensureRuntimeForThread({ discordClient, threadId, appId, purpose: 'restored queue' })
+    const runtime = await ensureRuntimeForThread({ discordClient, resolveRuntime, threadId, appId, purpose: 'restored queue' })
     if (!runtime) {
       continue
     }
@@ -823,7 +838,7 @@ export type PreprocessResult = {
 export function applyPersonToIngress(input: IngressInput): IngressInput {
   if (!isIdentityHookConfigured()) return input
   if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
-  const person = getCachedPerson({ platform: 'discord', id: input.userId })
+  const person = getCachedPerson({ platform: input.actorPlatform ?? 'discord', id: input.userId })
   if (!person?.allowed) return input
   return {
     ...input,
@@ -854,6 +869,7 @@ export function applyChannelPolicyToIngress({
 }
 
 export type IngressInput = {
+  actorPlatform?: string
   prompt: string
   userId: string
   username: string
@@ -1009,7 +1025,7 @@ export class ThreadSessionRuntime {
   readonly sdkDirectory: string
   readonly channelId: string | undefined
   readonly appId: string | undefined
-  readonly thread: ThreadChannel
+  readonly thread: ThreadChannel | ChatThread
   /** Platform-neutral view of `thread`; prefer it for conversation operations. */
   readonly chat: ChatThread
 
@@ -1084,8 +1100,8 @@ export class ThreadSessionRuntime {
     this.sdkDirectory = opts.sdkDirectory
     this.channelId = opts.channelId
     this.appId = opts.appId
-    this.thread = opts.thread
-    this.chat = createDiscordChatThread(opts.thread)
+    this.thread = opts.thread ?? opts.chat
+    this.chat = opts.chat ?? createDiscordChatThread(opts.thread)
     this.sentPartIdsBootstrap = this.bootstrapSentPartIds().catch((error) => {
       logger.warn(
         `[PART BOOTSTRAP] Failed to load sent part ids for thread ${this.threadId}:`,
@@ -1464,6 +1480,7 @@ export class ThreadSessionRuntime {
     // Clean up all pending UI state for this thread (permissions, questions,
     // action buttons, file uploads, html actions).
     cleanupPendingUiForThread(this.thread.id)
+    this.chat.interactions.dispose()
   }
 
   private compactTextForEventBuffer(text: string): string {
@@ -1946,12 +1963,11 @@ export class ThreadSessionRuntime {
   // ── Typing Indicator Management ─────────────────────────────
 
   private hasPendingQuestionUi(): boolean {
-    return [...pendingQuestionContexts.values()].some((ctx) => {
-      return ctx.thread.id === this.thread.id
-    })
+    return this.chat.interactions.hasQuestion()
   }
 
   private hasPendingInteractiveUi(): boolean {
+    if (this.chat.interactions.hasPending()) return true
     if (this.hasPendingQuestionUi()) {
       return true
     }
@@ -1982,6 +1998,7 @@ export class ThreadSessionRuntime {
   }
 
   private shouldTypeNow(): boolean {
+    if (!this.chat.capabilities.typing) return false
     if (this.disposed) {
       return false
     }
@@ -2597,8 +2614,7 @@ export class ThreadSessionRuntime {
             )
             return
           }
-          const showResult = await showActionButtons({
-            thread: this.thread,
+          const showResult = await this.chat.interactions.actions({
             sessionId: request.sessionId,
             directory: request.directory,
             buttons: request.buttons,
@@ -2953,7 +2969,7 @@ export class ThreadSessionRuntime {
         contextHash: existingPending.contextHash,
         dedupeKey,
       })
-      const added = addPermissionRequestToContext({
+      const added = this.chat.interactions.addPermissionRequest({
         contextHash: existingPending.contextHash,
         requestId: permission.id,
       })
@@ -2971,8 +2987,7 @@ export class ThreadSessionRuntime {
 
     this.stopTyping()
 
-    const { messageId, contextHash } = await showPermissionButtons({
-      thread: this.thread,
+    const { messageId, contextHash } = await this.chat.interactions.permission({
       permission,
       directory: this.sdkDirectory,
       subtaskLabel,
@@ -3016,7 +3031,7 @@ export class ThreadSessionRuntime {
     if (!pending) {
       return
     }
-    pendingPermissionContexts.delete(pending.contextHash)
+    this.chat.interactions.clearPermission(pending.contextHash)
     threadPermissions.delete(properties.requestId)
     if (threadPermissions.size === 0) {
       pendingPermissions.delete(this.thread.id)
@@ -3070,8 +3085,7 @@ export class ThreadSessionRuntime {
     await this.showInteractiveUi({
       flushMessageId: messageId,
       show: async () => {
-        await showAskUserQuestionDropdowns({
-          thread: this.thread,
+        await this.chat.interactions.question({
           sessionId,
           directory: this.sdkDirectory,
           requestId: request.id,
@@ -3266,6 +3280,11 @@ export class ThreadSessionRuntime {
     if (this.appliedOpencodeTitle === normalizedTitle) {
       return
     }
+    if (!this.chat.capabilities.rename) {
+      await (await getDb()).update(schema.thread_sessions).set({ last_synced_name: normalizedTitle }).where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
+      this.appliedOpencodeTitle = normalizedTitle
+      return
+    }
     const desiredName = deriveThreadNameFromSessionTitle({
       sessionTitle: info.title,
       currentName: this.chat.name,
@@ -3358,7 +3377,7 @@ export class ThreadSessionRuntime {
       ...(input.userId
         ? {
             actor: {
-              platform: 'discord',
+              platform: this.chat.platform,
               id: input.userId,
               ...(input.username ? { name: input.username } : {}),
               via: input.actorVia ?? 'chat',
@@ -3596,6 +3615,7 @@ export class ThreadSessionRuntime {
       }
       const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
       const syntheticContext = getOpencodePromptContext({
+        platform: this.chat.platform,
         sessionId: session.id,
         threadId: this.thread.id,
         username: input.username,
@@ -3772,8 +3792,8 @@ export class ThreadSessionRuntime {
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
-    input = applyPersonToIngress(input)
-    input = applyChannelPolicyToIngress({ input, channelId: this.channelId || this.chat.parentId || this.threadId })
+    input = applyPersonToIngress({ ...input, actorPlatform: this.chat.platform })
+    input = applyChannelPolicyToIngress({ input: { ...input, actorPlatform: this.chat.platform }, channelId: this.channelId || this.chat.parentId || this.threadId })
     threadState.setSessionUsername(this.threadId, input.username)
     const botUserId = this.chat.botUserId
     if (input.userId && input.userId !== botUserId) {
@@ -3988,7 +4008,7 @@ export class ThreadSessionRuntime {
 
     // The aborted run owns the question request, so the dropdown dies with it.
     // Questions have no TTL, so this is the only thing that clears them here.
-    void cancelPendingQuestion(this.threadId)
+    void this.chat.interactions.cancelQuestion()
 
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })
@@ -4605,6 +4625,7 @@ export class ThreadSessionRuntime {
     const systemPromptFromSourceSession = !isSystemPromptForSession({ system, sessionId: session.id })
     const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
     const syntheticContext = getOpencodePromptContext({
+      platform: this.chat.platform,
       sessionId: session.id,
       threadId: this.thread.id,
       username: input.username,
@@ -4642,6 +4663,7 @@ export class ThreadSessionRuntime {
       // Append the <discord-user /> tag to the arguments, same as promptAsync,
       // so the model sees who sent the command.
       const discordTag = getOpencodePromptContext({
+        platform: this.chat.platform,
         sessionId: session.id,
         threadId: this.thread.id,
         username: input.username,
@@ -4805,7 +4827,7 @@ export class ThreadSessionRuntime {
     if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return {}
     return {
       actor: {
-        platform: 'discord',
+        platform: this.chat.platform,
         id: input.userId,
         ...(input.username ? { name: input.username } : {}),
       },
@@ -4839,6 +4861,7 @@ export class ThreadSessionRuntime {
       threadId: this.thread.id,
       channelId: this.channelId,
       directory: this.sdkDirectory,
+      ...channelContextBinding(this.channelId || this.threadId),
       ...speaker,
     })
     return renderContextSections(sections)
@@ -4863,6 +4886,7 @@ export class ThreadSessionRuntime {
       sessionId,
       generate: async () => {
         const base = getOpencodeSystemMessage({
+          platform: this.chat.platform,
           sessionId,
           channelId: this.channelId,
           guildId: this.chat.spaceId ?? undefined,
@@ -4882,6 +4906,7 @@ export class ThreadSessionRuntime {
           threadId: this.thread.id,
           channelId: this.channelId,
           directory: this.sdkDirectory,
+          ...channelContextBinding(this.channelId || this.threadId),
           ...this.contextSpeaker(input),
         })
         return base + renderContextSections(sections)
@@ -5255,10 +5280,7 @@ export class ThreadSessionRuntime {
       : false
     const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
     const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
-      ? await resolveThreadFooterMentionUserId({
-          sessionUserId: this.state?.sessionUserId,
-          thread: this.thread,
-        })
+      ? await this.chat.footerMentionUserId(this.state?.sessionUserId)
       : undefined
     const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
     const footerText = asSubtext(

@@ -45,10 +45,18 @@ let db: Database.Database | null = null
 let server: http.Server | null = null
 let hranaUrl: string | null = null
 let discordGatewayReady = false
+let chatPlatform = 'discord'
+let chatReady = false
+
+export function markChatPlatformReady(platform: string, ready: boolean): void {
+  chatPlatform = platform
+  chatReady = ready
+}
 
 /** Record that the Discord connection is up (reported by /health consumers and tests). */
 export function markDiscordGatewayReady(): void {
   discordGatewayReady = true
+  markChatPlatformReady('discord', true)
 }
 
 export function isDiscordGatewayReady(): boolean {
@@ -141,7 +149,7 @@ export async function startHranaServer({
     // Health check — no auth required
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid(), discordReady: discordGatewayReady }))
+      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid(), discordReady: discordGatewayReady, chatPlatform, chatReady }))
       return
     }
     // OpenCode server port discovery — no auth required (localhost only).
@@ -227,6 +235,7 @@ export async function stopHranaServer() {
   }
   hranaUrl = null
   discordGatewayReady = false
+  chatReady = false
   hranaLogger.log('Hrana server stopped')
 }
 

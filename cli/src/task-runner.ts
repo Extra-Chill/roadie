@@ -46,10 +46,17 @@ const MAX_SCHEDULED_PROMPT_LENGTH = 1_900
 const PENDING_RUN_TIMEOUT_MS = 120_000
 
 type StartTaskRunnerOptions = {
-  token: string
+  token?: string
+  delivery?: TaskDelivery
   pollIntervalMs?: number
   staleRunningMs?: number
   dueBatchSize?: number
+}
+
+/** Native transports deliver automation without impersonating Discord REST. */
+export type TaskDelivery = {
+  execute(input: { task: ScheduledTask; payload: ScheduledTaskPayload; prompt: string; runId?: number }): Promise<string | null | Error>
+  wake(input: { sleep: SessionSleep; threadId: string }): Promise<Error | void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,10 +214,12 @@ async function postSessionSleepWake({
 
 export async function wakeDueSessionSleeps({
   rest,
+  delivery,
   now = new Date(),
   limit = 20,
 }: {
-  rest: REST
+  rest?: REST
+  delivery?: TaskDelivery
   now?: Date
   limit?: number
 }): Promise<void> {
@@ -247,7 +256,10 @@ export async function wakeDueSessionSleeps({
 
     // A successful post changes nothing here on purpose: ingress owns the
     // transition out of `planned` when the wake actually becomes a turn.
-    const postResult = await postSessionSleepWake({ rest, sleep: claimed, threadId })
+    const nativeResult = delivery ? await delivery.wake({ sleep: claimed, threadId }) : undefined
+    const postResult = delivery
+      ? nativeResult instanceof Error ? { error: nativeResult, permanent: false } : null
+      : rest ? await postSessionSleepWake({ rest, sleep: claimed, threadId }) : { error: new Error('No chat task delivery configured'), permanent: false }
     if (!postResult) continue
 
     const exhausted = claimed.attempts >= SLEEP_WAKE_MAX_ATTEMPTS
@@ -448,10 +460,12 @@ async function hasRunningSession(task: ScheduledTask): Promise<boolean | Error> 
 
 async function executeScheduledTask({
   rest,
+  delivery,
   task,
   runId,
 }: {
-  rest: REST
+  rest?: REST
+  delivery?: TaskDelivery
   task: ScheduledTask
   runId?: number
 }): Promise<string | null | Error | { kind: 'condition-not-met' }> {
@@ -474,6 +488,8 @@ async function executeScheduledTask({
     return { kind: 'condition-not-met' }
   }
 
+  if (delivery) return delivery.execute({ task, payload: payloadResult, prompt: commandResult.prompt, runId })
+  if (!rest) return new Error('No chat task delivery configured')
   if (payloadResult.kind === 'thread') {
     return executeThreadScheduledTask({
       rest,
@@ -581,9 +597,11 @@ export type ProcessDueTaskResult =
 
 async function processDueTask({
   rest,
+  delivery,
   task,
 }: {
-  rest: REST
+  rest?: REST
+  delivery?: TaskDelivery
   task: ScheduledTask
 }): Promise<ProcessDueTaskResult> {
   const startedAt = new Date()
@@ -623,7 +641,7 @@ async function processDueTask({
     ? await createScheduledTaskRun({ taskId: task.id, startedAt })
     : undefined
 
-  const executeResult = await executeScheduledTask({ rest, task, runId })
+  const executeResult = await executeScheduledTask({ rest, delivery, task, runId })
   const finishedAt = new Date()
 
   if (executeResult instanceof Error) {
@@ -679,10 +697,12 @@ export async function runScheduledTaskNow({
 
 async function runTaskRunnerTick({
   rest,
+  delivery,
   staleRunningMs,
   dueBatchSize,
 }: {
-  rest: REST
+  rest?: REST
+  delivery?: TaskDelivery
   staleRunningMs: number
   dueBatchSize: number
 }): Promise<void> {
@@ -703,19 +723,20 @@ async function runTaskRunnerTick({
 
   await dueTasks.reduce<Promise<void>>(async (previous, task) => {
     await previous
-    await processDueTask({ rest, task })
+    await processDueTask({ rest, delivery, task })
   }, Promise.resolve())
 
-  await wakeDueSessionSleeps({ rest })
+  await wakeDueSessionSleeps({ rest, delivery })
 }
 
 export function startTaskRunner({
   token,
+  delivery,
   pollIntervalMs = 5_000,
   staleRunningMs = 120_000,
   dueBatchSize = 20,
 }: StartTaskRunnerOptions): () => Promise<void> {
-  const rest = createDiscordRest(token)
+  const rest = token ? createDiscordRest(token) : undefined
   let stopped = false
   let ticking = false
   let tickPromise: Promise<void> | null = null
@@ -728,6 +749,7 @@ export function startTaskRunner({
     ticking = true
     const currentTickPromise = runTaskRunnerTick({
       rest,
+      delivery,
       staleRunningMs,
       dueBatchSize,
     }).catch((error) => {

@@ -28,7 +28,7 @@ import {
 } from './server.js'
 import { messageToSlack } from './serializers.js'
 import type { SlackMessage, SlackOpenedView } from './types.js'
-import { sendWebhookEvent, type WebhookSenderConfig } from './webhook-sender.js'
+import { sendWebhookEvent, sendInteractivePayload, type WebhookSenderConfig } from './webhook-sender.js'
 
 export type { SlackMessage, SlackOpenedView }
 
@@ -393,6 +393,35 @@ export class UserActor {
     this.userId = userId
   }
 
+  /** Native Block Kit actions, signed exactly like Slack's HTTP delivery. */
+  async clickButton(input: { channel: string; messageTs: string; actionId: string; triggerId?: string }): Promise<Response> {
+    const config = this.twin.webhookSenderConfig
+    if (!config) throw new Error('Configure setWebhookUrl before interacting')
+    return sendInteractivePayload({ config: { ...config, webhookUrl: config.webhookUrl.replace(/\/events$/, '/interactions') }, payload: {
+      type: 'block_actions', user: { id: this.userId }, channel: { id: this.twin.resolveChannelId(input.channel) }, message: { ts: input.messageTs },
+      trigger_id: input.triggerId ?? 'test-trigger', actions: [{ type: 'button', action_id: input.actionId }],
+    } })
+  }
+
+  async selectOptions(input: { channel: string; messageTs: string; actionId: string; values: string[]; multiple?: boolean }): Promise<Response> {
+    const config = this.twin.webhookSenderConfig
+    if (!config) throw new Error('Configure setWebhookUrl before interacting')
+    return sendInteractivePayload({ config: { ...config, webhookUrl: config.webhookUrl.replace(/\/events$/, '/interactions') }, payload: {
+      type: 'block_actions', user: { id: this.userId }, channel: { id: this.twin.resolveChannelId(input.channel) }, message: { ts: input.messageTs },
+      actions: [{ type: input.multiple ? 'multi_static_select' : 'static_select', action_id: input.actionId,
+        ...(input.multiple ? { selected_options: input.values.map((value) => ({ value })) } : { selected_option: { value: input.values[0] } }),
+      }],
+    } })
+  }
+
+  async submitView(input: { privateMetadata: string; values: Record<string, Record<string, { value?: string; selected_option?: { value: string }; files?: Array<{ id: string }> }>> }): Promise<Response> {
+    const config = this.twin.webhookSenderConfig
+    if (!config) throw new Error('Configure setWebhookUrl before interacting')
+    return sendInteractivePayload({ config: { ...config, webhookUrl: config.webhookUrl.replace(/\/events$/, '/interactions') }, payload: {
+      type: 'view_submission', user: { id: this.userId }, view: { private_metadata: input.privateMetadata, state: { values: input.values } },
+    } })
+  }
+
   // Send a message as this user to a channel.
   // When webhookSenderConfig is set, auto-emits a signed webhook event
   // so the bridge receives it via /slack/events.
@@ -400,13 +429,17 @@ export class UserActor {
     channel,
     text,
     threadTs,
+    botId,
   }: {
     channel: string
     text: string
     threadTs?: string
+    botId?: string
   }): Promise<SlackMessage & { ts: string }> {
     const channelId = this.twin.resolveChannelId(channel)
     const ts = generateMessageTs()
+    const author = botId ? await this.twin.prisma.user.findUnique({ where: { id: this.userId } }) : null
+    if (botId && !author?.isBot) throw new Error('Only bot actors can send bot messages')
 
     await this.twin.prisma.message.create({
       data: {
@@ -415,6 +448,7 @@ export class UserActor {
         text,
         ts,
         threadTs,
+        botId,
       },
     })
 
@@ -428,6 +462,7 @@ export class UserActor {
           text,
           ts,
           ...(threadTs ? { thread_ts: threadTs } : {}),
+          ...(botId ? { bot_id: botId, subtype: 'bot_message', bot_profile: { name: author?.name } } : {}),
         },
       })
     }

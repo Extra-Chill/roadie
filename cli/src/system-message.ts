@@ -336,6 +336,7 @@ function formatWorkingDirectoryReminder(dir: WorkingDirectoryInfo): string {
 }
 
 export function getOpencodePromptContext({
+  platform = 'discord',
   sessionId,
   threadId,
   username,
@@ -350,6 +351,7 @@ export function getOpencodePromptContext({
   systemPromptFromSourceSession,
   parentSessionId,
 }: {
+  platform?: string
   sessionId?: string
   threadId?: string
   /** Set only when the pinned system prompt does not name this parent yet. */
@@ -388,7 +390,7 @@ export function getOpencodePromptContext({
       ? [`Your current OpenCode session ID is: ${sessionId}`]
       : []),
     ...(threadId
-      ? [`Your current Discord thread ID is: ${threadId}`]
+      ? [`Your current ${platform === 'discord' ? 'Discord' : 'Slack'} thread ID is: ${threadId}`]
       : []),
     ...(systemPromptFromSourceSession && (sessionId || threadId)
       ? [
@@ -408,7 +410,7 @@ ${escapePromptText(repliedMessage.text)}
 </replied-message>`
     : undefined
   const sections = [
-    ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
+    ...(userAttrs ? [platform === 'discord' ? `<discord-user${userAttrs} />` : `<chat-user platform="${escapePromptAttribute(platform)}"${userAttrs} />`] : []),
     ...(identityReminder ? [identityReminder] : []),
     ...(repliedMessageXml ? [repliedMessageXml] : []),
     ...(currentAgent
@@ -430,6 +432,7 @@ ${escapePromptText(repliedMessage.text)}
 type SystemPromptSection = PromptSection
 
 export function getOpencodeSystemMessage({
+  platform = 'discord',
   sessionId,
   channelId,
   guildId,
@@ -440,6 +443,7 @@ export function getOpencodeSystemMessage({
   parentSessionId,
   scheduledTask,
 }: {
+  platform?: string
   sessionId: string
   channelId?: string
   /** Discord server/guild ID for discord_list_users tool */
@@ -463,6 +467,19 @@ export function getOpencodeSystemMessage({
    */
   scheduledTask?: ScheduledTaskSystemContext
 }) {
+  if (platform === 'slack') {
+    const sections: SystemPromptSection[] = [
+      { id: 'chat-output', text: 'The user is reading your messages in Slack through Roadie. Use concise Markdown; Roadie converts it to native Slack formatting. Include original source links in your answers.' },
+      { id: 'session', text: `${SESSION_ID_LINE_PREFIX}${sessionId}\nSlack workspace: ${guildId ?? ''}\nSlack channel: ${channelId ?? ''}\nRoadie thread: ${threadId ?? ''}${parentSessionId ? `\n${getParentSessionInstructions(parentSessionId)}` : ''}` },
+      { id: 'identity', text: 'The current speaker is supplied in <chat-user platform="slack" ... /> metadata. Mention Slack users by <@USER_ID>. Tool processes receive ROADIE_ACTOR_PLATFORM, ROADIE_ACTOR_ID and ROADIE_PERSON_ID; authority comes from the host identity and permission policy.' },
+      { id: 'interaction', text: 'For questions use question. For quick choices use roadie_action_buttons. Write the user-visible explanation before the interaction tool and call that tool last. Roadie renders native Slack selects, buttons and modals.' },
+      { id: 'file-upload', text: `Upload screenshots, images and other artifacts with roadie upload-to-chat --session ${sessionId} <file paths>. Use roadie_file_upload to request files through Slack's native file picker. Local Markdown image paths are not visible to the user.` },
+      { id: 'automation', text: `Use roadie send --platform slack --thread '${threadId ?? ''}' --prompt '<message>' to continue this thread. Use --channel '${channelId ?? ''}' to create a new session, --notify-only for notifications, --send-at for schedules, and roadie_sleep for a persistent wake. A new human message cancels a pending sleep.` },
+      { id: 'channel-topic', text: channelTopic?.trim() ? `<channel-topic>\n${channelTopic.trim()}\n</channel-topic>` : '' },
+      { id: 'agents', text: (agents ?? []).map((agent) => `${agent.name}: ${agent.description ?? ''}`).join('\n') },
+    ]
+    return applyPromptConfig({ intro: '', sections: applyFilters('system_prompt_sections', sections, { sessionId }), config: getPromptConfig() }) + '\n'
+  }
   const userArg = ` --user '${userId || '<discord-user-id>'}'`
   const parentSessionArg = ` --parent-session ${sessionId}`
   // Prefer thread ID for cross-machine compatibility. Keep commands copyable.

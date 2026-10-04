@@ -47,6 +47,7 @@ process.title = 'roadie'
 
 cli
   .command('', 'Set up and run the Roadie Discord bot')
+  .option('--platform <name>', 'Chat platform: discord (default) or slack. Also ROADIE_PLATFORM')
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
@@ -210,6 +211,7 @@ cli
       disableSkill?: string[]
       opencodeHostname?: string
       opencodePort?: string
+      platform?: string
     }) => {
       // Guard: only one roadie bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
@@ -436,6 +438,14 @@ cli
         if (backend.id !== 'opencode') {
           cliLogger.log(`Agent backend: ${backend.id}`)
         }
+        const platform = options.platform ?? process.env.ROADIE_PLATFORM ?? 'discord'
+        if (platform === 'slack') {
+          const { runNativeSlack } = await import('./slack-bot.js')
+          const result = await runNativeSlack()
+          if (result instanceof Error) { cliLogger.error(result.message); process.exit(EXIT_NO_RESTART) }
+          return
+        }
+        if (platform !== 'discord') { cliLogger.error('Use --platform discord or --platform slack'); process.exit(EXIT_NO_RESTART) }
 
         // Single-instance enforcement is handled by the hrana server binding the lock port.
         // startHranaServer() in run() evicts any existing instance before binding.
