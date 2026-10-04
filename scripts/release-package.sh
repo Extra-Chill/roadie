@@ -18,8 +18,10 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 
 pnpm install --frozen-lockfile
-# The CLI typecheck covers its tests, which import the Discord twin.
-(cd discord-digital-twin && pnpm generate && pnpm build)
+# The CLI typecheck covers tests for both chat adapters. Use the canonical
+# workspace generation contract so clean release workers have both clients.
+pnpm run generate
+(cd discord-digital-twin && pnpm build)
 (cd cli && pnpm build)
 
 tarball="$(cd cli && pnpm exec tsx scripts/pack-release.ts --out "$root/cli/release" | tail -n 1)"
