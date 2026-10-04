@@ -2,7 +2,7 @@
 // Checks GitHub releases for a newer version, installs it globally, then spawns a new roadie process.
 // The new process kills the old one on startup (roadie's single-instance lock).
 
-import { isManagedInstall, MANAGED_UPGRADE_MESSAGE } from '../service-lifecycle.js'
+import { hostUpgradeHandler, isManagedInstall, MANAGED_UPGRADE_MESSAGE, runHostUpgrade } from '../service-lifecycle.js'
 import type { CommandContext } from './types.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getCurrentVersion, upgrade } from '../upgrade.js'
@@ -15,7 +15,15 @@ export async function handleUpgradeAndRestartCommand({
   command,
 }: CommandContext): Promise<void> {
   if (isManagedInstall()) {
-    await command.reply({ content: MANAGED_UPGRADE_MESSAGE, flags: MessageFlags.Ephemeral })
+    const handler = hostUpgradeHandler()
+    if (!handler) {
+      await command.reply({ content: MANAGED_UPGRADE_MESSAGE, flags: MessageFlags.Ephemeral })
+      return
+    }
+    await command.deferReply()
+    logger.log('[UPGRADE] /upgrade-and-restart: triggering host upgrade')
+    const result = await runHostUpgrade(handler, 'command')
+    await command.editReply({ content: result.message })
     return
   }
   await command.deferReply()

@@ -3,7 +3,7 @@
 // Imported by both cli.ts (startup registration) and restart-opencode-server.ts
 // (post-restart re-registration).
 
-import { isManagedInstall } from './service-lifecycle.js'
+import { hostUpgradeHandler, isManagedInstall } from './service-lifecycle.js'
 import {
   type REST,
   Routes,
@@ -366,8 +366,9 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
 
-    // Managed installs are upgraded by the host, never from chat.
-    ...(isManagedInstall()
+    // Managed installs are upgraded by the host: offered only when the host
+    // registered a host_upgrade handler for it.
+    ...(isManagedInstall() && !hostUpgradeHandler()
       ? []
       : [
           new SlashCommandBuilder()

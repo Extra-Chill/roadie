@@ -1,5 +1,6 @@
 // Upgrade and maintenance terminal commands.
-import { isManagedInstall, MANAGED_UPGRADE_MESSAGE } from '../service-lifecycle.js'
+import { hostUpgradeHandler, isManagedInstall, MANAGED_UPGRADE_MESSAGE, runHostUpgrade } from '../service-lifecycle.js'
+import { loadPlugins, resolvePluginSpecs } from '../plugins.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -49,8 +50,21 @@ cli
   .option('--skip-restart', 'Only upgrade, do not restart the running bot')
   .action(async (options) => {
     if (isManagedInstall()) {
-      cliLogger.error(MANAGED_UPGRADE_MESSAGE)
-      process.exit(1)
+      // The host registers its upgrade path from a plugin (ROADIE_PLUGINS).
+      const loaded = await loadPlugins(resolvePluginSpecs([]))
+      if (loaded instanceof Error) {
+        cliLogger.error(loaded.message)
+        process.exit(1)
+      }
+      const handler = hostUpgradeHandler()
+      if (!handler) {
+        cliLogger.error(MANAGED_UPGRADE_MESSAGE)
+        process.exit(1)
+      }
+      const result = await runHostUpgrade(handler, 'cli')
+      if (result.ok) cliLogger.log(result.message)
+      else cliLogger.error(result.message)
+      process.exit(result.ok ? 0 : 1)
     }
     try {
       const current = getCurrentVersion()
