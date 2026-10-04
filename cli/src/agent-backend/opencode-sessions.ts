@@ -135,6 +135,7 @@ export function toAgentProvider(provider: OpenCodeProvider): AgentProviderInfo {
       name: model.name || id,
       ...(model.limit?.context ? { contextLimit: model.limit.context } : {}),
       variants: Object.keys(model.variants ?? {}).filter((v) => v.trim().length > 0),
+      ...(model.release_date && { releaseDate: model.release_date }),
     }])),
   }
 }

@@ -161,7 +161,6 @@ Roadie ships a full set of slash commands and a CLI. The most common slash comma
 
 | Command | Description |
 |---|---|
-| `/resume <session>` | Resume a previous session (with autocomplete) |
 | `/abort` | Stop the current running session |
 | `/model` | Change the AI model for this channel or session |
 | `/agent` | Change the agent for this channel or session |

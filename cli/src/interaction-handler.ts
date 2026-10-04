@@ -16,10 +16,6 @@ import { handleTasksCommand } from './commands/tasks.js'
 import { handleLastSessionsCommand } from './commands/last-sessions.js'
 
 import {
-  handleResumeCommand,
-  handleResumeAutocomplete,
-} from './commands/resume.js'
-import {
   handleAddProjectCommand,
   handleAddProjectAutocomplete,
 } from './commands/add-project.js'
@@ -274,10 +270,6 @@ export function registerInteractionHandler({
               await handleSessionAutocomplete({ interaction, appId })
               return
 
-            case 'resume':
-              await handleResumeAutocomplete({ interaction, appId })
-              return
-
             case 'add-project':
               await handleAddProjectAutocomplete({ interaction, appId })
               return
@@ -337,10 +329,6 @@ export function registerInteractionHandler({
                 command: interaction,
                 appId,
               })
-              return
-
-            case 'resume':
-              await handleResumeCommand({ command: interaction, appId })
               return
 
             case 'add-project':
