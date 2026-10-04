@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.36.0] - 2026-10-04
+
+### Added
+- host_upgrade hook for managed installs
+
 ## [0.35.1] - 2026-10-04
 
 ### Changed
