@@ -36,6 +36,11 @@
 
 import { recordAgentServerPid, clearAgentServerPid } from './service-lifecycle.js'
 import { stopOwnedChild } from './owned-process.js'
+import {
+  PROCESS_GROUP_SPAWN_OPTIONS,
+  signalProcessGroup,
+  terminateProcessGroup,
+} from './process-group.js'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -436,7 +441,7 @@ function killSingleServerProcessNow({
 
   const killResult = errore.try(
     { try: () => {
-      serverProcess.kill('SIGTERM')
+      signalProcessGroup(pid, 'SIGTERM')
     }, catch: (error) => {
       return new Error('Failed to send SIGTERM to opencode server', {
         cause: error,
@@ -473,7 +478,7 @@ function killStartingServerProcessNow({
 
   const killResult = errore.try(
     { try: () => {
-      serverProcess.kill('SIGTERM')
+      signalProcessGroup(pid, 'SIGTERM')
     }, catch: (error) => {
       return new Error('Failed to send SIGTERM to starting opencode server', {
         cause: error,
@@ -962,7 +967,9 @@ async function startSingleServer({
     spawnArgs,
     {
       stdio: 'pipe',
-      detached: false,
+      // Own process group, so stopping the server also stops everything it
+      // spawned instead of leaving children writing to the data dir (#88).
+      ...PROCESS_GROUP_SPAWN_OPTIONS,
       windowsVerbatimArguments,
       // No project-specific cwd — the server handles all directories via
       // x-opencode-directory header. Use home dir as a neutral working dir.
@@ -1421,6 +1428,16 @@ export async function stopOpencodeServer(): Promise<boolean> {
     // Legacy callers expect exceptions on a teardown failure. Do not report
     // success or permit file cleanup while the writer can still be alive.
     if (stopped instanceof Error) throw stopped
+  }
+  // The owned children are closed, but anything they spawned shares their
+  // process group and can still be writing to the data dir. Stop the rest of
+  // each group before reporting success (#88).
+  for (const child of children) {
+    if (!child.pid) continue
+    const groupStopped = await terminateProcessGroup(child)
+    if (!groupStopped) {
+      throw new Error(`OpenCode process group ${child.pid} outlived SIGKILL`)
+    }
   }
   singleServer = null
   clientCache.clear()
