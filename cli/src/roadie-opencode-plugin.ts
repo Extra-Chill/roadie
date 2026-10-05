@@ -20,3 +20,4 @@ export { injectionGuardInternal as injectionGuard } from 'opencode-injection-gua
 export { fileEditTrackerPlugin } from './file-edit-log.js'
 export { bashToolSchemaPlugin } from './bash-tool-schema-plugin.js'
 export { taskIdPlugin } from './task-id-plugin.js'
+export { titleRequestPlugin } from './title-request-plugin.js'

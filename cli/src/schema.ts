@@ -47,6 +47,7 @@ export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles',
   inherited_title: sqliteCore.text('inherited_title').notNull(),
 })
 
+
 // Signed chat ingress is acknowledged only after it is durably inserted.
 // Keep handled IDs to deduplicate platform and host redelivery across restarts.
 export const chat_ingress_events = sqliteCore.sqliteTable('chat_ingress_events', {

@@ -18,6 +18,7 @@ import { warmOpencodeInstance } from './queue-advanced-e2e-setup.js'
 import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import type { Capability } from './identity.js'
+import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 
 const secret = 'native-slack-test-secret'
 const channelId = 'CNATIVE1'
@@ -71,9 +72,12 @@ beforeAll(async () => {
           .toString(),
         model: 'deterministic-v2',
         smallModel: 'deterministic-v3',
-        settings: {
+    settings: {
           strict: false,
-          matchers: [
+      matchers: [
+        { id: 'native-fork-generated-title', priority: 200, when: { latestUserTextIncludes: 'NATIVE_SLACK forked', rawPromptIncludes: TITLE_REQUEST_SYSTEM, maxOutputTokens: 96, toolsEmpty: true, rawPromptRegex: '^(?!.*NATIVE_SLACK model source)(?!.*The user is reading your messages)' }, then: {
+          parts: [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'fork-title' }, { type: 'text-delta', id: 'fork-title', delta: 'Native Slack Fork' }, { type: 'text-end', id: 'fork-title' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 30, outputTokens: 4, totalTokens: 34 } }],
+        } },
             {
               id: 'native-sleep',
               priority: 110,
@@ -795,7 +799,7 @@ test('native model picker selects the backend catalog and fork creates a separat
     .channel(secondChannelId)
     .waitForMessage({
       timeout: 10_000,
-      predicate: (message) => message.text === 'Fork: NATIVE_SLACK forked',
+      predicate: (message) => message.text === 'Fork: Native Slack Fork',
     })
   if (!forkRoot.ts) throw new Error('Fork has no Slack root timestamp')
   await slack
@@ -811,13 +815,13 @@ test('native model picker selects the backend catalog and fork creates a separat
       .filter(
         (message) =>
           message.text === 'Model: deterministic-provider/deterministic-v3' ||
-          message.text === 'Fork: NATIVE_SLACK forked',
+          message.text === 'Fork: Native Slack Fork',
       )
       .map((message) => message.text),
   ).toMatchInlineSnapshot(`
     [
       "Model: deterministic-provider/deterministic-v3",
-      "Fork: NATIVE_SLACK forked",
+      "Fork: Native Slack Fork",
     ]
   `)
   const forkId = slackThreadId({ workspaceId, channelId: secondChannelId, threadTs: forkRoot.ts })

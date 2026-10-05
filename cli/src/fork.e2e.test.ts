@@ -8,6 +8,7 @@ import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
 import { disposeRuntime } from './session-handler/thread-session-runtime.js'
+import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 
 const TEXT_CHANNEL_ID = '200000000000001074'
 
@@ -17,6 +18,25 @@ describe('/fork', () => {
     channelName: 'qa-fork-e2e',
     dirName: 'qa-fork-e2e',
     username: 'fork-tester',
+    extraMatchers: [
+      ['fork-cache-investigation', 'Cache Investigation'],
+      ['fork-permission-review', 'Permission Review'],
+      ['fork-deferred-task', 'Deferred Fork Task'],
+    ].map(([marker, title]) => ({
+      id: `generated-title-${marker}`, priority: 200,
+      when: { latestUserTextIncludes: marker, rawPromptIncludes: TITLE_REQUEST_SYSTEM, maxOutputTokens: 96, toolsEmpty: true,
+        // The model responds only when the request has neither the parent
+        // conversation nor Roadie's full coding-system instructions.
+        rawPromptRegex: '^(?!.*fork-first)(?!.*The user is reading your messages)(?!.*Forked from)(?!.*current git branch)(?!.*working directory)',
+      },
+      then: { parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'title' },
+        { type: 'text-delta', id: 'title', delta: title! },
+        { type: 'text-end', id: 'title' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 40, outputTokens: 4, totalTokens: 44 } },
+      ] },
+    })),
   })
 
   async function startSource(): Promise<{ id: string }> {
@@ -113,7 +133,7 @@ describe('/fork', () => {
     expect(forkUserCount).toBe(userMessages.length - 1)
   }, 30_000)
 
-  test('different fork prompts persist distinct task titles without adding title-generation turns', async () => {
+  test('small-model titles use only the new prompt, without replay or title turns in the fork', async () => {
     const source = await startSource()
     const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
     if (getClient instanceof Error) throw getClient
@@ -121,17 +141,18 @@ describe('/fork', () => {
     const before = await getClient().session.list({ directory })
     const prompts = ['Reply with exactly: fork-cache-investigation', 'Reply with exactly: fork-permission-review']
     const titles: string[] = []
-    for (const prompt of prompts) {
+    const expected = ['Cache Investigation', 'Permission Review']
+    for (const [index, prompt] of prompts.entries()) {
       const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: prompt }])
       const sessionId = await waitForThreadSession(fork.id)
       await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
       const session = await getClient().session.get({ sessionID: sessionId, directory })
-      expect(session.data?.title).toBe(prompt)
+      expect(session.data?.title).toBe(expected[index])
       const deadline = Date.now() + 4_000
       let title = ''
       while (Date.now() < deadline) {
         title = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name ?? ''
-        if (title === prompt) break
+        if (title === expected[index]) break
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
       titles.push(title)
@@ -143,8 +164,8 @@ describe('/fork', () => {
     }
     expect(titles).toMatchInlineSnapshot(`
       [
-        "Reply with exactly: fork-cache-investigation",
-        "Reply with exactly: fork-permission-review",
+        "Cache Investigation",
+        "Permission Review",
       ]
     `)
     const after = await getClient().session.list({ directory })
@@ -164,11 +185,11 @@ describe('/fork', () => {
     const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
     if (getClient instanceof Error) throw getClient
     const directory = ctx.directories.projectDirectory
-    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe(prompt)
+    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('Deferred Fork Task')
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: fork-later-turn' })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-later-turn' })
-    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe(prompt)
-    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"Reply with exactly: fork-deferred-task"`)
+    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('Deferred Fork Task')
+    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"Deferred Fork Task"`)
     expect(await getThreadSession(fork.id)).toBe(sessionId)
   }, 30_000)
 
