@@ -224,6 +224,32 @@ describe('getDb', () => {
     })
   })
 
+  test('migrates pending fork titles and preserves the claimed task across reopening', async () => {
+    await closeDb()
+    const previousDbUrl = process.env['ROADIE_DB_URL']
+    const dbPath = path.join(testDbDir, `test-db-fork-title-${crypto.randomUUID()}.db`)
+    const client = createClient({ url: `file:${dbPath}` })
+    await client.execute('CREATE TABLE pending_fork_titles (session_id TEXT PRIMARY KEY NOT NULL, inherited_title TEXT NOT NULL)')
+    await client.execute("INSERT INTO pending_fork_titles VALUES ('legacy-fork', 'Inherited title')")
+    client.close()
+    process.env['ROADIE_DB_URL'] = `file:${dbPath}`
+    try {
+      const db = await getDb()
+      expect(await db.query.pending_fork_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
+        inherited_title: 'Inherited title', task_prompt: null,
+      })
+      await db.update(schema.pending_fork_titles).set({ task_prompt: 'Original task' }).where(orm.eq(schema.pending_fork_titles.session_id, 'legacy-fork'))
+      await closeDb()
+      expect(await (await getDb()).query.pending_fork_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
+        inherited_title: 'Inherited title', task_prompt: 'Original task',
+      })
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) delete process.env['ROADIE_DB_URL']
+      else process.env['ROADIE_DB_URL'] = previousDbUrl
+    }
+  })
+
   test('rebuilds thread_queue_items that still use queue_id as the primary key', async () => {
     await closeDb()
 

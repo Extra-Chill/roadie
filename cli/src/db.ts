@@ -198,6 +198,7 @@ async function migrateSchema({
   }
 
   const alterStatements = [
+    'ALTER TABLE pending_fork_titles ADD COLUMN task_prompt TEXT',
     'ALTER TABLE channel_models ADD COLUMN variant TEXT',
     'ALTER TABLE session_models ADD COLUMN variant TEXT',
     'ALTER TABLE global_models ADD COLUMN variant TEXT',

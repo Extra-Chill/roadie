@@ -45,6 +45,8 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
 export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   inherited_title: sqliteCore.text('inherited_title').notNull(),
+  // Claimed by the first actual task; retries keep this input across restarts.
+  task_prompt: sqliteCore.text('task_prompt'),
 })
 
 // Chat admission is conversation attribution, never an execution principal or
