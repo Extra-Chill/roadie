@@ -943,6 +943,8 @@ export type IngressInput = {
    * (e.g. user-to-user replies in a thread).
    */
   noReply?: boolean
+  /** Intake data only: preserve execution identity and preferences as well as suppressing replies. */
+  contextOnly?: boolean
   /**
    * True only for the wake prompt posted by the roadie_sleep task runner.
    * Every other ingress cancels a pending sleep; this one must not, because it
@@ -3563,6 +3565,35 @@ export class ThreadSessionRuntime {
           )
           return
         }
+        if (input.contextOnly) {
+          const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory)
+          if (backend instanceof Error) {
+            logger.warn(`[CONTEXT] Cannot record message: ${backend.message}`)
+            return
+          }
+          const history = await backend().sessions.messages({ sessionId: existingSessionId, directory: this.sdkDirectory })
+          if (history instanceof Error) {
+            logger.warn(`[CONTEXT] Cannot resolve existing preferences: ${history.message}`)
+            return
+          }
+          const previous = history.findLast((entry) => entry.message.role === 'user')?.message
+          const context = getOpencodePromptContext({
+            platform: this.chat.platform, sessionId: existingSessionId, threadId: this.threadId,
+            username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
+            sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
+            repliedMessage: input.repliedMessage,
+          })
+          const parts: AgentPromptPart[] = [
+            { kind: 'text', text: input.prompt }, { kind: 'text', text: context, synthetic: true },
+            ...(input.images ?? []).map((file): AgentPromptPart => ({ kind: 'file', mime: file.mime, url: file.url, filename: file.filename })),
+          ]
+          const recorded = await backend().sessions.prompt({
+            sessionId: existingSessionId, directory: this.sdkDirectory, parts, noReply: true,
+            agent: previous?.agent, model: previous?.model, system: previous?.system,
+          })
+          if (recorded instanceof Error) logger.warn(`[CONTEXT] Cannot record message: ${recorded.message}`)
+          return
+        }
       }
 
       // Helper: stop typing and drain queued local messages on error.
@@ -3860,7 +3891,7 @@ export class ThreadSessionRuntime {
    * let a stale wake land after the user took the conversation back.
    */
   private async supersedePendingSleep(input: IngressInput): Promise<void> {
-    if (input.isSleepWake) return
+    if (input.isSleepWake || input.contextOnly) return
     await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
       (error) => {
         logger.error('[SLEEP] failed to cancel pending sleep:', error)
@@ -3952,11 +3983,12 @@ export class ThreadSessionRuntime {
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
+    if (input.contextOnly) input = { ...input, noReply: true }
     input = applyPersonToIngress({ ...input, actorPlatform: this.chat.platform })
     input = applyChannelPolicyToIngress({ input: { ...input, actorPlatform: this.chat.platform }, channelId: this.channelId || this.chat.parentId || this.threadId })
-    threadState.setSessionUsername(this.threadId, input.username)
+    if (!input.contextOnly) threadState.setSessionUsername(this.threadId, input.username)
     const botUserId = this.chat.botUserId
-    if (input.userId && input.userId !== botUserId) {
+    if (!input.contextOnly && input.userId && input.userId !== botUserId) {
       threadState.setSessionUserId(this.threadId, input.userId)
     }
     await this.ensureParentSessionId({
@@ -3973,7 +4005,7 @@ export class ThreadSessionRuntime {
     // opencode's session.command API instead of being sent to the model as
     // plain text. Covers Discord chat messages, /new-session, CLI
     // `roadie send --prompt`, and scheduled tasks — all funnel through here.
-    input = maybeConvertLeadingCommand(input)
+    if (!input.contextOnly) input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
     }
@@ -5009,10 +5041,10 @@ export class ThreadSessionRuntime {
     isFirstTurn,
   }: {
     sessionId: string
-    input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli' }
+    input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli'; contextOnly?: boolean }
     isFirstTurn: boolean
   }): Promise<string> {
-    if (!isContextProviderConfigured()) return ''
+    if (input.contextOnly || !isContextProviderConfigured()) return ''
     const speaker = this.contextSpeaker(input)
     const key = speakerKey(speaker)
     const previous = this.lastContextSpeakerKey

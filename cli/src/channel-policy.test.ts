@@ -133,6 +133,22 @@ describe('parseChannelsConfig', () => {
 })
 
 describe('resolution', () => {
+  test('intake fields merge across project and channel defaults', () => {
+    write(`
+projects:
+  shared:
+    intake:
+      start: mention
+      continue: participants
+      join: mention
+channels:
+  channel-ops:
+    project: shared
+    intake:
+      other: context
+`)
+    expect(resolveChannelPolicy('thread-1')?.intake).toEqual({ start: 'mention', continue: 'participants', join: 'mention', other: 'context' })
+  })
   test('multiple channels share project context while keeping independent intake policies', () => {
     write(`
 projects:

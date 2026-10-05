@@ -181,6 +181,7 @@ export function messageToAPI(
   author: User,
   guildId?: string,
   member?: GuildMember & { user: User },
+  mentionedUsers: User[] = [],
 ): APIMessage {
   // Build with all required fields in the literal, then spread optional
   // fields conditionally. The `as APIMessage` at the end is needed because
@@ -195,7 +196,7 @@ export function messageToAPI(
     edited_timestamp: message.editedTimestamp ? isoTimestamp(message.editedTimestamp) : null,
     tts: message.tts,
     mention_everyone: message.mentionEveryone,
-    mentions: [] as APIUser[],
+    mentions: mentionedUsers.map(userToAPI),
     mention_roles: JSON.parse(message.mentionRoles) as string[],
     attachments: JSON.parse(message.attachments),
     embeds: JSON.parse(message.embeds),

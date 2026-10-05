@@ -26,6 +26,7 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { DiscordOperationError } from '../errors.js'
+import { resolveConversationIntake, recordConversationAdmission } from '../conversation-intake.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -147,6 +148,15 @@ export async function handleSessionCommand({
     .map((f) => f.trim())
     .filter((f) => f)
 
+  const actor = { platform: 'discord', id: command.user.id, name: command.user.displayName }
+  const intake = await resolveConversationIntake({ actor, spaceId: textChannel.guildId, channelId: textChannel.id,
+    text: `/new-session ${prompt}`, messageId: command.id, eligible: true, isNewConversation: true, createsThread: true,
+    hasSession: false, mentionsBot: false, isCommand: true, legacyOutcome: 'respond' })
+  if (intake.outcome !== 'respond') {
+    await command.editReply('Starting a new conversation is not enabled for this channel.')
+    return
+  }
+
   const thread = await createNewSessionThread({
     textChannel,
     projectDirectory,
@@ -161,6 +171,7 @@ export async function handleSessionCommand({
     return
   }
   await command.editReply(`Created new session in ${thread.toString()}`)
+  await recordConversationAdmission({ scope: { platform: 'discord', spaceId: textChannel.guildId, threadId: thread.id }, actor, starter: true, decision: intake })
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
     thread,
