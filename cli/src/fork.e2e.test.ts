@@ -43,14 +43,15 @@ describe('/fork', () => {
       ['fork-cache-investigation', 'Cache Investigation'],
       ['fork-permission-review', 'Permission Review'],
       ['fork-deferred-task', 'Deferred Fork Task'],
-      ].map<DeterministicMatcher>(([marker, title]) => ({
+       ['fork-title-slow', 'Follow-up Investigation'],
+       ].map<DeterministicMatcher>(([marker, title]) => ({
       id: `generated-title-${marker}`, priority: 200,
       when: { latestUserTextIncludes: marker, rawPromptIncludes: TITLE_REQUEST_SYSTEM, maxOutputTokens: 96, toolsEmpty: true,
         // The model responds only when the request has neither the parent
         // conversation nor Roadie's full coding-system instructions.
         rawPromptRegex: '^(?!.*fork-first)(?!.*The user is reading your messages)(?!.*Forked from)(?!.*current git branch)(?!.*working directory)',
       },
-      then: { parts: [
+      then: { ...(marker === 'fork-title-slow' ? { partDelaysMs: [0, 0, 0, 4000, 0] } : {}), parts: [
         { type: 'stream-start', warnings: [] },
         { type: 'text-start', id: 'title' },
         { type: 'text-delta', id: 'title', delta: title! },
@@ -106,6 +107,18 @@ describe('/fork', () => {
       directory: ctx.directories.projectDirectory,
     })
     return response.data ?? []
+  }
+
+  async function waitForGeneratedTitle(sessionId: string, expected: string): Promise<void> {
+    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
+    if (getClient instanceof Error) throw getClient
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const result = await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })
+      if (result.data?.title === expected) return
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error(`Generated title did not become ${expected}`)
   }
 
   test('without a prompt the fork gets its own session and waits', async () => {
@@ -278,6 +291,7 @@ describe('/fork', () => {
       const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: prompt }])
       const sessionId = await waitForThreadSession(fork.id)
       await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+      await waitForGeneratedTitle(sessionId, expected[index]!)
       const session = await getClient().session.get({ sessionID: sessionId, directory })
       expect(session.data?.title).toBe(expected[index])
       const deadline = Date.now() + 4_000
@@ -314,6 +328,7 @@ describe('/fork', () => {
     const prompt = 'Reply with exactly: fork-deferred-task'
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: prompt })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    await waitForGeneratedTitle(sessionId, 'Deferred Fork Task')
     const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
     if (getClient instanceof Error) throw getClient
     const directory = ctx.directories.projectDirectory
@@ -338,5 +353,19 @@ describe('/fork', () => {
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
     expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('User chosen branch')
     expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"User chosen branch"`)
+  }, 30_000)
+
+  test('a slow title request does not delay the actual fork task reply', async () => {
+    const source = await startSource()
+    const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: 'Reply with exactly: fork-title-slow' }])
+    const sessionId = await waitForThreadSession(fork.id)
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
+    if (getClient instanceof Error) throw getClient
+    const title = await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })
+    expect(title.data?.title).not.toBe('Follow-up Investigation')
+    expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain('fork-title-slow')
+    await waitForGeneratedTitle(sessionId, 'Follow-up Investigation')
+    expect((await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })).data?.title).toMatchInlineSnapshot(`"Follow-up Investigation"`)
   }, 30_000)
 })

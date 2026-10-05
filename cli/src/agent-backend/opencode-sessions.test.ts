@@ -12,6 +12,27 @@ function fakeClient(session: Record<string, unknown>, permission: Record<string,
 }
 
 describe('openCodeSessionOperations', () => {
+  test('title generation refuses an unconfigured route instead of guessing from provider catalogs', async () => {
+    const create = vi.fn()
+    const list = vi.fn()
+    const client = { session: { create }, config: { get: async () => ({ data: {} }) }, provider: { list } } as unknown as OpencodeClient
+    const result = await openCodeSessionOperations(client).generateTitle!({ directory: '/project', prompt: 'Investigate the follow-up' })
+    expect(result).toBeInstanceOf(AgentRequestError)
+    expect((result as Error).message).toContain('Configure agent.title.model or small_model explicitly')
+    expect(create).not.toHaveBeenCalled()
+    expect(list).not.toHaveBeenCalled()
+  })
+  test('explicit title-agent routing wins and preserves an API rejection in diagnostics', async () => {
+    const prompt = vi.fn(async (_input: unknown) => ({ data: { info: { role: 'assistant', error: { name: 'APIError', data: { message: 'model rejected by auth route' } } }, parts: [] } }))
+    const client = { config: { get: async () => ({ data: { small_model: 'unwanted/old-model', agent: { title: { model: 'subrouter/gpt-title-luna' } } } }) },
+      session: { create: async () => ({ data: { id: 'internal-title' } }), prompt, abort: async () => ({}), delete: async () => ({}) },
+    } as unknown as OpencodeClient
+    const result = await openCodeSessionOperations(client).generateTitle!({ directory: '/project', prompt: 'Name this follow-up' })
+    expect(prompt.mock.calls[0]?.[0]).toMatchObject({ model: { providerID: 'subrouter', modelID: 'gpt-title-luna' } })
+    expect(result).toBeInstanceOf(AgentRequestError)
+    expect((result as Error).message).toContain('subrouter/gpt-title-luna')
+    expect((result as Error).message).toContain('model rejected by auth route')
+  })
   test('prompt maps parts, model and variant to OpenCode shape', async () => {
     const promptAsync = vi.fn(async () => ({ data: undefined }))
     const ops = openCodeSessionOperations(fakeClient({ promptAsync }))
