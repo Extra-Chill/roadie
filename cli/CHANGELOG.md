@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.40.0] - 2026-10-05
+
+### Added
+- bind application channels through Discord commands
+
 ## [0.39.0] - 2026-10-05
 
 ### Added
