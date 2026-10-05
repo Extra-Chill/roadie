@@ -37,6 +37,9 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { resolveForkWorkspace, forkWorkspaceNotice, type ForkWorkspaceMode } from '../fork-workspace.js'
+import { doAction } from '../hooks.js'
+import { forkOpenCodeSession } from '../agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from '../fork-title.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
@@ -127,6 +130,7 @@ export async function forkSessionToThread({
   username,
   appId,
   images,
+  workspaceMode,
 }: {
   sourceThread: ThreadChannel
   projectDirectory: string
@@ -141,6 +145,7 @@ export async function forkSessionToThread({
   username: string
   appId: string | undefined
   images?: DiscordFileAttachment[]
+  workspaceMode?: ForkWorkspaceMode
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
   const startedAt = Date.now()
   const [sessionId, getClientResult, textChannel] = await Promise.all([
@@ -161,14 +166,23 @@ export async function forkSessionToThread({
     return new Error('Could not resolve parent text channel')
   }
 
+  const workspace = await resolveForkWorkspace({
+    mode: workspaceMode, sourceSessionId: sessionId, sourceThreadId: sourceThread.id,
+    projectDirectory, sourceDirectory: sdkDirectory, prompt, userId,
+    platform: 'discord', spaceId: sourceThread.guildId, channelId: sourceThread.parentId ?? undefined,
+  })
+  if (workspace instanceof Error) return workspace
+  const forkDirectory = workspace.binding?.workingDirectory ?? sdkDirectory
+  const forkProjectDirectory = workspace.binding?.projectDirectory ?? projectDirectory
+
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
   const initMs = Date.now() - startedAt
   const [forkSettled, threadSettled] = await Promise.allSettled([
-    timed(getClientResult().session.fork({
-      sessionID: sessionId,
-      directory: sdkDirectory,
-      ...(fromMessageId && { messageID: fromMessageId }),
+    timed(forkOpenCodeSession({
+      client: getClientResult(), sessionId, sourceDirectory: sdkDirectory,
+      ...(workspace.binding && { targetDirectory: forkDirectory }),
+      ...(fromMessageId && { messageId: fromMessageId }),
     })),
     timed(textChannel.threads.create({
       name: `Fork: ${sourceThread.name.replace(/^(Fork: |btw: )/, '')}`.slice(0, THREAD_NAME_MAX),
@@ -184,16 +198,17 @@ export async function forkSessionToThread({
         forkLogger.warn(`Could not delete orphan fork thread ${createdThread.id}:`, error)
       }),
       forkedSession && getClientResult()
-        .session.delete({ sessionID: forkedSession.id, directory: sdkDirectory })
+        .session.delete({ sessionID: forkedSession.id, directory: forkDirectory })
         .catch((error) => {
           forkLogger.warn(`Could not delete orphan fork session ${forkedSession.id}:`, error)
         }),
     ])
+    if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
   }
   if (!forkedSession) {
     await cleanup()
     const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value[0].error
-    return new OpenCodeSdkError({ operation: 'session.fork', cause })
+    return cause instanceof Error ? cause : new OpenCodeSdkError({ operation: 'session.fork', cause })
   }
   if (!createdThread) {
     await cleanup()
@@ -225,7 +240,7 @@ export async function forkSessionToThread({
     }),
     getClientResult().session.messages({
       sessionID: forkedSession.id,
-      directory: sdkDirectory,
+      directory: forkDirectory,
       limit: 10,
     }).catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause })),
   ])
@@ -238,10 +253,14 @@ export async function forkSessionToThread({
 
   const copyMs = Date.now() - copyStartedAt
   const trimmedPrompt = prompt?.trim()
-  await Promise.all([
+  const bindingResult = await Promise.all([
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
       await setThreadSession(thread.id, forkedSession.id)
+      if (workspace.binding) {
+        await setThreadWorkingDirectory({ threadId: thread.id, ...workspace.binding })
+        return
+      }
       // The fork works where its source thread works.
       const source = await getThreadWorkingDirectory(sourceThread.id)
       if (!source) {
@@ -258,7 +277,12 @@ export async function forkSessionToThread({
         ? `Forked from ${sourceThreadLink}.\n${trimmedPrompt}`
         : `Forked from ${sourceThreadLink}. Continue the conversation here.`,
     ),
-  ])
+  ]).catch((cause) => new OpenCodeSdkError({ operation: 'fork workspace binding', cause }))
+  if (bindingResult instanceof Error) {
+    await cleanup()
+    return bindingResult
+  }
+  if (workspace.binding) await sendThreadMessage(thread, forkWorkspaceNotice(workspace.binding))
 
   forkLogger.log(
     `Created fork session ${forkedSession.id} in thread ${thread.id} from ${sourceThread.id} (session ${sessionId}${fromMessageId ? `, before message ${fromMessageId}` : ''}), system prompt ${copiedSystem ? 'reused' : 'regenerated'}`,
@@ -270,8 +294,8 @@ export async function forkSessionToThread({
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
     thread,
-    projectDirectory,
-    sdkDirectory,
+    projectDirectory: forkProjectDirectory,
+    sdkDirectory: forkDirectory,
     channelId,
     appId,
     sessionId: forkedSession.id,
@@ -345,6 +369,11 @@ export async function handleForkCommand({
 
   const prompt = interaction.options.getString('prompt') ?? undefined
   const fromMessageId = interaction.options.getString('from') ?? undefined
+  const workspace = interaction.options.getString('workspace')
+  if (workspace && workspace !== 'shared' && workspace !== 'separate') {
+    await interaction.editReply('Choose workspace:shared or workspace:separate.')
+    return
+  }
   try {
     const result = await forkSessionToThread({
       sourceThread: threadChannel,
@@ -352,11 +381,13 @@ export async function handleForkCommand({
       sdkDirectory: resolved.workingDirectory,
       ...(fromMessageId && { fromMessageId }),
       ...(prompt && { prompt }),
+      workspaceMode: workspace === 'separate' ? 'separate' : workspace === 'shared' ? 'shared' : undefined,
       userId: interaction.user.id,
       username: interaction.user.displayName,
       appId,
     })
     if (result instanceof Error) {
+      forkLogger.warn('Fork setup failed:', result)
       await interaction.editReply(`Failed to fork session: ${result.message}`)
       return
     }

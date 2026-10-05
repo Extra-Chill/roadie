@@ -31,6 +31,8 @@
 import { applyFilters, hasFilter } from './hooks.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import YAML from 'yaml'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
@@ -223,8 +225,82 @@ export function resolveSendChannel(channelId?: string): string | Error {
   if (config?.application && !config.channels[target]) {
     return new Error(`Channel ${target} is not explicitly configured for this Roadie application`)
   }
-  if (config && !resolveChannelPolicy(target)) return new Error(`Channel ${target} is not configured`)
+  const policy = resolveChannelPolicy(target)
+  if (config && !policy) return new Error(`Channel ${target} is not configured`)
+  if (config?.application && policy?.respond === 'never') return new Error(`Channel ${target} is unbound from this Roadie application`)
   return target
+}
+
+export function applicationBinding(): ChannelsConfig['application'] {
+  const binding = currentConfig()?.application
+  return binding ? { ...binding } : undefined
+}
+
+// One writer for the application policy. Serialized fresh reads keep different
+// channel commands from overwriting each other's bindings.
+let bindingWrites: Promise<unknown> = Promise.resolve()
+
+export function setApplicationChannelBinding({ channelId, bound, application }: {
+  channelId: string
+  bound: boolean
+  application: NonNullable<ChannelsConfig['application']>
+}): Promise<{ changed: boolean } | Error> {
+  const write = bindingWrites.then(() => {
+    const configPath = getChannelsConfigPath()
+    if (!configPath) return new Error('Configure ROADIE_CHANNELS_CONFIG before binding channels')
+    let temporary: string | undefined
+    try {
+      // Follow an operator's config symlink without replacing the symlink itself.
+      const file = fs.realpathSync(configPath)
+      const stat = fs.statSync(file)
+      fs.accessSync(file, fs.constants.W_OK)
+      const text = fs.readFileSync(file, 'utf8')
+      const config = parseChannelsConfig(text)
+      if (config instanceof Error) return new Error(`Fix the channel policy before changing bindings: ${config.message}`)
+      if (!config.application) return new Error('Configure application.channel and application.directory first')
+      if (config.application.channel !== application.channel || config.application.directory !== application.directory) {
+        return new Error('Application configuration changed; run the channel command again')
+      }
+      if (!bound && channelId === application.channel) return new Error('The application default cannot be unbound; change application.channel first')
+      const previous = config.channels[channelId]
+      const enabled = Boolean(previous && previous.respond !== 'never')
+      if (enabled === bound) return { changed: false }
+      const source = config.channels[application.channel]!
+      if (bound && source.respond === 'never') return new Error('Enable the application default channel policy before binding another channel')
+      // Disabling is a canonical respond: never policy, so category/wildcard
+      // policies cannot re-enable an unbound channel or discard its settings.
+      const policy: ChannelPolicy = bound
+        ? { ...structuredClone(source), respond: source.respond ?? 'always' }
+        : { ...previous, respond: 'never' }
+      config.channels[channelId] = policy
+      const document = YAML.parseDocument(text)
+      document.setIn(['channels', channelId], policy)
+      const contents = path.extname(file).toLowerCase() === '.json'
+        ? `${JSON.stringify(config, null, 2)}\n`
+        : document.toString()
+      const validated = parseChannelsConfig(contents)
+      if (validated instanceof Error) return validated
+      if (!isDeepStrictEqual(validated, config)) return new Error('Cannot change this binding without altering an aliased policy; use an independent channel policy')
+      temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`)
+      fs.writeFileSync(temporary, contents, { flag: 'wx', mode: stat.mode & 0o777 })
+      fs.chmodSync(temporary, stat.mode & 0o777)
+      fs.chownSync(temporary, stat.uid, stat.gid)
+      fs.renameSync(temporary, file)
+      temporary = undefined
+      loaded = undefined
+      return { changed: true }
+    } catch (cause) {
+      return new Error('Could not persist the channel binding; the previous policy is unchanged', { cause })
+    } finally {
+      if (temporary) {
+        try { fs.rmSync(temporary, { force: true }) } catch (cause) {
+          logger.error('Could not clean up the channel policy temporary file', cause)
+        }
+      }
+    }
+  })
+  bindingWrites = write.catch(() => undefined)
+  return write
 }
 
 /** One runtime/context directory for an application, independent of repository work. */

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.0] - 2026-10-05
+
+### Added
+- add host-provisioned fork workspace selection
+
+### Fixed
+- bind fork worktrees through native workspace discovery
+
+## [0.40.0] - 2026-10-05
+
+### Added
+- bind application channels through Discord commands
+
 ## [0.39.0] - 2026-10-05
 
 ### Added
