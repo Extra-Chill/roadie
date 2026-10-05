@@ -1,6 +1,6 @@
 after every change always run tsc inside cli to validate your changes. try to never use as any
 
-always load the `changesets` skill before fixing bugs or adding features. User-facing fixes and features usually need a `.changeset/*.md` entry, and the skill explains package selection, issue references, descriptive filenames, and `.changeset/readme.md` expectations.
+Homeboy owns changelog and version generation from conventional commits. The release workflow uses `homeboy.json` to update `cli/CHANGELOG.md` and package versions, then runs `release:package` (`scripts/release-package.sh`) to build the installable tarball. Use `fix:` for fixes and `feat:` for features so Homeboy includes them in the generated changelog.
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
