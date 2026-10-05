@@ -30,6 +30,8 @@ export type ChatInteractions = {
 export type ChatMessage = { id: string }
 
 export type ChatThread = {
+  /** Optional native presentation of a backend session title. */
+  syncTitle?(title: string): Promise<void | Error>
   readonly platform: string
   readonly interactions: ChatInteractions
   readonly capabilities: { rename: boolean; typing: boolean }

@@ -5,6 +5,22 @@ import { getDb } from './database.js'
 import * as schema from './schema.js'
 import type { AgentBackend } from './agent-backend/types.js'
 import type { AgentSession } from './agent-backend/events.js'
+import { createLogger } from './logger.js'
+
+const logger = createLogger('TITLE')
+// In-flight request handles, not session state. The durable pending marker
+// owns retry eligibility; this only coalesces concurrent turns for one fork.
+const requests = new Map<string, Promise<void>>()
+
+export function schedulePendingForkTitle(input: Parameters<typeof applyPendingForkTitle>[0]): void {
+  if (requests.has(input.session.id)) return
+  const request = applyPendingForkTitle(input).then((result) => {
+    if (result instanceof Error) logger.warn(`Fork ${input.session.id} title generation failed: ${result.message}`)
+  }).catch((cause) => logger.warn('Fork title request failed:', cause)).finally(() => {
+    requests.delete(input.session.id)
+  })
+  requests.set(input.session.id, request)
+}
 
 export function normalizeGeneratedForkTitle(generated: string): string | null {
   const text = generated.replace(/\s+/gu, ' ').trim()

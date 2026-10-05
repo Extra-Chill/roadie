@@ -7,7 +7,7 @@
 // run internals.
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
-import { applyPendingForkTitle } from '../fork-title.js'
+import { schedulePendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
@@ -3426,6 +3426,8 @@ export class ThreadSessionRuntime {
     }
     if (!this.chat.capabilities.rename) {
       await (await getDb()).update(schema.thread_sessions).set({ last_synced_name: normalizedTitle }).where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
+      const synced = await this.chat.syncTitle?.(normalizedTitle)
+      if (synced instanceof Error) logger.warn('Could not synchronize native chat title:', synced)
       this.appliedOpencodeTitle = normalizedTitle
       return
     }
@@ -3586,8 +3588,7 @@ export class ThreadSessionRuntime {
 
       const { session, getClient, createdNewSession } = sessionResult
       if (!input.noReply && !input.isSleepWake) {
-        const title = await applyPendingForkTitle({ session, prompt: input.titlePrompt ?? (input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt), backend: getClient(), directory: this.sdkDirectory })
-        if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
+        schedulePendingForkTitle({ session, prompt: input.titlePrompt ?? (input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt), backend: getClient(), directory: this.sdkDirectory })
       }
 
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
@@ -4600,8 +4601,7 @@ export class ThreadSessionRuntime {
       return false
     }
     const { session, getClient, createdNewSession } = sessionResult
-    const title = await applyPendingForkTitle({ session, prompt: input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt, backend: getClient(), directory: this.sdkDirectory })
-    if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
+    schedulePendingForkTitle({ session, prompt: input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt, backend: getClient(), directory: this.sdkDirectory })
 
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),

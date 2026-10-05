@@ -318,6 +318,12 @@ export class SlackChatThread implements ChatThread {
   }
   async sendTyping() {}
   async rename() {}
+  async syncTitle(title: string) {
+    const text = await this.options.api.read({ channel: this.parentId, threadTs: this.options.threadTs, ts: this.options.threadTs })
+    if (text instanceof Error) return text
+    if (!text.startsWith('Fork: ')) return
+    return this.options.api.edit({ channel: this.parentId, ts: this.options.threadTs, text: `Fork: ${title}` })
+  }
   async channelTopic() {
     const result = await this.options.api.call(
       'conversations.info',

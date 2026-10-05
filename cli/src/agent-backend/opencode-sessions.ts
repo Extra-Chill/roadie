@@ -64,14 +64,8 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
     async generateTitle({ directory, prompt }) {
       const config = await call('config.get', () => client.config.get({ directory }))
       if (config instanceof Error) return config
-      const configured = config?.small_model
-      const catalog = configured ? undefined : await call('provider.list', () => client.provider.list({ directory }))
-      if (catalog instanceof Error) return catalog
-      const candidates = (catalog?.all ?? []).filter((provider) => catalog?.connected.includes(provider.id)).flatMap((provider) =>
-        Object.values(provider.models ?? {}).filter((model) => /small|mini|nano|flash|haiku/i.test(`${model.id} ${model.name}`)).map((model) => ({ id: `${provider.id}/${model.id}`, cost: (model.cost?.input ?? 0) + (model.cost?.output ?? 0) })),
-      ).sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id))
-      const selected = configured ?? candidates[0]?.id
-      if (!selected) return new AgentRequestError({ detail: 'Configure small_model in OpenCode for fork title generation; no small model is connected' })
+      const selected = config?.agent?.title?.model ?? config?.small_model
+      if (!selected) return new AgentRequestError({ detail: 'Configure agent.title.model or small_model explicitly in OpenCode for fork titles. Roadie does not choose a model for you.' })
       const separator = selected.indexOf('/')
       if (separator <= 0) return new AgentRequestError({ detail: 'small_model must use provider/model format' })
       const signal = AbortSignal.timeout(15_000)
@@ -90,7 +84,7 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
           system: TITLE_REQUEST_SYSTEM, parts: [{ type: 'text', text: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) }],
         }, { signal }))
       if (response instanceof Error) return response
-      if (response?.info.role === 'assistant' && response.info.error) return new AgentRequestError({ detail: 'Small model could not generate a fork title' })
+      if (response?.info.role === 'assistant' && response.info.error) return new AgentRequestError({ detail: `Configured title model ${selected} failed: ${extractSdkErrorMessage(response.info.error)}` })
       const title = response?.parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('').trim()
       return title || new AgentRequestError({ detail: 'Small model returned an empty fork title' })
     },
