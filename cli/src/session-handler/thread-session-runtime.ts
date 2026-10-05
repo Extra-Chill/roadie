@@ -5000,8 +5000,8 @@ export class ThreadSessionRuntime {
 
   /**
    * Per-turn host context, fetched only when the speaker differs from the
-   * previous turn's (the session_start context already covers the first
-   * speaker). Returns '' when there is nothing to add.
+   * previous turn's. First/reconstructed turns have no successful speaker
+   * lookup, so they fetch too. Shared session context carries no speaker.
    */
   private async resolveTurnContext({
     sessionId,
@@ -5016,17 +5016,24 @@ export class ThreadSessionRuntime {
     const speaker = this.contextSpeaker(input)
     const key = speakerKey(speaker)
     const previous = this.lastContextSpeakerKey
-    this.lastContextSpeakerKey = key
-    if (isFirstTurn || previous === undefined || previous === key || key === 'none') return ''
+    if (previous === key) return ''
+    if (key === 'none') {
+      this.lastContextSpeakerKey = key
+      return ''
+    }
     const sections = await requestContext({
       event: 'turn',
       sessionId,
+      spaceId: this.chat.spaceId ?? undefined,
       threadId: this.thread.id,
       channelId: this.channelId,
       directory: this.sdkDirectory,
       ...channelContextBinding(this.channelId || this.threadId),
       ...speaker,
     })
+    // Empty/error responses are not a successful refresh. Retry on the next
+    // turn rather than permanently caching the failed speaker lookup.
+    if (sections.length > 0) this.lastContextSpeakerKey = key
     return renderContextSections(sections)
   }
 
@@ -5066,11 +5073,11 @@ export class ThreadSessionRuntime {
         const sections = await requestContext({
           event: 'session_start',
           sessionId,
+          spaceId: this.chat.spaceId ?? undefined,
           threadId: this.thread.id,
           channelId: this.channelId,
           directory: this.sdkDirectory,
           ...channelContextBinding(this.channelId || this.threadId),
-          ...this.contextSpeaker(input),
         })
         return base + renderContextSections(sections)
       },

@@ -19,6 +19,7 @@ import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import type { Capability } from './identity.js'
 import { TITLE_REQUEST_SYSTEM } from './title-request.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 
 const secret = 'native-slack-test-secret'
 const channelId = 'CNATIVE1'
@@ -31,6 +32,48 @@ let root: string
 let project: string
 let startedAt: number
 const contextRequests: ContextRequest[] = []
+
+test('speaker context is turn-scoped on first/change/return/reconstructed turns, shared context has no actor', async () => {
+  const requests: ContextRequest[] = []
+  const remove = addFilter('context_sections', (sections, request) => {
+    requests.push(request)
+    return request.event === 'turn' && request.actor ? [...sections, { id: 'speaker', content: `SPEAKER_${request.actor.id}` }] : sections
+  })
+  try {
+    const starter = await slack.user(userId).sendMessage({ channel: secondChannelId, text: 'NATIVE_SLACK speaker first' })
+    await slack.channel(secondChannelId).waitForMessage({ timeout: 10_000, predicate: (message) => message.thread_ts === starter.ts && (message.text?.includes('native Slack answer') ?? false) })
+    for (const [speaker, text] of [['USECOND1', 'second'], [userId, 'return']] as const) {
+      const sent = await slack.user(speaker).sendMessage({ channel: secondChannelId, threadTs: starter.ts, text: `NATIVE_SLACK speaker ${text}` })
+      await slack.channel(secondChannelId).waitForMessage({ timeout: 10_000, predicate: (message) => (message.ts ?? '') > sent.ts && message.thread_ts === starter.ts && (message.text?.includes('native Slack answer') ?? false) })
+    }
+    await bot.stop()
+    bot = new NativeSlackBot({ token: slack.botToken, signingSecret: secret, apiUrl: slack.apiUrl, workspaceId, taskPollIntervalMs: 100 })
+    const started = await bot.start()
+    if (started instanceof Error) throw started
+    slack.setWebhookUrl(`${bot.url}/slack/events`)
+    const recovered = await slack.user('USECOND1').sendMessage({ channel: secondChannelId, threadTs: starter.ts, text: 'NATIVE_SLACK speaker recovered' })
+    await slack.channel(secondChannelId).waitForMessage({ timeout: 10_000, predicate: (message) => (message.ts ?? '') > recovered.ts && message.thread_ts === starter.ts && (message.text?.includes('native Slack answer') ?? false) })
+    const id = slackThreadId({ workspaceId, channelId: secondChannelId, threadTs: starter.ts })
+    const sessionId = await getThreadSession(id)
+    const backend = await getAgentBackendProvider().initializeForDirectory(project)
+    if (backend instanceof Error || !sessionId) throw new Error('Missing backend or speaker session')
+    const history = await backend().sessions.messages({ directory: project, sessionId })
+    if (history instanceof Error) throw history
+    const userTurns = history.filter((entry) => entry.message.role === 'user')
+    expect(userTurns.map((entry) => entry.parts.filter((part) => part.kind === 'text' && part.text.includes('SPEAKER_')).map((part) => part.kind === 'text' ? part.text.match(/SPEAKER_\w+/)?.[0] : '').filter(Boolean))).toEqual([['SPEAKER_UNATIVE1'], ['SPEAKER_USECOND1'], ['SPEAKER_UNATIVE1'], ['SPEAKER_USECOND1']])
+    expect(userTurns.every((entry) => !entry.message.system?.includes('SPEAKER_'))).toBe(true)
+    expect(requests.filter((request) => request.event === 'session_start').every((request) => !request.actor && !request.personId)).toBe(true)
+    expect(requests.filter((request) => request.event === 'turn').every((request) => request.spaceId === workspaceId)).toBe(true)
+    expect((await slack.channel(secondChannelId).getMessages()).filter((message) => message.thread_ts === starter.ts && message.text?.includes('native Slack answer')).map((message) => message.text?.replace(/^>\s*/, '').trim())).toMatchInlineSnapshot(`
+      [
+        "native Slack answer",
+        "native Slack answer",
+        "native Slack answer",
+        "native Slack answer",
+      ]
+    `)
+  } finally { remove() }
+}, 30_000)
 let removeContextFilter: (() => boolean) | undefined
 
 beforeAll(async () => {
@@ -39,7 +82,7 @@ beforeAll(async () => {
   project = path.join(root, 'project')
   fs.mkdirSync(project)
   initTestGitRepo(project)
-  process.env.ROADIE_LOCK_PORT = String(chooseLockPort({ key: 'native-slack-e2e' }))
+  process.env.ROADIE_LOCK_PORT = String(chooseLockPort({ key: `native-slack-e2e:${root}` }))
   setDataDir(path.join(root, 'data'))
   const config = path.join(root, 'channels.json')
   fs.writeFileSync(
@@ -335,6 +378,7 @@ beforeAll(async () => {
     botUser: { id: 'UBOTNATIVE' },
     users: [
       { id: userId, name: 'Chris' },
+      { id: 'USECOND1', name: 'Second person' },
       { id: 'UWORKER1', name: 'Worker', isBot: true },
     ],
     channels: [
@@ -442,7 +486,7 @@ test('two channels share a project with separate sessions; signed event redelive
     .channel(secondChannelId)
     .waitForMessage({
       timeout: 10_000,
-      predicate: (message) => message.text?.includes('native Slack answer') ?? false,
+      predicate: (message) => message.thread_ts === starter.ts && (message.text?.includes('native Slack answer') ?? false),
     })
   await sendWebhookEvent({
     config: { signingSecret: secret, webhookUrl: `${bot.url}/slack/events`, workspaceId },
@@ -459,7 +503,7 @@ test('two channels share a project with separate sessions; signed event redelive
     (await slack.channel(secondChannelId).getMessages())
       .filter(
         (message) =>
-          message.text?.includes('NATIVE_SLACK') || message.text?.includes('native Slack answer'),
+          (message.ts === starter.ts || message.thread_ts === starter.ts) && (message.text?.includes('NATIVE_SLACK') || message.text?.includes('native Slack answer')),
       )
       .map((message) => message.text?.replace(/^>\s*/, '').trim()),
   ).toMatchInlineSnapshot(`
@@ -470,7 +514,7 @@ test('two channels share a project with separate sessions; signed event redelive
   `)
   expect(
     (await slack.channel(secondChannelId).getMessages()).filter((message) =>
-      message.text?.includes('native Slack answer'),
+      message.thread_ts === starter.ts && message.text?.includes('native Slack answer'),
     ),
   ).toHaveLength(1)
   const runtime = await bot.runtimeFor(secondChannelId, starter.ts)
