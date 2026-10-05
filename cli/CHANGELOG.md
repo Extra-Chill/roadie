@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.41.3] - 2026-10-05
+
+### Fixed
+- acknowledge fork interactions before slow setup
+
+## [0.41.2] - 2026-10-05
+
+### Fixed
+- preserve fork task titles across restart recovery
+
 ## [0.41.1] - 2026-10-05
 
 ### Fixed
