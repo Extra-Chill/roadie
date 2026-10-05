@@ -195,8 +195,8 @@ export function remoteSendOptions(options: Record<string, unknown>, cwd = proces
   for (const key of ['project', 'cwd']) {
     if (typeof picked[key] === 'string') picked[key] = path.resolve(cwd, picked[key] as string)
   }
-  // The local default is the current directory; the bot runs elsewhere.
-  if (!picked.channel && !picked.project && !picked.thread && !picked.session) picked.project = path.resolve(cwd)
+  // The running application resolves its configured destination. The caller's
+  // cwd is never a project/channel selector.
   return picked
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.4] - 2026-10-05
+
+### Fixed
+- bind sends to application channels and runtime directory
+- generate fork titles with a bounded prompt-only small-model request
+- name forks from their new task prompt without model calls
+
 ## [0.38.3] - 2026-10-05
 
 ### Fixed

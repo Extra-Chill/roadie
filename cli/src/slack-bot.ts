@@ -30,7 +30,9 @@ import {
   decideRespond,
   resolveChannelPolicy,
   setChannelParentResolver,
-  channelsForProject,
+  applicationDirectory,
+  resolveSendChannel,
+  validateApplicationDirectory,
 } from './channel-policy.js'
 import { personHas, resolvePerson } from './identity.js'
 import {
@@ -45,6 +47,7 @@ import {
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
 import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
+import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
 import { setThreadSession } from './database.js'
@@ -74,6 +77,7 @@ import { REMOTE_SEND_OPTIONS, setRemoteSendRunner } from './remote-send.js'
 import { prepareChatAttachments } from './chat-platform/attachments.js'
 import { markChatPlatformReady } from './hrana-server.js'
 import { doAction } from './hooks.js'
+import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
 
 const logger = createLogger('SLACK')
@@ -402,7 +406,7 @@ export class NativeSlackBot {
       threadId: chat.id,
       chat,
       projectDirectory: directory,
-      sdkDirectory: working?.workingDirectory ?? directory,
+      sdkDirectory: applicationDirectory() ?? working?.workingDirectory ?? directory,
       channelId,
       sessionId: (await getThreadSession(chat.id)) || undefined,
     })
@@ -418,6 +422,9 @@ export class NativeSlackBot {
     if (!parsed.success)
       return new SlackApiError({ operation: 'send', detail: parsed.error.message })
     const options = parsed.data
+    if (options.project) return new SlackApiError({ operation: 'send', detail: '--project no longer selects channels; configure application.channel or use --channel' })
+    const directoryError = validateApplicationDirectory(options.cwd)
+    if (directoryError) return directoryError
     const sessionThread = options.session ? await getThreadIdBySessionId(options.session) : null
     const target = parseSlackThreadId(options.thread ?? sessionThread ?? '')
     if ((options.thread || options.session) && !target)
@@ -427,17 +434,8 @@ export class NativeSlackBot {
       })
     if (target && target.workspaceId !== this.workspaceId)
       return new SlackApiError({ operation: 'send', detail: 'thread belongs to another workspace' })
-    const candidates = options.project ? channelsForProject(options.project) : []
-    const channelId =
-      target?.channelId ?? options.channel ?? (candidates.length === 1 ? candidates[0] : undefined)
-    if (!channelId)
-      return new SlackApiError({
-        operation: 'send',
-        detail:
-          candidates.length > 1
-            ? 'this project has multiple channels; pass --channel or --thread'
-            : 'pass --channel, --thread, --session or a configured --project',
-      })
+    const channelId = resolveSendChannel(target?.channelId ?? options.channel)
+    if (channelId instanceof Error) return channelId
     if (options.channel && target && options.channel !== target.channelId)
       return new SlackApiError({ operation: 'send', detail: 'channel and thread targets disagree' })
     const policy = resolveChannelPolicy(channelId)
@@ -944,6 +942,16 @@ export class NativeSlackBot {
       const identity = await this.authorize(target.channelId, delivery.event.user.id)
       if (identity instanceof Error) return identity
       if (!identity) return
+      if (resolveChannelPolicy(target.channelId)?.intake) {
+        const scope = { platform: 'slack', spaceId: this.workspaceId, threadId: row.thread_id }
+        const admission = await readConversationAdmission(scope)
+        const hasSession = Boolean(await getThreadSession(row.thread_id))
+        const intake = await resolveConversationIntake({ actor: identity.actor, personId: identity.person?.personId, spaceId: this.workspaceId,
+          channelId: target.channelId, threadId: row.thread_id, eligible: true, isNewConversation: !hasSession && !admission, createsThread: false,
+          hasSession, mentionsBot: false, isCommand: true, text: 'interactive callback', legacyOutcome: 'respond' })
+        if (intake.outcome !== 'respond') return
+        await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
+      }
       const runtime = await this.runtimeFor(target.channelId, target.threadTs)
       if (runtime instanceof Error) return runtime
       const thread = this.threads.get(runtime.threadId)!
@@ -974,14 +982,26 @@ export class NativeSlackBot {
     if (!identity) return
     const mentioned = message.text.includes(`<@${this.botUserId}>`)
     const decision = decideRespond(message.channel)
-    if (
-      (decision === 'needs-mention' ||
-        (decision === 'builtin' && store.getState().defaultMentionMode)) &&
-      !mentioned
-    )
-      return
-    if (!message.thread_ts && !channelStartsThreads(message.channel)) return
-    const runtime = await this.runtimeFor(message.channel, message.thread_ts ?? message.ts)
+    // A host-relayed root may repeat its own ts as thread_ts. That is still a
+    // new platform thread, not a continuation that bypasses start policy.
+    const reply = Boolean(message.thread_ts && message.thread_ts !== message.ts)
+    const threadTs = reply ? message.thread_ts! : message.ts
+    const threadId = slackThreadId({ workspaceId: this.workspaceId, channelId: message.channel, threadTs })
+    const scope = { platform: 'slack', spaceId: this.workspaceId, threadId }
+    const hasSession = Boolean(await getThreadSession(threadId))
+    const admission = await readConversationAdmission(scope)
+    const legacyOutcome = (decision === 'needs-mention' || decision === 'builtin' && store.getState().defaultMentionMode) && !mentioned ? 'ignore' : 'respond'
+    const intake = await resolveConversationIntake({
+      actor: identity.actor, spaceId: this.workspaceId, channelId: message.channel, threadId,
+      personId: identity.person?.personId, messageId: message.ts, text: message.text,
+      eligible: true, isNewConversation: !hasSession && !admission, createsThread: !reply,
+      hasSession, mentionsBot: mentioned, isCommand: message.text.trimStart().startsWith('/'),
+      directedElsewhere: /^<@[A-Z0-9]+>/.test(message.text) && !mentioned,
+      legacyOutcome,
+    })
+    if (intake.outcome === 'ignore') return
+    await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
+    const runtime = await this.runtimeFor(message.channel, threadTs)
     if (runtime instanceof Error) return runtime
     const prompt = message.text.replaceAll(`<@${this.botUserId}>`, '').trim()
     const attached: Array<{ name: string; mimetype: string; bytes: Buffer }> = []
@@ -1003,6 +1023,8 @@ export class NativeSlackBot {
       sourceThreadId: runtime.threadId,
       sourceChannelId: message.channel,
       mode: 'opencode',
+      noReply: intake.outcome === 'context',
+      contextOnly: intake.outcome === 'context',
     })
   }
 
@@ -1014,6 +1036,10 @@ export class NativeSlackBot {
     if (!identity) return
     const [name, target, ...words] = event.text.trim().split(/\s+/)
     if (name === 'new') {
+      const intake = await resolveConversationIntake({ actor: identity.actor, spaceId: this.workspaceId, channelId: event.channel_id,
+        personId: identity.person?.personId, text: event.text,
+        eligible: true, isNewConversation: true, createsThread: true, hasSession: false, mentionsBot: false, isCommand: true, legacyOutcome: 'respond' })
+      if (intake.outcome !== 'respond') return
       const root = await this.api.post({
         channel: event.channel_id,
         text: [target, ...words].filter(Boolean).join(' ') || 'New Roadie session',
@@ -1021,6 +1047,7 @@ export class NativeSlackBot {
       if (root instanceof Error) return root
       const runtime = await this.runtimeFor(event.channel_id, root.id)
       if (runtime instanceof Error) return runtime
+      await recordConversationAdmission({ scope: { platform: 'slack', spaceId: this.workspaceId, threadId: runtime.threadId }, actor: identity.actor, starter: true, decision: intake })
       await runtime.enqueueIncoming({
         prompt: [target, ...words].filter(Boolean).join(' '),
         userId: event.user_id,
@@ -1059,6 +1086,17 @@ export class NativeSlackBot {
         text: 'Use /roadie new <prompt>, or /roadie <abort|model|agent> <thread timestamp> [value]. Session commands target an explicit thread.',
       })
       return result instanceof Error ? result : undefined
+    }
+    if (resolveChannelPolicy(event.channel_id)?.intake) {
+      const id = slackThreadId({ workspaceId: this.workspaceId, channelId: event.channel_id, threadTs: target })
+      const scope = { platform: 'slack', spaceId: this.workspaceId, threadId: id }
+      const admission = await readConversationAdmission(scope)
+      const hasSession = Boolean(await getThreadSession(id))
+      const intake = await resolveConversationIntake({ actor: identity.actor, personId: identity.person?.personId, spaceId: this.workspaceId,
+        channelId: event.channel_id, threadId: id, eligible: true, isNewConversation: !hasSession && !admission, createsThread: name === 'fork',
+        hasSession, mentionsBot: false, isCommand: true, text: event.text, legacyOutcome: 'respond' })
+      if (intake.outcome !== 'respond') return
+      await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
     }
     const runtime = await this.runtimeFor(event.channel_id, target)
     if (runtime instanceof Error) return runtime
@@ -1169,7 +1207,7 @@ export class NativeSlackBot {
       })
       const root = await this.api.post({
         channel: event.channel_id,
-        text: `Fork: ${promptWords.join(' ') || forked.data.title}`,
+        text: `Fork: ${forked.data.title}`,
       })
       if (root instanceof Error) { await abandon(); return root }
       const id = slackThreadId({
@@ -1178,6 +1216,7 @@ export class NativeSlackBot {
         threadTs: root.id,
       })
       await setThreadSession(id, forked.data.id)
+      await markPendingForkTitle(forked.data)
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (workspace.binding) {
         await setThreadWorkingDirectory({ threadId: id, ...workspace.binding })
@@ -1190,12 +1229,16 @@ export class NativeSlackBot {
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
       if (workspace.binding) await fork.chat.sendNotice(forkWorkspaceNotice(workspace.binding))
-      if (promptWords.length)
+      if (promptWords.length) {
         await fork.enqueueIncoming({
           prompt: promptWords.join(' '),
           userId: event.user_id,
           username: identity.actor.name,
         })
+        const info = await backend().sessions.get({ sessionId: forked.data.id, directory: runtime.sdkDirectory })
+        if (info instanceof Error) logger.warn('Could not display generated fork title:', info)
+        else if (info && info.title !== forked.data.title) await this.api.edit({ channel: event.channel_id, ts: root.id, text: `Fork: ${info.title}` })
+      }
       return
     }
     if (name === 'session') {

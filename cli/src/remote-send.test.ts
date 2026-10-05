@@ -60,10 +60,11 @@ describe('remote send client', () => {
     expect(shouldSendRemotely({ dataDir: dir, token: 't' })).toBe(false)
   })
 
-  test('paths become absolute and the project defaults to the caller cwd', () => {
+  test('explicit paths become absolute without deriving a destination from caller cwd', () => {
     expect(remoteSendOptions({ prompt: 'p', cwd: 'sub', preRun: 'x' }, '/work')).toEqual({
-      prompt: 'p', cwd: '/work/sub', project: '/work',
+      prompt: 'p', cwd: '/work/sub',
     })
+    expect(remoteSendOptions({ prompt: 'p' }, '/unrelated/repo')).toEqual({ prompt: 'p' })
     expect(remoteSendOptions({ prompt: 'p', thread: '1' }, '/work')).toEqual({ prompt: 'p', thread: '1' })
   })
 })

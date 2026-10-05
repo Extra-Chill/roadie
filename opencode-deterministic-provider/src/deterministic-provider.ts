@@ -72,6 +72,8 @@ export type DeterministicMatcher = {
   enabled?: boolean
   priority?: number
   when?: {
+    maxOutputTokens?: number
+    toolsEmpty?: boolean
     lastMessageRole?: MessageRole
     lastMessageTextIncludes?: string
     lastMessageTextRegex?: string
@@ -359,6 +361,8 @@ function matcherMatches({
   if (!when) {
     return true
   }
+  if (when.maxOutputTokens !== undefined && options.maxOutputTokens !== when.maxOutputTokens) return false
+  if (when.toolsEmpty && options.tools?.length) return false
 
   const lastRole = getLastMessageRole({ prompt: options.prompt })
   if (when.lastMessageRole && when.lastMessageRole !== lastRole) {

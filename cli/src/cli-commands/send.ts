@@ -14,7 +14,8 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { initDatabase, getChannelDirectory, initializeOpencodeForDirectory } from '../discord-bot.js'
+import { applicationDirectory, resolveSendChannel, validateApplicationDirectory } from '../channel-policy.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -56,7 +57,7 @@ cli
   .option('-c, --channel <channelId>', 'Discord channel ID')
   .option(
     '-d, --project <path>',
-    'Project directory (alternative to --channel)',
+    'Removed: channels are application configuration; use --channel',
   )
   .option(
     '-p, --prompt <prompt>',
@@ -194,10 +195,16 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
-        // Default to current directory if neither --channel nor --project provided
-        const resolvedProjectPath = existingThreadMode
-          ? undefined
-          : projectPath || (!channelId ? '.' : undefined)
+        if (projectPath) {
+          throw new Error('--project no longer selects channels. Use --channel or configure application.channel')
+        }
+        const directoryError = validateApplicationDirectory(options.cwd)
+        if (directoryError) throw directoryError
+        if (!existingThreadMode) {
+          const destination = resolveSendChannel(channelId)
+          if (destination instanceof Error) throw destination
+          channelId = destination
+        }
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
@@ -320,138 +327,9 @@ cli
         // Initialize database first
         await initDatabase()
 
-        const { token: botToken, appId } = await resolveBotCredentials({
+        const { token: botToken } = await resolveBotCredentials({
           appIdOverride: optionAppId,
         })
-
-        // If --project provided (or defaulting to cwd), resolve to channel ID
-        if (resolvedProjectPath) {
-          const absolutePath = path.resolve(resolvedProjectPath)
-
-          if (!fs.existsSync(absolutePath)) {
-            cliLogger.error(`Directory does not exist: ${absolutePath}`)
-            process.exit(EXIT_NO_RESTART)
-          }
-
-          cliLogger.log('Looking up channel for project...')
-
-          // Check if channel already exists for this directory or a parent directory
-          // This allows running from subfolders of a registered project
-          try {
-            // Helper to find channel for a path.
-            const findChannelForPath = async (
-              dirPath: string,
-            ): Promise<
-              { channel_id: string; directory: string } | undefined
-            > => {
-              const channels = await findChannelsByDirectory({
-                directory: dirPath,
-                channelType: 'text',
-              })
-              if (channels.length > 1) {
-                cliLogger.error(`This project has multiple channels (${channels.map((channel) => channel.channel_id).join(', ')}). Pass --channel or --thread.`)
-                process.exit(EXIT_NO_RESTART)
-              }
-              return channels[0]
-            }
-
-            // Try exact match first, then walk up parent directories
-            let existingChannel:
-              | { channel_id: string; directory: string }
-              | undefined
-            let searchPath = absolutePath
-            while (searchPath !== path.dirname(searchPath)) {
-              existingChannel = await findChannelForPath(searchPath)
-              if (existingChannel) break
-              searchPath = path.dirname(searchPath)
-            }
-
-            if (existingChannel) {
-              channelId = existingChannel.channel_id
-              if (existingChannel.directory !== absolutePath) {
-                cliLogger.log(
-                  `Found parent project channel: ${existingChannel.directory}`,
-                )
-              } else {
-                cliLogger.log(`Found existing channel: ${channelId}`)
-              }
-            } else {
-              // Need to create a new channel
-              cliLogger.log('Creating new channel...')
-
-              if (!appId) {
-                cliLogger.log('Missing app ID')
-                cliLogger.error(
-                  'App ID is required to create channels. Use --app-id or run `roadie` first.',
-                )
-                process.exit(EXIT_NO_RESTART)
-              }
-
-              const client = await createDiscordClient()
-
-              await new Promise<void>((resolve, reject) => {
-                client.once(Events.ClientReady, () => {
-                  resolve()
-                })
-                client.once(Events.Error, reject)
-                void client.login(botToken)
-              })
-
-              // Get guild from existing channels or first available
-              const guild = await (async () => {
-                const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
-                  where: { channel_type: 'text' },
-                  orderBy: { created_at: 'desc' },
-                  columns: { channel_id: true },
-                }).then((row) => row?.channel_id)
-
-                if (existingChannelId) {
-                  try {
-                    const ch = await client.channels.fetch(existingChannelId)
-                    if (ch && !ch.isDMBased()) {
-                      return ch.guild
-                    }
-                  } catch (error) {
-                    cliLogger.debug(
-                      'Failed to fetch existing channel while selecting guild:',
-                      error instanceof Error ? error.stack : String(error),
-                    )
-                  }
-                }
-                // Fall back to first guild the bot is in
-                let firstGuild = client.guilds.cache.first()
-                if (!firstGuild) {
-                  // Cache might be empty, try fetching guilds from API
-                  const fetched = await client.guilds.fetch()
-                  const firstOAuth2Guild = fetched.first()
-                  if (firstOAuth2Guild) {
-                    firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-                  }
-                }
-                if (!firstGuild) {
-                  throw new Error(
-                    'No guild found. Add the bot to a server first.',
-                  )
-                }
-                return firstGuild
-              })()
-
-              const { textChannelId } = await createProjectChannels({
-                guild,
-                projectDirectory: absolutePath,
-                botName: client.user?.username,
-              })
-
-              channelId = textChannelId
-              cliLogger.log(`Created channel: ${channelId}`)
-
-              void client.destroy()
-            }
-          } catch (e) {
-            cliLogger.log('Failed to resolve project')
-            throw e
-          }
-        }
 
         const rest = createDiscordRest(botToken)
 
@@ -489,6 +367,8 @@ cli
           if (!threadData.parent_id) {
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
+          const destination = resolveSendChannel(threadData.parent_id)
+          if (destination instanceof Error) throw destination
 
           // Adding the user as a thread member is what makes the thread appear
           // in their Discord left sidebar. Without it a scheduled reminder posts
@@ -509,7 +389,9 @@ cli
           // The running bot on the other end resolves the directory from its own DB.
           // We only require it for features that genuinely need a local directory
           // (scheduled tasks and --wait).
-          const channelConfig = await getChannelDirectory(threadData.parent_id)
+          const storedConfig = await getChannelDirectory(threadData.parent_id)
+          const fixedDirectory = applicationDirectory()
+          const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
           const threadModelCheck = await validateCliModelOption({
             model: options.model,
             directory: channelConfig?.directory,
@@ -654,7 +536,9 @@ cli
         // The running bot on the other end resolves the directory from its own DB.
         // We only require it for features that genuinely need a local directory
         // (--send-at, --wait, --cwd).
-        const channelConfig = await getChannelDirectory(channelData.id)
+        const storedConfig = await getChannelDirectory(channelData.id)
+        const fixedDirectory = applicationDirectory()
+        const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
         const projectDirectory = channelConfig?.directory
         const channelModelCheck = await validateCliModelOption({
           model: options.model,

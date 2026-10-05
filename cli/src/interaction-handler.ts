@@ -92,10 +92,12 @@ import {
   channelAllowsCapability,
   channelAllowsSpeaker,
   decideRespond,
+  resolveChannelPolicy,
 } from './channel-policy.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import { getChannelDirectory } from './database.js'
+import { getChannelDirectory, getThreadSession } from './database.js'
+import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 import {
   reserveThreadIngress,
   runInThreadIngressSlot,
@@ -249,6 +251,24 @@ export function registerInteractionHandler({
             }
             return
           }
+        }
+
+        if (!interaction.isAutocomplete() && interaction.channel?.isThread() && interaction.isRepliable() && resolveChannelPolicy(interaction.channel.id)?.intake) {
+          const thread = interaction.channel
+          const scope = { platform: 'discord', spaceId: thread.guildId, threadId: thread.id }
+          const hasSession = Boolean(await getThreadSession(thread.id))
+          const admission = await readConversationAdmission(scope)
+          const actor = { platform: 'discord', id: interaction.user.id, name: interaction.user.displayName }
+          const intake = await resolveConversationIntake({ actor, spaceId: thread.guildId, channelId: thread.parentId ?? thread.id, threadId: thread.id,
+            personId: getCachedPerson(actor)?.personId,
+            eligible: hasRoadieBotPermission(interaction.member, interaction.guild), isNewConversation: !hasSession && !admission,
+            createsThread: interaction.isChatInputCommand() && ['new-session', 'fork', 'fork-subagent'].includes(interaction.commandName), hasSession,
+            mentionsBot: false, isCommand: true, messageId: interaction.id, text: interaction.isChatInputCommand() ? `/${interaction.commandName}` : 'interactive callback', legacyOutcome: 'respond' })
+          if (intake.outcome !== 'respond') {
+            await interaction.reply({ content: 'Your account is not admitted to this conversation.', flags: MessageFlags.Ephemeral })
+            return
+          }
+          await recordConversationAdmission({ scope, actor, starter: !hasSession && !admission, decision: intake })
         }
 
         if (interaction.isAutocomplete()) {

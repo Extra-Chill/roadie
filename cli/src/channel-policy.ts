@@ -30,6 +30,7 @@
 
 import { applyFilters, hasFilter } from './hooks.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import YAML from 'yaml'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
@@ -40,16 +41,22 @@ const logger = createLogger(LogPrefix.DISCORD)
 
 const RELOAD_CHECK_MS = 2_000
 
-const whoEntrySchema = z.union([
-  z.literal('owner'),
-  z.string().regex(/^(role|user|person):.+$/),
-])
+const whoEntrySchema = z.union([z.literal('owner'), z.string().regex(/^(role|user|person):.+$/)])
 
 const policySchema = z
   .object({
     project: z.string().min(1).optional(),
     context: z.string().min(1).optional(),
     respond: z.enum(['always', 'mention', 'never']).optional(),
+    intake: z
+      .object({
+        start: z.enum(['message', 'mention', 'command']).optional(),
+        continue: z.enum(['starter', 'participants', 'eligible']).optional(),
+        join: z.enum(['mention', 'message', 'never']).optional(),
+        other: z.enum(['context', 'ignore']).optional(),
+      })
+      .strict()
+      .optional(),
     who: z.union([z.literal('everyone'), z.array(whoEntrySchema).min(1)]).optional(),
     threads: z.enum(['per-message', 'existing-only']).optional(),
     directory: z.string().min(1).optional(),
@@ -63,6 +70,10 @@ const policySchema = z
 
 const configSchema = z
   .object({
+    application: z.object({
+      channel: z.string().min(1),
+      directory: z.string().refine(path.isAbsolute, 'Use an absolute application directory'),
+    }).strict().optional(),
     projects: z.record(z.string().min(1), policySchema.omit({ project: true })).optional(),
     channels: z.record(z.string().min(1), policySchema),
   })
@@ -125,6 +136,9 @@ export function parseChannelsConfig(text: string): ChannelsConfig | Error {
       return new Error(`channels.${channelId}.project: unknown project "${policy.project}"`)
     }
   }
+  if (parsed.data.application && !parsed.data.channels[parsed.data.application.channel]) {
+    return new Error('application.channel must name an explicitly configured channel')
+  }
   return parsed.data
 }
 
@@ -164,7 +178,9 @@ function currentConfig(): ChannelsConfig | null | undefined {
     loaded = { path, mtimeMs, checkedAt: now, config: previous }
     return previous
   }
-  logger.log(`[CHANNEL POLICY] loaded ${Object.keys(result.channels).length} policy entries from ${path}`)
+  logger.log(
+    `[CHANNEL POLICY] loaded ${Object.keys(result.channels).length} policy entries from ${path}`,
+  )
   loaded = { path, mtimeMs, checkedAt: now, config: result }
   return result
 }
@@ -189,7 +205,39 @@ function lookupChain(channelId: string): string[] {
  *   null      → config file present but nothing matches: do not answer
  */
 export function resolveChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
-  return applyFilters('channel_policy', configuredChannelPolicy(channelId), { channelId })
+  const config = currentConfig()
+  if (config?.application && !lookupChain(channelId).some((id) => id !== '*' && config.channels[id])) {
+    return null
+  }
+  const policy = applyFilters('channel_policy', configuredChannelPolicy(channelId), { channelId })
+  if (policy && config?.application) return { ...policy, directory: config.application.directory }
+  return policy
+}
+
+/** Application routing is explicit configuration, never a caller-directory lookup. */
+export function resolveSendChannel(channelId?: string): string | Error {
+  const config = currentConfig()
+  if (config === null) return new Error('Cannot send: application channel configuration is unavailable')
+  const target = channelId || config?.application?.channel
+  if (!target) return new Error('Pass --channel, --thread or --session, or configure application.channel')
+  if (config?.application && !config.channels[target]) {
+    return new Error(`Channel ${target} is not explicitly configured for this Roadie application`)
+  }
+  if (config && !resolveChannelPolicy(target)) return new Error(`Channel ${target} is not configured`)
+  return target
+}
+
+/** One runtime/context directory for an application, independent of repository work. */
+export function applicationDirectory(): string | undefined {
+  return currentConfig()?.application?.directory
+}
+
+export function validateApplicationDirectory(directory?: string): Error | undefined {
+  const fixed = applicationDirectory()
+  if (fixed && directory && path.resolve(directory) !== path.resolve(fixed)) {
+    return new Error('Session directory is fixed by application.directory; use the host development workspace for repository work')
+  }
+  return undefined
 }
 
 function configuredChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
@@ -203,13 +251,31 @@ function configuredChannelPolicy(channelId: string): ChannelPolicy | null | unde
   if (matches.length === 0) return null
 
   // Least specific first so more specific entries override field by field.
-  const channel = matches.reverse().reduce<ChannelPolicy>((acc, policy) => ({ ...acc, ...policy }), {})
+  const channel = matches
+    .reverse()
+    .reduce<ChannelPolicy>(
+      (acc, policy) => ({
+        ...acc,
+        ...policy,
+        ...(acc.intake || policy.intake ? { intake: { ...acc.intake, ...policy.intake } } : {}),
+      }),
+      {},
+    )
   const project = channel.project ? config.projects?.[channel.project] : undefined
-  return { ...project, ...channel }
+  return {
+    ...project,
+    ...channel,
+    ...(project?.intake || channel.intake
+      ? { intake: { ...project?.intake, ...channel.intake } }
+      : {}),
+  }
 }
 
 /** Opaque host context shared by every channel bound to the same project. */
-export function channelContextBinding(channelId: string): { projectId?: string; contextId?: string } {
+export function channelContextBinding(channelId: string): {
+  projectId?: string
+  contextId?: string
+} {
   const policy = resolveChannelPolicy(channelId)
   if (!policy) return {}
   return {
@@ -303,10 +369,9 @@ export function channelStartsThreads(channelId: string): boolean {
 }
 
 /** Per-channel overrides for settings Roadie otherwise stores in SQLite. */
-export function channelPolicyOverrides(channelId: string): Pick<
-  ChannelPolicy,
-  'directory' | 'agent' | 'model' | 'verbosity' | 'permissions'
-> {
+export function channelPolicyOverrides(
+  channelId: string,
+): Pick<ChannelPolicy, 'directory' | 'agent' | 'model' | 'verbosity' | 'permissions'> {
   const policy = resolveChannelPolicy(channelId)
   if (!policy) return {}
   return {

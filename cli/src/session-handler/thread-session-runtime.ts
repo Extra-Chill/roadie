@@ -7,6 +7,7 @@
 // run internals.
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
+import { applyPendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
@@ -47,7 +48,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
-import { channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
+import { applicationDirectory, channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
   renderContextSections,
@@ -784,7 +785,7 @@ function getThreadNameCandidateFromSessionTitle({
   }
   const matchedPrefix =
     PRESERVED_THREAD_PREFIXES.find((p) => {
-      return currentName.startsWith(p)
+      return p !== 'Fork: ' && currentName.startsWith(p)
     }) ?? ''
   return `${matchedPrefix}${withoutCopiedPrefix}`.slice(0, DISCORD_THREAD_NAME_MAX)
 }
@@ -877,6 +878,8 @@ export function applyChannelPolicyToIngress({
 }
 
 export type IngressInput = {
+  /** Raw task text when a fork adds synthetic lineage instructions. */
+  titlePrompt?: string
   actorPlatform?: string
   prompt: string
   userId: string
@@ -940,6 +943,8 @@ export type IngressInput = {
    * (e.g. user-to-user replies in a thread).
    */
   noReply?: boolean
+  /** Intake data only: preserve execution identity and preferences as well as suppressing replies. */
+  contextOnly?: boolean
   /**
    * True only for the wake prompt posted by the roadie_sleep task runner.
    * Every other ingress cancels a pending sleep; this one must not, because it
@@ -1117,8 +1122,8 @@ export class ThreadSessionRuntime {
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
-    this.projectDirectory = opts.projectDirectory
-    this.sdkDirectory = opts.sdkDirectory
+    this.projectDirectory = applicationDirectory() ?? opts.projectDirectory
+    this.sdkDirectory = applicationDirectory() ?? opts.sdkDirectory
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread ?? opts.chat
@@ -3558,6 +3563,35 @@ export class ThreadSessionRuntime {
           )
           return
         }
+        if (input.contextOnly) {
+          const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory)
+          if (backend instanceof Error) {
+            logger.warn(`[CONTEXT] Cannot record message: ${backend.message}`)
+            return
+          }
+          const history = await backend().sessions.messages({ sessionId: existingSessionId, directory: this.sdkDirectory })
+          if (history instanceof Error) {
+            logger.warn(`[CONTEXT] Cannot resolve existing preferences: ${history.message}`)
+            return
+          }
+          const previous = history.findLast((entry) => entry.message.role === 'user')?.message
+          const context = getOpencodePromptContext({
+            platform: this.chat.platform, sessionId: existingSessionId, threadId: this.threadId,
+            username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
+            sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
+            repliedMessage: input.repliedMessage,
+          })
+          const parts: AgentPromptPart[] = [
+            { kind: 'text', text: input.prompt }, { kind: 'text', text: context, synthetic: true },
+            ...(input.images ?? []).map((file): AgentPromptPart => ({ kind: 'file', mime: file.mime, url: file.url, filename: file.filename })),
+          ]
+          const recorded = await backend().sessions.prompt({
+            sessionId: existingSessionId, directory: this.sdkDirectory, parts, noReply: true,
+            agent: previous?.agent, model: previous?.model, system: previous?.system,
+          })
+          if (recorded instanceof Error) logger.warn(`[CONTEXT] Cannot record message: ${recorded.message}`)
+          return
+        }
       }
 
       // Helper: stop typing and drain queued local messages on error.
@@ -3582,6 +3616,10 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
+      if (!input.noReply && !input.isSleepWake) {
+        const title = await applyPendingForkTitle({ session, prompt: input.titlePrompt ?? (input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt), backend: getClient(), directory: this.sdkDirectory })
+        if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
+      }
 
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
@@ -3741,7 +3779,7 @@ export class ThreadSessionRuntime {
       })()
 
       // ── Working directory + channel topic for per-turn prompt context ──
-      const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
+      const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
 
       const channelTopic = await this.chat.channelTopic(channelId)
       const system = await this.resolveTurnSystemPrompt({
@@ -3852,7 +3890,7 @@ export class ThreadSessionRuntime {
    * let a stale wake land after the user took the conversation back.
    */
   private async supersedePendingSleep(input: IngressInput): Promise<void> {
-    if (input.isSleepWake) return
+    if (input.isSleepWake || input.contextOnly) return
     await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
       (error) => {
         logger.error('[SLEEP] failed to cancel pending sleep:', error)
@@ -3944,11 +3982,12 @@ export class ThreadSessionRuntime {
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
+    if (input.contextOnly) input = { ...input, noReply: true }
     input = applyPersonToIngress({ ...input, actorPlatform: this.chat.platform })
     input = applyChannelPolicyToIngress({ input: { ...input, actorPlatform: this.chat.platform }, channelId: this.channelId || this.chat.parentId || this.threadId })
-    threadState.setSessionUsername(this.threadId, input.username)
+    if (!input.contextOnly) threadState.setSessionUsername(this.threadId, input.username)
     const botUserId = this.chat.botUserId
-    if (input.userId && input.userId !== botUserId) {
+    if (!input.contextOnly && input.userId && input.userId !== botUserId) {
       threadState.setSessionUserId(this.threadId, input.userId)
     }
     await this.ensureParentSessionId({
@@ -3965,7 +4004,7 @@ export class ThreadSessionRuntime {
     // opencode's session.command API instead of being sent to the model as
     // plain text. Covers Discord chat messages, /new-session, CLI
     // `roadie send --prompt`, and scheduled tasks — all funnel through here.
-    input = maybeConvertLeadingCommand(input)
+    if (!input.contextOnly) input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
     }
@@ -4593,6 +4632,8 @@ export class ThreadSessionRuntime {
       return false
     }
     const { session, getClient, createdNewSession } = sessionResult
+    const title = await applyPendingForkTitle({ session, prompt: input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt, backend: getClient(), directory: this.sdkDirectory })
+    if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
 
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
@@ -4755,7 +4796,7 @@ export class ThreadSessionRuntime {
     })()
 
     // ── Working directory for per-turn prompt context ─────────
-    const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
+    const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
 
     const channelTopic = await this.chat.channelTopic(channelId)
     // Pinned before building parts so the fork notice can compare identities.
@@ -5000,10 +5041,10 @@ export class ThreadSessionRuntime {
     isFirstTurn,
   }: {
     sessionId: string
-    input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli' }
+    input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli'; contextOnly?: boolean }
     isFirstTurn: boolean
   }): Promise<string> {
-    if (!isContextProviderConfigured()) return ''
+    if (input.contextOnly || !isContextProviderConfigured()) return ''
     const speaker = this.contextSpeaker(input)
     const key = speakerKey(speaker)
     const previous = this.lastContextSpeakerKey
@@ -5142,7 +5183,7 @@ export class ThreadSessionRuntime {
   }): Promise<
     | Error
     | {
-        session: { id: string }
+        session: { id: string; title: string }
         getClient: AgentBackendGetter
         createdNewSession: boolean
       }
@@ -5151,7 +5192,7 @@ export class ThreadSessionRuntime {
 
     // A thread in a separate git checkout is kept out of the origin checkout.
     // A project subfolder is not: its project root contains it.
-    const threadDir = await getThreadWorkingDirectory(this.thread.id)
+    const threadDir = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
     const originalRepoDirectory = threadDir?.kind === 'git-worktree'
       ? threadDir.projectDirectory
       : undefined
@@ -5170,7 +5211,7 @@ export class ThreadSessionRuntime {
       sessionId = await getThreadSession(this.thread.id) || undefined
     }
 
-    let session: { id: string } | undefined
+    let session: { id: string; title: string } | undefined
     let createdNewSession = false
 
     if (sessionId) {

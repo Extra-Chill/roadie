@@ -18,7 +18,9 @@ import { warmOpencodeInstance } from './queue-advanced-e2e-setup.js'
 import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import type { Capability } from './identity.js'
+import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 const secret = 'native-slack-test-secret'
 const channelId = 'CNATIVE1'
@@ -81,12 +83,13 @@ beforeAll(async () => {
   project = path.join(root, 'project')
   fs.mkdirSync(project)
   initTestGitRepo(project)
-  process.env.ROADIE_LOCK_PORT = String(chooseLockPort({ key: 'native-slack-e2e' }))
+  process.env.ROADIE_LOCK_PORT = String(chooseLockPort({ key: `native-slack-e2e:${root}` }))
   setDataDir(path.join(root, 'data'))
   const config = path.join(root, 'channels.json')
   fs.writeFileSync(
     config,
     JSON.stringify({
+      application: { channel: channelId, directory: project },
       projects: { shared: { directory: project, context: 'shared-brain' } },
       channels: {
         [channelId]: {
@@ -114,9 +117,12 @@ beforeAll(async () => {
           .toString(),
         model: 'deterministic-v2',
         smallModel: 'deterministic-v3',
-        settings: {
+    settings: {
           strict: false,
-          matchers: [
+      matchers: [
+        { id: 'native-fork-generated-title', priority: 200, when: { latestUserTextIncludes: 'NATIVE_SLACK forked', rawPromptIncludes: TITLE_REQUEST_SYSTEM, maxOutputTokens: 96, toolsEmpty: true, rawPromptRegex: '^(?!.*NATIVE_SLACK model source)(?!.*The user is reading your messages)' }, then: {
+          parts: [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'fork-title' }, { type: 'text-delta', id: 'fork-title', delta: 'Native Slack Fork' }, { type: 'text-end', id: 'fork-title' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 30, outputTokens: 4, totalTokens: 34 } }],
+        } },
             {
               id: 'native-sleep',
               priority: 110,
@@ -839,7 +845,7 @@ test('native model picker selects the backend catalog and fork creates a separat
     .channel(secondChannelId)
     .waitForMessage({
       timeout: 10_000,
-      predicate: (message) => message.text === 'Fork: NATIVE_SLACK forked',
+      predicate: (message) => message.text === 'Fork: Native Slack Fork',
     })
   if (!forkRoot.ts) throw new Error('Fork has no Slack root timestamp')
   await slack
@@ -855,13 +861,13 @@ test('native model picker selects the backend catalog and fork creates a separat
       .filter(
         (message) =>
           message.text === 'Model: deterministic-provider/deterministic-v3' ||
-          message.text === 'Fork: NATIVE_SLACK forked',
+          message.text === 'Fork: Native Slack Fork',
       )
       .map((message) => message.text),
   ).toMatchInlineSnapshot(`
     [
       "Model: deterministic-provider/deterministic-v3",
-      "Fork: NATIVE_SLACK forked",
+      "Fork: Native Slack Fork",
     ]
   `)
   const forkId = slackThreadId({ workspaceId, channelId: secondChannelId, threadTs: forkRoot.ts })
@@ -941,3 +947,18 @@ test('a host-vouched bot can participate using its authenticated platform identi
     remove()
   }
 })
+
+test('application default starts a real session in its fixed directory and rejects routing overrides before posting', async () => {
+  const before = await slack.channel(channelId).getMessages()
+  expect(await bot.send({ prompt: 'NATIVE_SLACK blocked', cwd: root })).toBeInstanceOf(Error)
+  expect(await bot.send({ prompt: 'NATIVE_SLACK blocked', channel: 'UNCONFIGURED' })).toBeInstanceOf(Error)
+  expect(await slack.channel(channelId).getMessages()).toHaveLength(before.length)
+  const sent = await bot.send({ prompt: 'NATIVE_SLACK application default' })
+  if (sent instanceof Error || !sent.threadId) throw new Error('Application default send failed', { cause: sent })
+  const target = parseSlackThreadId(sent.threadId)
+  if (!target) throw new Error('Missing application thread')
+  expect(target.channelId).toBe(channelId)
+  await slack.channel(channelId).waitForMessage({ timeout: 10_000, predicate: (message) => message.thread_ts === target.threadTs && (message.text?.includes('native Slack answer') ?? false) })
+  expect(getRuntime(sent.threadId)?.sdkDirectory).toBe(project)
+  expect(getRuntime(sent.threadId)?.projectDirectory).toBe(project)
+}, 15_000)
