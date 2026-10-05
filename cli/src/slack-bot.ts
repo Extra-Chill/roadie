@@ -30,7 +30,9 @@ import {
   decideRespond,
   resolveChannelPolicy,
   setChannelParentResolver,
-  channelsForProject,
+  applicationDirectory,
+  resolveSendChannel,
+  validateApplicationDirectory,
 } from './channel-policy.js'
 import { personHas, resolvePerson } from './identity.js'
 import {
@@ -400,7 +402,7 @@ export class NativeSlackBot {
       threadId: chat.id,
       chat,
       projectDirectory: directory,
-      sdkDirectory: working?.workingDirectory ?? directory,
+      sdkDirectory: applicationDirectory() ?? working?.workingDirectory ?? directory,
       channelId,
       sessionId: (await getThreadSession(chat.id)) || undefined,
     })
@@ -416,6 +418,9 @@ export class NativeSlackBot {
     if (!parsed.success)
       return new SlackApiError({ operation: 'send', detail: parsed.error.message })
     const options = parsed.data
+    if (options.project) return new SlackApiError({ operation: 'send', detail: '--project no longer selects channels; configure application.channel or use --channel' })
+    const directoryError = validateApplicationDirectory(options.cwd)
+    if (directoryError) return directoryError
     const sessionThread = options.session ? await getThreadIdBySessionId(options.session) : null
     const target = parseSlackThreadId(options.thread ?? sessionThread ?? '')
     if ((options.thread || options.session) && !target)
@@ -425,17 +430,8 @@ export class NativeSlackBot {
       })
     if (target && target.workspaceId !== this.workspaceId)
       return new SlackApiError({ operation: 'send', detail: 'thread belongs to another workspace' })
-    const candidates = options.project ? channelsForProject(options.project) : []
-    const channelId =
-      target?.channelId ?? options.channel ?? (candidates.length === 1 ? candidates[0] : undefined)
-    if (!channelId)
-      return new SlackApiError({
-        operation: 'send',
-        detail:
-          candidates.length > 1
-            ? 'this project has multiple channels; pass --channel or --thread'
-            : 'pass --channel, --thread, --session or a configured --project',
-      })
+    const channelId = resolveSendChannel(target?.channelId ?? options.channel)
+    if (channelId instanceof Error) return channelId
     if (options.channel && target && options.channel !== target.channelId)
       return new SlackApiError({ operation: 'send', detail: 'channel and thread targets disagree' })
     const policy = resolveChannelPolicy(channelId)

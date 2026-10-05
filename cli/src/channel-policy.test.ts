@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import {
   channelAllowsCapability,
+  applicationDirectory,
   channelContextBinding,
   channelAllowsSpeaker,
   channelPolicyOverrides,
@@ -14,6 +15,8 @@ import {
   matchesWho,
   parseChannelsConfig,
   resolveChannelPolicy,
+  resolveSendChannel,
+  validateApplicationDirectory,
   setChannelParentResolver,
   setChannelsConfigPath,
   type WhoSubject,
@@ -75,6 +78,40 @@ channels:
   "*":
     respond: never
 `
+
+describe('application bindings', () => {
+  test('default routing is explicit and directory overrides cannot move the runtime', () => {
+    write(`
+application:
+  channel: channel-ops
+  directory: /srv/context
+channels:
+  channel-ops:
+    directory: /unrelated/repository
+  channel-general: {}
+  '*':
+    respond: always
+`)
+    expect(resolveSendChannel()).toBe('channel-ops')
+    expect(resolveSendChannel('channel-general')).toBe('channel-general')
+    expect(resolveSendChannel('unregistered')).toBeInstanceOf(Error)
+    expect(resolveChannelPolicy('unregistered')).toBeNull()
+    expect(resolveChannelPolicy('thread-1')?.directory).toBe('/srv/context')
+    expect(applicationDirectory()).toBe('/srv/context')
+    expect(validateApplicationDirectory('/developer/repo')).toBeInstanceOf(Error)
+    expect(validateApplicationDirectory('/srv/context')).toBeUndefined()
+  })
+
+  test('missing routing and invalid application configuration fail closed', () => {
+    setChannelsConfigPath(null)
+    expect(resolveSendChannel()).toBeInstanceOf(Error)
+    expect(resolveSendChannel('explicit')).toBe('explicit')
+    expect(parseChannelsConfig(`application: { channel: unknown, directory: /srv/context }\nchannels: {}`)).toBeInstanceOf(Error)
+    expect(parseChannelsConfig(`application: { channel: known, directory: relative }\nchannels: { known: {} }`)).toBeInstanceOf(Error)
+    setChannelsConfigPath(path.join(dir, 'missing-config.yaml'))
+    expect(resolveSendChannel('explicit')).toBeInstanceOf(Error)
+  })
+})
 
 describe('parseChannelsConfig', () => {
   test('accepts YAML and JSON', () => {
