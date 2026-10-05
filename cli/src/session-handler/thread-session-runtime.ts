@@ -10,7 +10,13 @@ import { resolveSessionPermissionRules } from '../permission-policy.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
-import { consumeInterruptedSessions, RESTART_CONTINUATION_PROMPT, type InterruptedSession } from '../service-lifecycle.js'
+import {
+  consumeInterruptedSessions,
+  RESTART_CONTINUATION_FAILED_NOTICE,
+  RESTART_CONTINUATION_MAX_ATTEMPTS,
+  RESTART_CONTINUATION_PROMPT,
+  type InterruptedSession,
+} from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { type Client, type ThreadChannel } from 'discord.js'
@@ -51,6 +57,7 @@ import {
 import {
   writeInjectionGuardConfig,
   extractSdkErrorMessage,
+  OPENCODE_SERVER_LOG_FILE,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import {
@@ -165,6 +172,7 @@ import {
 } from './opencode-session-event-log.js'
 import {
   doesLatestUserTurnHaveNaturalCompletion,
+  getContinuationTurnOutcome,
   didLatestUserTurnUseSleepTool,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
   deriveLatestUnansweredQuestion,
@@ -482,7 +490,7 @@ export async function resumeInterruptedSessions({
       continue
     }
     await runtime.chat.sendNotice(asSubtext('Roadie restarted while this session was running. Resuming.'))
-    const result = await runtime.enqueueIncoming({
+    const result = await runtime.resumeAfterRestart({
       prompt: RESTART_CONTINUATION_PROMPT,
       userId: entry.userId || discordClient?.user?.id || '',
       username: entry.username || 'Roadie',
@@ -1097,6 +1105,15 @@ export class ThreadSessionRuntime {
   // a pending marker until the agent picks it up at a step boundary.
   private pendingDeliveryMessageIds: string[] = []
   private seenUserMessageIds = new Set<string>()
+  // A restart continuation prompt still waiting for a reply. Watched on idle
+  // so a turn the backend aborts before producing anything is re-sent once
+  // instead of leaving the thread silent.
+  private restartContinuation:
+    | { input: IngressInput; attempt: number; priorUserMessageIds: Set<string> }
+    | undefined
+  // Set while a Roadie-initiated abort is settling, so an abort Roadie did not
+  // request can be logged as coming from the agent backend.
+  private roadieAbortPending = false
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -2851,6 +2868,8 @@ export class ThreadSessionRuntime {
         `[SESSION IDLE] session became idle sessionId=${sessionId} drainQueue=${shouldDrainQueuedMessages} ${this.formatRunStateForLog()}`,
       )
       await this.persistEventBufferDebounced.flush()
+      this.roadieAbortPending = false
+      await this.settleRestartContinuation(idleSessionId)
 
       if (!shouldDrainQueuedMessages) {
         return
@@ -2861,6 +2880,68 @@ export class ThreadSessionRuntime {
       await this.tryDrainQueue({ showIndicator: true })
       return
     }
+  }
+
+  /** Send the restart continuation prompt and watch its turn until it replies. */
+  async resumeAfterRestart(input: IngressInput): Promise<EnqueueResult> {
+    this.restartContinuation = { input, attempt: 1, priorUserMessageIds: this.currentUserMessageIds() }
+    return this.enqueueIncoming(input)
+  }
+
+  private currentUserMessageIds(): Set<string> {
+    const ids = new Set<string>()
+    for (const entry of this.eventBuffer) {
+      if (entry.event.type === 'message' && entry.event.message.role === 'user') {
+        ids.add(entry.event.message.id)
+      }
+    }
+    return ids
+  }
+
+  private async settleRestartContinuation(sessionId: string): Promise<void> {
+    const watch = this.restartContinuation
+    if (!watch) {
+      return
+    }
+    const outcome = getContinuationTurnOutcome({
+      events: this.eventBuffer,
+      sessionId,
+      promptText: watch.input.prompt,
+      priorUserMessageIds: watch.priorUserMessageIds,
+    })
+    logger.log(
+      `[RESTART CONTINUATION] idle outcome=${outcome} attempt=${watch.attempt} sessionId=${sessionId} threadId=${this.threadId}`,
+    )
+    if (outcome === 'pending') {
+      return
+    }
+    if (outcome !== 'aborted-empty') {
+      this.restartContinuation = undefined
+      return
+    }
+    if (watch.attempt < RESTART_CONTINUATION_MAX_ATTEMPTS) {
+      watch.attempt += 1
+      // A duplicate idle for the aborted attempt can arrive before the re-sent
+      // prompt shows up; treating the aborted one as prior keeps that pending.
+      watch.priorUserMessageIds = this.currentUserMessageIds()
+      logger.warn(
+        `[RESTART CONTINUATION] turn ended aborted with no output, re-sending (attempt ${watch.attempt}/${RESTART_CONTINUATION_MAX_ATTEMPTS}) sessionId=${sessionId} threadId=${this.threadId}`,
+      )
+      // Called from the action queue, so the re-send must not be awaited here.
+      void this.enqueueIncoming(watch.input).catch((error: unknown) => {
+        logger.warn(
+          `[RESTART CONTINUATION] re-send failed threadId=${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        this.restartContinuation = undefined
+        void this.chat.sendNotice(asSubtext(RESTART_CONTINUATION_FAILED_NOTICE))
+      })
+      return
+    }
+    this.restartContinuation = undefined
+    logger.warn(
+      `[RESTART CONTINUATION] turn ended aborted with no output after ${watch.attempt} attempts, giving up sessionId=${sessionId} threadId=${this.threadId}`,
+    )
+    await this.chat.sendNotice(asSubtext(RESTART_CONTINUATION_FAILED_NOTICE))
   }
 
   private async handleNaturalAssistantCompletion({
@@ -2946,9 +3027,15 @@ export class ThreadSessionRuntime {
 
     // Skip abort errors — they are expected when operations are cancelled
     if (event.error?.name === 'MessageAbortedError') {
-      logger.log(
-        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-      )
+      if (this.roadieAbortPending) {
+        logger.log(
+          `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+        )
+      } else {
+        logger.warn(
+          `[SESSION ERROR] Run aborted by the agent backend, not by Roadie sessionId=${sessionId} ${this.formatRunStateForLog()}; the backend's reason is in ${OPENCODE_SERVER_LOG_FILE}`,
+        )
+      }
       await this.persistEventBufferDebounced.flush()
       return
     }
@@ -4063,6 +4150,8 @@ export class ThreadSessionRuntime {
 
     const sessionId = state.sessionId
     const sessionIsBusy = this.isBusy()
+    this.restartContinuation = undefined
+    this.roadieAbortPending = true
 
     logger.log(
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} sessionBusy=${sessionIsBusy}`,

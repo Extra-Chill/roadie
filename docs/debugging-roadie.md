@@ -23,6 +23,8 @@ description: >
 
 roadie writes logs to `<dataDir>/roadie.log` (default `~/.roadie/roadie.log`). The log file is reset on every bot startup, so it only contains logs from the current run. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
 
+The OpenCode server's own log goes to `<dataDir>/opencode-server.log`, kept across restarts and capped at 10 MB (the previous file is kept as `opencode-server.log.1`). It runs at INFO by default; set `ROADIE_OPENCODE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARN`, `ERROR`) to change that. WARN and ERROR lines also appear in `roadie.log`. When a run ends in `MessageAbortedError` without an `[ABORT]` line in `roadie.log`, roadie logs `Run aborted by the agent backend`; look in `opencode-server.log` at that time for `message=cancel session.id=...` (someone called the abort API) or `message="disposing instance"` (the instance was torn down).
+
 ## session event JSONL
 
 To debug OpenCode event ordering, set `ROADIE_LOG_OPENCODE_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). Use `ROADIE_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.

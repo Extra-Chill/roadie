@@ -36,6 +36,7 @@
 
 import { recordAgentServerPid, clearAgentServerPid } from './service-lifecycle.js'
 import { stopOwnedChild } from './owned-process.js'
+import { createBoundedLogFile } from './bounded-log-file.js'
 import {
   PROCESS_GROUP_SPAWN_OPTIONS,
   signalProcessGroup,
@@ -168,12 +169,37 @@ export function publicOpencodeBindRequiresPassword({
 // Always pass --hostname so opencode.json server.hostname / mdns cannot bind 0.0.0.0.
 const DEFAULT_OPENCODE_HOSTNAME = '127.0.0.1'
 
+/** OpenCode server log lines below WARN go here (in the data dir), not roadie.log. */
+export const OPENCODE_SERVER_LOG_FILE = 'opencode-server.log'
+const OPENCODE_SERVER_LOG_MAX_BYTES = 10 * 1024 * 1024
+const OPENCODE_LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'] as const
+type OpencodeLogLevel = (typeof OPENCODE_LOG_LEVELS)[number]
+
+/**
+ * Level the OpenCode server logs at. INFO by default so the reason for a
+ * cancelled run (an abort request, an instance disposal) is on record.
+ * Override with ROADIE_OPENCODE_LOG_LEVEL.
+ */
+export function getOpencodeLogLevel(env: NodeJS.ProcessEnv = process.env): OpencodeLogLevel {
+  const value = env.ROADIE_OPENCODE_LOG_LEVEL?.trim().toUpperCase()
+  return OPENCODE_LOG_LEVELS.find((level) => level === value) ?? 'INFO'
+}
+
+const VERBOSE_SERVER_LOG_LINE = /^timestamp=\S+ level=(?:INFO|DEBUG)\b/
+
+/** Structured OpenCode log lines below WARN, which stay out of roadie.log. */
+export function isVerboseOpencodeLogLine(line: string): boolean {
+  return VERBOSE_SERVER_LOG_LINE.test(line)
+}
+
 export function buildOpencodeServeArgs({
   port,
   hostname,
+  logLevel = getOpencodeLogLevel(),
 }: {
   port: number
   hostname?: string | null
+  logLevel?: OpencodeLogLevel
 }): string[] {
   return [
     'serve',
@@ -183,7 +209,7 @@ export function buildOpencodeServeArgs({
     hostname || DEFAULT_OPENCODE_HOSTNAME,
     '--print-logs',
     '--log-level',
-    'WARN',
+    logLevel,
   ]
 }
 
@@ -1022,9 +1048,17 @@ async function startSingleServer({
     },
   })
 
+  const serverLog = createBoundedLogFile({
+    filePath: path.join(getDataDir(), OPENCODE_SERVER_LOG_FILE),
+    maxBytes: OPENCODE_SERVER_LOG_MAX_BYTES,
+  })
   const stderrReader = subscribeToProcessLogStream({
     stream: serverProcess.stderr,
     onLine: (line) => {
+      serverLog.append(line)
+      if (isVerboseOpencodeLogLine(line)) {
+        return
+      }
       if (!serverReady) {
         logBuffer.push(`[stderr] ${line}`)
         pushStartupStderrTail({ stderrTail: startupStderrTail, line })
