@@ -20,6 +20,7 @@ import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
+import type { IntakeDecision, ConversationIntakeRequest, ConversationAdmission } from './conversation-intake.js'
 import type { HostUpgradeHandler } from './service-lifecycle.js'
 
 const logger = createLogger(LogPrefix.CLI)
@@ -28,6 +29,7 @@ export const DEFAULT_PRIORITY = 10
 
 /** Filter name -> [value, context]. */
 export interface RoadieFilters {
+  conversation_intake: [IntakeDecision, { request: ConversationIntakeRequest; admission: ConversationAdmission | null; policy: ChannelPolicy | null | undefined }]
   /** The agent backend provider. Resolved once at startup. */
   agent_backend: [AgentBackendProvider, Record<string, never>]
   /** The person behind a chat actor; null means no identity layer. */

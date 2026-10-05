@@ -101,7 +101,6 @@ export class DiscordGateway {
     const data: GatewayMessageCreateDispatchData = {
       ...message,
       guild_id: guildId,
-      mentions: [],
     }
     this.broadcast(GatewayDispatchEvents.MessageCreate, data)
   }

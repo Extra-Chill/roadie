@@ -47,6 +47,21 @@ export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles',
   inherited_title: sqliteCore.text('inherited_title').notNull(),
 })
 
+// Chat admission is conversation attribution, never an execution principal or
+// permission grant. Platform + space scope prevents cross-workspace reuse.
+export const conversation_admissions = sqliteCore.sqliteTable('conversation_admissions', {
+  platform: sqliteCore.text('platform').notNull(),
+  space_id: sqliteCore.text('space_id').notNull(),
+  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onDelete: 'cascade' }),
+  starter_actor_id: sqliteCore.text('starter_actor_id'),
+}, (table) => [sqliteCore.primaryKey({ columns: [table.platform, table.space_id, table.thread_id] })])
+
+export const conversation_participants = sqliteCore.sqliteTable('conversation_participants', {
+  platform: sqliteCore.text('platform').notNull(),
+  space_id: sqliteCore.text('space_id').notNull(),
+  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onDelete: 'cascade' }),
+  actor_id: sqliteCore.text('actor_id').notNull(),
+}, (table) => [sqliteCore.primaryKey({ columns: [table.platform, table.space_id, table.thread_id, table.actor_id] })])
 
 // Signed chat ingress is acknowledged only after it is durably inserted.
 // Keep handled IDs to deduplicate platform and host redelivery across restarts.
@@ -345,6 +360,8 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 
 export const relations = defineRelations({
   pending_fork_titles,
+  conversation_admissions,
+  conversation_participants,
   chat_ingress_events,
   chat_interactions,
   thread_sessions,

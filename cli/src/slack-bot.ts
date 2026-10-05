@@ -75,6 +75,7 @@ import { REMOTE_SEND_OPTIONS, setRemoteSendRunner } from './remote-send.js'
 import { prepareChatAttachments } from './chat-platform/attachments.js'
 import { markChatPlatformReady } from './hrana-server.js'
 import { doAction } from './hooks.js'
+import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
 
 const logger = createLogger('SLACK')
@@ -939,6 +940,16 @@ export class NativeSlackBot {
       const identity = await this.authorize(target.channelId, delivery.event.user.id)
       if (identity instanceof Error) return identity
       if (!identity) return
+      if (resolveChannelPolicy(target.channelId)?.intake) {
+        const scope = { platform: 'slack', spaceId: this.workspaceId, threadId: row.thread_id }
+        const admission = await readConversationAdmission(scope)
+        const hasSession = Boolean(await getThreadSession(row.thread_id))
+        const intake = await resolveConversationIntake({ actor: identity.actor, personId: identity.person?.personId, spaceId: this.workspaceId,
+          channelId: target.channelId, threadId: row.thread_id, eligible: true, isNewConversation: !hasSession && !admission, createsThread: false,
+          hasSession, mentionsBot: false, isCommand: true, text: 'interactive callback', legacyOutcome: 'respond' })
+        if (intake.outcome !== 'respond') return
+        await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
+      }
       const runtime = await this.runtimeFor(target.channelId, target.threadTs)
       if (runtime instanceof Error) return runtime
       const thread = this.threads.get(runtime.threadId)!
@@ -969,14 +980,26 @@ export class NativeSlackBot {
     if (!identity) return
     const mentioned = message.text.includes(`<@${this.botUserId}>`)
     const decision = decideRespond(message.channel)
-    if (
-      (decision === 'needs-mention' ||
-        (decision === 'builtin' && store.getState().defaultMentionMode)) &&
-      !mentioned
-    )
-      return
-    if (!message.thread_ts && !channelStartsThreads(message.channel)) return
-    const runtime = await this.runtimeFor(message.channel, message.thread_ts ?? message.ts)
+    // A host-relayed root may repeat its own ts as thread_ts. That is still a
+    // new platform thread, not a continuation that bypasses start policy.
+    const reply = Boolean(message.thread_ts && message.thread_ts !== message.ts)
+    const threadTs = reply ? message.thread_ts! : message.ts
+    const threadId = slackThreadId({ workspaceId: this.workspaceId, channelId: message.channel, threadTs })
+    const scope = { platform: 'slack', spaceId: this.workspaceId, threadId }
+    const hasSession = Boolean(await getThreadSession(threadId))
+    const admission = await readConversationAdmission(scope)
+    const legacyOutcome = (decision === 'needs-mention' || decision === 'builtin' && store.getState().defaultMentionMode) && !mentioned ? 'ignore' : 'respond'
+    const intake = await resolveConversationIntake({
+      actor: identity.actor, spaceId: this.workspaceId, channelId: message.channel, threadId,
+      personId: identity.person?.personId, messageId: message.ts, text: message.text,
+      eligible: true, isNewConversation: !hasSession && !admission, createsThread: !reply,
+      hasSession, mentionsBot: mentioned, isCommand: message.text.trimStart().startsWith('/'),
+      directedElsewhere: /^<@[A-Z0-9]+>/.test(message.text) && !mentioned,
+      legacyOutcome,
+    })
+    if (intake.outcome === 'ignore') return
+    await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
+    const runtime = await this.runtimeFor(message.channel, threadTs)
     if (runtime instanceof Error) return runtime
     const prompt = message.text.replaceAll(`<@${this.botUserId}>`, '').trim()
     const attached: Array<{ name: string; mimetype: string; bytes: Buffer }> = []
@@ -998,6 +1021,8 @@ export class NativeSlackBot {
       sourceThreadId: runtime.threadId,
       sourceChannelId: message.channel,
       mode: 'opencode',
+      noReply: intake.outcome === 'context',
+      contextOnly: intake.outcome === 'context',
     })
   }
 
@@ -1009,6 +1034,10 @@ export class NativeSlackBot {
     if (!identity) return
     const [name, target, ...words] = event.text.trim().split(/\s+/)
     if (name === 'new') {
+      const intake = await resolveConversationIntake({ actor: identity.actor, spaceId: this.workspaceId, channelId: event.channel_id,
+        personId: identity.person?.personId, text: event.text,
+        eligible: true, isNewConversation: true, createsThread: true, hasSession: false, mentionsBot: false, isCommand: true, legacyOutcome: 'respond' })
+      if (intake.outcome !== 'respond') return
       const root = await this.api.post({
         channel: event.channel_id,
         text: [target, ...words].filter(Boolean).join(' ') || 'New Roadie session',
@@ -1016,6 +1045,7 @@ export class NativeSlackBot {
       if (root instanceof Error) return root
       const runtime = await this.runtimeFor(event.channel_id, root.id)
       if (runtime instanceof Error) return runtime
+      await recordConversationAdmission({ scope: { platform: 'slack', spaceId: this.workspaceId, threadId: runtime.threadId }, actor: identity.actor, starter: true, decision: intake })
       await runtime.enqueueIncoming({
         prompt: [target, ...words].filter(Boolean).join(' '),
         userId: event.user_id,
@@ -1054,6 +1084,17 @@ export class NativeSlackBot {
         text: 'Use /roadie new <prompt>, or /roadie <abort|model|agent> <thread timestamp> [value]. Session commands target an explicit thread.',
       })
       return result instanceof Error ? result : undefined
+    }
+    if (resolveChannelPolicy(event.channel_id)?.intake) {
+      const id = slackThreadId({ workspaceId: this.workspaceId, channelId: event.channel_id, threadTs: target })
+      const scope = { platform: 'slack', spaceId: this.workspaceId, threadId: id }
+      const admission = await readConversationAdmission(scope)
+      const hasSession = Boolean(await getThreadSession(id))
+      const intake = await resolveConversationIntake({ actor: identity.actor, personId: identity.person?.personId, spaceId: this.workspaceId,
+        channelId: event.channel_id, threadId: id, eligible: true, isNewConversation: !hasSession && !admission, createsThread: name === 'fork',
+        hasSession, mentionsBot: false, isCommand: true, text: event.text, legacyOutcome: 'respond' })
+      if (intake.outcome !== 'respond') return
+      await recordConversationAdmission({ scope, actor: identity.actor, starter: !hasSession && !admission, decision: intake })
     }
     const runtime = await this.runtimeFor(event.channel_id, target)
     if (runtime instanceof Error) return runtime

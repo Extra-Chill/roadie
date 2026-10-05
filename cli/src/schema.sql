@@ -85,6 +85,24 @@ CREATE TABLE IF NOT EXISTS `chat_interactions` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `conversation_admissions` (
+	`platform` text NOT NULL,
+	`space_id` text NOT NULL,
+	`thread_id` text NOT NULL,
+	`starter_actor_id` text,
+	CONSTRAINT `conversation_admissions_pk` PRIMARY KEY(`platform`, `space_id`, `thread_id`),
+	CONSTRAINT `fk_conversation_admissions_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS `conversation_participants` (
+	`platform` text NOT NULL,
+	`space_id` text NOT NULL,
+	`thread_id` text NOT NULL,
+	`actor_id` text NOT NULL,
+	CONSTRAINT `conversation_participants_pk` PRIMARY KEY(`platform`, `space_id`, `thread_id`, `actor_id`),
+	CONSTRAINT `fk_conversation_participants_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS `forum_sync_configs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`app_id` text NOT NULL,

@@ -398,6 +398,7 @@ export class DigitalDiscord {
       author,
       guildId,
       member ?? undefined,
+      await this.prisma.user.findMany({ where: { id: { in: [...new Set([...content.matchAll(/<@!?(\d+)>/g)].map((match) => match[1]!))] } } }),
     )
     this.server.gateway.broadcastMessageCreate(apiMessage, guildId ?? '')
     return apiMessage
