@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.38.3] - 2026-10-05
+
+### Fixed
+- keep host speaker context turn-scoped across session recovery
+
 ## [0.38.2] - 2026-10-05
 
 ### Fixed
