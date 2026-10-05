@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.39.0] - 2026-10-05
+
+### Added
+- share conversation intake and durable participant admission
+
 ## [0.38.4] - 2026-10-05
 
 ### Fixed
