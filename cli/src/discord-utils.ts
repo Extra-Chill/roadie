@@ -12,7 +12,7 @@ import {
   personHas,
   type Capability,
 } from './identity.js'
-import { channelAllowsCapability } from './channel-policy.js'
+import { applicationDirectory, channelAllowsCapability, channelPolicyOverrides, resolveSendChannel } from './channel-policy.js'
 import type {
   APIInteractionGuildMember,
   AutocompleteInteraction,
@@ -948,6 +948,12 @@ export async function getRoadieMetadata(
   if (!textChannel) {
     return {}
   }
+  if (applicationDirectory()) {
+    if (resolveSendChannel(textChannel.id) instanceof Error) return {}
+    return { projectDirectory: applicationDirectory() }
+  }
+  const policyDirectory = channelPolicyOverrides(textChannel.id).directory
+  if (policyDirectory) return { projectDirectory: policyDirectory }
 
   const channelConfig = await getChannelDirectory(textChannel.id)
 
@@ -1043,7 +1049,7 @@ export async function resolveWorkingDirectory({
   }
 
   let workingDirectory = metadata.projectDirectory
-  if (isThread) {
+  if (isThread && !applicationDirectory()) {
     const threadDir = await getThreadWorkingDirectory(channel.id)
     if (threadDir) {
       workingDirectory = threadDir.workingDirectory

@@ -30,6 +30,7 @@
 
 import { applyFilters, hasFilter } from './hooks.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import YAML from 'yaml'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
@@ -63,6 +64,10 @@ const policySchema = z
 
 const configSchema = z
   .object({
+    application: z.object({
+      channel: z.string().min(1),
+      directory: z.string().refine(path.isAbsolute, 'Use an absolute application directory'),
+    }).strict().optional(),
     projects: z.record(z.string().min(1), policySchema.omit({ project: true })).optional(),
     channels: z.record(z.string().min(1), policySchema),
   })
@@ -124,6 +129,9 @@ export function parseChannelsConfig(text: string): ChannelsConfig | Error {
     if (policy.project && !parsed.data.projects?.[policy.project]) {
       return new Error(`channels.${channelId}.project: unknown project "${policy.project}"`)
     }
+  }
+  if (parsed.data.application && !parsed.data.channels[parsed.data.application.channel]) {
+    return new Error('application.channel must name an explicitly configured channel')
   }
   return parsed.data
 }
@@ -189,7 +197,39 @@ function lookupChain(channelId: string): string[] {
  *   null      → config file present but nothing matches: do not answer
  */
 export function resolveChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
-  return applyFilters('channel_policy', configuredChannelPolicy(channelId), { channelId })
+  const config = currentConfig()
+  if (config?.application && !lookupChain(channelId).some((id) => id !== '*' && config.channels[id])) {
+    return null
+  }
+  const policy = applyFilters('channel_policy', configuredChannelPolicy(channelId), { channelId })
+  if (policy && config?.application) return { ...policy, directory: config.application.directory }
+  return policy
+}
+
+/** Application routing is explicit configuration, never a caller-directory lookup. */
+export function resolveSendChannel(channelId?: string): string | Error {
+  const config = currentConfig()
+  if (config === null) return new Error('Cannot send: application channel configuration is unavailable')
+  const target = channelId || config?.application?.channel
+  if (!target) return new Error('Pass --channel, --thread or --session, or configure application.channel')
+  if (config?.application && !config.channels[target]) {
+    return new Error(`Channel ${target} is not explicitly configured for this Roadie application`)
+  }
+  if (config && !resolveChannelPolicy(target)) return new Error(`Channel ${target} is not configured`)
+  return target
+}
+
+/** One runtime/context directory for an application, independent of repository work. */
+export function applicationDirectory(): string | undefined {
+  return currentConfig()?.application?.directory
+}
+
+export function validateApplicationDirectory(directory?: string): Error | undefined {
+  const fixed = applicationDirectory()
+  if (fixed && directory && path.resolve(directory) !== path.resolve(fixed)) {
+    return new Error('Session directory is fixed by application.directory; use the host development workspace for repository work')
+  }
+  return undefined
 }
 
 function configuredChannelPolicy(channelId: string): ChannelPolicy | null | undefined {

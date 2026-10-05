@@ -19,6 +19,7 @@ import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import type { Capability } from './identity.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 const secret = 'native-slack-test-secret'
 const channelId = 'CNATIVE1'
@@ -87,6 +88,7 @@ beforeAll(async () => {
   fs.writeFileSync(
     config,
     JSON.stringify({
+      application: { channel: channelId, directory: project },
       projects: { shared: { directory: project, context: 'shared-brain' } },
       channels: {
         [channelId]: {
@@ -941,3 +943,18 @@ test('a host-vouched bot can participate using its authenticated platform identi
     remove()
   }
 })
+
+test('application default starts a real session in its fixed directory and rejects routing overrides before posting', async () => {
+  const before = await slack.channel(channelId).getMessages()
+  expect(await bot.send({ prompt: 'NATIVE_SLACK blocked', cwd: root })).toBeInstanceOf(Error)
+  expect(await bot.send({ prompt: 'NATIVE_SLACK blocked', channel: 'UNCONFIGURED' })).toBeInstanceOf(Error)
+  expect(await slack.channel(channelId).getMessages()).toHaveLength(before.length)
+  const sent = await bot.send({ prompt: 'NATIVE_SLACK application default' })
+  if (sent instanceof Error || !sent.threadId) throw new Error('Application default send failed', { cause: sent })
+  const target = parseSlackThreadId(sent.threadId)
+  if (!target) throw new Error('Missing application thread')
+  expect(target.channelId).toBe(channelId)
+  await slack.channel(channelId).waitForMessage({ timeout: 10_000, predicate: (message) => message.thread_ts === target.threadTs && (message.text?.includes('native Slack answer') ?? false) })
+  expect(getRuntime(sent.threadId)?.sdkDirectory).toBe(project)
+  expect(getRuntime(sent.threadId)?.projectDirectory).toBe(project)
+}, 15_000)

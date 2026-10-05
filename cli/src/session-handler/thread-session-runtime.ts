@@ -47,7 +47,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
-import { channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
+import { applicationDirectory, channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
   renderContextSections,
@@ -1117,8 +1117,8 @@ export class ThreadSessionRuntime {
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
-    this.projectDirectory = opts.projectDirectory
-    this.sdkDirectory = opts.sdkDirectory
+    this.projectDirectory = applicationDirectory() ?? opts.projectDirectory
+    this.sdkDirectory = applicationDirectory() ?? opts.sdkDirectory
     this.channelId = opts.channelId
     this.appId = opts.appId
     this.thread = opts.thread ?? opts.chat
@@ -3741,7 +3741,7 @@ export class ThreadSessionRuntime {
       })()
 
       // ── Working directory + channel topic for per-turn prompt context ──
-      const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
+      const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
 
       const channelTopic = await this.chat.channelTopic(channelId)
       const system = await this.resolveTurnSystemPrompt({
@@ -4755,7 +4755,7 @@ export class ThreadSessionRuntime {
     })()
 
     // ── Working directory for per-turn prompt context ─────────
-    const workingDirectory = await getThreadWorkingDirectory(this.thread.id)
+    const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
 
     const channelTopic = await this.chat.channelTopic(channelId)
     // Pinned before building parts so the fork notice can compare identities.
@@ -5151,7 +5151,7 @@ export class ThreadSessionRuntime {
 
     // A thread in a separate git checkout is kept out of the origin checkout.
     // A project subfolder is not: its project root contains it.
-    const threadDir = await getThreadWorkingDirectory(this.thread.id)
+    const threadDir = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
     const originalRepoDirectory = threadDir?.kind === 'git-worktree'
       ? threadDir.projectDirectory
       : undefined
