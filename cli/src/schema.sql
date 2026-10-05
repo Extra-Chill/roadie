@@ -153,7 +153,8 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 
 CREATE TABLE IF NOT EXISTS `pending_fork_titles` (
 	`session_id` text PRIMARY KEY,
-	`inherited_title` text NOT NULL
+	`inherited_title` text NOT NULL,
+	`task_prompt` text
 );
 
 CREATE TABLE IF NOT EXISTS `scheduled_task_runs` (

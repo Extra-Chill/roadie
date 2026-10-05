@@ -4,7 +4,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
-import { getThreadSession } from './database.js'
+import { getDb, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
 import fs from 'node:fs'
@@ -13,7 +13,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { addFilter } from './hooks.js'
 import { getThreadWorkingDirectory } from './database.js'
-import { disposeRuntime } from './session-handler/thread-session-runtime.js'
+import { disposeRuntime, getRuntime, resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
+import { applyPendingForkTitle } from './fork-title.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 const exec = promisify(execFile)
 import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
@@ -323,15 +325,21 @@ describe('/fork', () => {
     expect((await getClient().session.get({ sessionID: (await getThreadSession(source.id))!, directory })).data?.title).not.toBe(prompts[0])
   }, 30_000)
 
-  test('a promptless fork takes its first message title after runtime reconstruction and keeps it on later turns', async () => {
+  test('a promptless fork ignores restart recovery and takes its first actual message title', async () => {
     const source = await startSource()
     const fork = await forkFrom(source.id)
     const sessionId = await waitForThreadSession(fork.id)
     // The durable marker outlives the runtime that created the fork.
     disposeRuntime(fork.id)
+    await resumeInterruptedSessions({
+      discordClient: ctx.botClient, appId: ctx.discord.botUserId,
+      consume: () => ({ resume: [{ threadId: fork.id, sessionId, userId: TEST_USER_ID, username: 'fork-tester' }], stale: [] }),
+    })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    expect(await (await getDb()).query.pending_fork_titles.findFirst({ where: { session_id: sessionId } })).toMatchObject({ task_prompt: null })
     const prompt = 'Reply with exactly: fork-deferred-task'
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: prompt })
-    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-deferred-task' })
     await waitForGeneratedTitle(sessionId, 'Deferred Fork Task')
     const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
     if (getClient instanceof Error) throw getClient
@@ -357,6 +365,57 @@ describe('/fork', () => {
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
     expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('User chosen branch')
     expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"User chosen branch"`)
+  }, 30_000)
+
+  test('failed naming keeps the original task across recovery and later local-queue turns', async () => {
+    const source = await startSource()
+    const fork = await forkFrom(source.id)
+    const sessionId = await waitForThreadSession(fork.id)
+    const directory = ctx.directories.projectDirectory
+    const getBackend = await getAgentBackendProvider().initializeForDirectory(directory)
+    if (getBackend instanceof Error) throw getBackend
+    const backend = getBackend()
+    const session = await backend.sessions.get({ sessionId, directory })
+    if (!session || session instanceof Error) throw new Error('Missing fork fixture session')
+    const originalPrompt = 'Reply with exactly: fork-cache-investigation'
+    const failure = new Error('Fixture title inference unavailable')
+    const result = await applyPendingForkTitle({
+      session, prompt: originalPrompt, directory,
+      backend: { ...backend, sessions: { ...backend.sessions, generateTitle: async () => failure } },
+    })
+    expect(result).toBe(failure)
+    const pending = () => getDb().then((db) => db.query.pending_fork_titles.findFirst({ where: { session_id: sessionId } }))
+    expect((await pending())?.task_prompt).toBe(originalPrompt)
+
+    disposeRuntime(fork.id)
+    await resumeInterruptedSessions({
+      discordClient: ctx.botClient, appId: ctx.discord.botUserId,
+      consume: () => ({ resume: [{ threadId: fork.id, sessionId, userId: TEST_USER_ID, username: 'fork-tester' }], stale: [] }),
+    })
+    const recoveryMessages = await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    expect((await pending())?.task_prompt).toBe(originalPrompt)
+    expect(await backend.sessions.get({ sessionId, directory })).toMatchObject({ title: session.title })
+    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).not.toBe('Cache Investigation')
+
+    const runtime = getRuntime(fork.id)
+    if (!runtime) throw new Error('Missing reconstructed runtime')
+    await runtime.enqueueIncoming({
+      prompt: 'Reply with exactly: fork-permission-review', userId: TEST_USER_ID, username: 'fork-tester',
+      appId: ctx.discord.botUserId, mode: 'local-queue',
+    })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageId: recoveryMessages.at(-1)!.id })
+    await waitForGeneratedTitle(sessionId, 'Cache Investigation')
+    expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>').replace(/^-# \*.*$/gm, '<FOOTER>')).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Forked from <#SOURCE_THREAD>. Continue the conversation here.
+      -# Roadie restarted while this session was running. Resuming.
+      ok
+      <FOOTER>
+      ok
+      <FOOTER>"
+    `)
+    await expect.poll(async () => (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toBe('Cache Investigation')
+    expect(await pending()).toBeUndefined()
   }, 30_000)
 
   test('a slow title request does not delay the actual fork task reply', async () => {
