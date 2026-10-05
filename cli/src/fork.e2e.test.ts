@@ -16,6 +16,7 @@ import { getThreadWorkingDirectory } from './database.js'
 import { disposeRuntime, getRuntime, resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
 import { applyPendingForkTitle } from './fork-title.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { clearIdentityCache, type Person } from './identity.js'
 const exec = promisify(execFile)
 import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
@@ -122,6 +123,64 @@ describe('/fork', () => {
     }
     throw new Error(`Generated title did not become ${expected}`)
   }
+
+  test.each(['success', 'denied', 'setup-error'] as const)(
+    'acknowledges before a slow identity hook and completes the %s reply',
+    async (outcome) => {
+      const source = await startSource()
+      const before = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)
+      let identityFinished = false
+      clearIdentityCache()
+      const removePerson = addFilter('person', async (): Promise<Person> => {
+        await new Promise((resolve) => setTimeout(resolve, 3_500))
+        identityFinished = true
+        return { allowed: outcome !== 'denied', capabilities: new Set(['sessions']), permissions: [] }
+      })
+      const removeWorkspace = outcome === 'setup-error'
+        ? addFilter('fork_workspace', () => ({ async provision() { return new Error('delayed setup failed') } }))
+        : () => {}
+      try {
+        const started = Date.now()
+        const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({
+          name: 'fork',
+          options: [{ name: 'workspace', type: 3, value: outcome === 'setup-error' ? 'separate' : 'shared' }],
+        })
+        const ack = await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 2_500 })
+        expect(Date.now() - started).toBeLessThan(3_000)
+        expect(ack.type).toBe(5)
+        expect(identityFinished).toBe(false)
+        const expected = outcome === 'success' ? 'Session forked!' : outcome === 'denied' ? "You don't have permission" : 'Failed to fork session: delayed setup failed'
+        await ctx.discord.thread(source.id).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes(expected) })
+        expect(identityFinished).toBe(true)
+        const after = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)
+        if (outcome === 'success') expect(after).toHaveLength(before.length + 1)
+        else expect(after).toEqual(before)
+      } finally {
+        removePerson()
+        removeWorkspace()
+        clearIdentityCache()
+      }
+    }, 25_000,
+  )
+
+  test('unowned forks leave the interaction token for the owning machine', async () => {
+    const unownedId = '200000000000001075'
+    const owned = await ctx.discord.prisma.channel.findUniqueOrThrow({ where: { id: TEXT_CHANNEL_ID } })
+    await ctx.discord.prisma.channel.create({ data: { id: unownedId, guildId: owned.guildId, type: 0, name: 'unowned-fork' } })
+    let identityCalled = false
+    const remove = addFilter('person', (person) => { identityCalled = true; return person })
+    clearIdentityCache()
+    try {
+      const interaction = await ctx.discord.channel(unownedId).user(TEST_USER_ID).runSlashCommand({ name: 'fork' })
+      await new Promise((resolve) => setTimeout(resolve, 3_500))
+      expect((await ctx.discord.channel(unownedId).getInteractionResponse(interaction.id))?.acknowledged).toBe(false)
+      expect(identityCalled).toBe(false)
+    } finally {
+      remove()
+      clearIdentityCache()
+      await ctx.discord.prisma.channel.delete({ where: { id: unownedId } })
+    }
+  }, 20_000)
 
   test('without a prompt the fork gets its own session and waits', async () => {
     const source = await startSource()

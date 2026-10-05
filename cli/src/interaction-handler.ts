@@ -98,6 +98,7 @@ import {
   resolveChannelPolicy,
 } from './channel-policy.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { replyOrEditInteraction } from './interaction-reply.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory, getThreadSession } from './database.js'
 import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
@@ -210,6 +211,13 @@ export function registerInteractionHandler({
           return
         }
 
+        // Only the owning machine may consume the token. Acknowledge forks
+        // before identity/intake hooks and directory or backend setup can
+        // exhaust Discord's three-second initial response deadline.
+        if (interaction.isChatInputCommand() && interaction.commandName === 'fork') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+        }
+
         // Identity hook (if configured): resolve the person once, before the
         // synchronous permission checks below read the cached result.
         if (interaction.guild) {
@@ -259,10 +267,7 @@ export function registerInteractionHandler({
             if (interaction.isAutocomplete()) {
               await interaction.respond([])
             } else if (interaction.isRepliable()) {
-              await interaction.reply({
-                content: 'Roadie is not available to you in this channel.',
-                flags: MessageFlags.Ephemeral,
-              })
+              await replyOrEditInteraction(interaction, 'Roadie is not available to you in this channel.')
             }
             return
           }
@@ -280,7 +285,7 @@ export function registerInteractionHandler({
             createsThread: interaction.isChatInputCommand() && ['new-session', 'fork', 'fork-subagent'].includes(interaction.commandName), hasSession,
             mentionsBot: false, isCommand: true, messageId: interaction.id, text: interaction.isChatInputCommand() ? `/${interaction.commandName}` : 'interactive callback', legacyOutcome: 'respond' })
           if (intake.outcome !== 'respond') {
-            await interaction.reply({ content: 'Your account is not admitted to this conversation.', flags: MessageFlags.Ephemeral })
+            await replyOrEditInteraction(interaction, 'Your account is not admitted to this conversation.')
             return
           }
           await recordConversationAdmission({ scope, actor, starter: !hasSession && !admission, decision: intake })
@@ -328,10 +333,9 @@ export function registerInteractionHandler({
           )
 
           if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await interaction.reply({
-              content: `You don't have permission to use this command.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-              flags: MessageFlags.Ephemeral,
-            })
+            await replyOrEditInteraction(interaction,
+              `You don't have permission to use this command.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
+            )
             return
           }
 

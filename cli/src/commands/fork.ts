@@ -41,6 +41,7 @@ import { resolveForkWorkspace, forkWorkspaceNotice, type ForkWorkspaceMode } fro
 import { doAction } from '../hooks.js'
 import { forkOpenCodeSession } from '../agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from '../fork-title.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
 
@@ -350,22 +351,20 @@ export async function handleForkCommand({
   interaction: ChatInputCommandInteraction
   appId: string | undefined
 }): Promise<void> {
+  if (!interaction.deferred) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  }
   const threadChannel = getThreadChannel(interaction.channel)
   if (threadChannel instanceof Error) {
-    await interaction.reply({ content: threadChannel.message, flags: MessageFlags.Ephemeral })
+    await replyOrEditInteraction(interaction, threadChannel.message)
     return
   }
 
   const resolved = await resolveWorkingDirectory({ channel: threadChannel })
   if (!resolved) {
-    await interaction.reply({
-      content: 'Could not determine project directory for this channel',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Could not determine project directory for this channel')
     return
   }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const prompt = interaction.options.getString('prompt') ?? undefined
   const fromMessageId = interaction.options.getString('from') ?? undefined
