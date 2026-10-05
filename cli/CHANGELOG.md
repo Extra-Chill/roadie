@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.41.2] - 2026-10-05
+
+### Fixed
+- preserve fork task titles across restart recovery
+
 ## [0.41.1] - 2026-10-05
 
 ### Fixed
