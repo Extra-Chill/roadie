@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.38.2] - 2026-10-05
+
+### Fixed
+- re-send a restart continuation the backend aborts, never leave the thread silent
+
 ## [0.38.1] - 2026-10-04
 
 ### Fixed
