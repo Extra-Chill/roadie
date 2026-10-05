@@ -32,6 +32,29 @@ or the caller's directory. Without an application default, pass `--channel`,
 operation. Existing database mappings are preserved; they do not expand the
 application's configured destinations.
 
+## Discord channel commands
+
+Create an ordinary Discord text channel, then run `/channel bind` in it. You can
+also run `/channel bind channel:#work` from another channel in the same server.
+Roadie administrators can bind previously unconfigured channels; ordinary
+messages remain ignored until the explicit binding succeeds. The new binding
+inherits the application default channel's context and policy, and all sessions
+keep the fixed application directory. No new Discord channel or repository is
+created by binding.
+
+`/channel unbind` (or `/channel unbind channel:#work`) writes the existing
+`respond: never` policy for that channel, stops its active runtimes and disables
+responses in its threads. It retains Discord messages and session history.
+Binding again enables the channel with the application's default policy and
+existing threads can continue their sessions. The application default itself
+cannot be unbound; change `application.channel` explicitly first.
+
+Changes are persisted atomically to the configured YAML/JSON file and apply
+immediately without restarting. Other channels and application settings are
+preserved. The command requires the configured application's server and the
+operator's existing Roadie admin authority; a different server cannot bind
+itself to the host runtime.
+
 Use the same config file in the bot service and in local CLI processes. Remote
 sends use the running bot's config. Installing this change requires the normal
 package release/upgrade and configuring the application bindings; opening a PR

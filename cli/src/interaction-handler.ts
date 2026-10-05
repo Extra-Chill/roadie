@@ -24,6 +24,7 @@ import {
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
+import { handleChannelCommand, isApplicationGuild } from './commands/channel.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
@@ -92,6 +93,8 @@ import {
   channelAllowsCapability,
   channelAllowsSpeaker,
   decideRespond,
+  applicationBinding,
+  resolveSendChannel,
   resolveChannelPolicy,
 } from './channel-policy.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -132,6 +135,7 @@ async function isInteractionOwnedByThisMachine(
 ): Promise<boolean> {
   const channelId = interaction.channelId
   if (!channelId) return false
+  if (applicationBinding() && !(resolveSendChannel(channelId) instanceof Error)) return true
 
   // Direct channel lookup
   const channelConfig = await getChannelDirectory(channelId)
@@ -142,6 +146,7 @@ async function isInteractionOwnedByThisMachine(
     ? interaction.channel.parentId
     : null
   if (cachedParentId) {
+    if (applicationBinding() && !(resolveSendChannel(cachedParentId) instanceof Error)) return true
     const parentConfig = await getChannelDirectory(cachedParentId)
     if (parentConfig) return true
   }
@@ -152,6 +157,7 @@ async function isInteractionOwnedByThisMachine(
       .fetch(channelId)
       .catch(() => null)
     if (fetched?.isThread() && fetched.parentId) {
+      if (applicationBinding() && !(resolveSendChannel(fetched.parentId) instanceof Error)) return true
       const parentConfig = await getChannelDirectory(fetched.parentId)
       if (parentConfig) return true
     }
@@ -192,8 +198,10 @@ export function registerInteractionHandler({
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
         // Setup commands must not let an unconfigured server grant itself host access.
+        const channelCommand = interaction.isChatInputCommand() && interaction.commandName === 'channel'
+        const applicationGuild = channelCommand && await isApplicationGuild(interaction)
         const owned = await isInteractionOwnedByThisMachine(interaction)
-        if (!owned) {
+        if (!owned && !applicationGuild) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
@@ -216,6 +224,13 @@ export function registerInteractionHandler({
               ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
             },
           })
+        }
+
+        // Explicit application management is the only bootstrap exception to
+        // ownership/response policy. The handler still requires admin identity.
+        if (channelCommand && interaction.isChatInputCommand()) {
+          await handleChannelCommand({ command: interaction, appId })
+          return
         }
 
         // Channel policy: interactions in channels the bot does not answer, or

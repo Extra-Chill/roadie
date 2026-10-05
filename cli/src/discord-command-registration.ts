@@ -157,6 +157,19 @@ export async function registerCommands({
       .toJSON(),
 
     new SlashCommandBuilder()
+      .setName('channel')
+      .setDescription('Bind or unbind existing channels to this Roadie application')
+      .addSubcommand((subcommand) => subcommand
+        .setName('bind')
+        .setDescription('Enable this application in an existing text channel')
+        .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel')))
+      .addSubcommand((subcommand) => subcommand
+        .setName('unbind')
+        .setDescription('Stop responses while preserving channel and session history')
+        .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel')))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
         truncateCommandDescription('Create Discord channels for a project. Use `npx roadie project add` for unlisted projects'),
