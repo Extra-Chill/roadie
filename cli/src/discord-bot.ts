@@ -87,6 +87,7 @@ import {
   runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
 import { runShellCommand } from './commands/run-command.js'
+import { getRoadieMetadata } from './discord-utils.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
@@ -148,6 +149,7 @@ import {
   channelStartsThreads,
   decideRespond,
   setChannelParentResolver,
+  applicationDirectory,
 } from './channel-policy.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -799,15 +801,12 @@ export async function startDiscordBot({
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         if (parent) {
-          const channelConfig = await getChannelDirectory(parent.id)
-          if (channelConfig) {
-            projectDirectory = channelConfig.directory
-          }
+          projectDirectory = (await getRoadieMetadata(parent)).projectDirectory
         }
 
         // A thread bound to its own working directory still runs its agent
         // server in the project root; the working directory is passed per call.
-        const threadDir = await getThreadWorkingDirectory(thread.id)
+        const threadDir = applicationDirectory() ? undefined : await getThreadWorkingDirectory(thread.id)
         if (threadDir) {
           projectDirectory = threadDir.projectDirectory
           discordLogger.log(
@@ -970,9 +969,9 @@ export async function startDiscordBot({
           `[GUILD_TEXT] Message in text channel #${channel.name} (${channel.id})`,
         )
 
-        const channelConfig = await getChannelDirectory(channel.id)
+        const projectDirectory = (await getRoadieMetadata(channel)).projectDirectory
 
-        if (!channelConfig) {
+        if (!projectDirectory) {
           const botMentioned = Boolean(
             discordClient.user && message.mentions.has(discordClient.user.id),
           )
@@ -992,8 +991,6 @@ export async function startDiscordBot({
           )
           return
         }
-
-        const projectDirectory = channelConfig.directory
 
         // Note: Mention mode is checked early in the handler (before permission check)
         // to avoid sending permission errors to users who just didn't @mention the bot.
@@ -1178,17 +1175,14 @@ export async function startDiscordBot({
         return
       }
 
-      // Get directory from database
-      const channelConfig = await getChannelDirectory(parent.id)
+      const projectDirectory = (await getRoadieMetadata(parent)).projectDirectory
 
-      if (!channelConfig) {
+      if (!projectDirectory) {
         discordLogger.log(
           `[BOT_SESSION] No project directory configured for parent channel`,
         )
         return
       }
-
-      const projectDirectory = channelConfig.directory
 
       if (!fs.existsSync(projectDirectory)) {
         discordLogger.error(
