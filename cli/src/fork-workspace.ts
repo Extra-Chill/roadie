@@ -6,7 +6,6 @@ import path from 'node:path'
 import * as errore from 'errore'
 import { applyFiltersAsync, doAction } from './hooks.js'
 
-export type ForkWorkspaceMode = 'shared' | 'separate'
 export type ForkWorkspaceRequest = {
   requestId: string
   sourceSessionId: string
@@ -28,7 +27,6 @@ export type ForkWorkspaceBinding = {
   baseRef?: string
 }
 export type ForkWorkspaceProvider = {
-  defaultMode?: ForkWorkspaceMode
   provision(request: ForkWorkspaceRequest): Promise<ForkWorkspaceBinding | Error>
 }
 export class ForkWorkspaceError extends errore.createTaggedError({
@@ -37,21 +35,13 @@ export class ForkWorkspaceError extends errore.createTaggedError({
 }) {}
 
 export async function resolveForkWorkspace(
-  input: Omit<ForkWorkspaceRequest, 'requestId'> & { mode?: ForkWorkspaceMode },
+  input: Omit<ForkWorkspaceRequest, 'requestId'>,
 ): Promise<{ request: ForkWorkspaceRequest; binding: ForkWorkspaceBinding | null } | Error> {
   const request: ForkWorkspaceRequest = { ...input, requestId: crypto.randomUUID() }
-  // Explicit sharing is a complete decision, not a provisioning request.
-  if (input.mode === 'shared') return { request, binding: null }
+  // No matching provider means the host wants the ordinary conversation fork
+  // in the source directory; nothing is allocated.
   const provider = await applyFiltersAsync('fork_workspace', null, request)
-  const mode = input.mode ?? provider?.defaultMode ?? 'shared'
-  if (mode !== 'shared' && mode !== 'separate')
-    return new ForkWorkspaceError({ detail: 'Host configured an invalid fork workspace mode.' })
-  if (mode === 'shared') return { request, binding: null }
-  if (!provider)
-    return new ForkWorkspaceError({
-      detail:
-        'No host workspace provider is configured for this project. Choose workspace:shared or configure a separate-workspace provider.',
-    })
+  if (!provider) return { request, binding: null }
   if (typeof provider.provision !== 'function')
     return new ForkWorkspaceError({
       detail: 'Host fork workspace provider is invalid; the fork was not started.',
@@ -103,7 +93,7 @@ export async function resolveForkWorkspace(
     )
   if (target instanceof Error) return invalid(target.message)
   if (source === target)
-    return invalid('Separate workspace resolved to the source directory; the fork was not started.')
+    return invalid('Host workspace resolved to the source directory; the fork was not started.')
   const stat = await fs
     .stat(target)
     .catch(
@@ -116,5 +106,5 @@ export async function resolveForkWorkspace(
 }
 
 export function forkWorkspaceNotice(binding: ForkWorkspaceBinding): string {
-  return `Separate workspace: \`${binding.workingDirectory}\`\nBranch/workspace: \`${binding.label}\`${binding.baseRef ? ` · committed base: \`${binding.baseRef}\`` : ''}\nUncommitted edits from the source checkout are not copied.`
+  return `Fork workspace: \`${binding.workingDirectory}\`\nBranch/workspace: \`${binding.label}\`${binding.baseRef ? ` · committed base: \`${binding.baseRef}\`` : ''}\nUncommitted edits from the source checkout are not copied.`
 }

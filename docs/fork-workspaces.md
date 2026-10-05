@@ -1,20 +1,20 @@
 # Fork workspaces
 
-Forks can share the source directory or request an independent host workspace:
+When the host supplies a `fork_workspace` provider, `/fork` automatically works
+in a freshly provisioned independent host workspace. There is no user-facing
+workspace choice:
 
 ```text
-/fork prompt:Investigate caching workspace:separate
-/fork prompt:Discuss the architecture workspace:shared
+/fork prompt:Investigate caching
 ```
 
-Slack uses `/roadie fork <thread timestamp> --workspace separate <prompt>` or
-`--workspace shared`. Omission follows the host provider's default; without a
-provider it remains shared.
+Without a matching provider the fork stays an ordinary conversation fork in the
+source directory.
 
-The `fork_workspace` filter supplies a provider with `defaultMode` and
-`provision(request)`. The request contains a unique request ID, source session,
-thread, project directory, source working directory, chat attribution and the
-new prompt. The provider returns:
+The `fork_workspace` filter supplies a provider with `provision(request)`. The
+request contains a unique request ID, source session, thread, project
+directory, source working directory, chat attribution and the new prompt. The
+provider returns a binding or an error:
 
 ```ts
 {
@@ -27,10 +27,15 @@ new prompt. The provider returns:
 }
 ```
 
+A matching provider must provision successfully before the fork or its task
+starts. Provisioning and binding failures fail closed: no fork thread is
+created and no prompt runs. The superseded `defaultMode` field (still returned
+by the current wp-coding-agents host plugin) is ignored.
+
 The host owns allocation, lifecycle and cleanup. Roadie validates the directory,
 persists the binding, and displays the workspace and committed base. It preserves
 conversation history/model preferences and injects the new working directory.
-Uncommitted source edits are not copied. Explicit sharing performs no allocation.
+Uncommitted source edits are not copied.
 
 If conversation setup fails after allocation, `fork_workspace_abandoned` informs
 the host with the request and binding. A host can retain failure evidence and
@@ -38,7 +43,7 @@ record a terminal disposition rather than deleting the workspace immediately.
 
 ## Backend prerequisite
 
-Separate Git worktree forks use OpenCode's existing experimental workspace APIs,
+Git worktree forks use OpenCode's existing experimental workspace APIs,
 verified against released OpenCode 1.18.31. Set
 `OPENCODE_EXPERIMENTAL_WORKSPACES=true` in the backend's startup environment and
 restart the backend when activating this feature.
@@ -55,8 +60,10 @@ support, a disabled flag, an undiscoverable target, or a failed warp stops setup
 before a task prompt runs. An unused fork is removed when binding fails.
 
 The default released-backend fork suite enables the workspace flag in its isolated
-fixture. It executes real tools in two Git worktrees, checks the unchanged source
-and dirty-file boundary, and reconstructs runtimes to verify persistence. It also
+fixture. It executes real tools in two Git worktrees without any workspace option,
+checks the unchanged source and dirty-file boundary, reconstructs runtimes to
+verify persistence, forks a workspace-bound session again, and proves that
+removing the provider restores ordinary conversation-fork behavior. It also
 proves that an ordinary unregistered directory cannot run the task in the source.
 
 The proposed native `targetDirectory` extension (anomalyco/opencode#53389) is not

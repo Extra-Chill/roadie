@@ -1155,17 +1155,10 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
-      const workspaceOption = words.indexOf('--workspace')
-      const choice = workspaceOption >= 0 ? words[workspaceOption + 1] : undefined
-      if (workspaceOption >= 0 && choice !== 'shared' && choice !== 'separate') {
-        await runtime.chat.sendNotice('Use --workspace shared or --workspace separate.')
-        return
-      }
-      const promptWords = workspaceOption >= 0 ? words.filter((_, index) => index !== workspaceOption && index !== workspaceOption + 1) : words
       const workspace = await resolveForkWorkspace({
-        mode: choice === 'separate' ? 'separate' : choice === 'shared' ? 'shared' : undefined, sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
+        sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
         projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
-        spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: promptWords.join(' '),
+        spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: words.join(' '),
       })
       if (workspace instanceof Error) { await runtime.chat.sendNotice(workspace.message); return }
       const forkDirectory = workspace.binding?.workingDirectory ?? runtime.sdkDirectory
@@ -1184,7 +1177,7 @@ export class NativeSlackBot {
       if (!forked.data) {
         await abandon()
         if (workspace.binding) {
-          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the separate workspace; no fork prompt was run.')
+          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the fork workspace; no fork prompt was run.')
           return
         }
         return new SlackApiError({
@@ -1229,9 +1222,9 @@ export class NativeSlackBot {
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
       if (workspace.binding) await fork.chat.sendNotice(forkWorkspaceNotice(workspace.binding))
-      if (promptWords.length) {
+      if (words.length) {
         await fork.enqueueIncoming({
-          prompt: promptWords.join(' '),
+          prompt: words.join(' '),
           userId: event.user_id,
           username: identity.actor.name,
         })

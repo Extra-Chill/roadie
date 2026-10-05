@@ -168,7 +168,7 @@ describe('/fork', () => {
     expect(forkUserCount).toBe(userMessages.length - 1)
   }, 30_000)
 
-  test('separate forks execute in real isolated worktrees, including workspace-bound sources and reconstruction', async () => {
+  test('forks execute in real isolated worktrees, including workspace-bound sources and reconstruction', async () => {
     const directory = ctx.directories.projectDirectory
     await exec('git', ['add', 'opencode.json'], { cwd: directory })
     const unchanged = await exec('git', ['diff', '--cached', '--quiet'], { cwd: directory }).then(() => true, () => false)
@@ -178,7 +178,8 @@ describe('/fork', () => {
     const source = await startSource()
     const allocations: string[] = []
     const forkThreads: string[] = []
-    const remove = addFilter('fork_workspace', () => ({ defaultMode: 'separate' as const, async provision(request) {
+    let nested: { id: string } | undefined
+    const remove = addFilter('fork_workspace', () => ({ async provision(request) {
       const workingDirectory = path.join(ctx.directories.root, `fork-${request.requestId}`)
       const branch = `fork-${request.requestId}`
       await exec('git', ['worktree', 'add', '-b', branch, workingDirectory, 'HEAD'], { cwd: directory })
@@ -209,7 +210,7 @@ describe('/fork', () => {
       // Forking an already-warped session must move only its new copy.
       fs.writeFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'keep existing fork')
       fs.writeFileSync(path.join(allocations[0]!, 'fork-local-only.txt'), 'keep fork edits')
-      const nested = await forkFrom(forkThreads[0]!, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER nested' }])
+      nested = await forkFrom(forkThreads[0]!, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER nested' }])
       await waitForThreadSession(nested.id)
       await waitForFooterMessage({ discord: ctx.discord, threadId: nested.id, timeout: 10_000 })
       expect((await getThreadWorkingDirectory(nested.id))?.workingDirectory).toBe(allocations[2])
@@ -218,26 +219,29 @@ describe('/fork', () => {
       expect(fs.readFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'utf8')).toBe('keep existing fork')
       expect(fs.readFileSync(path.join(directory, 'fork-result.txt'), 'utf8')).toBe('source must stay unchanged')
       expect(new Set(allocations).size).toBe(3)
-      const count = allocations.length
-      const sharedNested = await forkFrom(nested.id, [{ name: 'workspace', type: 3, value: 'shared' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER shared nested' }])
-      await waitForThreadSession(sharedNested.id)
-      await waitForFooterMessage({ discord: ctx.discord, threadId: sharedNested.id, timeout: 10_000 })
-      expect((await getThreadWorkingDirectory(sharedNested.id))?.workingDirectory).toBe(allocations[2])
-      expect(allocations).toHaveLength(count)
-      const shared = await forkFrom(source.id, [{ name: 'workspace', type: 3, value: 'shared' }])
-      await waitForThreadSession(shared.id)
-      expect(await getThreadWorkingDirectory(shared.id)).toBeUndefined()
-      expect(allocations).toHaveLength(count)
     } finally { remove() }
+    // Without a provider the fork is an ordinary conversation fork: the
+    // workspace-bound fork inherits its source directory, the source fork
+    // stays unbound, and nothing new is allocated.
+    const count = allocations.length
+    const inherited = await forkFrom(nested!.id, [{ name: 'prompt', type: 3, value: 'Reply with exactly: inherited fork' }])
+    await waitForThreadSession(inherited.id)
+    await waitForFooterMessage({ discord: ctx.discord, threadId: inherited.id, timeout: 10_000 })
+    expect((await getThreadWorkingDirectory(inherited.id))?.workingDirectory).toBe(allocations[2])
+    expect(allocations).toHaveLength(count)
+    const plain = await forkFrom(source.id)
+    await waitForThreadSession(plain.id)
+    expect(await getThreadWorkingDirectory(plain.id)).toBeUndefined()
+    expect(allocations).toHaveLength(count)
   }, 60_000)
 
-  test('separate provisioning failure creates no fork thread and runs no prompt', async () => {
+  test('provisioning failure creates no fork thread and runs no prompt', async () => {
     const source = await startSource()
     const beforeFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
     const before = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
     const remove = addFilter('fork_workspace', () => ({ async provision() { return new Error('fixture allocation failed') } }))
     try {
-      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
+      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
       await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
       expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)).toEqual(before.map((thread) => thread.id))
       const afterFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
@@ -258,7 +262,7 @@ describe('/fork', () => {
       return { workingDirectory, projectDirectory: ctx.directories.projectDirectory, label: 'unsupported', kind: 'directory' as const }
     } }))
     try {
-      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
+      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
       await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
       // Wait for the handler's terminal error edit, not merely deferReply.
       const deadline = Date.now() + 8_000

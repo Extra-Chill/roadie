@@ -6,6 +6,9 @@
 //
 // The source session keeps running. The fork runs with the source agent,
 // model and pinned system prompt so its requests reuse the source prompt cache.
+// When the host supplies a fork_workspace provider, the fork automatically
+// works in a freshly provisioned host worktree; without one it stays in the
+// source directory.
 
 import { openCodeCatalogGetter } from '../agent-backend/registry.js'
 import { parsePersistedEvents } from '../session-handler/persisted-events.js'
@@ -37,7 +40,7 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { OpenCodeSdkError } from '../errors.js'
-import { resolveForkWorkspace, forkWorkspaceNotice, type ForkWorkspaceMode } from '../fork-workspace.js'
+import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
 import { forkOpenCodeSession } from '../agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from '../fork-title.js'
@@ -130,7 +133,6 @@ export async function forkSessionToThread({
   username,
   appId,
   images,
-  workspaceMode,
 }: {
   sourceThread: ThreadChannel
   projectDirectory: string
@@ -145,7 +147,6 @@ export async function forkSessionToThread({
   username: string
   appId: string | undefined
   images?: DiscordFileAttachment[]
-  workspaceMode?: ForkWorkspaceMode
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
   const startedAt = Date.now()
   const [sessionId, getClientResult, textChannel] = await Promise.all([
@@ -167,7 +168,7 @@ export async function forkSessionToThread({
   }
 
   const workspace = await resolveForkWorkspace({
-    mode: workspaceMode, sourceSessionId: sessionId, sourceThreadId: sourceThread.id,
+    sourceSessionId: sessionId, sourceThreadId: sourceThread.id,
     projectDirectory, sourceDirectory: sdkDirectory, prompt, userId,
     platform: 'discord', spaceId: sourceThread.guildId, channelId: sourceThread.parentId ?? undefined,
   })
@@ -369,11 +370,6 @@ export async function handleForkCommand({
 
   const prompt = interaction.options.getString('prompt') ?? undefined
   const fromMessageId = interaction.options.getString('from') ?? undefined
-  const workspace = interaction.options.getString('workspace')
-  if (workspace && workspace !== 'shared' && workspace !== 'separate') {
-    await interaction.editReply('Choose workspace:shared or workspace:separate.')
-    return
-  }
   try {
     const result = await forkSessionToThread({
       sourceThread: threadChannel,
@@ -381,7 +377,6 @@ export async function handleForkCommand({
       sdkDirectory: resolved.workingDirectory,
       ...(fromMessageId && { fromMessageId }),
       ...(prompt && { prompt }),
-      workspaceMode: workspace === 'separate' ? 'separate' : workspace === 'shared' ? 'shared' : undefined,
       userId: interaction.user.id,
       username: interaction.user.displayName,
       appId,
