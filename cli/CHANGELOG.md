@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.41.4] - 2026-10-05
+
+### Fixed
+- resolve fork coding scope outside the conversation home
+- automatically isolate configured conversation forks
+
 ## [0.41.3] - 2026-10-05
 
 ### Fixed
