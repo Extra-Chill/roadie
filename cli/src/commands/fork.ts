@@ -386,6 +386,7 @@ export async function handleForkCommand({
       appId,
     })
     if (result instanceof Error) {
+      forkLogger.warn('Fork setup failed:', result)
       await interaction.editReply(`Failed to fork session: ${result.message}`)
       return
     }

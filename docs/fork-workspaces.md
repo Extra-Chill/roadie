@@ -38,19 +38,26 @@ record a terminal disposition rather than deleting the workspace immediately.
 
 ## Backend prerequisite
 
-Independent directory binding requires the native OpenCode `targetDirectory`
-fork contract tracked by https://github.com/anomalyco/opencode/issues/53385.
-Native implementation: https://github.com/anomalyco/opencode/pull/53389.
-Passing only the request `directory` is insufficient: OpenCode routes by the
-source session's persisted directory.
+Separate Git worktree forks use OpenCode's existing experimental workspace APIs,
+verified against released OpenCode 1.18.31. Set
+`OPENCODE_EXPERIMENTAL_WORKSPACES=true` in the backend's startup environment and
+restart the backend when activating this feature.
 
-Roadie sends the explicit target and verifies the returned session directory
-before dispatch. An older backend that ignores that field has its unused fork
-removed and reports an upgrade requirement; no task prompt runs in the source.
-Workspace-adapter sessions retain their own native backend routing contract.
+After host allocation, Roadie calls `workspace.syncList` and `workspace.list` to
+find the exact canonical Git worktree directory, forks the conversation normally,
+then calls `workspace.warp` with `copyChanges: false`. It verifies the saved native
+`workspaceID` before dispatching the task. This adds no model calls or conversation
+replay and leaves physical worktree ownership with the host.
 
-Local activation waits for that native capability to be installed. The default
-released-backend suite verifies fail-closed behavior. The real isolation scenario
-runs against the linked native repair with `ROADIE_TEST_FORK_TARGET_DIRECTORY=1`.
-It executes real tools in two Git worktrees, checks the unchanged source and
-dirty-file boundary, and reconstructs runtimes to verify persistence.
+Passing only the request `directory` is insufficient: OpenCode routes an existing
+session through its persisted directory/workspace binding. Missing workspace
+support, a disabled flag, an undiscoverable target, or a failed warp stops setup
+before a task prompt runs. An unused fork is removed when binding fails.
+
+The default released-backend fork suite enables the workspace flag in its isolated
+fixture. It executes real tools in two Git worktrees, checks the unchanged source
+and dirty-file boundary, and reconstructs runtimes to verify persistence. It also
+proves that an ordinary unregistered directory cannot run the task in the source.
+
+The proposed native `targetDirectory` extension (anomalyco/opencode#53389) is not
+a prerequisite for this Git worktree workflow.
