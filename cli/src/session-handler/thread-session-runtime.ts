@@ -7,7 +7,7 @@
 // run internals.
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
-import { schedulePendingForkTitle } from '../fork-title.js'
+import { forkTitlePrompt, schedulePendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
@@ -951,6 +951,8 @@ export type IngressInput = {
    * is delivering that sleep rather than superseding it.
    */
   isSleepWake?: boolean
+  /** Synthetic recovery turn, never a new fork task. Preserved on retries. */
+  isRestartContinuation?: boolean
   /**
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
@@ -2889,8 +2891,9 @@ export class ThreadSessionRuntime {
 
   /** Send the restart continuation prompt and watch its turn until it replies. */
   async resumeAfterRestart(input: IngressInput): Promise<EnqueueResult> {
-    this.restartContinuation = { input, attempt: 1, priorUserMessageIds: this.currentUserMessageIds() }
-    return this.enqueueIncoming(input)
+    const continuation = { ...input, isRestartContinuation: true }
+    this.restartContinuation = { input: continuation, attempt: 1, priorUserMessageIds: this.currentUserMessageIds() }
+    return this.enqueueIncoming(continuation)
   }
 
   private currentUserMessageIds(): Set<string> {
@@ -3618,9 +3621,7 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
-      if (!input.noReply && !input.isSleepWake) {
-        schedulePendingForkTitle({ session, prompt: input.titlePrompt ?? (input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt), backend: getClient(), directory: this.sdkDirectory })
-      }
+      schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
@@ -3922,6 +3923,11 @@ export class ThreadSessionRuntime {
       repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
+      titlePrompt: input.titlePrompt,
+      noReply: input.noReply,
+      contextOnly: input.contextOnly,
+      isSleepWake: input.isSleepWake,
+      isRestartContinuation: input.isRestartContinuation,
     }
 
     let result: EnqueueResult = { queued: false, queueId }
@@ -4633,7 +4639,7 @@ export class ThreadSessionRuntime {
       return false
     }
     const { session, getClient, createdNewSession } = sessionResult
-    schedulePendingForkTitle({ session, prompt: input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt, backend: getClient(), directory: this.sdkDirectory })
+    schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
