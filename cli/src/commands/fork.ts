@@ -37,6 +37,7 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { markPendingForkTitle } from '../fork-title.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
 
@@ -160,8 +161,6 @@ export async function forkSessionToThread({
     return new Error('Could not resolve parent text channel')
   }
 
-  const threadLabel = prompt?.trim() || sourceThread.name.replace(/^(Fork: |btw: )/, '')
-
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
   const initMs = Date.now() - startedAt
@@ -172,7 +171,7 @@ export async function forkSessionToThread({
       ...(fromMessageId && { messageID: fromMessageId }),
     })),
     timed(textChannel.threads.create({
-      name: `Fork: ${threadLabel}`.slice(0, THREAD_NAME_MAX),
+      name: `Fork: ${sourceThread.name.replace(/^(Fork: |btw: )/, '')}`.slice(0, THREAD_NAME_MAX),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Forked from session ${sessionId}`,
     })),
@@ -203,6 +202,7 @@ export async function forkSessionToThread({
     })
   }
   const thread = createdThread
+  await markPendingForkTitle(forkedSession)
   const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
   const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
   const channelId = sourceThread.parentId || sourceThread.id
@@ -300,6 +300,7 @@ export async function forkSessionToThread({
     // Not awaited: the caller confirms right away while the runtime resolves
     // preferences and dispatches. Failures are reported in the fork.
     void runtime.enqueueIncoming({
+      titlePrompt: trimmedPrompt,
       prompt: forkedPrompt,
       images,
       userId,

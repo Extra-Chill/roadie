@@ -7,6 +7,7 @@
 // run internals.
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
+import { applyPendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
 import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
@@ -784,7 +785,7 @@ function getThreadNameCandidateFromSessionTitle({
   }
   const matchedPrefix =
     PRESERVED_THREAD_PREFIXES.find((p) => {
-      return currentName.startsWith(p)
+      return p !== 'Fork: ' && currentName.startsWith(p)
     }) ?? ''
   return `${matchedPrefix}${withoutCopiedPrefix}`.slice(0, DISCORD_THREAD_NAME_MAX)
 }
@@ -877,6 +878,8 @@ export function applyChannelPolicyToIngress({
 }
 
 export type IngressInput = {
+  /** Raw task text when a fork adds synthetic lineage instructions. */
+  titlePrompt?: string
   actorPlatform?: string
   prompt: string
   userId: string
@@ -3582,6 +3585,10 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
+      if (!input.noReply && !input.isSleepWake) {
+        const title = await applyPendingForkTitle({ session, prompt: input.titlePrompt ?? (input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt), backend: getClient(), directory: this.sdkDirectory })
+        if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
+      }
 
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
@@ -4593,6 +4600,8 @@ export class ThreadSessionRuntime {
       return false
     }
     const { session, getClient, createdNewSession } = sessionResult
+    const title = await applyPendingForkTitle({ session, prompt: input.command ? `/${input.command.name} ${input.command.arguments}` : input.prompt, backend: getClient(), directory: this.sdkDirectory })
+    if (title instanceof Error) logger.warn('Could not name fork from its task prompt:', title)
 
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
@@ -5142,7 +5151,7 @@ export class ThreadSessionRuntime {
   }): Promise<
     | Error
     | {
-        session: { id: string }
+        session: { id: string; title: string }
         getClient: AgentBackendGetter
         createdNewSession: boolean
       }
@@ -5170,7 +5179,7 @@ export class ThreadSessionRuntime {
       sessionId = await getThreadSession(this.thread.id) || undefined
     }
 
-    let session: { id: string } | undefined
+    let session: { id: string; title: string } | undefined
     let createdNewSession = false
 
     if (sessionId) {

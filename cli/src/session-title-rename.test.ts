@@ -142,13 +142,13 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`"btw: Side question about auth"`)
   })
 
-  test('preserves Fork: prefix from current name', () => {
+  test('replaces the provisional Fork: prefix with the task title', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: 'Forked task title',
         currentName: 'Fork: old session title',
       }),
-    ).toMatchInlineSnapshot(`"Fork: Forked task title"`)
+    ).toMatchInlineSnapshot(`"Forked task title"`)
   })
 
   test('does not double a worktree prefix copied from the Discord thread name', () => {

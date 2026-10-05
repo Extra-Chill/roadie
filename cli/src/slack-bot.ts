@@ -45,6 +45,7 @@ import {
   type ThreadSessionRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
 import { setThreadSession } from './database.js'
@@ -1138,7 +1139,7 @@ export class NativeSlackBot {
       })
       const root = await this.api.post({
         channel: event.channel_id,
-        text: `Fork: ${words.join(' ') || forked.data.title}`,
+        text: `Fork: ${forked.data.title}`,
       })
       if (root instanceof Error) return root
       const id = slackThreadId({
@@ -1147,6 +1148,7 @@ export class NativeSlackBot {
         threadTs: root.id,
       })
       await setThreadSession(id, forked.data.id)
+      await markPendingForkTitle(forked.data)
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (working)
         await setThreadWorkingDirectory({
@@ -1156,12 +1158,16 @@ export class NativeSlackBot {
         })
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
-      if (words.length)
+      if (words.length) {
         await fork.enqueueIncoming({
           prompt: words.join(' '),
           userId: event.user_id,
           username: identity.actor.name,
         })
+        const info = await backend().sessions.get({ sessionId: forked.data.id, directory: runtime.sdkDirectory })
+        if (info instanceof Error) logger.warn('Could not display generated fork title:', info)
+        else if (info && info.title !== forked.data.title) await this.api.edit({ channel: event.channel_id, ts: root.id, text: `Fork: ${info.title}` })
+      }
       return
     }
     if (name === 'session') {

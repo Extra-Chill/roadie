@@ -9,6 +9,8 @@ import { OpenCodeSdkError } from '../errors.js'
 import { extractSdkErrorMessage, getOpencodeServerAuthHeaders, getOpencodeServerPort } from '../opencode.js'
 import { toAgentMessage, toAgentPart, toAgentSession } from './opencode-events.js'
 import type { AgentStatus } from './events.js'
+import { TITLE_REQUEST_SYSTEM, TITLE_PROMPT_MAX_CHARS } from '../title-request.js'
+import * as errore from 'errore'
 import {
   AgentRequestError,
   type AgentAuthMethod,
@@ -59,6 +61,43 @@ function toStatus(status: { type: string; attempt?: number; message?: string; ne
 
 export function openCodeSessionOperations(client: OpencodeClient): AgentSessionOperations {
   return {
+    async generateTitle({ directory, prompt }) {
+      const config = await call('config.get', () => client.config.get({ directory }))
+      if (config instanceof Error) return config
+      const configured = config?.small_model
+      const catalog = configured ? undefined : await call('provider.list', () => client.provider.list({ directory }))
+      if (catalog instanceof Error) return catalog
+      const candidates = (catalog?.all ?? []).filter((provider) => catalog?.connected.includes(provider.id)).flatMap((provider) =>
+        Object.values(provider.models ?? {}).filter((model) => /small|mini|nano|flash|haiku/i.test(`${model.id} ${model.name}`)).map((model) => ({ id: `${provider.id}/${model.id}`, cost: (model.cost?.input ?? 0) + (model.cost?.output ?? 0) })),
+      ).sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id))
+      const selected = configured ?? candidates[0]?.id
+      if (!selected) return new AgentRequestError({ detail: 'Configure small_model in OpenCode for fork title generation; no small model is connected' })
+      const separator = selected.indexOf('/')
+      if (separator <= 0) return new AgentRequestError({ detail: 'small_model must use provider/model format' })
+      const signal = AbortSignal.timeout(15_000)
+      // Explicit non-default title prevents the temporary session's own
+      // automatic title request. Its history starts empty: never fork it.
+      const temporary = await call('session.create', () => client.session.create({ directory, title: 'Roadie internal title request', permission: [{ permission: '*', pattern: '*', action: 'deny' }] }, { signal }))
+      if (temporary instanceof Error) return temporary
+      if (!temporary) return new AgentRequestError({ detail: 'Could not create isolated title request' })
+      await using cleanup = new errore.AsyncDisposableStack()
+      cleanup.defer(async () => {
+        await client.session.abort({ sessionID: temporary.id, directory }).catch(() => undefined)
+        await client.session.delete({ sessionID: temporary.id, directory }).catch(() => undefined)
+      })
+      const response = await call('session.prompt', () => client.session.prompt({ sessionID: temporary.id, directory, agent: 'title',
+          model: { providerID: selected.slice(0, separator), modelID: selected.slice(separator + 1) },
+          system: TITLE_REQUEST_SYSTEM, parts: [{ type: 'text', text: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) }],
+        }, { signal }))
+      if (response instanceof Error) return response
+      if (response?.info.role === 'assistant' && response.info.error) return new AgentRequestError({ detail: 'Small model could not generate a fork title' })
+      const title = response?.parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('').trim()
+      return title || new AgentRequestError({ detail: 'Small model returned an empty fork title' })
+    },
+    async setTitle({ sessionId, directory, title }) {
+      const result = await call('session.update', () => client.session.update({ sessionID: sessionId, directory, title }))
+      return result instanceof Error ? result : undefined
+    },
     async create({ directory, permission }) {
       const session = await call('session.create', () => client.session.create({ directory, permission }))
       if (session instanceof Error) return session
