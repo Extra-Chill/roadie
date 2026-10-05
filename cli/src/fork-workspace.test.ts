@@ -1,8 +1,7 @@
 // Unit tests for the fork_workspace provider contract: a matching provider
 // provisions automatically, no provider means an ordinary conversation fork,
-// and provisioning or binding failures fail closed. The superseded
-// `defaultMode` field (still returned by the current host plugin) is ignored.
-import { expect, test, beforeEach } from 'vitest'
+// and provisioning or binding failures fail closed.
+import { expect, test, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,6 +17,11 @@ beforeEach(() => {
   resetHooks()
 })
 
+const temporaryDirectories: string[] = []
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })))
+})
+
 function requestInput(sourceDirectory: string) {
   return {
     sourceSessionId: 'session-1',
@@ -30,7 +34,9 @@ function requestInput(sourceDirectory: string) {
 }
 
 async function makeTempDir(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'fork-workspace-'))
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'fork-workspace-')))
+  temporaryDirectories.push(directory)
+  return directory
 }
 
 test('without a provider the fork stays in the source directory', async () => {
@@ -42,13 +48,10 @@ test('without a provider the fork stays in the source directory', async () => {
   expect(result.request.sourceSessionId).toBe('session-1')
 })
 
-test('a matching provider provisions automatically; the superseded defaultMode field is ignored', async () => {
+test('a matching provider provisions automatically', async () => {
   const source = await makeTempDir()
   const target = await makeTempDir()
-  // Built without a fresh object literal so the extra field typechecks the
-  // same way a host plugin written against the old contract would.
   const hostProvider = {
-    defaultMode: 'shared',
     provision: async () => ({
       workingDirectory: target,
       projectDirectory: source,
@@ -56,7 +59,7 @@ test('a matching provider provisions automatically; the superseded defaultMode f
       kind: 'git-worktree' as const,
     }),
   }
-  addFilter('fork_workspace', () => hostProvider as ForkWorkspaceProvider)
+  addFilter('fork_workspace', () => hostProvider)
   const result = await resolveForkWorkspace(requestInput(source))
   if (result instanceof Error) throw result
   expect(result.binding?.workingDirectory).toBe(target)
@@ -78,9 +81,18 @@ test('provisioning failures fail closed without abandoning an unallocated worksp
   expect(abandoned).toHaveLength(0)
 })
 
+test('host repository-resolution errors are values and prevent a shared-directory fallback', async () => {
+  const source = await makeTempDir()
+  addFilter('fork_workspace', () => new Error('Multiple coding repositories; no fork was started.'))
+  const result = await resolveForkWorkspace(requestInput(source))
+  expect(result).toBeInstanceOf(Error)
+  if (!(result instanceof Error)) throw new Error('Expected a repository resolution failure')
+  expect(result.message).toContain('Multiple coding repositories')
+})
+
 test('a provider without a provision function fails closed', async () => {
   const source = await makeTempDir()
-  const hostProvider = { defaultMode: 'separate' }
+  const hostProvider = {}
   addFilter('fork_workspace', () => hostProvider as unknown as ForkWorkspaceProvider)
   const result = await resolveForkWorkspace(requestInput(source))
   expect(result).toBeInstanceOf(ForkWorkspaceError)

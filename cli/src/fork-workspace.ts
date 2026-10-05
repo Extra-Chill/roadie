@@ -12,6 +12,8 @@ export type ForkWorkspaceRequest = {
   sourceThreadId: string
   projectDirectory: string
   sourceDirectory: string
+  /** Successful coding tool locations, oldest first. Host resolves repository ownership. */
+  codingPaths?: string[]
   platform: string
   spaceId?: string
   channelId?: string
@@ -41,6 +43,8 @@ export async function resolveForkWorkspace(
   // No matching provider means the host wants the ordinary conversation fork
   // in the source directory; nothing is allocated.
   const provider = await applyFiltersAsync('fork_workspace', null, request)
+    .catch((cause) => new ForkWorkspaceError({ detail: cause instanceof Error ? cause.message : 'Could not resolve fork repository; the fork was not started.', cause }))
+  if (provider instanceof Error) return provider
   if (!provider) return { request, binding: null }
   if (typeof provider.provision !== 'function')
     return new ForkWorkspaceError({

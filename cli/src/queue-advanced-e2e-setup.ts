@@ -11,9 +11,10 @@ import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
-import { initTestGitRepo, removeTestDataDir } from './test-utils.js'
+import { chooseAvailableLockPort, initTestGitRepo, removeTestDataDir } from './test-utils.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
+import { setChannelsConfigPath } from './channel-policy.js'
 import { startDiscordBot } from './discord-bot.js'
 import { disposeRuntime } from './session-handler/thread-session-runtime.js'
 import {
@@ -998,7 +999,10 @@ export function setupQueueAdvancedSuite({
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
     ctx.directories = createRunDirectories({ name: dirName })
-    const lockPort = chooseLockPort({ channelId })
+    // These fixtures own their channel mapping. An operator's production
+    // allowlist must not suppress the synthetic Discord channels.
+    setChannelsConfigPath(null)
+    const lockPort = await chooseAvailableLockPort({ key: `${channelId}:${ctx.directories.root}` })
     const sessionEventsDir = path.join(ctx.directories.root, 'opencode-session-events')
     fs.mkdirSync(sessionEventsDir, { recursive: true })
 
@@ -1111,6 +1115,7 @@ export function setupQueueAdvancedSuite({
     delete process.env['ROADIE_DB_URL']
     delete process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS']
     delete process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR']
+    setChannelsConfigPath(undefined)
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }

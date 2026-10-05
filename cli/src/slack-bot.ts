@@ -46,6 +46,7 @@ import {
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
+import { loadForkCodingPaths } from './fork-coding-context.js'
 import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
@@ -1155,9 +1156,13 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
+      const client = getOpencodeClient(runtime.sdkDirectory)
+      if (!client) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
+      const codingPaths = await loadForkCodingPaths({ client, sessionId, directory: runtime.sdkDirectory })
+      if (codingPaths instanceof Error) { await runtime.chat.sendNotice(codingPaths.message); return }
       const workspace = await resolveForkWorkspace({
         sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
-        projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
+        projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, codingPaths, platform: 'slack',
         spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: words.join(' '),
       })
       if (workspace instanceof Error) { await runtime.chat.sendNotice(workspace.message); return }
@@ -1165,14 +1170,9 @@ export class NativeSlackBot {
       const abandon = async () => {
         if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
       }
-      const client = getOpencodeClient(runtime.sdkDirectory)
-      if (!client) {
-        await abandon()
-        return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
-      }
       const forked = await forkOpenCodeSession({
         client, sessionId, sourceDirectory: runtime.sdkDirectory,
-        ...(workspace.binding && { targetDirectory: forkDirectory }),
+        ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
       })
       if (!forked.data) {
         await abandon()
