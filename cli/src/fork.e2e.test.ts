@@ -7,6 +7,14 @@ import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setu
 import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { addFilter } from './hooks.js'
+import { getThreadWorkingDirectory } from './database.js'
+import { disposeRuntime } from './session-handler/thread-session-runtime.js'
+const exec = promisify(execFile)
 
 const TEXT_CHANNEL_ID = '200000000000001074'
 
@@ -16,6 +24,14 @@ describe('/fork', () => {
     channelName: 'qa-fork-e2e',
     dirName: 'qa-fork-e2e',
     username: 'fork-tester',
+    extraMatchers: [
+      { id: 'workspace-write', priority: 140, when: { latestUserTextIncludes: 'WORKSPACE_WRITE_MARKER', lastMessageRole: 'user', rawPromptRegex: '^(?!.*workspace-write-call)' }, then: {
+        parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'workspace-write-call', toolName: 'bash', input: JSON.stringify({ command: 'printf isolated > fork-result.txt', description: 'Write only in fork workspace', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
+      } },
+      { id: 'workspace-write-complete', priority: 141, when: { latestUserTextIncludes: 'WORKSPACE_WRITE_MARKER', lastMessageRole: 'tool' }, then: {
+        parts: [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'done' }, { type: 'text-delta', id: 'done', delta: 'workspace-write-complete' }, { type: 'text-end', id: 'done' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
+      } },
+    ],
   })
 
   async function startSource(): Promise<{ id: string }> {
@@ -111,4 +127,94 @@ describe('/fork', () => {
     const forkUserCount = forkMessages.filter((m) => m.info.role === 'user').length
     expect(forkUserCount).toBe(userMessages.length - 1)
   }, 30_000)
+
+  // This native capability is exercised against the linked OpenCode repair;
+  // released backends are separately verified to fail closed below.
+  test.skipIf(process.env.ROADIE_TEST_FORK_TARGET_DIRECTORY !== '1')('two separate forks execute in real isolated worktrees and retain their directory binding after reconstruction', async () => {
+    const directory = ctx.directories.projectDirectory
+    await exec('git', ['add', 'opencode.json'], { cwd: directory })
+    const unchanged = await exec('git', ['diff', '--cached', '--quiet'], { cwd: directory }).then(() => true, () => false)
+    if (!unchanged) await exec('git', ['commit', '-m', 'Commit deterministic runtime fixture'], { cwd: directory })
+    fs.writeFileSync(path.join(directory, 'source-dirty.txt'), 'keep source edits')
+    fs.writeFileSync(path.join(directory, 'fork-result.txt'), 'source must stay unchanged')
+    const source = await startSource()
+    const allocations: string[] = []
+    const remove = addFilter('fork_workspace', () => ({ defaultMode: 'separate' as const, async provision(request) {
+      const workingDirectory = path.join(ctx.directories.root, `fork-${request.requestId}`)
+      const branch = `fork-${request.requestId}`
+      await exec('git', ['worktree', 'add', '-b', branch, workingDirectory, 'HEAD'], { cwd: directory })
+      allocations.push(workingDirectory)
+      return { workingDirectory, projectDirectory: directory, label: branch, kind: 'git-worktree' as const, workspaceId: branch, baseRef: (await exec('git', ['rev-parse', 'HEAD'], { cwd: directory })).stdout.trim() }
+    } }))
+    try {
+      for (let i = 0; i < 2; i++) {
+        const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: `WORKSPACE_WRITE_MARKER ${i}` }])
+        await waitForThreadSession(fork.id)
+        await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 10_000 })
+        const binding = await getThreadWorkingDirectory(fork.id)
+        expect(binding?.workingDirectory).toBe(allocations[i])
+        expect(binding?.kind).toBe('git-worktree')
+        expect(fs.readFileSync(path.join(allocations[i]!, 'fork-result.txt'), 'utf8')).toBe('isolated')
+        expect(fs.existsSync(path.join(allocations[i]!, 'source-dirty.txt'))).toBe(false)
+        expect(fs.readFileSync(path.join(directory, 'fork-result.txt'), 'utf8')).toBe('source must stay unchanged')
+        const visible = await ctx.discord.thread(fork.id).text()
+        expect(visible).toContain('Uncommitted edits from the source checkout are not copied.')
+        expect(visible).toContain('workspace-write-complete')
+        disposeRuntime(fork.id)
+        await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: reconstructed fork' })
+        await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'reconstructed fork' })
+        expect((await getThreadWorkingDirectory(fork.id))?.workingDirectory).toBe(allocations[i])
+      }
+      expect(allocations[0]).not.toBe(allocations[1])
+      const count = allocations.length
+      const shared = await forkFrom(source.id, [{ name: 'workspace', type: 3, value: 'shared' }])
+      await waitForThreadSession(shared.id)
+      expect(await getThreadWorkingDirectory(shared.id)).toBeUndefined()
+      expect(allocations).toHaveLength(count)
+    } finally { remove() }
+  }, 60_000)
+
+  test('separate provisioning failure creates no fork thread and runs no prompt', async () => {
+    const source = await startSource()
+    const beforeFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
+    const before = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
+    const remove = addFilter('fork_workspace', () => ({ async provision() { return new Error('fixture allocation failed') } }))
+    try {
+      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
+      await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+      expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)).toEqual(before.map((thread) => thread.id))
+      const afterFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
+      expect(afterFile).toBe(beforeFile)
+    } finally { remove() }
+  }, 25_000)
+
+  test.skipIf(process.env.ROADIE_TEST_FORK_TARGET_DIRECTORY === '1')('an older backend cannot dispatch an isolated fork into the source checkout', async () => {
+    const source = await startSource()
+    const existing = new Set((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id))
+    let invoked = false
+    const remove = addFilter('fork_workspace', () => ({ async provision(request) {
+      invoked = true
+      const workingDirectory = path.join(ctx.directories.root, `unsupported-${request.requestId}`)
+      await exec('git', ['worktree', 'add', '-b', `unsupported-${request.requestId}`, workingDirectory, 'HEAD'], { cwd: ctx.directories.projectDirectory })
+      return { workingDirectory, projectDirectory: ctx.directories.projectDirectory, label: 'unsupported', kind: 'git-worktree' as const }
+    } }))
+    try {
+      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
+      await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
+      // Wait for the handler's terminal error edit, not merely deferReply.
+      const deadline = Date.now() + 8_000
+      let settled = false
+      while (Date.now() < deadline) {
+        const threads = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
+        if (invoked && threads.every((thread) => existing.has(thread.id))) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          settled = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).every((thread) => existing.has(thread.id))
+          if (settled) break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      expect(settled).toBe(true)
+      expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).every((thread) => existing.has(thread.id))).toBe(true)
+    } finally { remove() }
+  }, 25_000)
 })

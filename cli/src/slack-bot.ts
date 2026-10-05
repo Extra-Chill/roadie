@@ -43,6 +43,8 @@ import {
   type ThreadSessionRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
+import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
 import { setThreadSession } from './database.js'
@@ -1115,36 +1117,61 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
-      const client = getOpencodeClient(runtime.sdkDirectory)
-      if (!client)
-        return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
-      const forked = await client.session.fork({
-        sessionID: sessionId,
-        directory: runtime.sdkDirectory,
+      const workspaceOption = words.indexOf('--workspace')
+      const choice = workspaceOption >= 0 ? words[workspaceOption + 1] : undefined
+      if (workspaceOption >= 0 && choice !== 'shared' && choice !== 'separate') {
+        await runtime.chat.sendNotice('Use --workspace shared or --workspace separate.')
+        return
+      }
+      const promptWords = workspaceOption >= 0 ? words.filter((_, index) => index !== workspaceOption && index !== workspaceOption + 1) : words
+      const workspace = await resolveForkWorkspace({
+        mode: choice === 'separate' ? 'separate' : choice === 'shared' ? 'shared' : undefined, sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
+        projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
+        spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: promptWords.join(' '),
       })
-      if (!forked.data)
+      if (workspace instanceof Error) { await runtime.chat.sendNotice(workspace.message); return }
+      const forkDirectory = workspace.binding?.workingDirectory ?? runtime.sdkDirectory
+      const abandon = async () => {
+        if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
+      }
+      const client = getOpencodeClient(runtime.sdkDirectory)
+      if (!client) {
+        await abandon()
+        return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
+      }
+      const forked = await forkOpenCodeSession({
+        client, sessionId, sourceDirectory: runtime.sdkDirectory,
+        ...(workspace.binding && { targetDirectory: forkDirectory }),
+      })
+      if (!forked.data) {
+        await abandon()
+        if (workspace.binding) {
+          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the separate workspace; no fork prompt was run.')
+          return
+        }
         return new SlackApiError({
           operation: 'fork',
           detail: 'agent could not fork the session',
           cause: forked.error,
         })
+      }
       const copied = await copySessionSystemPrompt({
         sourceSessionId: sessionId,
         targetSessionId: forked.data.id,
       })
-      if (copied instanceof Error) return copied
+      if (copied instanceof Error) { await abandon(); return copied }
       await copySessionPreferences({
         sourceSessionId: sessionId,
         targetSessionId: forked.data.id,
         channelId: event.channel_id,
-        directory: runtime.sdkDirectory,
+        directory: forkDirectory,
         getClient: () => ({ ...openCodeCatalogGetter(() => client)(), session: client.session }),
       })
       const root = await this.api.post({
         channel: event.channel_id,
-        text: `Fork: ${words.join(' ') || forked.data.title}`,
+        text: `Fork: ${promptWords.join(' ') || forked.data.title}`,
       })
-      if (root instanceof Error) return root
+      if (root instanceof Error) { await abandon(); return root }
       const id = slackThreadId({
         workspaceId: this.workspaceId,
         channelId: event.channel_id,
@@ -1152,7 +1179,9 @@ export class NativeSlackBot {
       })
       await setThreadSession(id, forked.data.id)
       const working = await getThreadWorkingDirectory(runtime.threadId)
-      if (working)
+      if (workspace.binding) {
+        await setThreadWorkingDirectory({ threadId: id, ...workspace.binding })
+      } else if (working)
         await setThreadWorkingDirectory({
           ...working,
           threadId: id,
@@ -1160,9 +1189,10 @@ export class NativeSlackBot {
         })
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
-      if (words.length)
+      if (workspace.binding) await fork.chat.sendNotice(forkWorkspaceNotice(workspace.binding))
+      if (promptWords.length)
         await fork.enqueueIncoming({
-          prompt: words.join(' '),
+          prompt: promptWords.join(' '),
           userId: event.user_id,
           username: identity.actor.name,
         })

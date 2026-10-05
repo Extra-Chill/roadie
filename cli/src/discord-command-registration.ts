@@ -219,6 +219,7 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Branch this session into a new thread; the original keeps running'))
+      .addStringOption((option) => option.setName('workspace').setDescription('Share the current directory or request a separate host workspace').addChoices({ name: 'Shared', value: 'shared' }, { name: 'Separate', value: 'separate' }).setRequired(false))
       .addStringOption((option) => {
         option
           .setName('prompt')

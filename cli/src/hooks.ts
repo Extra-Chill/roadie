@@ -20,6 +20,7 @@ import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
+import type { ForkWorkspaceProvider, ForkWorkspaceRequest, ForkWorkspaceBinding } from './fork-workspace.js'
 import type { HostUpgradeHandler } from './service-lifecycle.js'
 
 const logger = createLogger(LogPrefix.CLI)
@@ -46,10 +47,14 @@ export interface RoadieFilters {
   permission_rules: [AgentPermissionRule[], PermissionRulesContext]
   /** How a managed install (ROADIE_MANAGED) upgrades; null = the host has no upgrade path. */
   host_upgrade: [HostUpgradeHandler | null, Record<string, never>]
+  /** Host provider for independent fork workspaces; null = shared-only. */
+  fork_workspace: [ForkWorkspaceProvider | null, ForkWorkspaceRequest]
 }
 
 /** Action name -> context. */
 export interface RoadieActions {
+  /** Provisioned workspace whose conversation setup failed; host owns cleanup. */
+  fork_workspace_abandoned: { request: ForkWorkspaceRequest; binding: ForkWorkspaceBinding }
   /** A session finished its run. `parentSessionId` is set when the session is a delegation child or was started with `--parent-session`. */
   session_idle: { sessionId: string; threadId: string; parentSessionId?: string }
   /** A session's run failed. `parentSessionId` follows the same lineage rule as `session_idle`. */
