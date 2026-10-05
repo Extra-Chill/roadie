@@ -43,16 +43,22 @@ const logger = createLogger(LogPrefix.DISCORD)
 
 const RELOAD_CHECK_MS = 2_000
 
-const whoEntrySchema = z.union([
-  z.literal('owner'),
-  z.string().regex(/^(role|user|person):.+$/),
-])
+const whoEntrySchema = z.union([z.literal('owner'), z.string().regex(/^(role|user|person):.+$/)])
 
 const policySchema = z
   .object({
     project: z.string().min(1).optional(),
     context: z.string().min(1).optional(),
     respond: z.enum(['always', 'mention', 'never']).optional(),
+    intake: z
+      .object({
+        start: z.enum(['message', 'mention', 'command']).optional(),
+        continue: z.enum(['starter', 'participants', 'eligible']).optional(),
+        join: z.enum(['mention', 'message', 'never']).optional(),
+        other: z.enum(['context', 'ignore']).optional(),
+      })
+      .strict()
+      .optional(),
     who: z.union([z.literal('everyone'), z.array(whoEntrySchema).min(1)]).optional(),
     threads: z.enum(['per-message', 'existing-only']).optional(),
     directory: z.string().min(1).optional(),
@@ -174,7 +180,9 @@ function currentConfig(): ChannelsConfig | null | undefined {
     loaded = { path, mtimeMs, checkedAt: now, config: previous }
     return previous
   }
-  logger.log(`[CHANNEL POLICY] loaded ${Object.keys(result.channels).length} policy entries from ${path}`)
+  logger.log(
+    `[CHANNEL POLICY] loaded ${Object.keys(result.channels).length} policy entries from ${path}`,
+  )
   loaded = { path, mtimeMs, checkedAt: now, config: result }
   return result
 }
@@ -319,13 +327,31 @@ function configuredChannelPolicy(channelId: string): ChannelPolicy | null | unde
   if (matches.length === 0) return null
 
   // Least specific first so more specific entries override field by field.
-  const channel = matches.reverse().reduce<ChannelPolicy>((acc, policy) => ({ ...acc, ...policy }), {})
+  const channel = matches
+    .reverse()
+    .reduce<ChannelPolicy>(
+      (acc, policy) => ({
+        ...acc,
+        ...policy,
+        ...(acc.intake || policy.intake ? { intake: { ...acc.intake, ...policy.intake } } : {}),
+      }),
+      {},
+    )
   const project = channel.project ? config.projects?.[channel.project] : undefined
-  return { ...project, ...channel }
+  return {
+    ...project,
+    ...channel,
+    ...(project?.intake || channel.intake
+      ? { intake: { ...project?.intake, ...channel.intake } }
+      : {}),
+  }
 }
 
 /** Opaque host context shared by every channel bound to the same project. */
-export function channelContextBinding(channelId: string): { projectId?: string; contextId?: string } {
+export function channelContextBinding(channelId: string): {
+  projectId?: string
+  contextId?: string
+} {
   const policy = resolveChannelPolicy(channelId)
   if (!policy) return {}
   return {
@@ -419,10 +445,9 @@ export function channelStartsThreads(channelId: string): boolean {
 }
 
 /** Per-channel overrides for settings Roadie otherwise stores in SQLite. */
-export function channelPolicyOverrides(channelId: string): Pick<
-  ChannelPolicy,
-  'directory' | 'agent' | 'model' | 'verbosity' | 'permissions'
-> {
+export function channelPolicyOverrides(
+  channelId: string,
+): Pick<ChannelPolicy, 'directory' | 'agent' | 'model' | 'verbosity' | 'permissions'> {
   const policy = resolveChannelPolicy(channelId)
   if (!policy) return {}
   return {

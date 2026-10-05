@@ -148,9 +148,11 @@ import {
   channelAllowsSpeaker,
   channelStartsThreads,
   decideRespond,
+  resolveChannelPolicy,
   setChannelParentResolver,
   applicationDirectory,
 } from './channel-policy.js'
+import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
@@ -646,11 +648,12 @@ export async function startDiscordBot({
       // When mention mode is enabled, users without Roadie role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
+      const explicitIntake = Boolean(resolveChannelPolicy(channel.id)?.intake)
 
       // In text channels, messages starting with a mention to another user
       // are fully ignored before any permission or mention-mode checks.
       // This prevents permission-error replies for user-to-user conversation.
-      if (channel.type === ChannelType.GuildText && isLeadingMentionToOtherUser) {
+      if (channel.type === ChannelType.GuildText && isLeadingMentionToOtherUser && !explicitIntake) {
         return
       }
 
@@ -667,7 +670,7 @@ export async function startDiscordBot({
           (respond === 'builtin' && channel.type === ChannelType.GuildText &&
             (await getChannelMentionMode(channel.id)))
         // Mentions only gate new conversations in channels; threads continue.
-        if (mentionRequired && channel.type === ChannelType.GuildText) {
+        if (!explicitIntake && mentionRequired && channel.type === ChannelType.GuildText) {
           const botMentioned =
             discordClient.user && message.mentions.has(discordClient.user.id)
           const isShellCommand = message.content?.startsWith('!')
@@ -740,6 +743,7 @@ export async function startDiscordBot({
         }
 
         if (hasNoRoadieRole(member)) {
+          if (explicitIntake) return
           await message.reply({
             content: `You have the **no-roadie** role which blocks bot access.\nRemove this role to use Roadie.`,
             flags: SILENT_MESSAGE_FLAGS,
@@ -748,6 +752,7 @@ export async function startDiscordBot({
         }
 
         if (!hasRoadieBotPermission(member, message.guild)) {
+          if (explicitIntake) return
           await message.reply({
             content: isIdentityHookConfigured()
               ? `You don't have permission to start sessions.\nAsk an admin to link and authorize your account.`
@@ -775,6 +780,8 @@ export async function startDiscordBot({
         // still responding to bot-created threads that may not yet have a session
         // row with a non-empty session_id (createPendingWorkspace sets ''). (GitHub #84)
         const hasExistingSession = await getThreadSession(thread.id)
+        const scope = { platform: 'discord', spaceId: thread.guildId, threadId: thread.id }
+        const admission = await readConversationAdmission(scope)
         const botMentioned =
           discordClient.user && message.mentions.has(discordClient.user.id)
         const botCreatedThread =
@@ -794,9 +801,19 @@ export async function startDiscordBot({
         // Context-only messages (user-to-user replies) can't be stored without
         // an existing session. Skip early to avoid creating a runtime or running
         // preprocessing for nothing.
-        if (isLeadingMentionToOtherUser && !hasExistingSession) {
+        if (isLeadingMentionToOtherUser && !hasExistingSession && !explicitIntake) {
           return
         }
+        const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
+          actor: { platform: 'discord', id: message.author.id }, spaceId: thread.guildId,
+          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+          channelId: thread.parentId ?? thread.id, threadId: thread.id, eligible: true,
+          isNewConversation: !hasExistingSession && !admission, createsThread: false,
+          hasSession: Boolean(hasExistingSession), mentionsBot: Boolean(botMentioned),
+          isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
+          legacyOutcome: isLeadingMentionToOtherUser ? 'context' : 'respond',
+        })
+        if (intake.outcome === 'ignore') return
 
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
@@ -825,7 +842,7 @@ export async function startDiscordBot({
 
         // ! prefix runs a shell command in the thread's working directory
         // instead of starting/continuing a session.
-        if (message.content?.startsWith('!') && projectDirectory) {
+        if (intake.outcome === 'respond' && message.content?.startsWith('!') && projectDirectory) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
@@ -871,12 +888,13 @@ export async function startDiscordBot({
           channelId: parent?.id || undefined,
           appId: currentAppId,
         })
+        await recordConversationAdmission({ scope, actor: { platform: 'discord', id: message.author.id }, starter: !hasExistingSession && !admission, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
 
         // Cancel interactive UI when a real user sends a message.
         // Context-only messages (user-to-user replies) should not interrupt
         // the active run or dismiss pending UI.
         const dismissSourceUi = async () => {
-          if (message.author.bot || isCliInjectedPrompt || isLeadingMentionToOtherUser) return
+          if (message.author.bot || isCliInjectedPrompt || intake.outcome === 'context') return
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -936,7 +954,8 @@ export async function startDiscordBot({
           injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
           parentSessionId: cliInjectedParentSessionId,
           isSleepWake: isSleepWake || undefined,
-          noReply: isLeadingMentionToOtherUser || undefined,
+          noReply: intake.outcome === 'context' || undefined,
+          contextOnly: intake.outcome === 'context' || undefined,
           sessionStartSource: sessionStartSource
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
@@ -1040,6 +1059,14 @@ export async function startDiscordBot({
           voiceLogger.log(`[IGNORED] Channel ${channel.id} does not start new threads`)
           return
         }
+        const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
+          actor: { platform: 'discord', id: message.author.id }, spaceId: channel.guildId, channelId: channel.id,
+          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+          eligible: true, isNewConversation: true, createsThread: true, hasSession: false,
+          mentionsBot: Boolean(discordClient.user && message.mentions.has(discordClient.user.id)),
+          isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser), legacyOutcome: 'respond',
+        })
+        if (intake.outcome !== 'respond') return
 
         const baseThreadName =
           stripMentions(message.content || '')
@@ -1071,6 +1098,7 @@ export async function startDiscordBot({
           channelId: channel.id,
           appId: currentAppId,
         })
+        await recordConversationAdmission({ scope: { platform: 'discord', spaceId: channel.guildId, threadId: thread.id }, actor: { platform: 'discord', id: message.author.id }, starter: true, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
         await channelRuntime.enqueueIncoming({
           prompt: '',
           userId: message.author.id,
