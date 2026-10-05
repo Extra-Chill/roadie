@@ -3,16 +3,18 @@
 // earlier user message, so the fork's history ends where that message began.
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
+import { setupQueueAdvancedSuite, warmOpencodeInstance, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { getDb, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { addFilter } from './hooks.js'
 import { getThreadWorkingDirectory } from './database.js'
+import { setChannelDirectory } from './database.js'
 import { disposeRuntime, getRuntime, resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
 import { applyPendingForkTitle } from './fork-title.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
@@ -36,6 +38,9 @@ describe('/fork', () => {
     dirName: 'qa-fork-e2e',
     username: 'fork-tester',
     extraMatchers: [
+      { id: 'site-coding-write', priority: 142, when: { latestUserTextIncludes: 'SITE_CODING_WRITE', lastMessageRole: 'user' }, then: {
+        parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'site-coding-call', toolName: 'bash', input: JSON.stringify({ command: 'printf source > site-coding.txt', workdir: path.resolve(process.cwd(), 'tmp/qa-fork-e2e/project'), description: 'Code in the repository from a site-root conversation', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
+      } },
       { id: 'workspace-write', priority: 140, when: { latestUserTextIncludes: 'WORKSPACE_WRITE_MARKER', lastMessageRole: 'user' }, then: {
         parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'workspace-write-call', toolName: 'bash', input: JSON.stringify({ command: 'printf isolated > fork-result.txt', description: 'Write only in fork workspace', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
       } },
@@ -229,7 +234,7 @@ describe('/fork', () => {
     expect(forkUserCount).toBe(userMessages.length - 1)
   }, 30_000)
 
-  test('separate forks execute in real isolated worktrees, including workspace-bound sources and reconstruction', async () => {
+  test('forks execute in real isolated worktrees, including workspace-bound sources and reconstruction', async () => {
     const directory = ctx.directories.projectDirectory
     await exec('git', ['add', 'opencode.json'], { cwd: directory })
     const unchanged = await exec('git', ['diff', '--cached', '--quiet'], { cwd: directory }).then(() => true, () => false)
@@ -239,7 +244,8 @@ describe('/fork', () => {
     const source = await startSource()
     const allocations: string[] = []
     const forkThreads: string[] = []
-    const remove = addFilter('fork_workspace', () => ({ defaultMode: 'separate' as const, async provision(request) {
+    let nested: { id: string } | undefined
+    const remove = addFilter('fork_workspace', () => ({ async provision(request) {
       const workingDirectory = path.join(ctx.directories.root, `fork-${request.requestId}`)
       const branch = `fork-${request.requestId}`
       await exec('git', ['worktree', 'add', '-b', branch, workingDirectory, 'HEAD'], { cwd: directory })
@@ -270,7 +276,7 @@ describe('/fork', () => {
       // Forking an already-warped session must move only its new copy.
       fs.writeFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'keep existing fork')
       fs.writeFileSync(path.join(allocations[0]!, 'fork-local-only.txt'), 'keep fork edits')
-      const nested = await forkFrom(forkThreads[0]!, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER nested' }])
+      nested = await forkFrom(forkThreads[0]!, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER nested' }])
       await waitForThreadSession(nested.id)
       await waitForFooterMessage({ discord: ctx.discord, threadId: nested.id, timeout: 10_000 })
       expect((await getThreadWorkingDirectory(nested.id))?.workingDirectory).toBe(allocations[2])
@@ -279,26 +285,93 @@ describe('/fork', () => {
       expect(fs.readFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'utf8')).toBe('keep existing fork')
       expect(fs.readFileSync(path.join(directory, 'fork-result.txt'), 'utf8')).toBe('source must stay unchanged')
       expect(new Set(allocations).size).toBe(3)
-      const count = allocations.length
-      const sharedNested = await forkFrom(nested.id, [{ name: 'workspace', type: 3, value: 'shared' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER shared nested' }])
-      await waitForThreadSession(sharedNested.id)
-      await waitForFooterMessage({ discord: ctx.discord, threadId: sharedNested.id, timeout: 10_000 })
-      expect((await getThreadWorkingDirectory(sharedNested.id))?.workingDirectory).toBe(allocations[2])
-      expect(allocations).toHaveLength(count)
-      const shared = await forkFrom(source.id, [{ name: 'workspace', type: 3, value: 'shared' }])
-      await waitForThreadSession(shared.id)
-      expect(await getThreadWorkingDirectory(shared.id)).toBeUndefined()
-      expect(allocations).toHaveLength(count)
     } finally { remove() }
+    // Without a provider the fork is an ordinary conversation fork: the
+    // workspace-bound fork inherits its source directory, the source fork
+    // stays unbound, and nothing new is allocated.
+    const count = allocations.length
+    const inherited = await forkFrom(nested!.id, [{ name: 'prompt', type: 3, value: 'Reply with exactly: inherited fork' }])
+    await waitForThreadSession(inherited.id)
+    await waitForFooterMessage({ discord: ctx.discord, threadId: inherited.id, timeout: 10_000 })
+    expect((await getThreadWorkingDirectory(inherited.id))?.workingDirectory).toBe(allocations[2])
+    expect(allocations).toHaveLength(count)
+    const plain = await forkFrom(source.id)
+    await waitForThreadSession(plain.id)
+    expect(await getThreadWorkingDirectory(plain.id)).toBeUndefined()
+    expect(allocations).toHaveLength(count)
   }, 60_000)
 
-  test('separate provisioning failure creates no fork thread and runs no prompt', async () => {
+  test('a non-Git home forks its persisted coding repository and leaves the source home intact', async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-fork-home-')))
+    const repository = ctx.directories.projectDirectory
+    fs.copyFileSync(path.join(repository, 'opencode.json'), path.join(home, 'opencode.json'))
+    const original = await initializeOpencodeForDirectory(home)
+    if (original instanceof Error) throw original
+    await warmOpencodeInstance({ getClient: original, directory: home })
+    await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: home, channelType: 'text' })
+    const allocations: string[] = []
+    const sessions: Array<{ id: string; directory: string; threadId: string }> = []
+    const remove = addFilter('fork_workspace', (_provider, scope) => scope.codingPaths?.length ? ({ async provision(request) {
+      expect(request.sourceDirectory).toBe(home)
+      expect(request.codingPaths).toContain(repository)
+      const target = path.join(ctx.directories.root, `site-fork-${request.requestId}`)
+      const branch = `site-fork-${request.requestId}`
+      await exec('git', ['worktree', 'add', '-b', branch, target, 'HEAD'], { cwd: repository })
+      allocations.push(target)
+      return { workingDirectory: target, projectDirectory: repository, label: branch, kind: 'git-worktree' as const }
+    } }) : null)
+    try {
+      const source = await startSource()
+      const sourceSession = await waitForThreadSession(source.id)
+      sessions.push({ id: sourceSession, directory: home, threadId: source.id })
+      await ctx.discord.thread(source.id).user(TEST_USER_ID).sendMessage({ content: 'SITE_CODING_WRITE' })
+      await waitForFooterMessage({ discord: ctx.discord, threadId: source.id, afterMessageIncludes: 'SITE_CODING_WRITE', afterAuthorId: TEST_USER_ID, timeout: 10_000 })
+      expect(fs.readFileSync(path.join(repository, 'site-coding.txt'), 'utf8')).toBe('source')
+      const sourceHistory = await original().session.messages({ sessionID: sourceSession, directory: home })
+      const boundary = sourceHistory.data?.find((message) => message.info.role === 'user' && message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))
+      if (!boundary) throw new Error('Missing source coding turn')
+      const historical = await forkFrom(source.id, [{ name: 'from', type: 3, value: boundary.info.id }])
+      const historicalSession = await waitForThreadSession(historical.id)
+      sessions.push({ id: historicalSession, directory: home, threadId: historical.id })
+      expect(await getThreadWorkingDirectory(historical.id)).toBeUndefined()
+      expect(allocations).toHaveLength(0)
+      // No in-memory scope survives this disposal: /fork reads the backend's
+      // persisted successful tool calls after runtime reconstruction.
+      disposeRuntime(source.id)
+      const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER site fork' }])
+      const forkSession = await waitForThreadSession(fork.id)
+      sessions.push({ id: forkSession, directory: allocations[0]!, threadId: fork.id })
+      await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 10_000 })
+      expect(forkSession).not.toBe(sourceSession)
+      expect(fs.readFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'utf8')).toBe('isolated')
+      expect(fs.existsSync(path.join(allocations[0]!, 'site-coding.txt'))).toBe(false)
+      expect(fs.existsSync(path.join(home, 'fork-result.txt'))).toBe(false)
+      const sourceInfo = await original().session.get({ sessionID: sourceSession, directory: home })
+      expect(sourceInfo.data?.directory).toBe(home)
+      expect(sourceInfo.data?.workspaceID).toBeUndefined()
+      expect(await getThreadWorkingDirectory(source.id)).toBeUndefined()
+      expect((await getThreadWorkingDirectory(fork.id))?.workingDirectory).toBe(allocations[0])
+      expect((await getThreadWorkingDirectory(fork.id))?.projectDirectory).toBe(repository)
+      const messages = await original().session.messages({ sessionID: forkSession, directory: allocations[0] })
+      expect(messages.data?.some((message) => message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))).toBe(true)
+    } finally {
+      remove()
+      await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: repository, channelType: 'text' })
+      for (const session of sessions) {
+        disposeRuntime(session.threadId)
+        await original().session.delete({ sessionID: session.id, directory: session.directory })
+      }
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  test('provisioning failure creates no fork thread and runs no prompt', async () => {
     const source = await startSource()
     const beforeFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
     const before = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
     const remove = addFilter('fork_workspace', () => ({ async provision() { return new Error('fixture allocation failed') } }))
     try {
-      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
+      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
       await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
       expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)).toEqual(before.map((thread) => thread.id))
       const afterFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
@@ -319,7 +392,7 @@ describe('/fork', () => {
       return { workingDirectory, projectDirectory: ctx.directories.projectDirectory, label: 'unsupported', kind: 'directory' as const }
     } }))
     try {
-      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'workspace', type: 3, value: 'separate' }, { name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
+      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
       await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
       // Wait for the handler's terminal error edit, not merely deferReply.
       const deadline = Date.now() + 8_000

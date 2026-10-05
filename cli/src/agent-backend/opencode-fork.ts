@@ -8,19 +8,21 @@ import { createLogger } from '../logger.js'
 const logger = createLogger('FORK')
 
 export async function forkOpenCodeSession({
-  client, sessionId, sourceDirectory, targetDirectory, messageId,
+  client, sessionId, sourceDirectory, targetDirectory, targetProjectDirectory, messageId,
 }: {
   client: OpencodeClient
   sessionId: string
   sourceDirectory: string
   targetDirectory?: string
+  targetProjectDirectory?: string
   messageId?: string
 }): Promise<{ data?: { id: string; title: string; directory: string }; error?: unknown }> {
   if (!targetDirectory) return client.session.fork({ sessionID: sessionId, directory: sourceDirectory, ...(messageId ? { messageID: messageId } : {}) })
-  const synced = await client.experimental.workspace.syncList({ directory: sourceDirectory }).catch((cause) => new OpenCodeSdkError({ operation: 'workspace.syncList', cause }))
+  const discoveryDirectory = targetProjectDirectory ?? sourceDirectory
+  const synced = await client.experimental.workspace.syncList({ directory: discoveryDirectory }).catch((cause) => new OpenCodeSdkError({ operation: 'workspace.syncList', cause }))
   if (synced instanceof Error) return { error: synced }
   if (synced.error) return { error: new OpenCodeSdkError({ operation: 'workspace.syncList', cause: synced.error }) }
-  const listed = await client.experimental.workspace.list({ directory: sourceDirectory }).catch((cause) => new OpenCodeSdkError({ operation: 'workspace.list', cause }))
+  const listed = await client.experimental.workspace.list({ directory: discoveryDirectory }).catch((cause) => new OpenCodeSdkError({ operation: 'workspace.list', cause }))
   if (listed instanceof Error) return { error: listed }
   if (listed.error) return { error: new OpenCodeSdkError({ operation: 'workspace.list', cause: listed.error }) }
   const canonical = await fs.realpath(targetDirectory).catch((cause) => new Error('Could not resolve the host worktree directory', { cause }))

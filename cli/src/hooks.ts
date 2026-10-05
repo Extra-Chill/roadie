@@ -49,8 +49,8 @@ export interface RoadieFilters {
   permission_rules: [AgentPermissionRule[], PermissionRulesContext]
   /** How a managed install (ROADIE_MANAGED) upgrades; null = the host has no upgrade path. */
   host_upgrade: [HostUpgradeHandler | null, Record<string, never>]
-  /** Host provider for independent fork workspaces; null = shared-only. */
-  fork_workspace: [ForkWorkspaceProvider | null, ForkWorkspaceRequest]
+  /** Host provider for independent fork workspaces; null = fork stays in the source directory. */
+  fork_workspace: [ForkWorkspaceProvider | Error | null, ForkWorkspaceRequest]
 }
 
 /** Action name -> context. */

@@ -92,20 +92,9 @@ export function buildQuickAgentSlashCommand({
     )
 }
 
-export async function registerCommands({
-  token,
-  appId,
-  guildIds,
-  userCommands = [],
-  agents = [],
-}: {
-  token: string
-  appId: string
-  guildIds: string[]
-  userCommands?: OpencodeCommand[]
-  agents?: AgentInfo[]
-}) {
-  const commands = [
+/** Static slash commands registered for every bot. */
+export function buildStaticSlashCommands() {
+  return [
     new SlashCommandBuilder()
       .setName('new-session')
       .setDescription(truncateCommandDescription('Start a new OpenCode session'))
@@ -232,7 +221,6 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Branch this session into a new thread; the original keeps running'))
-      .addStringOption((option) => option.setName('workspace').setDescription('Share the current directory or request a separate host workspace').addChoices({ name: 'Shared', value: 'shared' }, { name: 'Separate', value: 'separate' }).setRequired(false))
       .addStringOption((option) => {
         option
           .setName('prompt')
@@ -345,6 +333,22 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
   ]
+}
+
+export async function registerCommands({
+  token,
+  appId,
+  guildIds,
+  userCommands = [],
+  agents = [],
+}: {
+  token: string
+  appId: string
+  guildIds: string[]
+  userCommands?: OpencodeCommand[]
+  agents?: AgentInfo[]
+}) {
+  const commands = [...buildStaticSlashCommands()]
 
   // Dynamic commands are registered in priority order:
   // agents → user config commands → MCP prompts → skills.

@@ -46,6 +46,7 @@ import {
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
+import { loadForkCodingPaths } from './fork-coding-context.js'
 import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
@@ -1155,36 +1156,28 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
-      const workspaceOption = words.indexOf('--workspace')
-      const choice = workspaceOption >= 0 ? words[workspaceOption + 1] : undefined
-      if (workspaceOption >= 0 && choice !== 'shared' && choice !== 'separate') {
-        await runtime.chat.sendNotice('Use --workspace shared or --workspace separate.')
-        return
-      }
-      const promptWords = workspaceOption >= 0 ? words.filter((_, index) => index !== workspaceOption && index !== workspaceOption + 1) : words
+      const client = getOpencodeClient(runtime.sdkDirectory)
+      if (!client) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
+      const codingPaths = await loadForkCodingPaths({ client, sessionId, directory: runtime.sdkDirectory })
+      if (codingPaths instanceof Error) { await runtime.chat.sendNotice(codingPaths.message); return }
       const workspace = await resolveForkWorkspace({
-        mode: choice === 'separate' ? 'separate' : choice === 'shared' ? 'shared' : undefined, sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
-        projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
-        spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: promptWords.join(' '),
+        sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
+        projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, codingPaths, platform: 'slack',
+        spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: words.join(' '),
       })
       if (workspace instanceof Error) { await runtime.chat.sendNotice(workspace.message); return }
       const forkDirectory = workspace.binding?.workingDirectory ?? runtime.sdkDirectory
       const abandon = async () => {
         if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
       }
-      const client = getOpencodeClient(runtime.sdkDirectory)
-      if (!client) {
-        await abandon()
-        return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
-      }
       const forked = await forkOpenCodeSession({
         client, sessionId, sourceDirectory: runtime.sdkDirectory,
-        ...(workspace.binding && { targetDirectory: forkDirectory }),
+        ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
       })
       if (!forked.data) {
         await abandon()
         if (workspace.binding) {
-          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the separate workspace; no fork prompt was run.')
+          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the fork workspace; no fork prompt was run.')
           return
         }
         return new SlackApiError({
@@ -1229,9 +1222,9 @@ export class NativeSlackBot {
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
       if (workspace.binding) await fork.chat.sendNotice(forkWorkspaceNotice(workspace.binding))
-      if (promptWords.length) {
+      if (words.length) {
         await fork.enqueueIncoming({
-          prompt: promptWords.join(' '),
+          prompt: words.join(' '),
           userId: event.user_id,
           username: identity.actor.name,
         })
