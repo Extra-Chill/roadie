@@ -12,11 +12,11 @@
 //            "person_id": "..." }
 //   stdout { "sections": [ { "id": "user-memory", "title": "...", "content": "..." } ] }
 //
-// session_start sections are appended once to the session's pinned system
-// prompt. turn sections are attached to that turn only, and the provider is
-// asked again only when the speaker (actor/person) differs from the previous
-// turn, so shared threads get each speaker's context without busting the
-// prompt cache.
+// session_start sections are shared project/agent context, pinned without an
+// actor/person. Speaker context is requested on the first turn, changes of
+// speaker and after runtime reconstruction. It is attached to user turns,
+// never pinned into the shared system prompt. History still retains earlier
+// turns; shared conversations are not private boundaries between speakers.
 //
 // Read-only: writing memory stays with the agent, through the provider's own
 // tools. Fails open: a provider error, timeout or invalid output means no
@@ -43,6 +43,7 @@ export type ContextRequest = {
   sessionId: string
   threadId?: string
   channelId?: string
+  spaceId?: string
   directory?: string
   projectId?: string
   contextId?: string
@@ -97,6 +98,7 @@ async function requestCommandContext(request: ContextRequest): Promise<ContextSe
     session_id: request.sessionId,
     ...(request.threadId ? { thread_id: request.threadId } : {}),
     ...(request.channelId ? { channel_id: request.channelId } : {}),
+    ...(request.spaceId ? { space_id: request.spaceId } : {}),
     ...(request.directory ? { directory: request.directory } : {}),
     ...(request.projectId ? { project_id: request.projectId } : {}),
     ...(request.contextId ? { context_id: request.contextId } : {}),
