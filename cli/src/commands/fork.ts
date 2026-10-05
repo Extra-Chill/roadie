@@ -37,6 +37,8 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { forkTaskTitle, markPendingForkTitle, applyPendingForkTitle } from '../fork-title.js'
+import { toOpenCodeBackend } from '../agent-backend/opencode-sessions.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
 
@@ -172,7 +174,7 @@ export async function forkSessionToThread({
       ...(fromMessageId && { messageID: fromMessageId }),
     })),
     timed(textChannel.threads.create({
-      name: `Fork: ${threadLabel}`.slice(0, THREAD_NAME_MAX),
+      name: forkTaskTitle(prompt ?? '') ?? `Fork: ${threadLabel}`.slice(0, THREAD_NAME_MAX),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `Forked from session ${sessionId}`,
     })),
@@ -203,6 +205,11 @@ export async function forkSessionToThread({
     })
   }
   const thread = createdThread
+  await markPendingForkTitle(forkedSession)
+  if (prompt?.trim()) {
+    const titled = await applyPendingForkTitle({ session: forkedSession, prompt, backend: toOpenCodeBackend(getClientResult()), directory: sdkDirectory })
+    if (titled instanceof Error) forkLogger.warn('Could not persist fork task title; the first turn will retry:', titled)
+  }
   const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
   const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
   const channelId = sourceThread.parentId || sourceThread.id
@@ -300,6 +307,7 @@ export async function forkSessionToThread({
     // Not awaited: the caller confirms right away while the runtime resolves
     // preferences and dispatches. Failures are reported in the fork.
     void runtime.enqueueIncoming({
+      titlePrompt: trimmedPrompt,
       prompt: forkedPrompt,
       images,
       userId,

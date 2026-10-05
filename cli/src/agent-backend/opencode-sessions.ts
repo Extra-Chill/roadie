@@ -59,6 +59,10 @@ function toStatus(status: { type: string; attempt?: number; message?: string; ne
 
 export function openCodeSessionOperations(client: OpencodeClient): AgentSessionOperations {
   return {
+    async setTitle({ sessionId, directory, title }) {
+      const result = await call('session.update', () => client.session.update({ sessionID: sessionId, directory, title }))
+      return result instanceof Error ? result : undefined
+    },
     async create({ directory, permission }) {
       const session = await call('session.create', () => client.session.create({ directory, permission }))
       if (session instanceof Error) return session

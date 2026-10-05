@@ -43,6 +43,7 @@ import {
   type ThreadSessionRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { markPendingForkTitle, applyPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
 import { setThreadSession } from './database.js'
@@ -1151,6 +1152,11 @@ export class NativeSlackBot {
         threadTs: root.id,
       })
       await setThreadSession(id, forked.data.id)
+      await markPendingForkTitle(forked.data)
+      if (words.length) {
+        const title = await applyPendingForkTitle({ session: forked.data, prompt: words.join(' '), backend: backend(), directory: runtime.sdkDirectory })
+        if (title instanceof Error) logger.warn('Could not persist fork task title:', title)
+      }
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (working)
         await setThreadWorkingDirectory({

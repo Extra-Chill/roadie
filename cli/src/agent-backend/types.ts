@@ -37,6 +37,8 @@ export type AgentPromptPart =
 export type AgentSessionMessage = { message: AgentMessage; parts: AgentPart[] }
 
 export type AgentSessionOperations = {
+  /** Optional backend title mutation; it never starts an agent/model turn. */
+  setTitle?(input: { sessionId: string; directory: string; title: string }): Promise<void | Error>
   create(input: { directory: string; permission?: AgentPermissionRule[] }): Promise<AgentSession | Error>
   /** Undefined when the backend has no such session. */
   get(input: { sessionId: string; directory: string }): Promise<AgentSession | undefined | Error>

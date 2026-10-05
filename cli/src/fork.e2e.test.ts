@@ -7,6 +7,7 @@ import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setu
 import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
+import { disposeRuntime } from './session-handler/thread-session-runtime.js'
 
 const TEXT_CHANNEL_ID = '200000000000001074'
 
@@ -40,7 +41,7 @@ describe('/fork', () => {
     await ctx.discord.thread(sourceId).waitForInteractionAck({ interactionId, timeout: 4_000 })
     return ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 6_000,
-      predicate: (t) => !existing.has(t.id) && (t.name?.startsWith('Fork: ') ?? false),
+      predicate: (t) => !existing.has(t.id),
     })
   }
 
@@ -110,5 +111,79 @@ describe('/fork', () => {
     const forkMessages = await sessionMessages(await waitForThreadSession(fork.id))
     const forkUserCount = forkMessages.filter((m) => m.info.role === 'user').length
     expect(forkUserCount).toBe(userMessages.length - 1)
+  }, 30_000)
+
+  test('different fork prompts persist distinct task titles without adding title-generation turns', async () => {
+    const source = await startSource()
+    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
+    if (getClient instanceof Error) throw getClient
+    const directory = ctx.directories.projectDirectory
+    const before = await getClient().session.list({ directory })
+    const prompts = ['Reply with exactly: fork-cache-investigation', 'Reply with exactly: fork-permission-review']
+    const titles: string[] = []
+    for (const prompt of prompts) {
+      const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: prompt }])
+      const sessionId = await waitForThreadSession(fork.id)
+      await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+      const session = await getClient().session.get({ sessionID: sessionId, directory })
+      expect(session.data?.title).toBe(prompt)
+      const deadline = Date.now() + 4_000
+      let title = ''
+      while (Date.now() < deadline) {
+        title = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name ?? ''
+        if (title === prompt) break
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      titles.push(title)
+      const sourceHistory = await sessionMessages((await getThreadSession(source.id))!)
+      const history = await sessionMessages(sessionId)
+      expect(history.filter((entry) => entry.info.role === 'user')).toHaveLength(sourceHistory.filter((entry) => entry.info.role === 'user').length + 1)
+      expect(history.filter((entry) => entry.info.role === 'assistant')).toHaveLength(sourceHistory.filter((entry) => entry.info.role === 'assistant').length + 1)
+      expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain(`Forked from <#SOURCE_THREAD>.\n${prompt}`)
+    }
+    expect(titles).toMatchInlineSnapshot(`
+      [
+        "Reply with exactly: fork-cache-investigation",
+        "Reply with exactly: fork-permission-review",
+      ]
+    `)
+    const after = await getClient().session.list({ directory })
+    expect((after.data?.length ?? 0) - (before.data?.length ?? 0)).toBe(2)
+    expect((await getClient().session.get({ sessionID: (await getThreadSession(source.id))!, directory })).data?.title).not.toBe(prompts[0])
+  }, 30_000)
+
+  test('a promptless fork takes its first message title after runtime reconstruction and keeps it on later turns', async () => {
+    const source = await startSource()
+    const fork = await forkFrom(source.id)
+    const sessionId = await waitForThreadSession(fork.id)
+    // The durable marker outlives the runtime that created the fork.
+    disposeRuntime(fork.id)
+    const prompt = 'Reply with exactly: fork-deferred-task'
+    await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: prompt })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
+    if (getClient instanceof Error) throw getClient
+    const directory = ctx.directories.projectDirectory
+    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe(prompt)
+    await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: fork-later-turn' })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-later-turn' })
+    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe(prompt)
+    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"Reply with exactly: fork-deferred-task"`)
+    expect(await getThreadSession(fork.id)).toBe(sessionId)
+  }, 30_000)
+
+  test('a user-chosen fork title is preserved before the first task message', async () => {
+    const source = await startSource()
+    const fork = await forkFrom(source.id)
+    const sessionId = await waitForThreadSession(fork.id)
+    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
+    if (getClient instanceof Error) throw getClient
+    const directory = ctx.directories.projectDirectory
+    const updated = await getClient().session.update({ sessionID: sessionId, directory, title: 'User chosen branch' })
+    if (updated.error) throw new Error('Could not set explicit fork title')
+    await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: keep-custom-fork-title' })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
+    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('User chosen branch')
+    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"User chosen branch"`)
   }, 30_000)
 })

@@ -40,6 +40,13 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+// Only newly created forks awaiting their first task prompt. Separate from
+// session history; this marker survives runtime reconstruction and restart.
+export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  inherited_title: sqliteCore.text('inherited_title').notNull(),
+})
+
 // Signed chat ingress is acknowledged only after it is durably inserted.
 // Keep handled IDs to deduplicate platform and host redelivery across restarts.
 export const chat_ingress_events = sqliteCore.sqliteTable('chat_ingress_events', {
@@ -336,6 +343,7 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 ])
 
 export const relations = defineRelations({
+  pending_fork_titles,
   chat_ingress_events,
   chat_interactions,
   thread_sessions,
