@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.41.3] - 2026-10-05
+
+### Fixed
+- acknowledge fork interactions before slow setup
+
 ## [0.41.2] - 2026-10-05
 
 ### Fixed
