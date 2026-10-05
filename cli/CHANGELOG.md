@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.41.1] - 2026-10-05
+
+### Fixed
+- use explicit title routing without blocking fork tasks
+
 ## [0.41.0] - 2026-10-05
 
 ### Added
