@@ -23,6 +23,7 @@ import type { PromptSection } from './prompt-config.js'
 import type { ForkWorkspaceProvider, ForkWorkspaceRequest, ForkWorkspaceBinding } from './fork-workspace.js'
 import type { IntakeDecision, ConversationIntakeRequest, ConversationAdmission } from './conversation-intake.js'
 import type { HostUpgradeHandler } from './service-lifecycle.js'
+import type { Config } from '@opencode-ai/sdk/v2'
 
 const logger = createLogger(LogPrefix.CLI)
 
@@ -30,6 +31,8 @@ export const DEFAULT_PRIORITY = 10
 
 /** Filter name -> [value, context]. */
 export interface RoadieFilters {
+  /** Host runtime configuration shared across all backend workspace instances. */
+  opencode_server_config: [Config | Error, Record<string, never>]
   conversation_intake: [IntakeDecision, { request: ConversationIntakeRequest; admission: ConversationAdmission | null; policy: ChannelPolicy | null | undefined }]
   /** The agent backend provider. Resolved once at startup. */
   agent_backend: [AgentBackendProvider, Record<string, never>]

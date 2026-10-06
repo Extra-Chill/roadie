@@ -178,12 +178,12 @@ export function toAgentProvider(provider: OpenCodeProvider): AgentProviderInfo {
 export function openCodeCatalogOperations(client: OpencodeClient): AgentCatalogOperations {
   return {
     async providers({ directory }) {
-      const data = await call('provider.list', () => client.provider.list({ directory }))
+      const data = await call('config.providers', () => client.config.providers({ directory }))
       if (data instanceof Error) return data
       if (!data) return new AgentRequestError({ detail: 'OpenCode returned no providers' })
       return {
-        providers: data.all.map(toAgentProvider),
-        connected: data.connected,
+        providers: data.providers.map(toAgentProvider),
+        connected: data.providers.map((provider) => provider.id),
         defaults: data.default,
       }
     },

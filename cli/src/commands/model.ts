@@ -32,7 +32,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 
 // Forks are OpenCode sessions read through its paged history API.
 type ForkHistoryGetter = () => AgentCatalog & { session: Pick<OpencodeClient['session'], 'messages'> }
-import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
+import { resolveWorkingDirectory } from '../discord-utils.js'
 import {
   getDefaultModel,
   resolveDisplayedModelId,
@@ -82,6 +82,7 @@ const MODEL_CONTEXT_TTL_MS = 10 * 60 * 1000
 
 type PendingModelContext = {
   dir: string
+  projectDirectory: string
   channelId: string
   sessionId?: string
   isThread: boolean
@@ -520,37 +521,26 @@ export async function handleModelCommand({
   // Determine if we're in a thread or text channel
   const thread = channel.isThread() ? channel : undefined
 
-  let projectDirectory: string | undefined
-  let targetChannelId: string
-  let sessionId: string | undefined
-
-  if (thread) {
-    // Parallelize: resolve metadata and session ID at the same time
-    const [textChannel, threadSessionId] = await Promise.all([
-      resolveTextChannel(thread),
-      getThreadSession(thread.id),
-    ])
-    const metadata = await getRoadieMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
-    sessionId = threadSessionId
-  } else if (channel.type === ChannelType.GuildText) {
-    const metadata = await getRoadieMetadata(channel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = channel.id
-  } else {
+  if (!thread && channel.type !== ChannelType.GuildText) {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
     })
     return
   }
 
-  if (!projectDirectory) {
+  const modelChannel = thread ?? (channel.type === ChannelType.GuildText ? channel : null)
+  if (!modelChannel) return
+  const resolved = await resolveWorkingDirectory({ channel: modelChannel })
+  if (!resolved) {
     await interaction.editReply({
       content: 'This channel is not configured with a project directory',
     })
     return
   }
+  const projectDirectory = resolved.projectDirectory
+  const directory = resolved.workingDirectory
+  const targetChannelId = thread?.parentId ?? channel.id
+  const sessionId = thread ? await getThreadSession(thread.id) : undefined
 
   try {
     const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
@@ -567,7 +557,7 @@ export async function handleModelCommand({
         channelId: targetChannelId,
         appId: effectiveAppId,
         getClient,
-        directory: projectDirectory,
+        directory,
       })
     }
 
@@ -580,13 +570,13 @@ export async function handleModelCommand({
       sessionPref,
       channelPref,
     ] = await Promise.all([
-      getClient().catalog.providers({ directory: projectDirectory }),
+      getClient().catalog.providers({ directory }),
       getCurrentModelInfo({
         sessionId,
         channelId: targetChannelId,
         appId: effectiveAppId,
         getClient,
-        directory: projectDirectory,
+        directory,
       }),
       getVariantCascade({
         sessionId,
@@ -656,7 +646,8 @@ export async function handleModelCommand({
     // Store context with a short hash key to avoid customId length limits.
     const providerSelectHeader = `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`
     const context = {
-      dir: projectDirectory,
+      dir: directory,
+      projectDirectory,
       channelId: targetChannelId,
       sessionId: sessionId,
       isThread: Boolean(thread),
@@ -849,7 +840,7 @@ export async function handleProviderSelectMenu(
     context.providerPage = providerNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
@@ -886,7 +877,7 @@ export async function handleProviderSelectMenu(
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -1023,7 +1014,7 @@ export async function handleModelSelectMenu(
     context.modelPage = modelNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
@@ -1069,7 +1060,7 @@ export async function handleModelSelectMenu(
     setModelContext(contextHash, context)
 
     // Check if model has variants (thinking levels) - if so, show variant picker first
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
     if (!(getClient instanceof Error)) {
       const providersResponse = await getClient().catalog.providers({
         directory: context.dir,
