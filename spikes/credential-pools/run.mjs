@@ -4,12 +4,16 @@
 //   B. concurrent sessions on ONE server resolve to different credentials,
 //   C. per-pool rotation works (alice's first key is rate limited),
 //   D. no x-roadie-* header leaks upstream,
-//   E. an untagged session never reaches upstream (fail closed).
+//   E. an untagged session never reaches upstream (fail closed),
+//   F. one session hands off across providers AND payers (alice on the
+//      Anthropic wire, bob on the OpenAI wire, alice again) and every turn
+//      receives the full prior history, including the other provider's reply.
 //
 // Fully isolated: temp HOME/XDG dirs, its own ports, no real credentials.
 // Usage: node spikes/credential-pools/run.mjs [path/to/opencode]
-// SPIKE_AI_SDK_FROM must point at a node_modules tree containing
-// @ai-sdk/openai-compatible (defaults to this checkout's cli/).
+// SPIKE_AI_SDK_FROM must point at a package.json whose node_modules contain
+// @ai-sdk/openai-compatible and @ai-sdk/anthropic (defaults to this
+// checkout's cli/).
 
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -54,6 +58,12 @@ const config = file('opencode.json', {
     pool: {
       name: 'Roadie pool (spike)',
       npm: pathToFileURL(path.join(here, 'pool-provider.mjs')).href,
+      options: { baseURL: `http://127.0.0.1:${upstreamPort}/v1` },
+      models: { m: { name: 'spike model', tool_call: false } },
+    },
+    'pool-anthropic': {
+      name: 'Roadie pool, Anthropic wire (spike)',
+      npm: pathToFileURL(path.join(here, 'pool-provider-anthropic.mjs')).href,
       options: { baseURL: `http://127.0.0.1:${upstreamPort}/v1` },
       models: { m: { name: 'spike model', tool_call: false } },
     },
@@ -124,34 +134,71 @@ for (let i = 0; ; i++) {
   }
 }
 
+// Plugin reads this file on every LLM call; rewriting it between turns is how
+// the spike simulates `--thread-billing speaker` (owner changes per turn).
+const poolMap = {}
+const setPool = (sessionID, pool) => {
+  if (pool) poolMap[sessionID] = pool
+  else delete poolMap[sessionID]
+  fs.writeFileSync(sessionPools, JSON.stringify(poolMap))
+}
+
+const send = async (sessionID, providerID, text) => {
+  const reply = await api('POST', `/session/${sessionID}/message`, {
+    model: { providerID, modelID: 'm' },
+    parts: [{ type: 'text', text }],
+  }).catch((e) => ({ thrown: String(e) }))
+  const out = (reply?.parts || [])
+    .filter((p) => p.type === 'text')
+    .map((p) => p.text)
+    .join('')
+  return { text: out, error: reply?.info?.error || reply?.thrown || null }
+}
+
 const people = ['alice', 'bob', null]
 const sessions = []
-for (const pool of people) sessions.push({ pool, id: (await api('POST', '/session', {})).id })
-fs.writeFileSync(
-  sessionPools,
-  JSON.stringify(Object.fromEntries(sessions.filter((s) => s.pool).map((s) => [s.id, s.pool]))),
-)
+for (const pool of people) {
+  const id = (await api('POST', '/session', {})).id
+  sessions.push({ pool, id })
+  setPool(id, pool)
+}
 
 // All three prompts in flight at once against the one server.
 const results = await Promise.all(
-  sessions.map(async (s) => {
-    const reply = await api('POST', `/session/${s.id}/message`, {
-      model: { providerID: 'pool', modelID: 'm' },
-      parts: [{ type: 'text', text: 'hello' }],
-    }).catch((e) => ({ thrown: String(e) }))
-    const text = (reply?.parts || [])
-      .filter((p) => p.type === 'text')
-      .map((p) => p.text)
-      .join('')
-    return { ...s, text, error: reply?.info?.error || reply?.thrown || null }
-  }),
+  sessions.map(async (s) => ({ ...s, ...(await send(s.id, 'pool', 'hello')) })),
 )
+
+// F. One session, three turns, alternating provider wire format and payer.
+const handoff = (await api('POST', '/session', {})).id
+const turns = [
+  { pool: 'alice', provider: 'pool-anthropic', prompt: 'turn-1-from-alice' },
+  { pool: 'bob', provider: 'pool', prompt: 'turn-2-from-bob' },
+  { pool: 'alice', provider: 'pool-anthropic', prompt: 'turn-3-from-alice' },
+]
+const handoffReplies = []
+for (const t of turns) {
+  setPool(handoff, t.pool)
+  handoffReplies.push(await send(handoff, t.provider, t.prompt))
+}
 
 const upstream = fs
   .readFileSync(log, 'utf8')
   .split('\n')
   .filter(Boolean)
   .map((l) => JSON.parse(l))
+
+// The successful request for a hand-off turn: the one carrying that turn's
+// prompt in the wire format that turn asked for (title generation is a
+// separate request on the small model and is excluded by format/latest prompt).
+const turnRequest = (t, i) =>
+  upstream.find(
+    (r) =>
+      r.status === 200 &&
+      r.format === (t.provider === 'pool' ? 'openai' : 'anthropic') &&
+      r.body.includes(t.prompt) &&
+      !turns.slice(i + 1).some((later) => r.body.includes(later.prompt)) &&
+      !r.body.toLowerCase().includes('title'),
+  )
 
 const checks = []
 const check = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail })
@@ -175,6 +222,29 @@ check(
   !upstream.some((r) => r.key === '' || r.key === 'shared-1') && !untagged.text.startsWith('ok:'),
   untagged.text || JSON.stringify(untagged.error)?.slice(0, 200),
 )
+
+const [r1, r2, r3] = turns.map(turnRequest)
+check(
+  'F turns billed to alternating payers',
+  handoffReplies[0].text === 'anth:alice-2' &&
+    handoffReplies[1].text === 'ok:bob-1' &&
+    handoffReplies[2].text === 'anth:alice-2',
+  handoffReplies.map((r) => r.text || JSON.stringify(r.error)?.slice(0, 120)).join(' | '),
+)
+check(
+  'F turn 2 (bob, OpenAI wire) saw turn 1 prompt and Anthropic reply',
+  r2 && r2.body.includes('turn-1-from-alice') && r2.body.includes('anth:alice-2'),
+  r2 ? r2.body.slice(0, 400) : 'no turn-2 request',
+)
+check(
+  'F turn 3 (alice, Anthropic wire) saw turns 1-2 including the OpenAI reply',
+  r3 &&
+    r3.body.includes('turn-1-from-alice') &&
+    r3.body.includes('turn-2-from-bob') &&
+    r3.body.includes('ok:bob-1'),
+  r3 ? r3.body.slice(0, 400) : 'no turn-3 request',
+)
+check('F turn 1 request went out on the Anthropic wire', r1 && r1.path.endsWith('/messages'), r1?.path)
 
 for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  [${c.detail}]`)
 console.log(`upstream requests: ${upstream.length}, temp dir: ${root}`)

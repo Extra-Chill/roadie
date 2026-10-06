@@ -95,6 +95,31 @@ Flags with env equivalents, following the existing pattern
   `speaker`: each turn bills to whoever sent it (the owner is resolved per
   turn instead of per session).
 
+### Speaker billing: what a hand-off costs
+
+In `speaker` mode a thread can move between payers, and with them between
+providers (alice's rotation is Claude, bob's is GPT). History is stored by
+OpenCode, not by the provider, so continuity holds: the spike shows each
+turn receiving the full prior conversation as structured user/assistant
+messages across the Anthropic and OpenAI wire formats. The tradeoffs:
+
+- **Cache loss.** A switch of account or provider is a prompt-cache miss.
+  The person taking over a long thread pays full input price for all of it;
+  two people alternating providers never hit cache. Document it, and
+  consider a per-server cap or a warning past a token threshold.
+- **Reasoning does not cross providers.** Claude thinking blocks and OpenAI
+  reasoning items cannot be replayed to the other provider; the next model
+  sees answers and tool results, not the reasoning behind them.
+- **Context windows differ.** A thread that fits one model may need a
+  compaction before a smaller one can take the turn. The router must check
+  the candidate's limit against the session size and compact or skip.
+- **Privacy.** Bob's turn sends the earlier conversation, including other
+  people's messages, to bob's provider account. `speaker` threads should
+  say so once, when the payer first changes.
+- **Turn granularity.** The payer is fixed per turn: tool follow-ups inside
+  one turn stay on the account that started it (live route held until the
+  session is idle), so a turn never splits across accounts.
+
 The identity hook may return `credential_pool` to override the pool for a
 person (teams sharing a pool, a guest pinned to `shared`, a person denied
 any pool). Hook output stays optional and backward compatible.
@@ -142,8 +167,11 @@ Components:
 ## Spike result
 
 `spikes/credential-pools/` runs a real `opencode serve` (1.18.31) with a
-stub upstream, a pool-aware provider and a `chat.headers` plugin. Three
-sessions prompt concurrently on one server:
+stub upstream that speaks both the Anthropic Messages and OpenAI chat
+wire formats, two pool-aware providers (one per wire) sharing one pool
+fetch, and a `chat.headers` plugin. Three sessions prompt concurrently on
+one server, then a fourth session runs three turns that alternate payer and
+provider (alice on Anthropic, bob on OpenAI, alice on Anthropic):
 
 ```
 PASS  A+B alice session billed to alice pool        [ok:alice-2]
@@ -152,14 +180,32 @@ PASS  C alice rotated past rate-limited alice-1     [ok:alice-2]
 PASS  C alice-1 was tried and got 429
 PASS  D no x-roadie-* header reached upstream
 PASS  E untagged session never reached upstream     [401 no credential pool]
+PASS  F turns billed to alternating payers          [anth:alice-2 | ok:bob-1 | anth:alice-2]
+PASS  F turn 2 (bob, OpenAI wire) saw turn 1 prompt and Anthropic reply
+PASS  F turn 3 (alice, Anthropic wire) saw turns 1-2 including the OpenAI reply
+PASS  F turn 1 request went out on the Anthropic wire
+```
+
+Wire-level history for the hand-off session, from the stub's request log:
+
+```
+anthropic alice-2  [user turn-1]
+openai    bob-1    [user turn-1, assistant anth:alice-2, user turn-2]
+anthropic alice-2  [user turn-1, assistant anth:alice-2, user turn-2,
+                    assistant ok:bob-1, user turn-3]
 ```
 
 So: the tag reaches the provider fetch per session, concurrent sessions
 resolve to different credentials on one server, per-pool rotation works in
-the fetch layer, internal headers can be stripped, and a missing tag fails
-closed. Title-generation calls carry the session too, so they bill to the
-owner. Note: OpenCode itself sends `x-session-id` and `x-session-affinity`
-upstream.
+the fetch layer, internal headers can be stripped, a missing tag fails
+closed, and one session can change payer and provider between turns with
+full structured history. Title-generation calls carry the session too, so
+they bill to the owner of the first turn. Note: OpenCode itself sends
+`x-session-id` and `x-session-affinity` upstream.
+
+Not covered by the spike: thinking/reasoning blocks (the stub returns plain
+text) and tool calls crossing providers. Both belong in phase 2's e2e
+tests against the deterministic provider.
 
 Run it: `node spikes/credential-pools/run.mjs /path/to/opencode`.
 
