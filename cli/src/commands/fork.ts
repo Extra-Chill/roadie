@@ -381,13 +381,13 @@ export async function handleForkCommand({
       appId,
     })
     if (result instanceof Error) {
-      forkLogger.warn('Fork setup failed:', result)
+      forkLogger.warn('Fork setup failed:', { sourceThreadId: threadChannel.id, workingDirectory: resolved.workingDirectory, error: result })
       await interaction.editReply(`Failed to fork session: ${result.message}`)
       return
     }
     await interaction.editReply(`Session forked! Continue in ${result.thread.toString()}`)
   } catch (error) {
-    forkLogger.error('Error forking session:', error)
+    forkLogger.error('Error forking session:', { sourceThreadId: threadChannel.id, workingDirectory: resolved.workingDirectory, error })
     await interaction.editReply(
       `Failed to fork session: ${error instanceof Error ? error.message : 'Unknown error'}`,
     )
