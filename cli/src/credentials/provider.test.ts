@@ -4,7 +4,9 @@ import path from 'node:path'
 import os from 'node:os'
 import {
   addPoolAccount,
+  addPoolOAuthAccount,
   markCooldown as markCooldownInStore,
+  readPoolAccounts,
   readPoolState,
   setPoolRotation,
   SHARED_POOL_ID,
@@ -17,6 +19,14 @@ import {
   wireFromRequestUrl,
   type PoolFetch,
 } from './provider.js'
+import {
+  CLAUDE_CODE_BETA,
+  CLAUDE_CODE_IDENTITY,
+  CLAUDE_CODE_USER_AGENT,
+  FINE_GRAINED_TOOL_STREAMING_BETA,
+  INTERLEAVED_THINKING_BETA,
+  OAUTH_BETA,
+} from './adapters/anthropic-oauth.js'
 
 let dataDir: string
 
@@ -67,6 +77,45 @@ async function seedPool({
   }
   const set = await setPoolRotation({ dataDir, poolId, name: rotationName, entries: rotation })
   expect(set).toBe(true)
+}
+
+const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
+
+function isTokenUrl(input: string | URL | Request): boolean {
+  return (input instanceof Request ? input.url : input.toString()).startsWith(TOKEN_URL)
+}
+
+/**
+ * Seed one OAuth account and a rotation. `expiresInMs` is how long the stored
+ * access token stays valid from NOW.
+ */
+async function seedOAuthPool({
+  accounts,
+  rotation = ['anthropic/claude-sonnet-4'],
+  poolId = SHARED_POOL_ID,
+}: {
+  accounts: Array<{ access: string; refresh: string; expiresInMs: number; label?: string }>
+  rotation?: string[]
+  poolId?: string
+} = { accounts: [] }) {
+  const added = []
+  for (const account of accounts) {
+    const result = await addPoolOAuthAccount({
+      dataDir,
+      poolId,
+      provider: 'anthropic',
+      refresh: account.refresh,
+      access: account.access,
+      expires: NOW + account.expiresInMs,
+      ...(account.label && { label: account.label }),
+    })
+    expect(result).not.toBeInstanceOf(Error)
+    if (result instanceof Error) throw result
+    added.push(result)
+  }
+  const set = await setPoolRotation({ dataDir, poolId, name: 'default', entries: rotation })
+  expect(set).toBe(true)
+  return added
 }
 
 describe('pure helpers', () => {
@@ -284,5 +333,283 @@ describe('makePoolFetch', () => {
       error: { message: 'all accounts in pool shared are cooling down' },
     })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('oauth accounts', () => {
+  const upstream = (auths: string[]) =>
+    stubFetch(async (input, init) => {
+      if (isTokenUrl(input)) {
+        throw new Error('token endpoint must not be called in this test')
+      }
+      const headers = new Headers(init?.headers)
+      auths.push(headers.get('authorization') ?? '')
+      return jsonResponse(200, { ok: true })
+    })
+
+  test('concurrent requests refresh an expiring oauth account once and share the rotated tokens', async () => {
+    await seedOAuthPool({ accounts: [{ access: 'at-old', refresh: 'rt-old', expiresInMs: 10_000 }] })
+    let refreshCount = 0
+    const auths: string[] = []
+    const bodies: string[] = []
+    const fetchImpl = stubFetch(async (input, init) => {
+      if (isTokenUrl(input)) {
+        refreshCount += 1
+        // Give the second request time to queue on the pool lock.
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return jsonResponse(200, { access_token: 'at-new', refresh_token: 'rt-new', expires_in: 3600 })
+      }
+      const headers = new Headers(init?.headers)
+      auths.push(headers.get('authorization') ?? '')
+      bodies.push(String(init?.body))
+      return jsonResponse(200, { ok: true })
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const request = () =>
+      poolFetch(ANTHROPIC_URL, {
+        method: 'POST',
+        headers: { 'x-roadie-pool': 'shared' },
+        body: JSON.stringify({ model: 'default' }),
+      })
+    const [first, second] = await Promise.all([request(), request()])
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(refreshCount).toBe(1)
+    // Both requests dispatched with the rotated access token, and the rotated
+    // refresh token was written back to accounts.json.
+    expect(auths).toEqual(['Bearer at-new', 'Bearer at-new'])
+    const accounts = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (accounts instanceof Error) throw accounts
+    expect(accounts).toHaveLength(1)
+    const account = accounts[0]
+    expect(account).toMatchObject({ type: 'oauth', refresh: 'rt-new', access: 'at-new' })
+    if (!account || account.type !== 'oauth') return
+    // expires_in 3600 minus the 5 minute early-expiry margin.
+    expect(account.expires).toBeGreaterThan(Date.now())
+    expect(bodies).toHaveLength(2)
+  })
+
+  test('an oauth account expiring beyond the 60s lead is dispatched without a refresh', async () => {
+    await seedOAuthPool({ accounts: [{ access: 'at-fresh', refresh: 'rt-fresh', expiresInMs: 61_000 }] })
+    const auths: string[] = []
+    const fetchImpl = upstream(auths)
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(auths).toEqual(['Bearer at-fresh'])
+    const accounts = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (accounts instanceof Error) throw accounts
+    const account = accounts[0]
+    expect(account).toMatchObject({ type: 'oauth', refresh: 'rt-fresh', access: 'at-fresh' })
+  })
+
+  test('a permanent refresh failure (400) cools the account down for an hour and moves to the next candidate', async () => {
+    const [dead, alive] = await seedOAuthPool({
+      accounts: [
+        { access: 'at-dead', refresh: 'rt-dead', expiresInMs: 10_000 },
+        { access: 'at-alive', refresh: 'rt-alive', expiresInMs: 10 * 3_600_000 },
+      ],
+    })
+    if (!dead || !alive) throw new Error('seed failed')
+    const auths: string[] = []
+    const fetchImpl = stubFetch(async (input, init) => {
+      if (isTokenUrl(input)) {
+        return jsonResponse(400, { error: 'invalid_grant' })
+      }
+      const headers = new Headers(init?.headers)
+      auths.push(headers.get('authorization') ?? '')
+      return jsonResponse(200, { ok: true })
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    // The refresh failure never surfaces: the next candidate serves the request.
+    expect(response.status).toBe(200)
+    expect(auths).toEqual(['Bearer at-alive'])
+    const state = readStateOrThrow()
+    expect(state.cooldowns[dead.id]).toBe(NOW + 60 * 60 * 1000)
+    expect(state.cooldowns[alive.id]).toBeUndefined()
+    expect(state.lastUsed).toEqual({ [alive.id]: NOW })
+  })
+
+  test('a transient refresh failure (500) skips the candidate without a cooldown', async () => {
+    const [flaky, healthy] = await seedOAuthPool({
+      accounts: [
+        { access: 'at-flaky', refresh: 'rt-flaky', expiresInMs: 10_000 },
+        { access: 'at-healthy', refresh: 'rt-healthy', expiresInMs: 10 * 3_600_000 },
+      ],
+    })
+    if (!flaky || !healthy) throw new Error('seed failed')
+    const auths: string[] = []
+    const fetchImpl = stubFetch(async (input, init) => {
+      if (isTokenUrl(input)) {
+        return jsonResponse(500, { error: 'server_error' })
+      }
+      const headers = new Headers(init?.headers)
+      auths.push(headers.get('authorization') ?? '')
+      return jsonResponse(200, { ok: true })
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(auths).toEqual(['Bearer at-healthy'])
+    const state = readStateOrThrow()
+    expect(state.cooldowns).toEqual({})
+    expect(state.lastUsed).toEqual({ [healthy.id]: NOW })
+  })
+
+  test('oauth candidates send the Claude Code headers, merged betas and payload shaping, and the response reverses tool names', async () => {
+    await seedOAuthPool({ accounts: [{ access: 'at-live', refresh: 'rt-live', expiresInMs: 10 * 3_600_000 }] })
+    let capturedInit: RequestInit | undefined
+    const fetchImpl = stubFetch(async (input, init) => {
+      if (isTokenUrl(input)) {
+        throw new Error('token endpoint must not be called in this test')
+      }
+      capturedInit = init
+      return new Response(
+        JSON.stringify({ content: [{ type: 'tool_use', name: 'Bash', input: {} }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: new Headers({
+        'content-type': 'application/json',
+        'x-roadie-pool': 'shared',
+        'x-api-key': 'roadie-pool-managed',
+        'anthropic-beta': 'interleaved-thinking-2025-05-14',
+      }),
+      body: JSON.stringify({
+        model: 'default',
+        system: 'You are OpenCode.',
+        tools: [{ name: 'bash', description: 'run a command' }],
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ content: [{ type: 'tool_use', name: 'bash', input: {} }] })
+
+    const headers = new Headers(capturedInit?.headers)
+    expect(headers.get('authorization')).toBe('Bearer at-live')
+    expect(headers.get('x-api-key')).toBeNull()
+    expect(headers.get('accept')).toBe('application/json')
+    expect(headers.get('user-agent')).toBe(CLAUDE_CODE_USER_AGENT)
+    expect(headers.get('x-app')).toBe('cli')
+    expect(headers.get('anthropic-dangerous-direct-browser-access')).toBe('true')
+    expect(headers.get('anthropic-beta')).toBe(
+      [CLAUDE_CODE_BETA, OAUTH_BETA, FINE_GRAINED_TOOL_STREAMING_BETA, INTERLEAVED_THINKING_BETA].join(','),
+    )
+    expect(headers.get('content-length')).toBeNull()
+
+    const body = JSON.parse(String(capturedInit?.body)) as {
+      model: string
+      system: Array<{ type: string; text: string }>
+      tools: Array<{ name: string }>
+    }
+    expect(body.model).toBe('claude-sonnet-4')
+    expect(body.system).toEqual([
+      { type: 'text', text: CLAUDE_CODE_IDENTITY },
+      { type: 'text', text: 'You are OpenCode.' },
+    ])
+    expect(body.tools[0]?.name).toBe('Bash')
+
+    const state = readStateOrThrow()
+    expect(state.cooldowns).toEqual({})
+  })
+
+  test('failing over from an oauth candidate to an api candidate replaces Bearer auth with x-api-key', async () => {
+    const oauth = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: 'rt-mixed',
+      access: 'at-mixed',
+      expires: NOW + 10 * 3_600_000,
+    })
+    expect(oauth).not.toBeInstanceOf(Error)
+    const api = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: 'sk-ant-fallback' })
+    expect(api).not.toBeInstanceOf(Error)
+    const set = await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['anthropic/claude-sonnet-4'] })
+    expect(set).toBe(true)
+
+    const authHeaders: string[][] = []
+    const fetchImpl = stubFetch(async (_input, init) => {
+      const headers = new Headers(init?.headers)
+      authHeaders.push([headers.get('authorization') ?? '', headers.get('x-api-key') ?? ''])
+      if (authHeaders.length === 1) return jsonResponse(429)
+      return jsonResponse(200, { ok: 'api account' })
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: 'api account' })
+    expect(authHeaders).toEqual([
+      ['Bearer at-mixed', ''],
+      ['', 'sk-ant-fallback'],
+    ])
+  })
+})
+
+describe('api-key regression', () => {
+  test('api-key requests carry no oauth headers and the body is unchanged apart from the model', async () => {
+    await seedPool({ keys: ['sk-ant-regression'] })
+    let capturedInit: RequestInit | undefined
+    const fetchImpl = stubFetch(async (_input, init) => {
+      capturedInit = init
+      return jsonResponse(200, { ok: true })
+    })
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const requestBody = {
+      model: 'default',
+      system: 'You are OpenCode.',
+      tools: [{ name: 'bash', description: 'run a command' }],
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0.7,
+    }
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-roadie-pool': 'shared',
+        'anthropic-beta': 'some-existing-beta',
+      },
+      body: JSON.stringify(requestBody),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+
+    const headers = new Headers(capturedInit?.headers)
+    expect(headers.get('x-api-key')).toBe('sk-ant-regression')
+    for (const name of [
+      'authorization',
+      'accept',
+      'user-agent',
+      'x-app',
+      'anthropic-dangerous-direct-browser-access',
+    ]) {
+      expect(headers.get(name)).toBeNull()
+    }
+    // Caller-provided betas pass through untouched (never stripped, never merged).
+    expect(headers.get('anthropic-beta')).toBe('some-existing-beta')
+    // The body is the request with only the model id swapped; system stays a
+    // plain string and tool names are untouched.
+    expect(JSON.parse(String(capturedInit?.body))).toEqual({ ...requestBody, model: 'claude-sonnet-4' })
   })
 })
