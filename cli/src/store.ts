@@ -128,6 +128,15 @@ export type RoadieState = {
   // Read by: opencode.ts when building the server plugin list.
   subrouterEnabled: boolean
 
+  // Whether credential pools are enabled: pool store under
+  // <dataDir>/credentials/, the roadie provider (roadie/<rotation> models),
+  // and the chat.headers tagging plugin in the OpenCode backend. Opt-in via
+  // --credential-pools or ROADIE_CREDENTIAL_POOLS=1; off by default so the
+  // generated OpenCode config and behavior are unchanged.
+  // Changes: set once at startup.
+  // Read by: opencode.ts when building the server config and env.
+  credentialPoolsEnabled: boolean
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -177,6 +186,7 @@ export const store = createStore<RoadieState>(() => ({
   permissionTimeoutMs: 10 * 60 * 1000,
   autoUpgradeEnabled: true,
   subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
+  credentialPoolsEnabled: process.env.ROADIE_CREDENTIAL_POOLS === '1',
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],

@@ -107,6 +107,51 @@ export function buildServerPluginList({
   ]
 }
 
+export type RoadiePoolProviderConfig = {
+  name: string
+  npm: string
+  options: Record<string, string>
+  models: Record<string, { name: string; tool_call: boolean }>
+}
+
+/**
+ * OpenCode provider entry for credential pools: one model per rotation named
+ * in the shared pool (model id = rotation name, e.g. `roadie/default`). The
+ * npm module URL loads cli/src/credentials/provider.ts, which resolves the
+ * pool account per request. Returns null when credential pools are disabled
+ * or the shared pool has no usable rotation, so the generated config stays
+ * byte-for-byte unchanged with the flag off.
+ */
+export async function buildRoadiePoolProviderConfig({
+  dataDir,
+  isDev,
+  baseURL,
+}: {
+  dataDir: string
+  isDev: boolean
+  baseURL?: string
+}): Promise<RoadiePoolProviderConfig | null> {
+  const rotations = readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })
+  if (rotations instanceof Error) return null
+  const rotationNames = Object.keys(rotations)
+    .filter((name) => (rotations[name]?.length ?? 0) > 0)
+    .sort()
+  if (rotationNames.length === 0) return null
+  const models: RoadiePoolProviderConfig['models'] = {}
+  for (const name of rotationNames) {
+    models[name] = { name: `Roadie pool ${name}`, tool_call: true }
+  }
+  return {
+    name: 'Roadie credential pool',
+    npm: new URL(
+      isDev ? './credentials/provider.ts' : './credentials/provider.js',
+      import.meta.url,
+    ).href,
+    options: { ...(baseURL && { baseURL }) },
+    models,
+  }
+}
+
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
 type PermissionRule = PermissionAction | Record<string, PermissionAction>
@@ -140,8 +185,97 @@ import {
 } from './opencode-command.js'
 import { execAsync } from './exec-async.js'
 import { computeSkillPermission } from './skill-filter.js'
+import { readPoolRotations, SHARED_POOL_ID } from './credentials/store.js'
+import { CREDENTIAL_POOLS_ENV } from './credential-pools-plugin.js'
+import { ROADIE_PROVIDER_ID } from './credentials/provider.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
+
+/**
+ * Pure server config for `opencode serve`, written to
+ * <dataDir>/opencode-config.json and passed via OPENCODE_CONFIG. Extracted so
+ * tests can assert the generated shape, including that credential pools are
+ * absent (flag off) or present (flag on) without spawning a server.
+ */
+export function buildOpencodeServerConfig({
+  externalDirectoryPermissions,
+  skillPermission,
+  pluginList,
+  roadiePoolProvider,
+}: {
+  externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'>
+  skillPermission: ReturnType<typeof computeSkillPermission>
+  pluginList: string[]
+  roadiePoolProvider: RoadiePoolProviderConfig | null
+}): Config {
+  return {
+    $schema: 'https://opencode.ai/config.json',
+    // Git snapshots of the working tree on every step only served undo/redo,
+    // which Roadie does not offer. Skipping them saves disk and CPU per turn.
+    snapshot: false,
+    lsp: false,
+    formatter: false,
+    plugin: pluginList,
+    permission: {
+      edit: 'allow',
+      bash: 'allow',
+      external_directory: externalDirectoryPermissions,
+      webfetch: 'allow',
+      ...(skillPermission && { skill: skillPermission }),
+    },
+    agent: {
+      explore: {
+        permission: {
+          '*': 'deny',
+          grep: 'allow',
+          glob: 'allow',
+          list: 'allow',
+          read: {
+            '*': 'allow',
+            '*.env': 'deny',
+            '*.env.*': 'deny',
+            '*.env.example': 'allow',
+          },
+          webfetch: 'allow',
+          websearch: 'allow',
+          codesearch: 'allow',
+          // No external_directory here on purpose. opencode composes agents as
+          // merge(defaults, agentSpecific, userConfig) and then appends
+          // config.agent.<name>.permission LAST, so anything set here would beat
+          // the user's own top-level opencode.json rules. The top-level
+          // permission block above already covers this agent.
+        },
+      },
+    },
+    // When a permission prompt times out and is auto-rejected, the model sees
+    // the rejection as a tool error and continues working (tries alternatives
+    // or explains it couldn't proceed) instead of the session going dead.
+    experimental: {
+      continue_loop_on_deny: true,
+    },
+    provider: {
+      xai: {
+        models: {
+          'grok-composer-2.5-fast': {
+            name: 'Grok Composer 2.5 Fast',
+            attachment: true,
+            tool_call: true,
+            limit: {
+              context: 256000,
+              output: 256000,
+            },
+            cost: {
+              input: 0.50,
+              output: 2.50,
+              cache_read: 0.20,
+            },
+          },
+        },
+      },
+      ...(roadiePoolProvider && { [ROADIE_PROVIDER_ID]: roadiePoolProvider }),
+    },
+  } satisfies Config
+}
 
 /**
  * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
@@ -906,75 +1040,31 @@ async function startSingleServer({
     enabledSkills: store.getState().enabledSkills,
     disabledSkills: store.getState().disabledSkills,
   })
-  const opencodeConfig = {
-    $schema: 'https://opencode.ai/config.json',
-    // Git snapshots of the working tree on every step only served undo/redo,
-    // which Roadie does not offer. Skipping them saves disk and CPU per turn.
-    snapshot: false,
-    lsp: false,
-    formatter: false,
-    plugin: buildServerPluginList({
+  // Opt-in credential pools (--credential-pools): expose the shared pool's
+  // rotations as roadie/<rotation> models backed by the pool provider. Null
+  // when disabled, so the generated config is unchanged with the flag off.
+  const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
+  const roadiePoolProvider = credentialPoolsEnabled
+    ? await buildRoadiePoolProviderConfig({
+        dataDir: getDataDir(),
+        isDev,
+        baseURL: process.env.ROADIE_CREDENTIAL_POOLS_BASE_URL,
+      })
+    : null
+  if (roadiePoolProvider) {
+    opencodeLogger.log(
+      `Credential pools enabled: roadie provider models [${Object.keys(roadiePoolProvider.models).join(', ')}]`,
+    )
+  }
+  const opencodeConfig = buildOpencodeServerConfig({
+    externalDirectoryPermissions,
+    skillPermission,
+    pluginList: buildServerPluginList({
       isDev,
       subrouterEnabled: store.getState().subrouterEnabled,
     }),
-    permission: {
-      edit: 'allow',
-      bash: 'allow',
-      external_directory: externalDirectoryPermissions,
-      webfetch: 'allow',
-      ...(skillPermission && { skill: skillPermission }),
-    },
-    agent: {
-      explore: {
-        permission: {
-          '*': 'deny',
-          grep: 'allow',
-          glob: 'allow',
-          list: 'allow',
-          read: {
-            '*': 'allow',
-            '*.env': 'deny',
-            '*.env.*': 'deny',
-            '*.env.example': 'allow',
-          },
-          webfetch: 'allow',
-          websearch: 'allow',
-          codesearch: 'allow',
-          // No external_directory here on purpose. opencode composes agents as
-          // merge(defaults, agentSpecific, userConfig) and then appends
-          // config.agent.<name>.permission LAST, so anything set here would beat
-          // the user's own top-level opencode.json rules. The top-level
-          // permission block above already covers this agent.
-        },
-      },
-    },
-    // When a permission prompt times out and is auto-rejected, the model sees
-    // the rejection as a tool error and continues working (tries alternatives
-    // or explains it couldn't proceed) instead of the session going dead.
-    experimental: {
-      continue_loop_on_deny: true,
-    },
-    provider: {
-      xai: {
-        models: {
-          'grok-composer-2.5-fast': {
-            name: 'Grok Composer 2.5 Fast',
-            attachment: true,
-            tool_call: true,
-            limit: {
-              context: 256000,
-              output: 256000,
-            },
-            cost: {
-              input: 0.50,
-              output: 2.50,
-              cache_read: 0.20,
-            },
-          },
-        },
-      },
-    },
-  } satisfies Config
+    roadiePoolProvider,
+  })
   const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
   const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)
   const existingContent = (() => {
@@ -1011,6 +1101,9 @@ async function startSingleServer({
         ROADIE_DATA_DIR: getDataDir(),
         ROADIE_LOCK_PORT: getLockPort().toString(),
         ROADIE_PARENT_LOCK_PORT: getLockPort().toString(),
+        // Opt-in credential pools: the plugin and provider read this inside
+        // the OpenCode process (config.ts state is not available there).
+        ...(credentialPoolsEnabled && { [CREDENTIAL_POOLS_ENV]: '1' }),
         ...(gatewayToken && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `roadie` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.

@@ -18,6 +18,7 @@ import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import { publicOpencodeBindRequiresPassword } from './opencode.js'
 import botCommands from './cli-commands/bot.js'
+import credentialsCommands from './cli-commands/credentials.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
 import miscCommands from './cli-commands/misc.js'
 import projectCommands from './cli-commands/project.js'
@@ -127,6 +128,10 @@ cli
     'Do not load subrouter account rotation into the OpenCode backend. Same as ROADIE_SUBROUTER=0',
   )
   .option(
+    '--credential-pools',
+    'Enable credential pools: manage API keys per pool (roadie credentials ...) and expose the shared pool rotations as roadie/<rotation> models. Same as ROADIE_CREDENTIAL_POOLS=1',
+  )
+  .option(
     '--no-analytics',
     'Deprecated no-op: Roadie no longer sends product analytics',
   )
@@ -201,6 +206,7 @@ cli
       permissionTimeoutMinutes?: string
       disableSync?: boolean
       subrouter?: boolean
+      credentialPools?: boolean
       autoRestart?: boolean
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
@@ -329,6 +335,7 @@ cli
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.subrouter === false && { subrouterEnabled: false }),
+          ...(options.credentialPools && { credentialPoolsEnabled: true }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
@@ -407,6 +414,11 @@ cli
             'Auto-upgrade disabled: roadie will not check for updates on startup',
           )
         }
+        if (options.credentialPools) {
+          cliLogger.log(
+            'Credential pools enabled: the shared pool rotations are exposed as roadie/<rotation> models',
+          )
+        }
         if (options.noAnalytics) {
           cliLogger.log('--no-analytics is a no-op: Roadie no longer sends product analytics')
         }
@@ -462,6 +474,7 @@ cli
   )
 
 cli.use(botCommands)
+cli.use(credentialsCommands)
 cli.use(miscCommands)
 cli.use(sendCommands)
 cli.use(taskCommands)
