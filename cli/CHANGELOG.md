@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.42.0] - 2026-10-06
+
+### Added
+- credential pools (plan, spike, opt-in engine)
+
 ## [0.41.6] - 2026-10-06
 
 ### Changed
