@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.0] - 2026-10-06
+
+### Added
+- Anthropic subscription (OAuth) accounts in credential pools
+
+### Fixed
+- include source thread and checkout in fork failure logs
+
 ## [0.42.0] - 2026-10-06
 
 ### Added
