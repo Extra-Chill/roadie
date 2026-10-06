@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.41.6] - 2026-10-06
+
+### Changed
+- align model validation fixtures with active providers
+
+### Fixed
+- retain host runtime providers across isolated forks
+
 ## [0.41.5] - 2026-10-06
 
 ### Fixed

@@ -2,7 +2,7 @@
   "name": "@extrachill/roadie",
   "module": "index.ts",
   "type": "module",
-  "version": "0.41.5",
+  "version": "0.41.6",
   "scripts": {
     "dev": "tsx src/bin.ts",
     "prepublishOnly": "pnpm build",
