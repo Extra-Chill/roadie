@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.41.5] - 2026-10-06
+
+### Fixed
+- remove conversation scanning from fork ownership
+
 ## [0.41.4] - 2026-10-05
 
 ### Fixed
