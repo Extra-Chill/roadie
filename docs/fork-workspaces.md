@@ -13,7 +13,7 @@ source directory.
 
 The `fork_workspace` filter supplies a provider with `provision(request)`. The
 request contains a unique request ID, source session, thread, project
-directory, source working directory, `codingPaths`, chat attribution and the new prompt. The
+directory, source working directory, chat attribution and the new prompt. The
 provider returns a binding or an error:
 
 ```ts
@@ -33,23 +33,26 @@ created and no prompt runs.
 
 ## Conversations with a non-Git home
 
-A conversation can live at a WordPress site root while its coding task works
-in a separate repository. Roadie derives `codingPaths` from successful tool
-calls persisted in the source session: edit/write file paths, patch file
-operations, and explicitly mutating shell calls with a `workdir` or `cwd`.
-Read-only tools, failed calls, prose, and directories mentioned in shell text
-are not coding scope. Forks with `from:` use only activity before that message.
-The backend history is the durable source of truth, including after a runtime
-restart; Roadie does not maintain a second scope store or move the source home.
+A conversation can live at a WordPress site root while its active coding task
+owns a separate checkout. Roadie supplies the source session ID to the host;
+repository selection performs no transcript read, tool-history inspection or
+prompt parsing.
 
-The host resolves those paths to repository ownership. The wp-coding-agents
-provider uses Homeboy's registered repository-root components automatically.
-If the source is already a Git checkout, that checkout takes precedence over
-inherited history. Otherwise, one unique coding repository is required; within
-that repository the most recent concrete location identifies the source
-checkout. Multiple repositories or an unregistered coding repository stop the
-fork with an explanation. No coding repository means an ordinary conversation
-fork. A host may optionally restrict ownership with its project configuration.
+The wp-coding-agents shell adapter exports an opaque source-session reference
+as `HOMEBOY_CALLER_CONTEXT`. Homeboy captures it at original task admission and
+persists the task's controller checkout authority. The host reads
+`homeboy agent-task active-scope --context <reference>`, a bounded indexed
+projection of queued/running task ownership. Existing lifecycle transitions
+remove terminal tasks from that projection. The immutable admission context
+survives detachment, retry and restart; a new fork's task uses its own session ID.
+
+One active checkout selects the repository. Multiple active checkouts or pending
+allocation stop setup with an explanation. With no active task, an existing
+Git/worktree-bound conversation uses its own checkout; a non-Git conversation
+retains ordinary conversation-fork behavior. `from:` controls the copied
+conversation boundary, while repository authority comes from the current task.
+The host verifies the selected checkout against its registered Homeboy owner.
+An unavailable ownership API fails closed; there is no history-based fallback.
 
 The host owns allocation, lifecycle and cleanup. Roadie validates the directory,
 persists the binding, and displays the workspace and committed base. It preserves
@@ -85,9 +88,11 @@ checks the unchanged source and dirty-file boundary, reconstructs runtimes to
 verify persistence, forks a workspace-bound session again, and proves that
 removing the provider restores ordinary conversation-fork behavior. It also
 proves that an ordinary unregistered directory cannot run the task in the source.
-The non-Git-home case records a real coding shell call in a separate repository,
-disposes the source runtime, forks across projects, and verifies actual writes in
-the target worktree, preserved history, and the unchanged source home.
+The non-Git-home case proves historical writes alone supply no owner, admits an
+active owner through the host seam, blocks transcript scope reads, disposes the
+source runtime and verifies actual writes in the target worktree, preserved
+history and the unchanged source home. The host integration separately tests
+real Homeboy admission, indexed task switching and terminal-owner expiry.
 
 The proposed native `targetDirectory` extension (anomalyco/opencode#53389) is not
 a prerequisite for this Git worktree workflow.

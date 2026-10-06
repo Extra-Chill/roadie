@@ -44,7 +44,6 @@ import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
 import { forkOpenCodeSession } from '../agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from '../fork-title.js'
-import { loadForkCodingPaths } from '../fork-coding-context.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
@@ -169,11 +168,9 @@ export async function forkSessionToThread({
     return new Error('Could not resolve parent text channel')
   }
 
-  const codingPaths = await loadForkCodingPaths({ client: getClientResult(), sessionId, directory: sdkDirectory, beforeMessageId: fromMessageId })
-  if (codingPaths instanceof Error) return codingPaths
   const workspace = await resolveForkWorkspace({
     sourceSessionId: sessionId, sourceThreadId: sourceThread.id,
-    projectDirectory, sourceDirectory: sdkDirectory, codingPaths, prompt, userId,
+    projectDirectory, sourceDirectory: sdkDirectory, prompt, userId,
     platform: 'discord', spaceId: sourceThread.guildId, channelId: sourceThread.parentId ?? undefined,
   })
   if (workspace instanceof Error) return workspace
