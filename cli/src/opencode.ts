@@ -187,6 +187,7 @@ import { execAsync } from './exec-async.js'
 import { computeSkillPermission } from './skill-filter.js'
 import { readPoolRotations, SHARED_POOL_ID } from './credentials/store.js'
 import { CREDENTIAL_POOLS_ENV } from './credential-pools-plugin.js'
+import { ROADIE_PROVIDER_ID } from './credentials/provider.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -271,7 +272,7 @@ export function buildOpencodeServerConfig({
           },
         },
       },
-      ...(roadiePoolProvider && { roadie: roadiePoolProvider }),
+      ...(roadiePoolProvider && { [ROADIE_PROVIDER_ID]: roadiePoolProvider }),
     },
   } satisfies Config
 }

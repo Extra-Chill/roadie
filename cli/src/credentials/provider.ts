@@ -35,6 +35,8 @@ import {
 } from './store.js'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
 
+// OpenCode provider id the pool provider is registered under (`provider.roadie`).
+export const ROADIE_PROVIDER_ID = 'roadie'
 export const POOL_HEADER = 'x-roadie-pool'
 export const SESSION_HEADER = 'x-roadie-session'
 export const ROADIE_INTERNAL_HEADER_PREFIX = 'x-roadie-'
