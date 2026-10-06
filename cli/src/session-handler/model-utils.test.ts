@@ -387,16 +387,16 @@ function fakeGetClient(options?: {
 }) {
   let failed = false
   const client = {
-    provider: {
-      list: async () => {
+    config: {
+      providers: async () => {
         if (options?.calls) options.calls.count += 1
         if (options?.failOnce && !failed) {
           failed = true
-          throw new Error('provider.list failed')
+          throw new Error('config.providers failed')
         }
         return {
           data: {
-            all: [
+            providers: [
               {
                 id: 'anthropic',
                 models: {
@@ -404,7 +404,6 @@ function fakeGetClient(options?: {
                 },
               },
             ],
-            connected: ['anthropic'],
             default: {},
           },
         }
@@ -416,7 +415,7 @@ function fakeGetClient(options?: {
 }
 
 describe('listModels', () => {
-  test('returns listed models from provider.list', async () => {
+  test('returns listed models from config.providers', async () => {
     const models = await listModels({
       getClient: fakeGetClient() as never,
       directory: '/tmp/project-a',
@@ -435,7 +434,7 @@ describe('listModels', () => {
     `)
   })
 
-  test('memoizes provider.list per directory', async () => {
+  test('memoizes config.providers per directory', async () => {
     const calls = { count: 0 }
     const getClient = fakeGetClient({ calls }) as never
     const first = await listModels({ getClient, directory: '/tmp/project-a' })
@@ -469,20 +468,18 @@ describe('listModels', () => {
     const calls = { count: 0 }
     const firstResponse = Promise.withResolvers<{
       data: {
-        all: Array<{ id: string; models: Record<string, { name: string }> }>
-        connected: string[]
+        providers: Array<{ id: string; models: Record<string, { name: string }> }>
         default: Record<string, string>
       }
     }>()
     const backend = toOpenCodeBackend({
-      provider: {
-        list: () => {
+      config: {
+        providers: () => {
           calls.count += 1
           if (calls.count === 1) return firstResponse.promise
           return Promise.resolve({
             data: {
-              all: [{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }],
-              connected: ['openai'],
+              providers: [{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }],
               default: {},
             },
           })
@@ -495,13 +492,12 @@ describe('listModels', () => {
     clearModelListCache()
     firstResponse.resolve({
       data: {
-        all: [
+        providers: [
           {
             id: 'anthropic',
             models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } },
           },
         ],
-        connected: ['anthropic'],
         default: {},
       },
     })

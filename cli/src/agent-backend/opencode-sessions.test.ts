@@ -161,17 +161,16 @@ describe('openCodeCatalogOperations', () => {
 
   test('providers translate models, context limits and variants', async () => {
     const ops = openCodeCatalogOperations(catalogClient({
-      provider: {
-        list: async () => ({
+      config: {
+        providers: async () => ({
           data: {
-            all: [{
+            providers: [{
               id: 'anthropic', name: 'Anthropic',
               models: {
                 claude: { name: 'Claude', limit: { context: 200000 }, variants: { low: {}, high: {}, ' ': {} } },
                 plain: { name: '' },
               },
             }],
-            connected: ['anthropic'],
             default: { anthropic: 'claude' },
           },
         }),
@@ -188,6 +187,15 @@ describe('openCodeCatalogOperations', () => {
       connected: ['anthropic'],
       defaults: { anthropic: 'claude' },
     })
+  })
+
+  test('provider discovery does not offer models absent from the execution-active catalogue', async () => {
+    const discovery = vi.fn(async () => ({ data: { all: [{ id: 'unavailable', models: { advertised: {} } }], connected: ['unavailable'], default: {} } }))
+    const active = vi.fn(async () => ({ data: { providers: [], default: {} } }))
+    const ops = openCodeCatalogOperations(catalogClient({ provider: { list: discovery }, config: { providers: active } }))
+    expect(await ops.providers({ directory: '/fork-worktree' })).toEqual({ providers: [], connected: [], defaults: {} })
+    expect(active).toHaveBeenCalledWith({ directory: '/fork-worktree' })
+    expect(discovery).not.toHaveBeenCalled()
   })
 
   test('config and agents translate to Roadie shape', async () => {

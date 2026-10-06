@@ -12,8 +12,6 @@ export type ForkWorkspaceRequest = {
   sourceThreadId: string
   projectDirectory: string
   sourceDirectory: string
-  /** Successful coding tool locations, oldest first. Host resolves repository ownership. */
-  codingPaths?: string[]
   platform: string
   spaceId?: string
   channelId?: string

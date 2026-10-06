@@ -44,6 +44,7 @@ import {
 } from './process-group.js'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
+import { applyFiltersAsync } from './hooks.js'
 import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
@@ -207,7 +208,7 @@ export function buildOpencodeServerConfig({
   skillPermission: ReturnType<typeof computeSkillPermission>
   pluginList: string[]
   roadiePoolProvider: RoadiePoolProviderConfig | null
-}): Config {
+}) {
   return {
     $schema: 'https://opencode.ai/config.json',
     // Git snapshots of the working tree on every step only served undo/redo,
@@ -1065,8 +1066,10 @@ async function startSingleServer({
     }),
     roadiePoolProvider,
   })
+  const runtimeConfig = await applyFiltersAsync('opencode_server_config', opencodeConfig, {})
+  if (runtimeConfig instanceof Error) return new ServerStartError({ port, reason: runtimeConfig.message, cause: runtimeConfig })
   const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
-  const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)
+  const opencodeConfigJson = JSON.stringify(runtimeConfig, null, 2)
   const existingContent = (() => {
     try {
       return fs.readFileSync(opencodeConfigPath, 'utf-8')
@@ -1075,8 +1078,9 @@ async function startSingleServer({
     }
   })()
   if (existingContent !== opencodeConfigJson) {
-    fs.writeFileSync(opencodeConfigPath, opencodeConfigJson)
+    fs.writeFileSync(opencodeConfigPath, opencodeConfigJson, { mode: 0o600 })
   }
+  fs.chmodSync(opencodeConfigPath, 0o600)
 
   const serverProcess = spawn(
     spawnCommand,
