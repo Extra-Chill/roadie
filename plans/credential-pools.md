@@ -1,0 +1,212 @@
+---
+title: Credential Pools
+description: |
+  Configurable AI credentials for Roadie. One mechanism, a credential pool,
+  covers a single shared subscription, a rotating shared pool, and
+  per-person subscriptions with per-person rotation. Global stays the
+  default; per-person is opt-in. Replaces the @subrouter dependency.
+prompt: |
+  Based on reading cli/src/opencode.ts (single-server lifecycle),
+  cli/src/identity.ts (identity hook), cli/src/turn-attribution-env.ts,
+  cli/src/schema.ts (session_actors), cli/src/commands/login.ts, and the
+  pinned @subrouter/cli 0.6.1 + @subrouter/opencode 0.5.1 sources. The
+  chat.headers -> provider fetch path was proven with the spike in
+  spikes/credential-pools/ against opencode 1.18.31.
+---
+
+# Credential Pools
+
+## Problem
+
+Roadie runs one OpenCode server, and every session uses the credentials in
+that server's `auth.json`. `/login` swaps them for the whole bot. That is
+right for a single-operator server and wrong for a server where several
+people each want to bring their own Claude or ChatGPT subscription.
+
+Servers want different things:
+
+- **Single operator.** One account, or a few of the operator's own accounts
+  rotated on rate limits. Nothing about other people.
+- **Shared team pool.** Everyone draws from the same accounts.
+- **Bring your own subscription.** Each person's sessions bill to that
+  person's accounts, rotated in that person's order.
+- **Mixed.** Own accounts first, shared pool as a fallback.
+
+Roadie should support all of these through configuration and keep the
+current behavior as the default.
+
+## Why not one OpenCode server per person
+
+The obvious isolation, one server per person with its own `HOME`, splits
+session storage: a session created on one server does not exist on another,
+so fork, search, listing and resume break across people. It costs a full
+server per person (about 640 MB RSS on our host), and `singleServer` is
+assumed across 20+ files. Rejected.
+
+## Why not subrouter
+
+`@subrouter/*` already routes per request, but around one global pool:
+
+- `subrouterHome()` reads `process.env.SUBROUTER_HOME` on every call,
+  `loadAccounts()` takes no scope, and `withStoreLock()` is one global lock.
+  A single server serves every person concurrently, so per-person scope
+  cannot be faked with env swaps; it would need a rewrite of store, router
+  and lock.
+- The published packages ship no license file or `license` field, so we
+  depend on them but should not copy code from them.
+- It is a third-party project with its own roadmap (Kimaki, its CLI).
+
+We keep the idea (tag in `chat.headers`, choose the account in the provider
+fetch, rotate on rate limits) and build it Roadie-native.
+
+## Model
+
+**Pool.** An ordered list of accounts plus per-account cooldown state. An
+account is an OAuth subscription or an API key for one provider. A pool has
+a rotation: ordered `provider/model[#variant]` entries, tried top to bottom,
+skipping accounts that are cooling down. Global rotation and per-person
+rotation are the same code with a different pool.
+
+**Person key.** `person_id` from the identity hook when configured,
+otherwise `<platform>:<actorId>` (e.g. `discord:532385681268408341`). Roadie
+does not know what a person is in the host's world; the hook decides.
+
+**Session owner.** The person whose pool a session draws from. Recorded
+once when the session is created. Not the same as `session_actors`, which
+tracks the *current* speaker and changes every turn.
+
+## Configuration
+
+Flags with env equivalents, following the existing pattern
+(`--identity-hook` / `ROADIE_IDENTITY_HOOK`):
+
+| setting | values | default |
+| --- | --- | --- |
+| `--credentials` / `ROADIE_CREDENTIALS` | `global`, `per-person`, `per-person-fallback` | `global` |
+| `--thread-billing` / `ROADIE_THREAD_BILLING` | `owner`, `speaker` | `owner` |
+| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | disable entirely, OpenCode's own `auth.json` applies | enabled |
+
+- `global`: every session uses the `shared` pool. Single-operator servers
+  set nothing.
+- `per-person`: each session uses its owner's pool. An owner with no
+  accounts gets told to run `/login`; nothing falls back silently.
+- `per-person-fallback`: owner's pool first, then `shared`.
+- `thread-billing=owner`: other people talking in your thread bill to you.
+  `speaker`: each turn bills to whoever sent it (the owner is resolved per
+  turn instead of per session).
+
+The identity hook may return `credential_pool` to override the pool for a
+person (teams sharing a pool, a guest pinned to `shared`, a person denied
+any pool). Hook output stays optional and backward compatible.
+
+## Architecture
+
+```
+Discord message
+  -> identity hook (optional) -> person key
+  -> session created: owner = person key   (credential_owners table)
+OpenCode server (one)
+  -> roadie plugin  chat.headers: x-roadie-session, x-roadie-pool
+  -> roadie provider fetch:
+       read + strip x-roadie-*
+       resolve pool -> rotation -> account (skip cooldowns)
+       adapter shapes the request for the provider (OAuth headers etc.)
+       429 / usage limit -> mark cooldown, next account
+```
+
+Components:
+
+1. **Pool store** (`cli/src/credentials/store.ts`). One directory per pool
+   under `<dataDir>/credentials/<poolId>/` with `accounts.json` (mode 0600)
+   and `state.json` (cooldowns, last used). One lock per pool, so people
+   never contend with each other. Token refresh writes back under that
+   pool's lock, which removes the shared-`auth.json` refresh race.
+2. **Owner table** (`credential_owners`: `session_id`, `pool_id`,
+   `person_key`, `created_at`). New table, so `schema.sql` creates it with
+   no migration.
+3. **Router** (`cli/src/credentials/router.ts`). Pool + rotation + cooldowns
+   -> candidate list. Keeps the live route per session until idle so tool
+   follow-ups stay on one account.
+4. **Adapters** (`cli/src/credentials/adapters/`). Anthropic OAuth first,
+   then OpenAI/Codex OAuth, then plain API keys for any provider. Written
+   from provider docs and our own traces, not copied.
+5. **OpenCode integration.** The Roadie OpenCode plugin adds the
+   `chat.headers` hook; a `roadie` provider module is loaded through
+   `provider.roadie.npm` (file:// URL). Models are `roadie/<rotation>`.
+6. **`/login` changes.** In `global` mode it adds an account to `shared`
+   (admin capability, as today). In per-person modes it adds to the
+   caller's pool; the flow runs in an ephemeral reply so codes never land
+   in a public channel. New `/credentials` to list, reorder and remove
+   accounts in your pool.
+
+## Spike result
+
+`spikes/credential-pools/` runs a real `opencode serve` (1.18.31) with a
+stub upstream, a pool-aware provider and a `chat.headers` plugin. Three
+sessions prompt concurrently on one server:
+
+```
+PASS  A+B alice session billed to alice pool        [ok:alice-2]
+PASS  A+B bob session billed to bob pool            [ok:bob-1]
+PASS  C alice rotated past rate-limited alice-1     [ok:alice-2]
+PASS  C alice-1 was tried and got 429
+PASS  D no x-roadie-* header reached upstream
+PASS  E untagged session never reached upstream     [401 no credential pool]
+```
+
+So: the tag reaches the provider fetch per session, concurrent sessions
+resolve to different credentials on one server, per-pool rotation works in
+the fetch layer, internal headers can be stripped, and a missing tag fails
+closed. Title-generation calls carry the session too, so they bill to the
+owner. Note: OpenCode itself sends `x-session-id` and `x-session-affinity`
+upstream.
+
+Run it: `node spikes/credential-pools/run.mjs /path/to/opencode`.
+
+## Security
+
+Phase 1 keeps today's trust model: OpenCode runs as the bot's user, so an
+agent with shell can read the credential directory. Acceptable for
+`global` mode (it is the operator's own credentials, same as today) and
+must be documented as a limit of per-person mode. Per-person servers
+should deny the `shell` capability to non-admins through the identity hook.
+
+Phase 3 removes the exposure:
+
+- The bot process owns the pool store. The provider asks the bot over the
+  existing hrana/IPC channel for a short-lived access token for
+  `(session, provider)`. Refresh tokens and API keys never enter the
+  OpenCode process.
+- OpenCode runs as an unprivileged user that cannot read `<dataDir>`.
+  Without this step the broker is defense in depth only.
+
+## Migration from subrouter
+
+- One release with both: subrouter still loads unless
+  `--no-subrouter`; `roadie/<rotation>` models are available alongside.
+- `roadie credentials import-subrouter` copies `~/.subrouter/auth.json`
+  accounts and presets into the `shared` pool and rotations.
+- Next release: `subrouter/<preset>` session models are rewritten to the
+  imported `roadie/<rotation>`; subrouter and its `/login` entry removed.
+
+## Phases
+
+1. **Pools, global mode.** Store, router, Anthropic + API-key adapters,
+   plugin hook, provider, `/login` into `shared`, subrouter import. Behavior
+   for existing servers unchanged except the backend.
+2. **Per-person.** `--credentials`, owner table, `--thread-billing`,
+   per-person `/login` and `/credentials`, identity hook
+   `credential_pool`, OpenAI/Codex adapter.
+3. **Isolation.** Token broker in the bot, unprivileged OpenCode user.
+4. **Remove subrouter.**
+
+## Open questions
+
+- Owner for scheduled tasks and `roadie send` sessions with no human
+  actor: default to `shared`, or the task creator?
+- Forks: does a forked session keep the parent's owner or take the forker?
+  Leaning forker, since they asked for it.
+- Should a person be able to see that their pool is cooling down (footer
+  note, like subrouter's fallback notice)?
+- Usage accounting per pool: store token counts per request so hosts can
+  show people what they spent.
