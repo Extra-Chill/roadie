@@ -1,24 +1,36 @@
 // Terminal commands for managing credential pools.
-// Phase 1a operates on the shared pool only:
+// Phase 1a/1b operate on the shared pool only:
 //   roadie credentials list
 //   roadie credentials add-key --provider <anthropic|openai|...> [--label]
+//   roadie credentials login anthropic [--label]
 //   roadie credentials remove <id>
 //   roadie credentials rotation set <name> <provider/model>...
 // API keys are read from stdin (never argv) and never printed; only the last
-// 4 characters are shown.
+// 4 characters are shown. OAuth tokens are never printed; `list` shows the
+// access token's expiry instead.
 import { goke } from 'goke'
 import fs from 'node:fs'
+import { createInterface } from 'node:readline/promises'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getDataDir } from '../config.js'
 import {
   addPoolAccount,
+  addPoolOAuthAccount,
   readPoolAccounts,
   readPoolRotations,
   readPoolState,
   removePoolAccount,
   setPoolRotation,
   SHARED_POOL_ID,
+  type PoolAccount,
 } from '../credentials/store.js'
+import {
+  buildAuthorizeUrl,
+  exchangeAuthorizationCode,
+  generatePKCE,
+  parseManualInput,
+  ANTHROPIC_OAUTH_REDIRECT_URI,
+} from '../credentials/adapters/anthropic-oauth.js'
 import { EXIT_NO_RESTART } from '../cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -27,6 +39,15 @@ const cli = goke()
 /** Keys are never printed in full; `…last4` is enough to tell accounts apart. */
 function maskKey(key: string): string {
   return `…${key.slice(-4)}`
+}
+
+/** One-line credential summary per account type. Never shows tokens. */
+function describeAccountCredential(account: PoolAccount, now: number): string {
+  if (account.type === 'oauth') {
+    const expiresAt = new Date(account.expires).toISOString()
+    return account.expires <= now ? `expires ${expiresAt} (expired)` : `expires ${expiresAt}`
+  }
+  return maskKey(account.key)
 }
 
 function exitWithError(message: string): never {
@@ -58,7 +79,7 @@ cli
             : ''
         const lastUsed = account.lastUsed ? ` | last used ${account.lastUsed}` : ''
         cliLogger.log(
-          `${account.id} | ${account.provider} | ${account.type} | ${maskKey(account.key)}${account.label ? ` | ${account.label}` : ''} | added ${account.addedAt}${lastUsed}${cooling}`,
+          `${account.id} | ${account.provider} | ${account.type} | ${describeAccountCredential(account, now)}${account.label ? ` | ${account.label}` : ''} | added ${account.addedAt}${lastUsed}${cooling}`,
         )
       }
     }
@@ -111,6 +132,60 @@ cli
     })
     if (account instanceof Error) exitWithError(account.message)
     cliLogger.log(`Added ${account.provider} account ${account.id} (${maskKey(account.key)}) to pool ${SHARED_POOL_ID}`)
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials login <provider>',
+    'Log in an OAuth subscription account and add it to the shared pool. Only anthropic (Claude Pro/Max) is supported.',
+  )
+  .option('--label <label>', 'Optional human-readable label for the account')
+  .action(async (provider, options) => {
+    if (provider !== 'anthropic') {
+      exitWithError(`Unsupported OAuth provider: ${provider}. Only anthropic is supported.`)
+    }
+    const dataDir = getDataDir()
+    const pkce = await generatePKCE()
+    if (pkce instanceof Error) exitWithError(pkce.message)
+    // The browser redirects to localhost (nothing listens there); the code and
+    // state stay visible in the address bar for pasting.
+    const state = pkce.verifier
+    const authorizeUrl = buildAuthorizeUrl({
+      challenge: pkce.challenge,
+      state,
+      redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
+    })
+    cliLogger.log('Open this URL in your browser and sign in with the account to add:')
+    cliLogger.log(authorizeUrl)
+    cliLogger.log('Then paste the code#state from the redirect (the full redirect URL also works):')
+    const readline = createInterface({ input: process.stdin })
+    const pasted = await readline.question('')
+    readline.close()
+    const { code, state: pastedState } = parseManualInput(pasted)
+    if (!code.trim()) {
+      exitWithError('No authorization code received')
+    }
+    const tokens = await exchangeAuthorizationCode({
+      code,
+      state: pastedState || state,
+      verifier: pkce.verifier,
+      redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
+    })
+    if (tokens instanceof Error) exitWithError(tokens.message)
+    const account = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: tokens.refresh,
+      access: tokens.access,
+      expires: tokens.expires,
+      ...(options.label && { label: options.label }),
+    })
+    if (account instanceof Error) exitWithError(account.message)
+    cliLogger.log(
+      `Added anthropic oauth account ${account.id} (access expires ${new Date(tokens.expires).toISOString()}) to pool ${SHARED_POOL_ID}`,
+    )
     process.exit(0)
   })
 

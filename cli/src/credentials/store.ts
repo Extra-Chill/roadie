@@ -1,8 +1,10 @@
 // Credential pool store: one directory per pool under <dataDir>/credentials/.
 //
 // Layout per pool:
-//   accounts.json  (mode 0600) — the pool's accounts, each:
+//   accounts.json  (mode 0600) — the pool's accounts, each an api key account
 //     { id, provider, type: 'api', key, label?, addedAt, lastUsed }
+//     or an OAuth subscription account
+//     { id, provider, type: 'oauth', refresh, access, expires, label?, addedAt, lastUsed }
 //   state.json     (mode 0600) — per-account cooldowns and last used, keyed by
 //     account id with epoch-ms values
 //   rotation.json  (mode 0600) — named rotations, each an ordered list of
@@ -31,17 +33,34 @@ export const ROTATION_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 export const CREDENTIALS_DIR_MODE = 0o700
 export const CREDENTIALS_FILE_MODE = 0o600
 
-export type PoolAccountType = 'api'
+export type PoolAccountType = 'api' | 'oauth'
 
-export type PoolAccount = {
+export type ApiPoolAccount = {
   id: string
   provider: string
-  type: PoolAccountType
+  type: 'api'
   key: string
   label?: string
   addedAt: string
   lastUsed: string | null
 }
+
+export type OAuthPoolAccount = {
+  id: string
+  provider: string
+  type: 'oauth'
+  /** Rotated on every refresh; always the newest refresh token. */
+  refresh: string
+  /** Short-lived bearer token sent as `authorization` on requests. */
+  access: string
+  /** Epoch ms after which `access` is considered expired. */
+  expires: number
+  label?: string
+  addedAt: string
+  lastUsed: string | null
+}
+
+export type PoolAccount = ApiPoolAccount | OAuthPoolAccount
 
 export type PoolState = {
   /** account id -> epoch ms until which the account is cooling down */
@@ -125,12 +144,47 @@ function readAccountsFile({ dataDir, poolId }: { dataDir: string; poolId: string
     path.join(getPoolDir({ dataDir, poolId }), 'accounts.json'),
   )
   if (!file || !Array.isArray(file.accounts)) return []
-  return file.accounts.filter(
-    (account): account is PoolAccount =>
-      typeof account?.id === 'string' &&
-      typeof account?.provider === 'string' &&
-      typeof account?.key === 'string',
-  )
+  const accounts: PoolAccount[] = []
+  for (const account of file.accounts) {
+    const normalized = normalizePoolAccount(account)
+    if (normalized) accounts.push(normalized)
+  }
+  return accounts
+}
+
+/**
+ * Accept both account generations on load so existing accounts.json files keep
+ * working unchanged:
+ * - api accounts as written since phase 1a (`type: 'api'` + `key`; the type
+ *   field is also tolerated being absent, matching the earliest files)
+ * - oauth subscription accounts (`type: 'oauth'` + `refresh`/`access`/`expires`)
+ * Anything else is dropped, as before.
+ */
+function normalizePoolAccount(account: unknown): PoolAccount | null {
+  if (!account || typeof account !== 'object') return null
+  const record = account as Record<string, unknown>
+  if (typeof record.id !== 'string' || typeof record.provider !== 'string') return null
+  const base = {
+    id: record.id,
+    provider: record.provider,
+    ...(typeof record.label === 'string' && { label: record.label }),
+    addedAt: typeof record.addedAt === 'string' ? record.addedAt : '',
+    lastUsed: typeof record.lastUsed === 'string' ? record.lastUsed : null,
+  }
+  if (record.type === 'oauth') {
+    if (
+      typeof record.refresh !== 'string' ||
+      typeof record.access !== 'string' ||
+      typeof record.expires !== 'number'
+    ) {
+      return null
+    }
+    return { ...base, type: 'oauth', refresh: record.refresh, access: record.access, expires: record.expires }
+  }
+  if (typeof record.key === 'string') {
+    return { ...base, type: 'api', key: record.key }
+  }
+  return null
 }
 
 function readStateFile({ dataDir, poolId }: { dataDir: string; poolId: string }): PoolState {
@@ -181,7 +235,7 @@ export async function addPoolAccount({
   key: string
   label?: string
   now?: Date
-}): Promise<PoolAccount | Error> {
+}): Promise<ApiPoolAccount | Error> {
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
@@ -210,6 +264,139 @@ export async function addPoolAccount({
     })
     return account
   })
+}
+
+export async function addPoolOAuthAccount({
+  dataDir,
+  poolId,
+  provider,
+  refresh,
+  access,
+  expires,
+  label,
+  now = new Date(),
+}: {
+  dataDir: string
+  poolId: string
+  provider: string
+  refresh: string
+  access: string
+  expires: number
+  label?: string
+  now?: Date
+}): Promise<PoolAccount | Error> {
+  if (!isValidPoolId(poolId)) {
+    return new Error(`Invalid pool id: ${poolId}`)
+  }
+  const trimmedProvider = provider.trim()
+  const trimmedRefresh = refresh.trim()
+  const trimmedAccess = access.trim()
+  if (!trimmedProvider) {
+    return new Error('Account provider is required')
+  }
+  if (!trimmedRefresh) {
+    return new Error('Account refresh token is required')
+  }
+  if (!trimmedAccess) {
+    return new Error('Account access token is required')
+  }
+  if (!Number.isFinite(expires) || expires <= 0) {
+    return new Error('Account expiry must be a positive epoch-ms number')
+  }
+  return await withPoolLock(poolId, () => {
+    const accounts = readAccountsFile({ dataDir, poolId })
+    const account: OAuthPoolAccount = {
+      id: crypto.randomUUID(),
+      provider: trimmedProvider,
+      type: 'oauth',
+      refresh: trimmedRefresh,
+      access: trimmedAccess,
+      expires,
+      ...(label?.trim() && { label: label.trim() }),
+      addedAt: now.toISOString(),
+      lastUsed: null,
+    }
+    atomicWriteFileSync({
+      filePath: path.join(getPoolDir({ dataDir, poolId }), 'accounts.json'),
+      data: JSON.stringify({ accounts: [...accounts, account] }, null, 2),
+    })
+    return account
+  })
+}
+
+/**
+ * Write rotated OAuth tokens back to an account without taking the pool lock.
+ * The caller must already hold the pool's withPoolLock (e.g. a refresh that
+ * re-read the account under that same lock); external callers should use
+ * updatePoolAccount instead. The refresh token must be persisted on every
+ * refresh because Anthropic rotates it: the previous refresh token stops
+ * working once a new one is issued.
+ */
+export function updatePoolAccountLocked({
+  dataDir,
+  poolId,
+  accountId,
+  refresh,
+  access,
+  expires,
+}: {
+  dataDir: string
+  poolId: string
+  accountId: string
+  refresh: string
+  access: string
+  expires: number
+}): OAuthPoolAccount | Error {
+  const accounts = readAccountsFile({ dataDir, poolId })
+  const account = accounts.find((entry) => entry.id === accountId)
+  if (!account) {
+    return new Error(`Account ${accountId} not found in pool ${poolId}`)
+  }
+  if (account.type !== 'oauth') {
+    return new Error(`Account ${accountId} is not an oauth account`)
+  }
+  const updated: OAuthPoolAccount = { ...account, refresh, access, expires }
+  atomicWriteFileSync({
+    filePath: path.join(getPoolDir({ dataDir, poolId }), 'accounts.json'),
+    data: JSON.stringify(
+      { accounts: accounts.map((entry) => (entry.id === accountId ? updated : entry)) },
+      null,
+      2,
+    ),
+  })
+  return updated
+}
+
+/**
+ * Write rotated OAuth tokens back to an account under the pool lock.
+ */
+export async function updatePoolAccount({
+  dataDir,
+  poolId,
+  accountId,
+  refresh,
+  access,
+  expires,
+}: {
+  dataDir: string
+  poolId: string
+  accountId: string
+  refresh: string
+  access: string
+  expires: number
+}): Promise<OAuthPoolAccount | Error> {
+  if (!isValidPoolId(poolId)) {
+    return new Error(`Invalid pool id: ${poolId}`)
+  }
+  if (!refresh.trim() || !access.trim()) {
+    return new Error('Refresh and access tokens are required')
+  }
+  if (!Number.isFinite(expires) || expires <= 0) {
+    return new Error('Account expiry must be a positive epoch-ms number')
+  }
+  return await withPoolLock(poolId, () =>
+    updatePoolAccountLocked({ dataDir, poolId, accountId, refresh, access, expires }),
+  )
 }
 
 export async function removePoolAccount({
@@ -256,6 +443,34 @@ export function readPoolState({ dataDir, poolId }: { dataDir: string; poolId: st
   return readStateFile({ dataDir, poolId })
 }
 
+/**
+ * Cooldown write without taking the pool lock. The caller must already hold
+ * the pool's withPoolLock (e.g. a refresh that re-read the account under that
+ * same lock); external callers should use markCooldown instead.
+ */
+export function markCooldownLocked({
+  dataDir,
+  poolId,
+  accountId,
+  untilMs,
+}: {
+  dataDir: string
+  poolId: string
+  accountId: string
+  untilMs: number
+}): true | Error {
+  const state = readStateFile({ dataDir, poolId })
+  atomicWriteFileSync({
+    filePath: path.join(getPoolDir({ dataDir, poolId }), 'state.json'),
+    data: JSON.stringify(
+      { cooldowns: { ...state.cooldowns, [accountId]: untilMs }, lastUsed: state.lastUsed },
+      null,
+      2,
+    ),
+  })
+  return true
+}
+
 export async function markCooldown({
   dataDir,
   poolId,
@@ -270,18 +485,7 @@ export async function markCooldown({
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
-  return await withPoolLock(poolId, () => {
-    const state = readStateFile({ dataDir, poolId })
-    atomicWriteFileSync({
-      filePath: path.join(getPoolDir({ dataDir, poolId }), 'state.json'),
-      data: JSON.stringify(
-        { cooldowns: { ...state.cooldowns, [accountId]: untilMs }, lastUsed: state.lastUsed },
-        null,
-        2,
-      ),
-    })
-    return true
-  })
+  return await withPoolLock(poolId, () => markCooldownLocked({ dataDir, poolId, accountId, untilMs }))
 }
 
 export async function markUsed({

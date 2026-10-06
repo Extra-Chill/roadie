@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import {
   addPoolAccount,
+  addPoolOAuthAccount,
   getPoolDir,
   isValidPoolId,
   markCooldown,
@@ -13,6 +14,7 @@ import {
   readPoolState,
   removePoolAccount,
   setPoolRotation,
+  updatePoolAccount,
   SHARED_POOL_ID,
   withPoolLock,
   CREDENTIALS_DIR_MODE,
@@ -89,6 +91,233 @@ describe('addPoolAccount', () => {
     ).toBeInstanceOf(Error)
     expect(
       await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: ' ' }),
+    ).toBeInstanceOf(Error)
+  })
+})
+
+describe('addPoolOAuthAccount', () => {
+  test('writes an oauth account with tokens and restrictive modes', async () => {
+    const account = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: 'rt-subscription',
+      access: 'at-subscription',
+      expires: 1_900_000,
+      label: 'claude max',
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    })
+    expect(account).not.toBeInstanceOf(Error)
+    if (account instanceof Error || account.type !== 'oauth') return
+    expect(account).toMatchObject({
+      provider: 'anthropic',
+      type: 'oauth',
+      refresh: 'rt-subscription',
+      access: 'at-subscription',
+      expires: 1_900_000,
+      label: 'claude max',
+      addedAt: '2026-01-01T00:00:00.000Z',
+      lastUsed: null,
+    })
+    expect(account.id).toBeTruthy()
+
+    const poolDir = getPoolDir({ dataDir, poolId: SHARED_POOL_ID })
+    expect(fs.statSync(poolDir).mode & 0o777).toBe(CREDENTIALS_DIR_MODE)
+    const accountsPath = path.join(poolDir, 'accounts.json')
+    expect(fs.statSync(accountsPath).mode & 0o777).toBe(CREDENTIALS_FILE_MODE)
+    expect(await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([account])
+  })
+
+  test('rejects invalid pool ids, empty tokens and bad expiry', async () => {
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: 'BAD POOL', provider: 'anthropic', refresh: 'r', access: 'a', expires: 1 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: ' ', refresh: 'r', access: 'a', expires: 1 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', refresh: ' ', access: 'a', expires: 1 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', refresh: 'r', access: ' ', expires: 1 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', refresh: 'r', access: 'a', expires: 0 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', refresh: 'r', access: 'a', expires: Number.NaN }),
+    ).toBeInstanceOf(Error)
+  })
+})
+
+describe('mixed account types', () => {
+  test('api and oauth accounts round-trip together in order', async () => {
+    const api = await addPoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      key: 'sk-ant-secret',
+    })
+    expect(api).not.toBeInstanceOf(Error)
+    const oauth = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: 'rt-1',
+      access: 'at-1',
+      expires: 1_000_000,
+    })
+    expect(oauth).not.toBeInstanceOf(Error)
+
+    const accounts = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (accounts instanceof Error) throw accounts
+    expect(accounts.map((account) => account.type)).toEqual(['api', 'oauth'])
+    expect(accounts).toEqual([api, oauth])
+  })
+
+  test('a legacy phase-1a accounts.json still loads unchanged', async () => {
+    const legacyAccounts = {
+      accounts: [
+        {
+          id: 'legacy-1',
+          provider: 'anthropic',
+          type: 'api',
+          key: 'sk-ant-legacy',
+          label: 'main',
+          addedAt: '2026-01-01T00:00:00.000Z',
+          lastUsed: null,
+        },
+        {
+          id: 'legacy-2',
+          provider: 'openai',
+          // Even older files may omit the type field.
+          key: 'sk-oai-legacy',
+          addedAt: '2026-01-02T00:00:00.000Z',
+          lastUsed: '2026-01-03T00:00:00.000Z',
+        },
+      ],
+    }
+    const poolDir = getPoolDir({ dataDir, poolId: SHARED_POOL_ID })
+    fs.mkdirSync(poolDir, { recursive: true })
+    fs.writeFileSync(path.join(poolDir, 'accounts.json'), JSON.stringify(legacyAccounts, null, 2))
+
+    const accounts = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (accounts instanceof Error) throw accounts
+    expect(accounts).toEqual([
+      {
+        id: 'legacy-1',
+        provider: 'anthropic',
+        type: 'api',
+        key: 'sk-ant-legacy',
+        label: 'main',
+        addedAt: '2026-01-01T00:00:00.000Z',
+        lastUsed: null,
+      },
+      {
+        id: 'legacy-2',
+        provider: 'openai',
+        type: 'api',
+        key: 'sk-oai-legacy',
+        addedAt: '2026-01-02T00:00:00.000Z',
+        lastUsed: '2026-01-03T00:00:00.000Z',
+      },
+    ])
+  })
+
+  test('malformed oauth accounts are dropped on load', async () => {
+    const poolDir = getPoolDir({ dataDir, poolId: SHARED_POOL_ID })
+    fs.mkdirSync(poolDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(poolDir, 'accounts.json'),
+      JSON.stringify({
+        accounts: [
+          { id: 'bad-1', provider: 'anthropic', type: 'oauth', refresh: 'r' },
+          { id: 'bad-2', provider: 'anthropic', type: 'oauth' },
+          { id: 'bad-3', provider: 'anthropic', type: 'api' },
+          'nope',
+        ],
+      }),
+    )
+    expect(await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([])
+  })
+})
+
+describe('updatePoolAccount', () => {
+  test('writes rotated tokens back and keeps the other fields', async () => {
+    const account = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: 'rt-old',
+      access: 'at-old',
+      expires: 1_000,
+      label: 'mine',
+    })
+    expect(account).not.toBeInstanceOf(Error)
+    if (account instanceof Error) return
+    await markUsed({ dataDir, poolId: SHARED_POOL_ID, accountId: account.id, now: 500 })
+
+    const updated = await updatePoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      accountId: account.id,
+      refresh: 'rt-new',
+      access: 'at-new',
+      expires: 2_000,
+    })
+    expect(updated).not.toBeInstanceOf(Error)
+    if (updated instanceof Error || updated.type !== 'oauth') return
+    expect(updated).toMatchObject({
+      id: account.id,
+      provider: 'anthropic',
+      type: 'oauth',
+      refresh: 'rt-new',
+      access: 'at-new',
+      expires: 2_000,
+      label: 'mine',
+      lastUsed: new Date(500).toISOString(),
+    })
+    expect(await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([updated])
+  })
+
+  test('returns an error for unknown ids and api accounts', async () => {
+    const api = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: 'k' })
+    expect(api).not.toBeInstanceOf(Error)
+    expect(
+      await updatePoolAccount({
+        dataDir,
+        poolId: SHARED_POOL_ID,
+        accountId: 'missing',
+        refresh: 'r',
+        access: 'a',
+        expires: 1,
+      }),
+    ).toBeInstanceOf(Error)
+    if (api instanceof Error) return
+    expect(
+      await updatePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: api.id, refresh: 'r', access: 'a', expires: 1 }),
+    ).toBeInstanceOf(Error)
+  })
+
+  test('rejects empty tokens and bad expiry', async () => {
+    const account = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      refresh: 'r',
+      access: 'a',
+      expires: 1,
+    })
+    expect(account).not.toBeInstanceOf(Error)
+    if (account instanceof Error) return
+    expect(
+      await updatePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: account.id, refresh: ' ', access: 'a', expires: 2 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await updatePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: account.id, refresh: 'r', access: '', expires: 2 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await updatePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: account.id, refresh: 'r', access: 'a', expires: -1 }),
     ).toBeInstanceOf(Error)
   })
 })
