@@ -14,19 +14,18 @@ import {
 
 function fakeProvider(calls: string[]): AgentBackendProvider {
   const backend = toOpenCodeBackend({
-    provider: {
-      list: async ({ directory }: { directory?: string }) => {
-        calls.push(`provider.list:${directory}`)
+    config: {
+      providers: async ({ directory }: { directory?: string }) => {
+        calls.push(`config.providers:${directory}`)
         return {
           data: {
-            all: [
+            providers: [
               {
                 id: 'fake',
                 name: 'Fake',
                 models: { 'model-1': { id: 'model-1', name: 'Model 1' } },
               },
             ],
-            connected: ['fake'],
             default: {},
           },
         }
@@ -70,7 +69,7 @@ describe('agent backend registry', () => {
     expect(result).toEqual({ providerID: 'fake', modelID: 'model-1' })
     expect(calls).toEqual([
       'initialize:/tmp/roadie-backend-seam',
-      'provider.list:/tmp/roadie-backend-seam',
+      'config.providers:/tmp/roadie-backend-seam',
     ])
   })
 
