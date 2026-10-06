@@ -301,7 +301,7 @@ describe('/fork', () => {
     expect(allocations).toHaveLength(count)
   }, 60_000)
 
-  test('a non-Git home forks its persisted coding repository and leaves the source home intact', async () => {
+  test('a non-Git home uses active task ownership without reading the conversation for scope', async () => {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-fork-home-')))
     const repository = ctx.directories.projectDirectory
     fs.copyFileSync(path.join(repository, 'opencode.json'), path.join(home, 'opencode.json'))
@@ -311,9 +311,11 @@ describe('/fork', () => {
     await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: home, channelType: 'text' })
     const allocations: string[] = []
     const sessions: Array<{ id: string; directory: string; threadId: string }> = []
-    const remove = addFilter('fork_workspace', (_provider, scope) => scope.codingPaths?.length ? ({ async provision(request) {
+    let taskActive = false
+    let restoreHistory = () => {}
+    const remove = addFilter('fork_workspace', () => taskActive ? ({ async provision(request) {
+      restoreHistory()
       expect(request.sourceDirectory).toBe(home)
-      expect(request.codingPaths).toContain(repository)
       const target = path.join(ctx.directories.root, `site-fork-${request.requestId}`)
       const branch = `site-fork-${request.requestId}`
       await exec('git', ['worktree', 'add', '-b', branch, target, 'HEAD'], { cwd: repository })
@@ -327,16 +329,21 @@ describe('/fork', () => {
       await ctx.discord.thread(source.id).user(TEST_USER_ID).sendMessage({ content: 'SITE_CODING_WRITE' })
       await waitForFooterMessage({ discord: ctx.discord, threadId: source.id, afterMessageIncludes: 'SITE_CODING_WRITE', afterAuthorId: TEST_USER_ID, timeout: 10_000 })
       expect(fs.readFileSync(path.join(repository, 'site-coding.txt'), 'utf8')).toBe('source')
-      const sourceHistory = await original().session.messages({ sessionID: sourceSession, directory: home })
-      const boundary = sourceHistory.data?.find((message) => message.info.role === 'user' && message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))
-      if (!boundary) throw new Error('Missing source coding turn')
-      const historical = await forkFrom(source.id, [{ name: 'from', type: 3, value: boundary.info.id }])
+      // Successful historical writes do not establish an active task owner.
+      const historical = await forkFrom(source.id)
       const historicalSession = await waitForThreadSession(historical.id)
       sessions.push({ id: historicalSession, directory: home, threadId: historical.id })
       expect(await getThreadWorkingDirectory(historical.id)).toBeUndefined()
       expect(allocations).toHaveLength(0)
-      // No in-memory scope survives this disposal: /fork reads the backend's
-      // persisted successful tool calls after runtime reconstruction.
+      taskActive = true
+      const client = original()
+      const messages = client.session.messages
+      restoreHistory = () => { client.session.messages = messages }
+      client.session.messages = new Proxy(messages, { apply(target, receiver, parameters) {
+        const input = parameters[0]
+        if (input?.sessionID === sourceSession && input.limit === undefined) throw new Error('Fork scope must not fetch the conversation')
+        return Reflect.apply(target, receiver, parameters)
+      } })
       disposeRuntime(source.id)
       const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER site fork' }])
       const forkSession = await waitForThreadSession(fork.id)
@@ -352,9 +359,10 @@ describe('/fork', () => {
       expect(await getThreadWorkingDirectory(source.id)).toBeUndefined()
       expect((await getThreadWorkingDirectory(fork.id))?.workingDirectory).toBe(allocations[0])
       expect((await getThreadWorkingDirectory(fork.id))?.projectDirectory).toBe(repository)
-      const messages = await original().session.messages({ sessionID: forkSession, directory: allocations[0] })
-      expect(messages.data?.some((message) => message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))).toBe(true)
+      const copied = await original().session.messages({ sessionID: forkSession, directory: allocations[0] })
+      expect(copied.data?.some((message) => message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))).toBe(true)
     } finally {
+      restoreHistory()
       remove()
       await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: repository, channelType: 'text' })
       for (const session of sessions) {
