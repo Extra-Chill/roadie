@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.45.0] - 2026-10-07
+
+### Added
+- per-person credential pool routing
+
 ## [0.44.1] - 2026-10-07
 
 ### Fixed
