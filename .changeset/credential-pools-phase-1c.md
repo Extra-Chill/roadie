@@ -1,0 +1,5 @@
+---
+"@extrachill/roadie": minor
+---
+
+Credential pools phase 1c: import subrouter accounts and presets into the shared pool with `roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]`. Reads `$SUBROUTER_HOME`/`~/.subrouter` `auth.json` and `config.json` strictly read-only, imports anthropic oauth accounts (with `{refresh, access, expires}` and email/accountId labels) and anthropic/openai api keys into the pool via the existing store functions, skips everything pools can't route yet (zai, github-copilot, xai, openai oauth, ...) with a per-entry reason, and turns presets into same-named rotations with `#variant` suffixes stripped and unroutable entries dropped (never overwriting an existing rotation). Runs are idempotent — api keys dedupe by key and oauth accounts by refresh token or accountId/email inside the pool lock, reporting `already present` — and everything is validated before the first write, so a malformed subrouter file reports the parse error and writes nothing. `--dry-run` prints the plan only, output is counts and labels (or `…last4`) and never shows a key or token.

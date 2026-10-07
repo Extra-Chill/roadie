@@ -221,6 +221,19 @@ export function readPoolAccounts({ dataDir, poolId }: { dataDir: string; poolId:
   return readAccountsFile({ dataDir, poolId })
 }
 
+/**
+ * Returned by addPoolAccount / addPoolOAuthAccount when the caller's
+ * `isDuplicate` check matches an account already in the pool. The check runs
+ * under the pool lock, in the same critical section as the write, so two
+ * concurrent adds of the same account cannot both succeed.
+ */
+export class DuplicatePoolAccountError extends Error {
+  constructor(readonly existing: PoolAccount) {
+    super(`account already present in pool: ${existing.id}`)
+    this.name = 'DuplicatePoolAccountError'
+  }
+}
+
 export async function addPoolAccount({
   dataDir,
   poolId,
@@ -228,6 +241,7 @@ export async function addPoolAccount({
   key,
   label,
   now = new Date(),
+  isDuplicate,
 }: {
   dataDir: string
   poolId: string
@@ -235,6 +249,8 @@ export async function addPoolAccount({
   key: string
   label?: string
   now?: Date
+  /** Checked under the pool lock; a match returns DuplicatePoolAccountError. */
+  isDuplicate?: (account: PoolAccount) => boolean
 }): Promise<ApiPoolAccount | Error> {
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
@@ -249,6 +265,8 @@ export async function addPoolAccount({
   }
   return await withPoolLock(poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
+    const duplicate = isDuplicate ? accounts.find(isDuplicate) : undefined
+    if (duplicate) return new DuplicatePoolAccountError(duplicate)
     const account: PoolAccount = {
       id: crypto.randomUUID(),
       provider: trimmedProvider,
@@ -275,6 +293,7 @@ export async function addPoolOAuthAccount({
   expires,
   label,
   now = new Date(),
+  isDuplicate,
 }: {
   dataDir: string
   poolId: string
@@ -284,6 +303,8 @@ export async function addPoolOAuthAccount({
   expires: number
   label?: string
   now?: Date
+  /** Checked under the pool lock; a match returns DuplicatePoolAccountError. */
+  isDuplicate?: (account: PoolAccount) => boolean
 }): Promise<PoolAccount | Error> {
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
@@ -305,6 +326,8 @@ export async function addPoolOAuthAccount({
   }
   return await withPoolLock(poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
+    const duplicate = isDuplicate ? accounts.find(isDuplicate) : undefined
+    if (duplicate) return new DuplicatePoolAccountError(duplicate)
     const account: OAuthPoolAccount = {
       id: crypto.randomUUID(),
       provider: trimmedProvider,
@@ -552,12 +575,15 @@ export async function setPoolRotation({
   poolId,
   name,
   entries,
+  onlyIfAbsent = false,
 }: {
   dataDir: string
   poolId: string
   name: string
   entries: string[]
-}): Promise<true | Error> {
+  /** Checked under the pool lock: never replace an existing rotation. */
+  onlyIfAbsent?: boolean
+}): Promise<true | 'exists' | Error> {
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
@@ -574,6 +600,7 @@ export async function setPoolRotation({
   }
   return await withPoolLock(poolId, () => {
     const rotations = readRotationFile({ dataDir, poolId })
+    if (onlyIfAbsent && rotations[name]) return 'exists'
     if (entries.length === 0) {
       delete rotations[name]
     } else {
