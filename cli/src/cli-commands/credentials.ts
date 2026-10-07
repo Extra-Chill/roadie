@@ -5,6 +5,7 @@
 //   roadie credentials login anthropic [--label]
 //   roadie credentials remove <id>
 //   roadie credentials rotation set <name> <provider/model>...
+//   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
 // API keys are read from stdin (never argv) and never printed; only the last
 // 4 characters are shown. OAuth tokens are never printed; `list` shows the
 // access token's expiry instead.
@@ -32,6 +33,10 @@ import {
   ANTHROPIC_OAUTH_REDIRECT_URI,
 } from '../credentials/adapters/anthropic-oauth.js'
 import { EXIT_NO_RESTART } from '../cli-runner.js'
+import {
+  formatSubrouterImportReport,
+  importSubrouterCredentials,
+} from '../credentials/import-subrouter.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -186,6 +191,29 @@ cli
     cliLogger.log(
       `Added anthropic oauth account ${account.id} (access expires ${new Date(tokens.expires).toISOString()}) to pool ${SHARED_POOL_ID}`,
     )
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials import-subrouter',
+    'Import subrouter accounts and presets into the shared credential pool. Read-only on subrouter files: they are never written, moved or deleted.',
+  )
+  .option('--dry-run', 'Print the import plan without writing anything')
+  .option(
+    '--subrouter-home <dir>',
+    'Subrouter home directory (default: $SUBROUTER_HOME, then ~/.subrouter)',
+  )
+  .action(async (options) => {
+    const result = await importSubrouterCredentials({
+      dataDir: getDataDir(),
+      ...(options.subrouterHome && { subrouterHome: options.subrouterHome }),
+      dryRun: options.dryRun === true,
+    })
+    if (result instanceof Error) exitWithError(result.message)
+    for (const line of formatSubrouterImportReport(result)) {
+      cliLogger.log(line)
+    }
     process.exit(0)
   })
 

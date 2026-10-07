@@ -107,6 +107,10 @@ const cleanup = () => children.forEach((c) => c.kill('SIGTERM'))
 process.on('exit', cleanup)
 
 start(process.execPath, [path.join(here, 'stub-upstream.mjs')])
+// Progress lines keep supervised runners (Homeboy gates kill a command after
+// minutes without output) from mistaking a slow cold start for a hang.
+const progress = (message) => console.log(`[spike] ${message}`)
+progress(`starting opencode serve on ${serverPort}`)
 const server = start(opencodeBin, ['serve', '--port', String(serverPort), '--hostname', '127.0.0.1'])
 const base = `http://127.0.0.1:${serverPort}`
 
@@ -122,6 +126,7 @@ const api = async (method, route, body) => {
 }
 
 for (let i = 0; ; i++) {
+  if (i > 0 && i % 20 === 0) progress(`waiting for opencode serve (${i / 2}s)`)
   try {
     await api('GET', '/config')
     break
@@ -164,6 +169,7 @@ for (const pool of people) {
 }
 
 // All three prompts in flight at once against the one server.
+progress('server ready; prompting three sessions concurrently')
 const results = await Promise.all(
   sessions.map(async (s) => ({ ...s, ...(await send(s.id, 'pool', 'hello')) })),
 )
@@ -176,6 +182,7 @@ const turns = [
   { pool: 'alice', provider: 'pool-anthropic', prompt: 'turn-3-from-alice' },
 ]
 const handoffReplies = []
+progress('running the cross-provider hand-off session')
 for (const t of turns) {
   setPool(handoff, t.pool)
   handoffReplies.push(await send(handoff, t.provider, t.prompt))
