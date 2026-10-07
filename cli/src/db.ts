@@ -219,6 +219,8 @@ async function migrateSchema({
     'ALTER TABLE session_sleeps ADD COLUMN last_attempt_at DATETIME',
     // session_actors shipped without person_id (identity hook added later).
     'ALTER TABLE session_actors ADD COLUMN person_id TEXT',
+    // session_actors shipped without credential_pool (credential pools phase 2a).
+    'ALTER TABLE session_actors ADD COLUMN credential_pool TEXT',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)

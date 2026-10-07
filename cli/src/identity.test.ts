@@ -94,6 +94,46 @@ describe('identity hook', () => {
     expect(stranger && personHas(stranger, 'sessions')).toBe(false)
   })
 
+  test('credential_pool: a valid override lands on the person, legacy output is untouched', async () => {
+    setIdentityHookCommand(
+      writeHook(
+        'pool.sh',
+        `input=$(cat)
+case "$input" in
+  *'"id":"pooled"'*) echo '{"allowed":true,"person_id":"wp:9","credential_pool":"team-pool"}' ;;
+  *'"id":"badpool"'*) echo '{"allowed":true,"person_id":"wp:9","credential_pool":"Not A Pool!"}' ;;
+  *) echo '{"allowed":true,"person_id":"wp:9"}' ;;
+esac`,
+      ),
+    )
+    const pooled = await resolvePerson({ actor: { platform: 'discord', id: 'pooled' } })
+    expect(pooled?.credentialPool).toBe('team-pool')
+    // An invalid pool id is ignored: the person resolves as if it were absent.
+    const bad = await resolvePerson({ actor: { platform: 'discord', id: 'badpool' } })
+    expect(bad?.allowed).toBe(true)
+    expect(bad?.credentialPool).toBeUndefined()
+    // Hooks that do not send the field behave as before.
+    const legacy = await resolvePerson({ actor: { platform: 'discord', id: 'plain' } })
+    expect(legacy?.allowed).toBe(true)
+    expect(legacy?.credentialPool).toBeUndefined()
+  })
+
+  test('applyPersonToIngress carries the credential pool override', async () => {
+    const poolHook = writeHook(
+      'pool-team.sh',
+      `input=$(cat)
+case "$input" in
+  *'"id":"team"'*) echo '{"allowed":true,"person_id":"host:38","credential_pool":"team-pool"}' ;;
+  *) echo '{"allowed":false}' ;;
+esac`,
+    )
+    setIdentityHookCommand(poolHook)
+    await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
+    expect(
+      applyPersonToIngress({ prompt: 'hi', userId: 'team', username: 'Team Member', mode: 'opencode' }),
+    ).toMatchObject({ personId: 'host:38', credentialPool: 'team-pool' })
+  })
+
   test('caches per actor and dedupes concurrent lookups', async () => {
     setIdentityHookCommand(mappingHook)
     const actor = { platform: 'discord', id: 'team' }

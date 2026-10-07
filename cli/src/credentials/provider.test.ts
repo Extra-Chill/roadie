@@ -163,7 +163,12 @@ describe('makePoolFetch', () => {
       body: JSON.stringify({ model: 'default' }),
     })
     expect(response.status).toBe(401)
-    expect(await response.json()).toMatchObject({ error: { message: 'pool shared has no accounts' } })
+    expect(await response.json()).toMatchObject({
+      error: {
+        message:
+          'no usable accounts in pool shared; add one with roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared',
+      },
+    })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -314,7 +319,7 @@ describe('makePoolFetch', () => {
     expect(state.lastUsed).toEqual({ [anthropicAccount.id]: NOW })
   })
 
-  test('all accounts cooling down returns 429 without touching upstream', async () => {
+  test('all accounts cooling down fails closed with 401 without touching upstream', async () => {
     const only = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: 'sk-ant-cold' })
     expect(only).not.toBeInstanceOf(Error)
     if (only instanceof Error) return
@@ -328,11 +333,143 @@ describe('makePoolFetch', () => {
       headers: { 'x-roadie-pool': 'shared' },
       body: JSON.stringify({ model: 'default' }),
     })
-    expect(response.status).toBe(429)
+    expect(response.status).toBe(401)
     expect(await response.json()).toMatchObject({
-      error: { message: 'all accounts in pool shared are cooling down' },
+      error: {
+        message:
+          'no usable accounts in pool shared; add one with roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared',
+      },
     })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('makePoolFetch pool lists', () => {
+  test('tries the listed pools in order: the first pool with usable accounts answers', async () => {
+    await seedPool({ keys: ['sk-ant-alice'], poolId: 'alice' })
+    await seedPool({ keys: ['sk-ant-shared'] })
+    const fetchImpl = stubFetch(async () => jsonResponse(200, { ok: true }))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'alice,shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(new Headers(lastInit(fetchImpl, 0).headers).get('x-api-key')).toBe('sk-ant-alice')
+    // Per-pool state: only the answering pool's account is marked used.
+    const aliceState = readPoolState({ dataDir, poolId: 'alice' })
+    expect(aliceState).not.toBeInstanceOf(Error)
+    if (aliceState instanceof Error) return
+    expect(Object.keys(aliceState.lastUsed)).toHaveLength(1)
+    const sharedState = readPoolState({ dataDir, poolId: SHARED_POOL_ID })
+    expect(sharedState).not.toBeInstanceOf(Error)
+    if (sharedState instanceof Error) return
+    expect(sharedState.lastUsed).toEqual({})
+  })
+
+  test('an empty billed pool falls through to the shared fallback pool', async () => {
+    const fetchImpl = stubFetch(async () => jsonResponse(200, { ok: 'from shared' }))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    await seedPool({ keys: ['sk-ant-shared'] })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'alice,shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: 'from shared' })
+    expect(new Headers(lastInit(fetchImpl, 0).headers).get('x-api-key')).toBe('sk-ant-shared')
+  })
+
+  test('a fully-cooled billed pool falls through to the shared fallback pool', async () => {
+    const cooled = await addPoolAccount({ dataDir, poolId: 'alice', provider: 'anthropic', key: 'sk-ant-cold' })
+    expect(cooled).not.toBeInstanceOf(Error)
+    if (cooled instanceof Error) return
+    await setPoolRotation({ dataDir, poolId: 'alice', name: 'default', entries: ['anthropic/claude-sonnet-4'] })
+    await markCooldownInStore({ dataDir, poolId: 'alice', accountId: cooled.id, untilMs: NOW + 60_000 })
+    await seedPool({ keys: ['sk-ant-shared'] })
+
+    const fetchImpl = stubFetch(async () => jsonResponse(200, { ok: 'from shared' }))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'alice,shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: 'from shared' })
+    // The cooled pool's cooldown is untouched by the fallback dispatch.
+    const state = readPoolState({ dataDir, poolId: 'alice' })
+    expect(state).not.toBeInstanceOf(Error)
+    if (state instanceof Error) return
+    expect(state.cooldowns[cooled.id]).toBe(NOW + 60_000)
+    expect(state.lastUsed).toEqual({})
+  })
+
+  test('cooldowns are per pool: a 429 in the first pool does not touch the fallback pool', async () => {
+    const aliceKey = await addPoolAccount({ dataDir, poolId: 'alice', provider: 'anthropic', key: 'sk-ant-alice' })
+    expect(aliceKey).not.toBeInstanceOf(Error)
+    if (aliceKey instanceof Error) return
+    await setPoolRotation({ dataDir, poolId: 'alice', name: 'default', entries: ['anthropic/claude-sonnet-4'] })
+    await seedPool({ keys: ['sk-ant-shared'] })
+
+    const fetchImpl = stubFetch(async () => jsonResponse(429))
+    fetchImpl
+      .mockImplementationOnce(async () => jsonResponse(429, {}, { 'retry-after': '30' }))
+      .mockImplementationOnce(async () => jsonResponse(200, { ok: 'from shared' }))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'alice,shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: 'from shared' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    const aliceState = readPoolState({ dataDir, poolId: 'alice' })
+    expect(aliceState).not.toBeInstanceOf(Error)
+    if (aliceState instanceof Error) return
+    // The rate-limited account cools down in its own pool only.
+    expect(aliceState.cooldowns[aliceKey.id]).toBe(NOW + 30_000)
+    const sharedState = readPoolState({ dataDir, poolId: SHARED_POOL_ID })
+    expect(sharedState).not.toBeInstanceOf(Error)
+    if (sharedState instanceof Error) return
+    expect(sharedState.cooldowns).toEqual({})
+    expect(Object.keys(sharedState.lastUsed)).toHaveLength(1)
+  })
+
+  test('every listed pool unusable fails closed with the actionable 401 message', async () => {
+    const fetchImpl = stubFetch(async () => jsonResponse(200))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'alice,shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      error: {
+        message:
+          'no usable accounts in pool alice,shared; add one with roadie credentials add-key --pool alice or roadie credentials login anthropic --pool alice',
+      },
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('a single pool id in the list behaves exactly as before', async () => {
+    await seedPool({ keys: ['sk-ant-single'] })
+    const fetchImpl = stubFetch(async () => jsonResponse(200, { ok: true }))
+    const poolFetch = makePoolFetch({ dataDir, rotationName: 'default', now: () => NOW, fetchImpl })
+    const response = await poolFetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-roadie-pool': 'shared' },
+      body: JSON.stringify({ model: 'default' }),
+    })
+    expect(response.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(new Headers(lastInit(fetchImpl, 0).headers).get('x-api-key')).toBe('sk-ant-single')
   })
 })
 

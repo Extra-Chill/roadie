@@ -33,6 +33,7 @@ import { spawn } from 'node:child_process'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { isValidPoolId } from './credentials/store.js'
 
 const logger = createLogger(LogPrefix.DISCORD)
 
@@ -62,6 +63,10 @@ export type Person = {
   agent?: string
   model?: string
   permissions: string[]
+  // Credential pool override for this person (credential pools phase 2a):
+  // puts a team on one pool or pins a guest to `shared`. Optional; hooks that
+  // do not send it behave as before. Invalid pool ids are ignored.
+  credentialPool?: string
 }
 
 const hookOutputSchema = z.object({
@@ -71,6 +76,7 @@ const hookOutputSchema = z.object({
   agent: z.string().min(1).max(200).optional(),
   model: z.string().min(1).max(200).optional(),
   permissions: z.array(z.string().min(1).max(500)).max(100).optional(),
+  credential_pool: z.string().min(1).max(200).optional(),
   ttl_seconds: z.number().int().min(0).max(MAX_TTL_SECONDS).optional(),
 })
 
@@ -220,6 +226,9 @@ async function runHook({
   const capabilities = new Set<Capability>(
     out.allowed ? (out.capabilities ?? ['sessions']) : [],
   )
+  const credentialPool = out.credential_pool && isValidPoolId(out.credential_pool)
+    ? out.credential_pool
+    : undefined
   const person: Person = {
     allowed: out.allowed,
     ...(out.person_id ? { personId: out.person_id } : {}),
@@ -227,6 +236,7 @@ async function runHook({
     ...(out.agent ? { agent: out.agent } : {}),
     ...(out.model ? { model: out.model } : {}),
     permissions: out.permissions ?? [],
+    ...(credentialPool ? { credentialPool } : {}),
   }
   return { person, ttlSeconds: out.ttl_seconds ?? DEFAULT_TTL_SECONDS }
 }

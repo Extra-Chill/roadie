@@ -91,6 +91,7 @@ import {
 } from '../message-formatting.js'
 import {
   setSessionTurnAttribution,
+  recordCredentialOwner,
   getChannelVerbosity,
   getPartMessageIds,
   getDb,
@@ -121,6 +122,7 @@ import {
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
+import { resolveTurnBilling } from '../credentials/person-pool.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
@@ -852,6 +854,7 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
   return {
     ...input,
     ...(person.personId ? { personId: person.personId } : {}),
+    ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
     ...(input.agent || !person.agent ? {} : { agent: person.agent }),
     ...(input.model || !person.model ? {} : { model: person.model }),
     ...(person.permissions.length > 0
@@ -889,6 +892,9 @@ export type IngressInput = {
   actorVia?: 'chat' | 'cli'
   // Opaque host person id resolved by the identity hook for this turn.
   personId?: string
+  // Credential pool override from the identity hook (`credential_pool`),
+  // applied to the speaker's billing pool when credential pools are enabled.
+  credentialPool?: string
   // Discord message ID and thread ID for the source message, embedded in
   // <discord-user> synthetic context so the model knows which message it answers.
   sourceMessageId?: string
@@ -3513,14 +3519,28 @@ export class ThreadSessionRuntime {
    * Record the current turn's speaker for this session before dispatching it,
    * so tool processes (via the plugin's shell.env hook) see who is speaking.
    * A turn without a userId clears the actor. Failures are logged, never fatal.
+   *
+   * With credential pools enabled this also resolves the speaker's billing
+   * pool (person id, else `<platform>:<actorId>`, with the identity hook's
+   * `credential_pool` override) onto the attribution row, and claims session
+   * ownership for the first human speaker (insert-or-ignore).
    */
   private async recordTurnAttribution({
     sessionId,
     input,
   }: {
     sessionId: string
-    input: Pick<IngressInput, 'userId' | 'username' | 'actorVia' | 'personId'>
+    input: Pick<IngressInput, 'userId' | 'username' | 'actorVia' | 'personId' | 'credentialPool'>
   }): Promise<void> {
+    const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
+    const billing = input.userId
+      ? resolveTurnBilling({
+          personId: input.personId,
+          platform: this.chat.platform,
+          actorId: input.userId,
+          credentialPoolOverride: input.credentialPool,
+        })
+      : undefined
     const result = await setSessionTurnAttribution({
       sessionId,
       threadId: this.thread.id,
@@ -3534,11 +3554,24 @@ export class ThreadSessionRuntime {
               via: input.actorVia ?? 'chat',
             },
             ...(input.personId ? { personId: input.personId } : {}),
+            ...(credentialPoolsEnabled && billing ? { credentialPool: billing.poolId } : {}),
           }
         : {}),
     }).catch((e) => new Error('Failed to record session turn attribution', { cause: e }))
     if (result instanceof Error) {
       logger.warn(`[ACTOR] ${result.message} for session ${sessionId}: ${String(result.cause)}`)
+    }
+    if (credentialPoolsEnabled && billing) {
+      // First human speaker owns the session; insert-or-ignore keeps later
+      // speakers from moving it. Sessions with no actor stay ownerless and
+      // bill to the shared pool.
+      await recordCredentialOwner({
+        sessionId,
+        poolId: billing.poolId,
+        personKey: billing.personKey,
+      }).catch((e) =>
+        logger.warn(`[ACTOR] Failed to record credential owner for session ${sessionId}: ${String(e)}`),
+      )
     }
   }
 

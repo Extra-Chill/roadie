@@ -924,6 +924,9 @@ export type SessionTurnAttribution = {
   channelId?: string
   actor?: SessionActor
   personId?: string
+  // Credential pool the speaker bills to (credential pools phase 2a). Only
+  // recorded when credential pools are enabled; without the flag it is null.
+  credentialPool?: string
 }
 
 /**
@@ -937,6 +940,7 @@ export async function setSessionTurnAttribution({
   channelId,
   actor,
   personId,
+  credentialPool,
 }: SessionTurnAttribution) {
   const db = await getDb()
   const values = {
@@ -948,6 +952,7 @@ export async function setSessionTurnAttribution({
     actor_name: actor?.name ?? null,
     actor_via: actor?.via ?? null,
     person_id: actor ? (personId ?? null) : null,
+    credential_pool: actor ? (credentialPool ?? null) : null,
     updated_at: new Date(),
   }
   await db.insert(schema.session_actors)
@@ -962,6 +967,7 @@ export async function setSessionTurnAttribution({
         actor_name: values.actor_name,
         actor_via: values.actor_via,
         person_id: values.person_id,
+        credential_pool: values.credential_pool,
         updated_at: values.updated_at,
       },
     })
@@ -990,6 +996,51 @@ export async function getSessionTurnAttribution(
     ...(row.channel_id ? { channelId: row.channel_id } : {}),
     ...(actor ? { actor } : {}),
     ...(actor && row.person_id ? { personId: row.person_id } : {}),
+    ...(actor && row.credential_pool ? { credentialPool: row.credential_pool } : {}),
+  }
+}
+
+/**
+ * Claim session ownership for credential billing: the first human speaker of
+ * a session owns it. Insert-or-ignore, so later speakers (or a rebinding of
+ * the same person) never move an existing owner. Called at turn attribution
+ * when credential pools are enabled.
+ */
+export async function recordCredentialOwner({
+  sessionId,
+  poolId,
+  personKey,
+}: {
+  sessionId: string
+  poolId: string
+  personKey?: string
+}) {
+  const db = await getDb()
+  await db.insert(schema.credential_owners)
+    .values({
+      session_id: sessionId,
+      pool_id: poolId,
+      ...(personKey ? { person_key: personKey } : {}),
+    })
+    .onConflictDoNothing({ target: schema.credential_owners.session_id })
+}
+
+/**
+ * The session's credential owner, or undefined when no human speaker has been
+ * recorded (scheduled tasks, `roadie send` without --user). Callers default
+ * those sessions to the shared pool.
+ */
+export async function getSessionCredentialOwner(
+  sessionId: string,
+): Promise<{ poolId: string; personKey?: string } | undefined> {
+  const db = await getDb()
+  const row = await db.query.credential_owners.findFirst({
+    where: { session_id: sessionId },
+  })
+  if (!row) return undefined
+  return {
+    poolId: row.pool_id,
+    ...(row.person_key ? { personKey: row.person_key } : {}),
   }
 }
 

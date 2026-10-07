@@ -19,10 +19,12 @@ import {
   setSessionModel,
   setSessionAgent,
   setSessionTurnAttribution,
+  recordCredentialOwner,
   createScheduledTask,
   consumeSessionSleepWake,
 } from './database.js'
 import * as schema from './schema.js'
+import { resolveTurnBilling } from './credentials/person-pool.js'
 import {
   channelAllowsSpeaker,
   channelAllowsCapability,
@@ -956,7 +958,14 @@ export class NativeSlackBot {
       if (runtime instanceof Error) return runtime
       const thread = this.threads.get(runtime.threadId)!
       const sessionId = runtime.state?.sessionId
-      if (sessionId)
+      if (sessionId) {
+        const billing = resolveTurnBilling({
+          personId: identity.person?.personId,
+          platform: 'slack',
+          actorId: identity.actor.id,
+          credentialPoolOverride: identity.person?.credentialPool,
+        })
+        const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
         await setSessionTurnAttribution({
           sessionId,
           threadId: runtime.threadId,
@@ -968,7 +977,17 @@ export class NativeSlackBot {
             via: 'chat',
           },
           personId: identity.person?.personId,
+          ...(credentialPoolsEnabled && billing ? { credentialPool: billing.poolId } : {}),
         })
+        if (credentialPoolsEnabled && billing) {
+          // First human speaker owns the session (insert-or-ignore).
+          await recordCredentialOwner({
+            sessionId,
+            poolId: billing.poolId,
+            personKey: billing.personKey,
+          }).catch(() => undefined)
+        }
+      }
       const result = await thread.handleInteraction(delivery.event)
       return result instanceof Error ? result : undefined
     }

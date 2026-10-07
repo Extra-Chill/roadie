@@ -29,6 +29,10 @@ import threadCommands from './cli-commands/thread.js'
 import userCommands from './cli-commands/user.js'
 import { isIdentityHookConfigured, setIdentityHookCommand } from './identity.js'
 import {
+  parseCredentialsModeStrict,
+  parseThreadBillingStrict,
+} from './credentials/person-pool.js'
+import {
   getChannelsConfigPath,
   isChannelPolicyConfigured,
   setChannelsConfigPath,
@@ -132,6 +136,14 @@ cli
     'Enable credential pools: manage API keys per pool (roadie credentials ...) and expose the shared pool rotations as roadie/<rotation> models. Same as ROADIE_CREDENTIAL_POOLS=1',
   )
   .option(
+    '--credentials <mode>',
+    'Credential pool routing: global (default, shared pool only), per-person (each session bills to its owner\'s pool), per-person-fallback (owner pool first, then shared). Implies --credential-pools except for global. Same as ROADIE_CREDENTIALS',
+  )
+  .option(
+    '--thread-billing <billing>',
+    'Who pays for a thread in per-person credential routing: owner (default, the first speaker owns the session) or speaker (each turn bills to whoever sent it). Same as ROADIE_THREAD_BILLING',
+  )
+  .option(
     '--no-analytics',
     'Deprecated no-op: Roadie no longer sends product analytics',
   )
@@ -207,6 +219,8 @@ cli
       disableSync?: boolean
       subrouter?: boolean
       credentialPools?: boolean
+      credentials?: string
+      threadBilling?: string
       autoRestart?: boolean
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
@@ -314,6 +328,40 @@ cli
           return parsed
         })()
 
+        // Credential pool routing (phase 2a). Strict on the flag (a typo must
+        // not silently bill everyone to shared), permissive on the env (warn).
+        const credentialsMode = (() => {
+          if (!options.credentials) return undefined
+          const parsed = parseCredentialsModeStrict(options.credentials)
+          if (parsed instanceof Error) {
+            cliLogger.error(parsed.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed
+        })()
+        const threadBilling = (() => {
+          if (!options.threadBilling) return undefined
+          const parsed = parseThreadBillingStrict(options.threadBilling)
+          if (parsed instanceof Error) {
+            cliLogger.error(parsed.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed
+        })()
+        for (const [envName, parse] of [
+          ['ROADIE_CREDENTIALS', parseCredentialsModeStrict],
+          ['ROADIE_THREAD_BILLING', parseThreadBillingStrict],
+        ] as const) {
+          const value = process.env[envName]
+          if (value && parse(value) instanceof Error) {
+            cliLogger.warn(
+              `Ignoring unsupported ${envName}=${value}: falling back to the default`,
+            )
+          }
+        }
+        // A per-person --credentials mode is itself an opt-in to pools.
+        const perPersonCredentials = credentialsMode === 'per-person' || credentialsMode === 'per-person-fallback'
+
         if (
           publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
           !process.env.OPENCODE_SERVER_PASSWORD
@@ -336,6 +384,9 @@ cli
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.subrouter === false && { subrouterEnabled: false }),
           ...(options.credentialPools && { credentialPoolsEnabled: true }),
+          ...(perPersonCredentials && { credentialPoolsEnabled: true }),
+          ...(credentialsMode && { credentialsMode }),
+          ...(threadBilling && { threadBilling }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
@@ -417,6 +468,11 @@ cli
         if (options.credentialPools) {
           cliLogger.log(
             'Credential pools enabled: the shared pool rotations are exposed as roadie/<rotation> models',
+          )
+        }
+        if (perPersonCredentials) {
+          cliLogger.log(
+            `Credential routing: ${credentialsMode} (thread billing: ${threadBilling ?? 'owner'})`,
           )
         }
         if (options.noAnalytics) {
