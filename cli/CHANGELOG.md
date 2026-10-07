@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.44.0] - 2026-10-07
+
+### Added
+- import subrouter accounts and presets into credential pools
+
 ## [0.43.0] - 2026-10-06
 
 ### Added
