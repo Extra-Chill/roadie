@@ -6,6 +6,12 @@
 import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './schema.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
+import {
+  parseCredentialsMode,
+  parseThreadBilling,
+  type CredentialsMode,
+  type ThreadBilling,
+} from './credentials/person-pool.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.
 // discordCommandName is the full sanitized Discord slash command name
@@ -137,6 +143,23 @@ export type RoadieState = {
   // Read by: opencode.ts when building the server config and env.
   credentialPoolsEnabled: boolean
 
+  // How LLM requests are routed to credential pools (credential pools phase
+  // 2a): `global` bills everything to the shared pool (today's behavior),
+  // `per-person` bills each session to its owner's pool, and
+  // `per-person-fallback` tries the owner's pool first, then shared. Only
+  // read when credentialPoolsEnabled is on. Opt-in via --credentials or
+  // ROADIE_CREDENTIALS; default global.
+  // Changes: set once at startup.
+  // Read by: opencode.ts when passing ROADIE_CREDENTIALS to the server.
+  credentialsMode: CredentialsMode
+
+  // Who pays for a thread in per-person modes: `owner` bills every turn to
+  // the session owner, `speaker` bills each turn to whoever sent it. Opt-in
+  // via --thread-billing or ROADIE_THREAD_BILLING; default owner.
+  // Changes: set once at startup.
+  // Read by: opencode.ts when passing ROADIE_THREAD_BILLING to the server.
+  threadBilling: ThreadBilling
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -187,6 +210,8 @@ export const store = createStore<RoadieState>(() => ({
   autoUpgradeEnabled: true,
   subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
   credentialPoolsEnabled: process.env.ROADIE_CREDENTIAL_POOLS === '1',
+  credentialsMode: parseCredentialsMode(process.env.ROADIE_CREDENTIALS),
+  threadBilling: parseThreadBilling(process.env.ROADIE_THREAD_BILLING),
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],

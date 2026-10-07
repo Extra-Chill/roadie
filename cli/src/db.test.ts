@@ -23,7 +23,9 @@ import {
   getDueSessionSleeps,
   getIpcRequestById,
   getScheduledTask,
+  getSessionCredentialOwner,
   getSessionEventSnapshot,
+  getSessionTurnAttribution,
   getSessionAgent,
   getSessionModel,
   getSessionSleep,
@@ -31,10 +33,12 @@ import {
   insertThreadQueueItem,
   listAllThreadQueueItems,
   listThreadQueueItems,
+  recordCredentialOwner,
   setChannelDirectory,
   setChannelVerbosity,
   setSessionAgent,
   setSessionModel,
+  setSessionTurnAttribution,
   setThreadSession,
   updateThreadQueueItemPayload,
   upsertSessionSleep,
@@ -490,6 +494,100 @@ describe('getDb', () => {
         }
       }
     }
+  })
+
+  test('adds session_actors credential_pool on databases created before phase 2a', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['ROADIE_DB_URL']
+    const dbPath = path.join(testDbDir, `test-db-legacy-actors-${crypto.randomUUID().slice(0, 8)}.db`)
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      // session_actors as shipped before credential pools phase 2a: no
+      // credential_pool column, and person_id may be missing too.
+      await client.execute(`
+        CREATE TABLE session_actors (
+          session_id text PRIMARY KEY,
+          thread_id text,
+          channel_id text,
+          actor_platform text,
+          actor_id text,
+          actor_name text,
+          actor_via text,
+          updated_at datetime
+        )
+      `)
+      await client.execute(`
+        INSERT INTO session_actors (session_id, thread_id, actor_platform, actor_id, actor_via)
+        VALUES ('ses-legacy-actors', 'thr-legacy-actors', 'discord', '42', 'chat')
+      `)
+      client.close()
+
+      process.env['ROADIE_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      // The legacy row survives, and attribution writes with the new column work.
+      await setSessionTurnAttribution({
+        sessionId: 'ses-legacy-actors',
+        threadId: 'thr-legacy-actors',
+        actor: { platform: 'discord', id: '42', via: 'chat' },
+        personId: 'wp:1',
+        credentialPool: 'alice',
+      })
+      expect(await getSessionTurnAttribution('ses-legacy-actors')).toMatchObject({
+        sessionId: 'ses-legacy-actors',
+        personId: 'wp:1',
+        credentialPool: 'alice',
+      })
+
+      // A turn without an actor clears the pool with the actor.
+      await setSessionTurnAttribution({ sessionId: 'ses-legacy-actors', threadId: 'thr-legacy-actors' })
+      expect(await getSessionTurnAttribution('ses-legacy-actors')).not.toHaveProperty('credentialPool')
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['ROADIE_DB_URL']
+      } else {
+        process.env['ROADIE_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('credential owner: the first speaker owns and later speakers do not move it', async () => {
+    const sessionId = `ses-owner-${crypto.randomUUID()}`
+    await recordCredentialOwner({ sessionId, poolId: 'alice', personKey: 'discord:1' })
+    expect(await getSessionCredentialOwner(sessionId)).toEqual({
+      poolId: 'alice',
+      personKey: 'discord:1',
+    })
+
+    // A second speaker (or the same person on another turn) never moves it.
+    await recordCredentialOwner({ sessionId, poolId: 'bob', personKey: 'discord:2' })
+    await recordCredentialOwner({ sessionId, poolId: 'alice', personKey: 'discord:1' })
+    expect(await getSessionCredentialOwner(sessionId)).toEqual({
+      poolId: 'alice',
+      personKey: 'discord:1',
+    })
+
+    // A fork (new session id) gets its own owner.
+    const forkId = `ses-fork-${crypto.randomUUID()}`
+    await recordCredentialOwner({ sessionId: forkId, poolId: 'bob', personKey: 'discord:2' })
+    expect(await getSessionCredentialOwner(forkId)).toEqual({ poolId: 'bob', personKey: 'discord:2' })
+    expect(await getSessionCredentialOwner(sessionId)).toEqual({
+      poolId: 'alice',
+      personKey: 'discord:1',
+    })
+
+    // Sessions with no actor never get a row: callers default them to shared.
+    expect(await getSessionCredentialOwner(`ses-unowned-${crypto.randomUUID()}`)).toBeUndefined()
   })
 
   test('rebuilds session_sleeps that still have posted_at from the intermediate schema', async () => {

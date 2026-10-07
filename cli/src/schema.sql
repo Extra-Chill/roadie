@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS `conversation_participants` (
 	CONSTRAINT `fk_conversation_participants_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `credential_owners` (
+	`session_id` text PRIMARY KEY,
+	`pool_id` text NOT NULL,
+	`person_key` text,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `forum_sync_configs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`app_id` text NOT NULL,
@@ -203,6 +210,7 @@ CREATE TABLE IF NOT EXISTS `session_actors` (
 	`actor_name` text,
 	`actor_via` text,
 	`person_id` text,
+	`credential_pool` text,
 	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 

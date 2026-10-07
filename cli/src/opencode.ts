@@ -187,7 +187,13 @@ import {
 import { execAsync } from './exec-async.js'
 import { computeSkillPermission } from './skill-filter.js'
 import { readPoolRotations, SHARED_POOL_ID } from './credentials/store.js'
-import { CREDENTIAL_POOLS_ENV } from './credential-pools-plugin.js'
+import {
+  CREDENTIAL_POOLS_ENV,
+} from './credential-pools-plugin.js'
+import {
+  CREDENTIALS_MODE_ENV,
+  THREAD_BILLING_ENV,
+} from './credentials/person-pool.js'
 import { ROADIE_PROVIDER_ID } from './credentials/provider.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
@@ -1108,6 +1114,13 @@ async function startSingleServer({
         // Opt-in credential pools: the plugin and provider read this inside
         // the OpenCode process (config.ts state is not available there).
         ...(credentialPoolsEnabled && { [CREDENTIAL_POOLS_ENV]: '1' }),
+        // Per-person routing (phase 2a): mode and billing for the
+        // chat.headers hook. Set only with pools enabled, so the default
+        // (global) environment is unchanged.
+        ...(credentialPoolsEnabled && {
+          [CREDENTIALS_MODE_ENV]: store.getState().credentialsMode,
+          [THREAD_BILLING_ENV]: store.getState().threadBilling,
+        }),
         ...(gatewayToken && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `roadie` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.

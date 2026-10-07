@@ -5,8 +5,9 @@
 // `createRoadiePoolProvider` must remain the only `create*` export here.
 //
 // Every LLM request goes through `poolFetch`, which:
-//   1. reads the pool id the roadie plugin put in `x-roadie-pool`
-//      (chat.headers hook),
+//   1. reads the ordered pool list the roadie plugin put in `x-roadie-pool`
+//      (chat.headers hook; global mode sends the single `shared` pool, and a
+//      single id behaves exactly as before),
 //   2. strips every `x-roadie-*` header plus the SDK placeholder auth headers
 //      so nothing internal reaches upstream,
 //   3. resolves the pool's rotation into ordered candidates, skipping
@@ -44,6 +45,7 @@ import {
   type PoolAccount,
 } from './store.js'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
+import { parsePoolListHeader } from './person-pool.js'
 import {
   applyAnthropicOAuthRequestHeaders,
   isPermanentRefreshFailure,
@@ -286,6 +288,79 @@ export type PoolFetchOptions = {
   fetchImpl?: PoolFetch
 }
 
+/**
+ * Resolved candidates for one pool in the request's list, or why the pool was
+ * skipped. An unusable pool (empty, cooling down, or missing the rotation)
+ * never fails the request on its own: the next pool answers, and only when
+ * every listed pool is unusable does the request fail.
+ */
+type PoolResolution =
+  | { poolId: string; candidates: PoolCandidate[] }
+  | { poolId: string; candidates: PoolCandidate[]; skipped: string }
+
+function resolvePoolListCandidates({
+  poolIds,
+  dataDir,
+  rotationName,
+  now,
+}: {
+  poolIds: string[]
+  dataDir: string
+  rotationName: string
+  now: number
+}): PoolResolution[] {
+  return poolIds.map((poolId) => {
+    const accounts = readPoolAccounts({ dataDir, poolId })
+    if (accounts instanceof Error) {
+      return { poolId, candidates: [], skipped: accounts.message }
+    }
+    if (accounts.length === 0) {
+      return { poolId, candidates: [], skipped: `pool ${poolId} has no accounts` }
+    }
+    const rotations = readPoolRotations({ dataDir, poolId })
+    if (rotations instanceof Error) {
+      return { poolId, candidates: [], skipped: rotations.message }
+    }
+    const rotation = rotations[rotationName] ?? []
+    if (rotation.length === 0) {
+      return {
+        poolId,
+        candidates: [],
+        skipped: `pool ${poolId} has no rotation named ${rotationName}`,
+      }
+    }
+    const state = readPoolState({ dataDir, poolId })
+    if (state instanceof Error) {
+      return { poolId, candidates: [], skipped: state.message }
+    }
+    return {
+      poolId,
+      candidates: resolveCandidates({
+        poolId,
+        rotation,
+        accounts,
+        cooldowns: state.cooldowns,
+        now,
+      }),
+    }
+  })
+}
+
+/** The 401 body when every pool in the request's list is unusable. */
+export function noUsableAccountsMessage({
+  requestedPool,
+  firstPoolId,
+}: {
+  requestedPool: string
+  firstPoolId: string
+}): string {
+  return (
+    `no usable accounts in pool ${requestedPool}; ` +
+    `add one with roadie credentials add-key --pool ${firstPoolId} ` +
+    `or roadie credentials login anthropic --pool ${firstPoolId}`
+  )
+}
+
 /** The global fetch type (bun-types) carries a preconnect member; match it so the fetch installs cleanly on the AI SDK providers. */
 export type PoolFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
@@ -320,35 +395,43 @@ export function makePoolFetch({
     if (!requestedPool) {
       return jsonErrorResponse(401, 'no credential pool on request')
     }
-
-    const accounts = readPoolAccounts({ dataDir, poolId: requestedPool })
-    if (accounts instanceof Error) return jsonErrorResponse(401, accounts.message)
-    if (accounts.length === 0) {
-      return jsonErrorResponse(401, `pool ${requestedPool} has no accounts`)
+    // `x-roadie-pool` carries an ordered comma-separated list (per-person
+    // fallback appends `shared`); a single pool id behaves exactly as before.
+    const poolIds = parsePoolListHeader(requestedPool)
+    if (poolIds.length === 0) {
+      return jsonErrorResponse(401, 'no credential pool on request')
     }
-    const rotations = readPoolRotations({ dataDir, poolId: requestedPool })
-    if (rotations instanceof Error) return jsonErrorResponse(401, rotations.message)
-    const rotation = rotations[rotationName] ?? []
-    if (rotation.length === 0) {
-      return jsonErrorResponse(
-        401,
-        `pool ${requestedPool} has no rotation named ${rotationName}`,
-      )
-    }
-    const state = readPoolState({ dataDir, poolId: requestedPool })
-    if (state instanceof Error) return jsonErrorResponse(401, state.message)
 
-    const candidates = resolveCandidates({
-      poolId: requestedPool,
-      rotation,
-      accounts,
-      cooldowns: state.cooldowns,
+    const resolutions = resolvePoolListCandidates({
+      poolIds,
+      dataDir,
+      rotationName,
       now: timestamp,
     })
+    const candidates = resolutions.flatMap((resolution) => resolution.candidates)
     if (candidates.length === 0) {
+      // Every listed pool is empty, cooling down, or otherwise unusable.
+      // Empty/cooling pools (the "nothing to bill" case, including a
+      // per-person pool) always get the actionable message; other reasons
+      // (e.g. a missing rotation on the only listed pool) keep their
+      // specific text, as before lists existed.
+      const isEmptyOrCooling = (resolution: PoolResolution): boolean =>
+        'skipped' in resolution
+          ? resolution.skipped.includes('has no accounts')
+          : resolution.candidates.length === 0
+      if (resolutions.every(isEmptyOrCooling)) {
+        return jsonErrorResponse(
+          401,
+          noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }),
+        )
+      }
+      const first = resolutions[0]
+      if (poolIds.length === 1 && first && 'skipped' in first) {
+        return jsonErrorResponse(401, first.skipped)
+      }
       return jsonErrorResponse(
-        429,
-        `all accounts in pool ${requestedPool} are cooling down`,
+        401,
+        noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }),
       )
     }
 
@@ -361,7 +444,7 @@ export function makePoolFetch({
       if (wireForProvider(candidate.provider) !== requestWire) continue
       const account = await ensureFreshOAuthAccount({
         dataDir,
-        poolId: requestedPool,
+        poolId: candidate.poolId,
         account: candidate.account,
         now: timestamp,
         fetchImpl,
@@ -374,12 +457,14 @@ export function makePoolFetch({
         // Best-effort metadata: a failed last-used write never changes the
         // routing outcome, and cooldowns (the state that matters) are
         // persisted separately below.
-        void markUsed({ dataDir, poolId: requestedPool, accountId: account.id, now: timestamp })
+        void markUsed({ dataDir, poolId: candidate.poolId, accountId: account.id, now: timestamp })
         return shaped.wrapResponse(response)
       }
+      // Cooldowns are per pool: a rate-limited account in the billed pool
+      // never cools down the same provider's account in another pool.
       const cooldown = markCooldown({
         dataDir,
-        poolId: requestedPool,
+        poolId: candidate.poolId,
         accountId: candidate.account.id,
         untilMs: cooldownUntilFromRetryAfter({
           retryAfter: response.headers.get('retry-after'),

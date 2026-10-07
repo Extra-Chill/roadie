@@ -207,7 +207,25 @@ export const session_actors = sqliteCore.sqliteTable('session_actors', {
   actor_via: sqliteCore.text('actor_via', { enum: ['chat', 'cli'] }),
   // Opaque host person id from the identity hook, when one is configured.
   person_id: sqliteCore.text('person_id'),
+  // Credential pool the current speaker bills to (credential pools phase 2a).
+  // Recorded only when credential pools are enabled; without the flag the
+  // column stays null and routing is unchanged.
+  credential_pool: sqliteCore.text('credential_pool'),
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
+// Session credential ownership (credential pools phase 2a): the first human
+// speaker of a session owns it. Written insert-or-ignore at turn attribution,
+// so later speakers, forks and rebinding never move an existing owner; a
+// session with no row (scheduled tasks, `roadie send` without --user) bills
+// to the shared pool.
+export const credential_owners = sqliteCore.sqliteTable('credential_owners', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  pool_id: sqliteCore.text('pool_id').notNull(),
+  // Person key that resolved to the pool: identity-hook person_id, else
+  // `<platform>:<actorId>`. Null only for a shared default row.
+  person_key: sqliteCore.text('person_key'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
 export const channel_agents = sqliteCore.sqliteTable('channel_agents', {
@@ -390,6 +408,7 @@ export const relations = defineRelations({
   forum_sync_configs,
   session_sleeps,
   ipc_requests,
+  credential_owners,
 }, (r) => ({
   thread_sessions: {
     session_events: r.many.session_events(),
@@ -467,6 +486,7 @@ export const relations = defineRelations({
   ipc_requests: {
     thread: r.one.thread_sessions({ from: r.ipc_requests.thread_id, to: r.thread_sessions.thread_id }),
   },
+  credential_owners: {},
 }))
 
 export type BotMode = typeof bot_tokens.$inferSelect.bot_mode
