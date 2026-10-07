@@ -232,12 +232,6 @@ cli
             cliLogger.error('Cannot use --file with --send-at')
             process.exit(EXIT_NO_RESTART)
           }
-          if (prompt.length > 1900) {
-            cliLogger.error(
-              '--send-at currently supports prompts up to 1900 characters',
-            )
-            process.exit(EXIT_NO_RESTART)
-          }
         }
 
         // Validate all --file paths exist and are regular files

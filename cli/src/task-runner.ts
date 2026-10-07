@@ -28,6 +28,7 @@ import {
 } from './database.js'
 import { execAsync } from './exec-async.js'
 import { QUEUE_PREFIX } from './message-formatting.js'
+import { prepareDiscordPromptMessage } from './discord-prompt-message.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -42,7 +43,6 @@ import {
 } from './task-schedule.js'
 
 const taskLogger = createLogger(LogPrefix.TASK)
-const MAX_SCHEDULED_PROMPT_LENGTH = 1_900
 const PENDING_RUN_TIMEOUT_MS = 120_000
 
 type StartTaskRunnerOptions = {
@@ -127,12 +127,10 @@ async function executeThreadScheduledTask({
   }
 
   const postResult = await rest
-    .post(Routes.channelMessages(payload.threadId), {
-      body: {
-        content: prefixedPrompt,
-        embeds: embed,
-      },
-    })
+    .post(Routes.channelMessages(payload.threadId), prepareDiscordPromptMessage({
+      prompt: prefixedPrompt,
+      metadata: { embeds: embed },
+    }))
     .catch((error) => {
       return new Error(`Failed to post scheduled thread task ${task.id}`, {
         cause: error,
@@ -184,14 +182,17 @@ async function postSessionSleepWake({
 }): Promise<SleepWakeFailure | null> {
   // `.then(() => null)` keeps the success type concrete. Returning the raw post
   // value would widen the union to `unknown` and erase the failure shape.
+  const { content, ...metadata } = buildSessionSleepWakeBody({
+    deliveryId: sleep.delivery_id,
+    wakeAt: sleep.wake_at,
+    reason: sleep.reason,
+  })
   return await rest
-    .post(Routes.channelMessages(threadId), {
-      body: buildSessionSleepWakeBody({
-        deliveryId: sleep.delivery_id,
-        wakeAt: sleep.wake_at,
-        reason: sleep.reason,
-      }),
-    })
+    .post(Routes.channelMessages(threadId), prepareDiscordPromptMessage({
+      prompt: content,
+      metadata,
+      attachmentContent: formatSessionSleepWakePrompt({ wakeAt: sleep.wake_at, reason: null }),
+    }))
     .then((): SleepWakeFailure | null => {
       return null
     })
@@ -312,12 +313,10 @@ async function executeChannelScheduledTask({
     : undefined
 
   const starterResult = await rest
-    .post(Routes.channelMessages(payload.channelId), {
-      body: {
-        content: prompt,
-        embeds,
-      },
-    })
+    .post(Routes.channelMessages(payload.channelId), prepareDiscordPromptMessage({
+      prompt,
+      metadata: { embeds },
+    }))
     .catch((error) => {
       return new Error(`Failed to create starter message for task ${task.id}`, {
         cause: error,
@@ -406,11 +405,6 @@ export async function runTaskCommand({
   if (result instanceof Error) return { kind: 'skip' }
 
   const prompt = appendTaskCommandOutput({ prompt: payload.prompt, stdout })
-  if (prompt.length > MAX_SCHEDULED_PROMPT_LENGTH) {
-    return new Error(
-      `Task ${task.id} prompt and pre-run stdout exceed ${MAX_SCHEDULED_PROMPT_LENGTH} characters`,
-    )
-  }
   return { kind: 'run', prompt }
 }
 

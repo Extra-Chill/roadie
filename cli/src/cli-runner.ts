@@ -50,11 +50,14 @@ import {
   type REST,
   Routes,
   AttachmentBuilder,
+  AllowedMentionsTypes,
 } from 'discord.js'
 import { discordApiUrl, getDiscordRestApiUrl } from './discord-urls.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
+import { buildLongPromptMessage, prepareDiscordPromptMessage } from './discord-prompt-message.js'
+export { buildLongPromptMessage } from './discord-prompt-message.js'
 import { spawn } from 'node:child_process'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -182,57 +185,6 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
 
 export { isThreadChannelType }
 
-/** Wrap long lines so prompt.md is readable in Discord's attachment preview. */
-function wrapPromptAttachmentText(prompt: string): string {
-  return prompt
-    .split('\n')
-    .flatMap((line) => {
-      if (line.length <= 120) {
-        return [line]
-      }
-      const wrapped: string[] = []
-      let remaining = line
-      const maxCol = 120
-      // Only soft-break at a space if it's reasonably close to maxCol,
-      // otherwise hard-break to avoid tiny fragments from early spaces
-      const minSoftBreak = 90
-      while (remaining.length > maxCol) {
-        const lastSpace = remaining.lastIndexOf(' ', maxCol)
-        const useSoftBreak = lastSpace >= minSoftBreak
-        const breakAt = useSoftBreak ? lastSpace : maxCol
-        wrapped.push(remaining.slice(0, breakAt))
-        // Only consume the separator space on soft breaks
-        remaining = useSoftBreak
-          ? remaining.slice(breakAt + 1)
-          : remaining.slice(breakAt)
-      }
-      if (remaining.length > 0) {
-        wrapped.push(remaining)
-      }
-      return wrapped
-    })
-    .join('\n')
-}
-
-/**
- * Visible message content + prompt.md text for prompts over Discord's limit.
- */
-export function buildLongPromptMessage(prompt: string): {
-  content: string
-  fileText: string
-} {
-  const fileText = prompt
-  const preview = fileText.slice(0, 100).replace(/\n/g, ' ')
-  const summary = `Prompt attached as file (${fileText.length} chars)\n\n> ${preview}…`
-  return { content: summary, fileText }
-}
-
-function promptAttachmentBlob(text: string) {
-  return new Blob([new Uint8Array(Buffer.from(text, 'utf8'))], {
-    type: 'text/markdown',
-  })
-}
-
 export async function sendDiscordMessageWithOptionalAttachment({
   channelId,
   prompt,
@@ -246,7 +198,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
   prompt: string
   botToken: string
   embeds?: Array<{ color: number; footer: { text: string } }>
-  /** Only `post` is used (short prompt / split paths). Accept a narrow shape so tests need no cast. */
+  /** Only `post` is used. Accept a narrow shape so tests need no cast. */
   rest: Pick<REST, 'post'>
   /** When true, long messages are split into multiple Discord messages instead of
    *  being attached as a file. Useful for notify-only messages where the content
@@ -371,43 +323,14 @@ export async function sendDiscordMessageWithOptionalAttachment({
     return firstMessage!
   }
 
-  const longPrompt = buildLongPromptMessage(prompt)
-  // In-memory Blob only — no temp file. Parallel send must never share a path.
-  const formData = new FormData()
-  formData.append(
-    'payload_json',
-    JSON.stringify({
-      content: longPrompt.content,
-      attachments: [{ id: 0, filename: 'prompt.md' }],
-      embeds,
-      allowed_mentions: { parse: store.getState().allowedMentions },
-    }),
-  )
-  formData.append(
-    'files[0]',
-    promptAttachmentBlob(wrapPromptAttachmentText(longPrompt.fileText)),
-    'prompt.md',
-  )
-
-  const starterMessageResponse = await fetch(
-    discordApiUrl(`/channels/${channelId}/messages`),
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bot ${botToken}`,
-      },
-      body: formData,
-    },
-  )
-
-  if (!starterMessageResponse.ok) {
-    const error = await starterMessageResponse.text()
-    throw new Error(
-      `Discord API error: ${starterMessageResponse.status} - ${error}`,
-    )
-  }
-
-  return (await starterMessageResponse.json()) as { id: string }
+  return (await rest.post(Routes.channelMessages(channelId), prepareDiscordPromptMessage({
+    prompt,
+    metadata: { embeds, allowed_mentions: { parse: store.getState().allowedMentions.map((mention) => ({
+      roles: AllowedMentionsTypes.Role,
+      users: AllowedMentionsTypes.User,
+      everyone: AllowedMentionsTypes.Everyone,
+    })[mention]) } },
+  }))) as { id: string }
 }
 
 export function formatRelativeTime(target: Date): string {

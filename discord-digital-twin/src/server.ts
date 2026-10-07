@@ -22,6 +22,7 @@ import type {
   APIGuild,
   APIGuildMember,
   APIMessage,
+  APIAttachment,
   APIRole,
   APIThreadList,
   RESTGetAPIGatewayBotResult,
@@ -125,6 +126,7 @@ export function createServer({
 }): ServerComponents {
   const state = { port: 0 }
   const typingEvents: TypingEventRecord[] = []
+  const attachmentFiles = new Map<string, { data: Uint8Array; contentType: string }>()
 
   // Route handlers close over `gateway`. It's assigned after httpServer
   // creation but before any request arrives (server hasn't started listening).
@@ -390,11 +392,33 @@ export function createServer({
     // --- Messages ---
 
     .route({
+      method: 'GET',
+      path: '/attachments/:attachment_id/:filename',
+      handler({ params }) {
+        const file = attachmentFiles.get(params.attachment_id)
+        if (!file) return new Response('Unknown attachment', { status: 404 })
+        return new Response(Buffer.from(file.data), {
+          headers: { 'Content-Type': file.contentType },
+        })
+      },
+    })
+    .route({
       method: 'POST',
       path: '/channels/:channel_id/messages',
       async handler({ params, request }): Promise<APIMessage> {
-        // JSON.parse of unknown request body -- `as` is the only option
-        const body = (await request.json()) as RESTPostAPIChannelMessageJSONBody
+        const form = request.headers.get('content-type')?.startsWith('multipart/form-data')
+          ? await request.formData()
+          : null
+        const body = (form
+          ? JSON.parse(String(form.get('payload_json')))
+          : await request.json()) as RESTPostAPIChannelMessageJSONBody
+        if ((body.content?.length ?? 0) > 2000 || String(body.nonce ?? '').length > 25) {
+          throw new Response(JSON.stringify({
+            code: 50035,
+            message: 'Invalid Form Body',
+            errors: { content: { _errors: [{ code: 'BASE_TYPE_MAX_LENGTH', message: 'Content must be 2000 or fewer in length; nonce must be 25 or fewer.' }] } },
+          }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+        }
         const channel = await prisma.channel.findUnique({
           where: { id: params.channel_id },
         })
@@ -408,6 +432,32 @@ export function createServer({
             { status: 404, headers: { 'Content-Type': 'application/json' } },
           )
         }
+        if (body.enforce_nonce && body.nonce != null) {
+          const previous = await prisma.message.findFirst({
+            where: {
+              channelId: params.channel_id,
+              authorId: botUserId,
+              nonce: String(body.nonce),
+              timestamp: { gte: new Date(Date.now() - 5 * 60_000) },
+            },
+          })
+          if (previous) {
+            const author = await prisma.user.findUniqueOrThrow({ where: { id: botUserId } })
+            return messageToAPI(previous, author, channel.guildId ?? undefined)
+          }
+        }
+        const attachments: APIAttachment[] = []
+        if (form) {
+          for (const descriptor of body.attachments ?? []) {
+            const file = form.get(`files[${descriptor.id}]`)
+            if (!file || typeof file === 'string') continue
+            const id = generateSnowflake()
+            const filename = descriptor.filename ?? file.name
+            const url = `http://127.0.0.1:${state.port}/api/v10/attachments/${id}/${encodeURIComponent(filename)}`
+            attachmentFiles.set(id, { data: new Uint8Array(await file.arrayBuffer()), contentType: file.type })
+            attachments.push({ id, filename, size: file.size, content_type: file.type, url, proxy_url: url })
+          }
+        }
         const messageId = generateSnowflake()
         await prisma.message.create({
           data: {
@@ -415,6 +465,7 @@ export function createServer({
             channelId: params.channel_id,
             authorId: botUserId,
             content: body.content ?? '',
+            attachments: JSON.stringify(attachments),
             tts: body.tts ?? false,
             nonce: body.nonce != null ? String(body.nonce) : null,
             flags: body.flags ?? 0,
