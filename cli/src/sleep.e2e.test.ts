@@ -4,23 +4,27 @@
 // a planned sleep so the wake never fires.
 
 import { describe, test, expect } from 'vitest'
+import { Routes } from 'discord.js'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
-import {
-  setupQueueAdvancedSuite,
-  TEST_USER_ID,
-} from './queue-advanced-e2e-setup.js'
-import {
-  waitForBotMessageContaining,
-  waitForFooterMessage,
-} from './test-utils.js'
-import { getSessionSleep, getThreadSession } from './database.js'
-import { wakeDueSessionSleeps } from './task-runner.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
+import { getSessionSleep, getThreadSession, upsertSessionSleep } from './database.js'
+import { buildSessionSleepWakeBody, wakeDueSessionSleeps } from './task-runner.js'
+import { prepareDiscordPromptMessage } from './discord-prompt-message.js'
+import { formatSessionSleepWakePrompt } from './task-schedule.js'
 
 const TEXT_CHANNEL_ID = '200000000000001073'
 
 // Fixed wake instant so the wake message stays snapshot-stable across runs.
 const SLEEP_UNTIL = '2030-01-01T09:00:00Z'
 const AFTER_SLEEP_UNTIL = new Date('2030-01-01T09:00:01Z')
+const oversizedReasons = [
+  { name: 'header-boundary', reason: 'boundary '.repeat(215) + 'END_BOUNDARY' },
+  {
+    name: 'unicode-large',
+    reason: 'café 漢字 👩‍💻 full continuation\n'.repeat(2500) + 'END_UNICODE',
+  },
+]
 
 function createSleepMatchers(): DeterministicMatcher[] {
   const sleepCallMatcher: DeterministicMatcher = {
@@ -256,6 +260,20 @@ function createSleepMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    ...oversizedReasons.map(
+      ({ name, reason }): DeterministicMatcher => ({
+        ...sleepWakeMatcher,
+        id: `sleep-full-${name}`,
+        priority: 150,
+        when: { lastMessageRole: 'user', latestUserTextIncludes: reason },
+        then: {
+          ...sleepWakeMatcher.then,
+          parts: sleepWakeMatcher.then.parts.map((part) =>
+            part.type === 'text-delta' ? { ...part, delta: `full-wake-${name}` } : part,
+          ),
+        },
+      }),
+    ),
     sleepCallMatcher,
     sleepAcknowledgeMatcher,
     sleepWakeMatcher,
@@ -277,70 +295,68 @@ describe('roadie_sleep', () => {
     extraMatchers: createSleepMatchers(),
   })
 
-  test(
-    'persists a wake row, then the runner wakes the same session',
-    async () => {
-      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'SLEEP_TOOL_MARKER wait for the deploy',
-      })
+  test('persists a wake row, then the runner wakes the same session', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'SLEEP_TOOL_MARKER wait for the deploy',
+    })
 
-      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'SLEEP_TOOL_MARKER wait for the deploy'
-        },
-      })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (t) => {
+        return t.name === 'SLEEP_TOOL_MARKER wait for the deploy'
+      },
+    })
 
-      const th = ctx.discord.thread(thread.id)
+    const th = ctx.discord.thread(thread.id)
 
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'sleep-started',
-        timeout: 4_000,
-      })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'sleep-started',
+      timeout: 4_000,
+    })
 
-      // Let the first turn finish emitting its footer before waking, otherwise
-      // the footer can land after the wake message and reorder the snapshot.
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'sleep-started',
-        afterAuthorId: ctx.discord.botUserId,
-      })
+    // Let the first turn finish emitting its footer before waking, otherwise
+    // the footer can land after the wake message and reorder the snapshot.
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'sleep-started',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
-      const sessionId = await getThreadSession(thread.id)
-      if (!sessionId) {
-        throw new Error('Expected a thread session after the sleep tool ran')
-      }
+    const sessionId = await getThreadSession(thread.id)
+    if (!sessionId) {
+      throw new Error('Expected a thread session after the sleep tool ran')
+    }
 
-      const plannedSleep = await getSessionSleep({ sessionId })
-      expect(plannedSleep?.status).toBe('planned')
-      expect(plannedSleep?.reason).toBe('waiting for the deploy')
+    const plannedSleep = await getSessionSleep({ sessionId })
+    expect(plannedSleep?.status).toBe('planned')
+    expect(plannedSleep?.reason).toBe('waiting for the deploy')
 
-      // The row is years out, so pass a future `now` instead of waiting on the tick.
-      await wakeDueSessionSleeps({
-        rest: ctx.botClient.rest,
-        now: AFTER_SLEEP_UNTIL,
-      })
+    // The row is years out, so pass a future `now` instead of waiting on the tick.
+    await wakeDueSessionSleeps({
+      rest: ctx.botClient.rest,
+      now: AFTER_SLEEP_UNTIL,
+    })
 
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'sleep-wake-done',
-        timeout: 4_000,
-      })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'sleep-wake-done',
+      timeout: 4_000,
+    })
 
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'sleep-wake-done',
-        afterAuthorId: ctx.discord.botUserId,
-      })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'sleep-wake-done',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+    expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (sleep-tester)
         SLEEP_TOOL_MARKER wait for the deploy
         --- from: assistant (TestBot)
@@ -359,109 +375,105 @@ describe('roadie_sleep', () => {
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
-      // The wake must continue the SAME OpenCode session, not start a new one:
-      // that is the whole point of sleeping instead of scheduling a new prompt.
-      expect(await getThreadSession(thread.id)).toBe(sessionId)
+    // The wake must continue the SAME OpenCode session, not start a new one:
+    // that is the whole point of sleeping instead of scheduling a new prompt.
+    expect(await getThreadSession(thread.id)).toBe(sessionId)
 
-      // `consumed` proves ingress actually turned the wake into a turn. The row
-      // only reaches this state through the ingress commit point.
-      const wokenSleep = await getSessionSleep({ sessionId })
-      expect(wokenSleep?.status).toBe('consumed')
+    // `consumed` proves ingress actually turned the wake into a turn. The row
+    // only reaches this state through the ingress commit point.
+    const wokenSleep = await getSessionSleep({ sessionId })
+    expect(wokenSleep?.status).toBe('consumed')
 
-      // Replaying the tick must not produce a second wake turn.
-      const messagesBeforeReplay = (await th.getMessages()).length
-      await wakeDueSessionSleeps({
-        rest: ctx.botClient.rest,
-        now: AFTER_SLEEP_UNTIL,
+    // Replaying the tick must not produce a second wake turn.
+    const messagesBeforeReplay = (await th.getMessages()).length
+    await wakeDueSessionSleeps({
+      rest: ctx.botClient.rest,
+      now: AFTER_SLEEP_UNTIL,
+    })
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect((await th.getMessages()).length).toBe(messagesBeforeReplay)
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20)
       })
-      for (let attempt = 0; attempt < 10; attempt++) {
-        expect((await th.getMessages()).length).toBe(messagesBeforeReplay)
-        await new Promise((resolve) => {
-          setTimeout(resolve, 20)
-        })
-      }
-    },
-    20_000,
-  )
+    }
+  }, 20_000)
 
-  test(
-    'a user message cancels a planned sleep so no wake fires',
-    async () => {
-      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'SLEEP_CANCEL_MARKER wait for something',
+  test('a user message cancels a planned sleep so no wake fires', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'SLEEP_CANCEL_MARKER wait for something',
+    })
+
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (t) => {
+        return t.name === 'SLEEP_CANCEL_MARKER wait for something'
+      },
+    })
+
+    const th = ctx.discord.thread(thread.id)
+
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'cancel-sleep-started',
+      timeout: 4_000,
+    })
+
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'cancel-sleep-started',
+      afterAuthorId: ctx.discord.botUserId,
+    })
+
+    const sessionId = await getThreadSession(thread.id)
+    if (!sessionId) {
+      throw new Error('Expected a thread session after the sleep tool ran')
+    }
+    expect((await getSessionSleep({ sessionId }))?.status).toBe('planned')
+
+    await th.user(TEST_USER_ID).sendMessage({
+      content: 'SLEEP_CANCEL_FOLLOWUP never mind, keep going',
+    })
+
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'cancel-followup-done',
+      timeout: 4_000,
+    })
+
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'cancel-followup-done',
+      afterAuthorId: ctx.discord.botUserId,
+    })
+
+    // Cancellation happens inside runtime.enqueueIncoming, so it covers
+    // slash commands and CLI-injected prompts, not just chat messages.
+    expect((await getSessionSleep({ sessionId }))?.status).toBe('cancelled')
+
+    await wakeDueSessionSleeps({
+      rest: ctx.botClient.rest,
+      now: AFTER_SLEEP_UNTIL,
+    })
+
+    // Everything is deterministic, so a short poll proves the wake never posts.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const messages = await th.getMessages()
+      const woke = messages.some((message) => {
+        return message.content.includes('Woke after sleeping until')
       })
-
-      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'SLEEP_CANCEL_MARKER wait for something'
-        },
+      expect(woke).toBe(false)
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20)
       })
+    }
 
-      const th = ctx.discord.thread(thread.id)
-
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'cancel-sleep-started',
-        timeout: 4_000,
-      })
-
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'cancel-sleep-started',
-        afterAuthorId: ctx.discord.botUserId,
-      })
-
-      const sessionId = await getThreadSession(thread.id)
-      if (!sessionId) {
-        throw new Error('Expected a thread session after the sleep tool ran')
-      }
-      expect((await getSessionSleep({ sessionId }))?.status).toBe('planned')
-
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'SLEEP_CANCEL_FOLLOWUP never mind, keep going',
-      })
-
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'cancel-followup-done',
-        timeout: 4_000,
-      })
-
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'cancel-followup-done',
-        afterAuthorId: ctx.discord.botUserId,
-      })
-
-      // Cancellation happens inside runtime.enqueueIncoming, so it covers
-      // slash commands and CLI-injected prompts, not just chat messages.
-      expect((await getSessionSleep({ sessionId }))?.status).toBe('cancelled')
-
-      await wakeDueSessionSleeps({
-        rest: ctx.botClient.rest,
-        now: AFTER_SLEEP_UNTIL,
-      })
-
-      // Everything is deterministic, so a short poll proves the wake never posts.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const messages = await th.getMessages()
-        const woke = messages.some((message) => {
-          return message.content.includes('Woke after sleeping until')
-        })
-        expect(woke).toBe(false)
-        await new Promise((resolve) => {
-          setTimeout(resolve, 20)
-        })
-      }
-
-      expect(await th.text()).toMatchInlineSnapshot(`
+    expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (sleep-tester)
         SLEEP_CANCEL_MARKER wait for something
         --- from: assistant (TestBot)
@@ -476,8 +488,83 @@ describe('roadie_sleep', () => {
         cancel-followup-done
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-    },
-    20_000,
-  )
+  }, 20_000)
 
+  test.each(oversizedReasons)(
+    'delivers $name losslessly and deduplicates a repeated upload',
+    async ({ name, reason }) => {
+      const title = `SLEEP_TOOL_MARKER ${name}`
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: title })
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (candidate) => candidate.name === title,
+      })
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'sleep-started',
+        afterAuthorId: ctx.discord.botUserId,
+      })
+      const sessionId = await getThreadSession(thread.id)
+      if (!sessionId) throw new Error('Expected existing sleep session')
+      const wakeAt = new Date(SLEEP_UNTIL)
+      const deliveryId = await upsertSessionSleep({ sessionId, wakeAt, reason })
+      expect((await getSessionSleep({ sessionId }))?.reason).toBe(reason)
+      await wakeDueSessionSleeps({ rest: ctx.botClient.rest, now: AFTER_SLEEP_UNTIL })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: `full-wake-${name}`,
+        timeout: 8_000,
+      })
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: `full-wake-${name}`,
+        afterAuthorId: ctx.discord.botUserId,
+      })
+      const messages = await ctx.discord.thread(thread.id).getMessages()
+      const wake = messages.find((message) =>
+        message.content.startsWith('-# Woke after sleeping until'),
+      )
+      if (!wake) throw new Error('Expected recognizable wake header')
+      expect(wake.content.length).toBeLessThanOrEqual(2000)
+      expect(wake.attachments).toHaveLength(1)
+      const attachment = wake.attachments[0]
+      if (!attachment) throw new Error('Expected prompt.md')
+      expect(attachment.filename).toBe('prompt.md')
+      const file = await fetch(attachment.url)
+      expect(file.ok).toBe(true)
+      expect(Buffer.from(await file.arrayBuffer())).toEqual(
+        Buffer.from(formatSessionSleepWakePrompt({ wakeAt, reason }), 'utf8'),
+      )
+      expect(wake.embeds[0]?.footer?.text).toContain(deliveryId)
+      expect(wake.nonce).toBe(deliveryId.replaceAll('-', '').slice(0, 25))
+
+      // Repeat the same upload as a client would after losing the accepted response.
+      const { content, ...metadata } = buildSessionSleepWakeBody({ deliveryId, wakeAt, reason })
+      const replay = await ctx.botClient.rest.post(
+        Routes.channelMessages(thread.id),
+        prepareDiscordPromptMessage({
+          prompt: content,
+          metadata,
+          attachmentContent: formatSessionSleepWakePrompt({ wakeAt, reason: null }),
+        }),
+      )
+      expect(replay).toMatchObject({ id: wake.id })
+      await wakeDueSessionSleeps({
+        rest: ctx.botClient.rest,
+        now: new Date(AFTER_SLEEP_UNTIL.getTime() + 31_000),
+      })
+      for (let attempt = 0; attempt < 10; attempt++) {
+        expect(await ctx.discord.thread(thread.id).getMessages()).toHaveLength(messages.length)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(await getThreadSession(thread.id)).toBe(sessionId)
+      expect((await getSessionSleep({ sessionId }))?.status).toBe('consumed')
+    },
+    25_000,
+  )
 })
