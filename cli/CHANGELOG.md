@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.44.1] - 2026-10-07
+
+### Fixed
+- attach oversized sleep wakes and scheduled prompts
+
 ## [0.44.0] - 2026-10-07
 
 ### Added
