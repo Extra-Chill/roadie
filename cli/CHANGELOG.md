@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.3] - 2026-10-08
+
+### Fixed
+- bind database authorization to its own service identity
+
 ## [0.46.2] - 2026-10-08
 
 ### Fixed
