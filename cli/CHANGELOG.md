@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.1] - 2026-10-08
+
+### Fixed
+- keep cached IPC database authentication current across restarts
+
 ## [0.46.0] - 2026-10-08
 
 ### Added
