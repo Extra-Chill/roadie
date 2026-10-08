@@ -100,6 +100,31 @@ export function resolveTurnBilling({
 }
 
 /**
+ * Pool (and person key) for one person record — the identity hook's person
+ * (`person_id` plus its `credential_pool` override) or a bare platform actor.
+ * The one shared helper for everything that resolves a person's pool: turn
+ * routing (thread-session-runtime, slack-bot) and the /credentials command
+ * call this, so a person always lands in the same pool everywhere. undefined
+ * when there is no actor id to key.
+ */
+export function resolvePersonBillingPool({
+  person,
+  platform,
+  actorId,
+}: {
+  person?: { personId?: string | null; credentialPool?: string | null } | null
+  platform?: string | null
+  actorId?: string | null
+}): { personKey: string; poolId: string } | undefined {
+  return resolveTurnBilling({
+    personId: person?.personId,
+    platform,
+    actorId,
+    credentialPoolOverride: person?.credentialPool,
+  })
+}
+
+/**
  * Ordered pool list for one LLM request. `global` is today's behavior: the
  * shared pool only. Without a billed pool (no owner, no actor) the shared
  * pool answers. `per-person-fallback` appends the shared pool after the

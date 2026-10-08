@@ -122,7 +122,7 @@ import {
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
-import { resolveTurnBilling } from '../credentials/person-pool.js'
+import { resolvePersonBillingPool } from '../credentials/person-pool.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
@@ -3534,11 +3534,13 @@ export class ThreadSessionRuntime {
   }): Promise<void> {
     const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
     const billing = input.userId
-      ? resolveTurnBilling({
-          personId: input.personId,
+      ? resolvePersonBillingPool({
+          person: {
+            personId: input.personId,
+            credentialPool: input.credentialPool,
+          },
           platform: this.chat.platform,
           actorId: input.userId,
-          credentialPoolOverride: input.credentialPool,
         })
       : undefined
     const result = await setSessionTurnAttribution({

@@ -92,6 +92,95 @@ export function buildQuickAgentSlashCommand({
     )
 }
 
+/**
+ * /credentials (credential pools phase 2b): manage your own credential pool.
+ * Registered only when credential pools are enabled, so servers with pools
+ * off see no change. The API key is only ever entered in a modal — there is
+ * deliberately no key option on any subcommand.
+ */
+export function buildCredentialsSlashCommand() {
+  return new SlashCommandBuilder()
+    .setName('credentials')
+    .setDescription(
+      truncateCommandDescription(
+        'Manage your AI credential pool: list accounts, add a key, Anthropic login, remove',
+      ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('list')
+        .setDescription(
+          truncateCommandDescription(
+            'List the accounts and rotations in your credential pool',
+          ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('pool')
+            .setDescription('Target the shared pool instead (admin only)')
+            .addChoices({ name: 'shared', value: 'shared' }),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('add-key')
+        .setDescription(
+          truncateCommandDescription(
+            'Add an API key via a private modal (the key is never a command option)',
+          ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('provider')
+            .setDescription('Provider the key belongs to')
+            .setRequired(true)
+            .addChoices(
+              { name: 'anthropic', value: 'anthropic' },
+              { name: 'openai', value: 'openai' },
+            ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('pool')
+            .setDescription('Target the shared pool instead (admin only)')
+            .addChoices({ name: 'shared', value: 'shared' }),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('login-anthropic')
+        .setDescription(
+          truncateCommandDescription(
+            'Add a Claude Pro/Max subscription account via OAuth (private replies)',
+          ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('pool')
+            .setDescription('Target the shared pool instead (admin only)')
+            .addChoices({ name: 'shared', value: 'shared' }),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('remove')
+        .setDescription('Remove an account from your credential pool')
+        .addStringOption((option) =>
+          option
+            .setName('account')
+            .setDescription('Account id from /credentials list')
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('pool')
+            .setDescription('Target the shared pool instead (admin only)')
+            .addChoices({ name: 'shared', value: 'shared' }),
+        ),
+    )
+    .setDMPermission(false)
+}
+
 /** Static slash commands registered for every bot. */
 export function buildStaticSlashCommands() {
   return [
@@ -335,6 +424,23 @@ export function buildStaticSlashCommands() {
   ]
 }
 
+/**
+ * The always-registered static commands plus the opt-in credential pools
+ * command: /credentials is only registered when --credential-pools is on, so
+ * servers with pools off see no change (issue #134) and /login stays the only
+ * credentials entry point for them.
+ */
+export function buildRegistrableStaticCommands({
+  credentialPoolsEnabled,
+}: {
+  credentialPoolsEnabled: boolean
+}) {
+  return [
+    ...buildStaticSlashCommands(),
+    ...(credentialPoolsEnabled ? [buildCredentialsSlashCommand().toJSON()] : []),
+  ]
+}
+
 export async function registerCommands({
   token,
   appId,
@@ -348,7 +454,11 @@ export async function registerCommands({
   userCommands?: OpencodeCommand[]
   agents?: AgentInfo[]
 }) {
-  const commands = [...buildStaticSlashCommands()]
+  const commands = [
+    ...buildRegistrableStaticCommands({
+      credentialPoolsEnabled: store.getState().credentialPoolsEnabled,
+    }),
+  ]
 
   // Dynamic commands are registered in priority order:
   // agents → user config commands → MCP prompts → skills.

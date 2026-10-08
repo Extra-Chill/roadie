@@ -19,6 +19,7 @@ export const LogPrefix = {
   CLI: 'CLI',
   COMPACT: 'COMPACT',
   CREATE_PROJECT: 'NEW_PROJ',
+  CREDENTIALS: 'CREDS',
   DB: 'DB',
   DIFF: 'DIFF',
   FILE_UPLOAD: 'FILEUP',

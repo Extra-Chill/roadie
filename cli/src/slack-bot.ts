@@ -24,7 +24,7 @@ import {
   consumeSessionSleepWake,
 } from './database.js'
 import * as schema from './schema.js'
-import { resolveTurnBilling } from './credentials/person-pool.js'
+import { resolvePersonBillingPool } from './credentials/person-pool.js'
 import {
   channelAllowsSpeaker,
   channelAllowsCapability,
@@ -959,11 +959,13 @@ export class NativeSlackBot {
       const thread = this.threads.get(runtime.threadId)!
       const sessionId = runtime.state?.sessionId
       if (sessionId) {
-        const billing = resolveTurnBilling({
-          personId: identity.person?.personId,
+        const billing = resolvePersonBillingPool({
+          person: {
+            personId: identity.person?.personId,
+            credentialPool: identity.person?.credentialPool,
+          },
           platform: 'slack',
           actorId: identity.actor.id,
-          credentialPoolOverride: identity.person?.credentialPool,
         })
         const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
         await setSessionTurnAttribution({

@@ -53,6 +53,15 @@ import {
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
+  handleCredentialsCommand,
+  handleCredentialsApiKeyModalSubmit,
+  handleCredentialsOAuthCodeButton,
+  handleCredentialsOAuthCodeModalSubmit,
+  CREDENTIALS_APIKEY_MODAL_PREFIX,
+  CREDENTIALS_OAUTH_BUTTON_PREFIX,
+  CREDENTIALS_OAUTH_MODAL_PREFIX,
+} from './commands/credentials.js'
+import {
   handleAgentCommand,
   handleAgentSelectMenu,
   handleQuickAgentCommand,
@@ -98,6 +107,7 @@ import {
   resolveChannelPolicy,
 } from './channel-policy.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { store } from './store.js'
 import { replyOrEditInteraction } from './interaction-reply.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory, getThreadSession } from './database.js'
@@ -408,6 +418,19 @@ export function registerInteractionHandler({
               await handleLoginCommand({ interaction, appId })
               return
 
+            case 'credentials':
+              if (!store.getState().credentialPoolsEnabled) {
+                // Stale registration: /credentials only exists when
+                // --credential-pools is on. Fail closed rather than touch pools.
+                await interaction.reply({
+                  content: 'Credential pools are not enabled on this server.',
+                  flags: MessageFlags.Ephemeral,
+                })
+                return
+              }
+              await handleCredentialsCommand({ command: interaction })
+              return
+
             case 'agent':
               await handleAgentCommand({ interaction, appId })
               return
@@ -537,6 +560,13 @@ export function registerInteractionHandler({
               return
             }
             await handleOAuthCodeButton(interaction)
+            return
+          }
+
+          if (customId.startsWith(CREDENTIALS_OAUTH_BUTTON_PREFIX)) {
+            // Per-person command: the handler enforces admin itself when the
+            // interaction targets the shared pool.
+            await handleCredentialsOAuthCodeButton(interaction)
             return
           }
 
@@ -677,6 +707,29 @@ export function registerInteractionHandler({
               return
             }
             await handleOAuthCodeModalSubmit(interaction)
+            return
+          }
+
+          if (
+            customId.startsWith(CREDENTIALS_APIKEY_MODAL_PREFIX) ||
+            customId.startsWith(CREDENTIALS_OAUTH_MODAL_PREFIX)
+          ) {
+            // Per-person command: modal handlers re-resolve the target pool
+            // and re-check admin from this interaction, never trusting the click.
+            if (!store.getState().credentialPoolsEnabled) {
+              // Stale registration: /credentials only exists when
+              // --credential-pools is on. Fail closed rather than touch pools.
+              await interaction.reply({
+                content: 'Credential pools are not enabled on this server.',
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+            if (customId.startsWith(CREDENTIALS_APIKEY_MODAL_PREFIX)) {
+              await handleCredentialsApiKeyModalSubmit(interaction)
+            } else {
+              await handleCredentialsOAuthCodeModalSubmit(interaction)
+            }
             return
           }
 
