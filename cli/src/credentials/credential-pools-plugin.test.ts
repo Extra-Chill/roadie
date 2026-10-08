@@ -1,9 +1,13 @@
-import { test, expect, describe, afterEach, afterAll } from 'vitest'
+import { test, expect, describe, afterEach, afterAll, beforeEach } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import { credentialPoolsPlugin, CREDENTIAL_POOLS_ENV } from '../credential-pools-plugin.js'
 import {
   CREDENTIALS_MODE_ENV,
   THREAD_BILLING_ENV,
 } from './person-pool.js'
+import { readSessionRoute, setSessionRoute } from './routes.js'
 import {
   getSessionCredentialOwner,
   getSessionTurnAttribution,
@@ -16,6 +20,7 @@ const ORIGINAL_ENV: Record<string, string | undefined> = {
   [CREDENTIAL_POOLS_ENV]: process.env[CREDENTIAL_POOLS_ENV],
   [CREDENTIALS_MODE_ENV]: process.env[CREDENTIALS_MODE_ENV],
   [THREAD_BILLING_ENV]: process.env[THREAD_BILLING_ENV],
+  ROADIE_DATA_DIR: process.env.ROADIE_DATA_DIR,
 }
 
 afterEach(() => {
@@ -175,5 +180,62 @@ describe('credentialPoolsPlugin', () => {
     await recordCredentialOwner({ sessionId: 'ses_round', poolId: 'alice', personKey: 'discord:9' })
     expect(await getSessionCredentialOwner('ses_round')).toEqual({ poolId: 'bob' })
     expect(await getSessionTurnAttribution('ses_round')).toBeUndefined()
+  })
+})
+
+describe('credentialPoolsPlugin event hook (turn affinity cleanup)', () => {
+  const NOW = 1_000_000
+
+  let dataDir: string
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credential-pools-plugin-events-'))
+  })
+
+  const ROUTE = {
+    poolId: 'alice',
+    accountId: 'acc_1',
+    provider: 'anthropic',
+    modelId: 'claude-sonnet-4',
+    rotation: 'default',
+  }
+
+  /** Instantiate the plugin with ROADIE_DATA_DIR pointing at the temp dir. */
+  async function eventHook() {
+    process.env[CREDENTIAL_POOLS_ENV] = '1'
+    process.env.ROADIE_DATA_DIR = dataDir
+    const hooks = await credentialPoolsPlugin({} as Parameters<typeof credentialPoolsPlugin>[0])
+    expect(hooks).not.toBeNull()
+    const hook = hooks && 'event' in hooks ? hooks.event : undefined
+    expect(hook).toBeDefined()
+    if (!hook) throw new Error('event hook missing')
+    return hook
+  }
+
+  test('session.idle clears the session\'s held route', async () => {
+    const hook = await eventHook()
+    await setSessionRoute({ dataDir, sessionId: 'ses_idle', route: { ...ROUTE, pinnedAt: NOW }, now: NOW })
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_idle', now: NOW })).toEqual({ ...ROUTE, pinnedAt: NOW })
+    await hook({ event: { type: 'session.idle', properties: { sessionID: 'ses_idle' } } })
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_idle', now: NOW })).toBeNull()
+  })
+
+  test('session.deleted clears the session\'s held route (keyed by info.id)', async () => {
+    const hook = await eventHook()
+    await setSessionRoute({ dataDir, sessionId: 'ses_dead', route: { ...ROUTE, pinnedAt: NOW }, now: NOW })
+    await hook({
+      event: { type: 'session.deleted', properties: { info: { id: 'ses_dead' } } } as Parameters<
+        NonNullable<typeof hook>
+      >[0]['event'],
+    })
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_dead', now: NOW })).toBeNull()
+  })
+
+  test('other events leave the route alone', async () => {
+    const hook = await eventHook()
+    await setSessionRoute({ dataDir, sessionId: 'ses_live', route: { ...ROUTE, pinnedAt: NOW }, now: NOW })
+    await hook({ event: { type: 'session.error', properties: { sessionID: 'ses_live' } } })
+    await hook({ event: { type: 'session.idle', properties: { sessionID: 'ses_other' } } })
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_live', now: NOW })).toEqual({ ...ROUTE, pinnedAt: NOW })
   })
 })

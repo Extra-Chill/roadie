@@ -26,8 +26,10 @@ import {
   cooldownUntilFromRetryAfter,
   createRoadiePoolProvider,
   POOL_HEADER,
+  SESSION_HEADER,
   type PoolFetch,
 } from './provider.js'
+import { ROUTES_TTL_MS, readSessionRoute } from './routes.js'
 import type { ModelsDevCatalog } from './provider-catalog.js'
 import {
   CLAUDE_CODE_BETA,
@@ -302,7 +304,7 @@ describe('languageModel doGenerate fail-closed', () => {
     if (!(error instanceof APICallError)) throw error
     expect(error.statusCode).toBe(401)
     expect(error.message).toBe(
-      'no usable accounts in pool shared; add one with roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared',
+      'no usable accounts in pool shared; add one with /credentials add-key or /credentials login-anthropic (operators: roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared)',
     )
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -337,7 +339,7 @@ describe('languageModel doGenerate fail-closed', () => {
     if (!(error instanceof APICallError)) throw error
     expect(error.statusCode).toBe(401)
     expect(error.message).toBe(
-      'no usable accounts in pool shared; add one with roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared',
+      'no usable accounts in pool shared; add one with /credentials add-key or /credentials login-anthropic (operators: roadie credentials add-key --pool shared or roadie credentials login anthropic --pool shared)',
     )
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -722,7 +724,7 @@ describe('pool lists', () => {
     if (!(error instanceof APICallError)) throw error
     expect(error.statusCode).toBe(401)
     expect(error.message).toBe(
-      'no usable accounts in pool alice,shared; add one with roadie credentials add-key --pool alice or roadie credentials login anthropic --pool alice',
+      'no usable accounts in pool alice,shared; add one with /credentials add-key or /credentials login-anthropic (operators: roadie credentials add-key --pool alice or roadie credentials login anthropic --pool alice)',
     )
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -735,6 +737,202 @@ describe('pool lists', () => {
     expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(new Headers(lastInit(fetchImpl, 0).headers).get('x-api-key')).toBe('sk-ant-single')
+  })
+})
+
+describe('turn affinity (x-roadie-session)', () => {
+  async function seedTwoAccounts() {
+    const first = await addPoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      key: 'sk-ant-affinity-1',
+    })
+    const second = await addPoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      key: 'sk-ant-affinity-2',
+    })
+    expect(first).not.toBeInstanceOf(Error)
+    expect(second).not.toBeInstanceOf(Error)
+    if (first instanceof Error || second instanceof Error) throw new Error('seed failed')
+    const set = await setPoolRotation({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      name: 'default',
+      entries: ['anthropic/claude-sonnet-4'],
+    })
+    expect(set).toBe(true)
+    return { first, second }
+  }
+
+  function affinityFetch(
+    handler: (key: string, key1Calls: number) => Promise<Response> | Response,
+  ): { fetchMock: FetchMock; key1Calls: () => number } {
+    let key1Calls = 0
+    const fetchMock = stubFetch(async (_input, init) => {
+      const key = new Headers(init?.headers).get('x-api-key') ?? ''
+      if (key === 'sk-ant-affinity-1') key1Calls += 1
+      return handler(key, key1Calls)
+    })
+    return { fetchMock, key1Calls: () => key1Calls }
+  }
+
+  function rateLimitFirst() {
+    return (key: string, key1Calls: number): Response =>
+      key === 'sk-ant-affinity-1' && key1Calls === 1
+        ? jsonResponse(429, { error: { message: 'rate limited' } }, { 'retry-after': '30' })
+        : jsonResponse(200, ANTHROPIC_OK_RESPONSE)
+  }
+
+  test('a turn pins the answering account and tool follow-ups stay on it', async () => {
+    const { second } = await seedTwoAccounts()
+    const { fetchMock } = affinityFetch(rateLimitFirst())
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_turn' } })
+    await model.doGenerate(options)
+    await model.doGenerate(options)
+    // The second request went straight to the pinned account: the
+    // rate-limited first account was not retried mid-turn.
+    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get('x-api-key'))).toEqual([
+      'sk-ant-affinity-1',
+      'sk-ant-affinity-2',
+      'sk-ant-affinity-2',
+    ])
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_turn', now: NOW })).toEqual({
+      poolId: SHARED_POOL_ID,
+      accountId: second.id,
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4',
+      rotation: 'default',
+      pinnedAt: NOW,
+    })
+  })
+
+  test('a held route expires after the TTL, so a missed idle cannot pin forever', async () => {
+    const { first, second } = await seedTwoAccounts()
+    const { fetchMock, key1Calls } = affinityFetch(rateLimitFirst())
+    let clock = NOW
+    const model = poolProvider({ fetchImpl: fetchMock, now: () => clock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_ttl' } })
+    await model.doGenerate(options)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_ttl', now: NOW })).toMatchObject({
+      accountId: second.id,
+    })
+    // Past the TTL the route is ignored and the fresh resolution dispatches
+    // the first account again, which answers this time.
+    clock = NOW + ROUTES_TTL_MS + 1
+    await model.doGenerate(options)
+    expect(key1Calls()).toBe(2)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_ttl', now: clock })).toMatchObject({
+      accountId: first.id,
+      pinnedAt: clock,
+    })
+  })
+
+  test('requests without a session header never pin or hold', async () => {
+    const { first } = await seedTwoAccounts()
+    const { fetchMock, key1Calls } = affinityFetch(rateLimitFirst())
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared' })
+    await model.doGenerate(options)
+    // Drop the 429 cooldown so the first account is a live candidate again:
+    // the second request must resolve fresh from the top instead of following
+    // a held route.
+    await markCooldownInStore({ dataDir, poolId: SHARED_POOL_ID, accountId: first.id, untilMs: NOW })
+    await model.doGenerate(options)
+    expect(key1Calls()).toBe(2)
+    expect(fs.existsSync(path.join(dataDir, 'credentials', 'routes.json'))).toBe(false)
+  })
+
+  test('a held account that is cooling down does not pin', async () => {
+    const { first, second } = await seedTwoAccounts()
+    const { fetchMock, key1Calls } = affinityFetch(rateLimitFirst())
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_cold' } })
+    await model.doGenerate(options)
+    // Drop the 429 cooldown so the pool has a live alternative, then cool the
+    // pinned account down: the held route no longer applies (its candidate is
+    // not in the cooldown-aware resolution) and the fresh resolution answers
+    // with the first account.
+    await markCooldownInStore({ dataDir, poolId: SHARED_POOL_ID, accountId: first.id, untilMs: NOW })
+    await markCooldownInStore({ dataDir, poolId: SHARED_POOL_ID, accountId: second.id, untilMs: NOW + 60_000 })
+    await model.doGenerate(options)
+    expect(key1Calls()).toBe(2)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_cold', now: NOW })).toMatchObject({ accountId: first.id })
+  })
+
+  test('a route pinned under another rotation never holds', async () => {
+    const { first, second } = await seedTwoAccounts()
+    const other = await setPoolRotation({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      name: 'other',
+      entries: ['anthropic/claude-sonnet-4'],
+    })
+    expect(other).toBe(true)
+    const { fetchMock, key1Calls } = affinityFetch(rateLimitFirst())
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_rot' } })
+    await model.doGenerate(options)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_rot', now: NOW })).toMatchObject({
+      accountId: second.id,
+      rotation: 'default',
+    })
+    // Drop the 429 cooldown so a fresh resolution would start from the first
+    // account: a /model switch (a different rotation name) must not follow
+    // the route pinned under the old rotation.
+    await markCooldownInStore({ dataDir, poolId: SHARED_POOL_ID, accountId: first.id, untilMs: NOW })
+    const otherModel = poolProvider({ fetchImpl: fetchMock }).languageModel('other')
+    await otherModel.doGenerate(options)
+    expect(key1Calls()).toBe(2)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_rot', now: NOW })).toMatchObject({
+      accountId: first.id,
+      rotation: 'other',
+    })
+  })
+
+  test('a held route steers doStream too', async () => {
+    await seedTwoAccounts()
+    let upstreamCalls = 0
+    let key1Calls = 0
+    const fetchMock = stubFetch(async (_input, init) => {
+      upstreamCalls += 1
+      const key = new Headers(init?.headers).get('x-api-key') ?? ''
+      if (key === 'sk-ant-affinity-1') {
+        key1Calls += 1
+        if (key1Calls === 1) return jsonResponse(429, { error: { message: 'rate limited' } })
+      }
+      // The doGenerate turn answers with JSON; the held doStream turn answers
+      // with an Anthropic SSE stream.
+      return upstreamCalls === 2 ? jsonResponse(200, ANTHROPIC_OK_RESPONSE) : anthropicSseResponse('ok')
+    })
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const options = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_stream' } })
+    await model.doGenerate(options)
+    const result = await model.doStream(options)
+    const parts = await collectStream(result.stream)
+    expect(parts.filter((part) => part.type === 'text-delta').map((part) => part.delta).join('')).toBe('ok')
+    expect(key1Calls).toBe(1)
+  })
+
+  test('two sessions pin independently', async () => {
+    const { first, second } = await seedTwoAccounts()
+    const { fetchMock, key1Calls } = affinityFetch(rateLimitFirst())
+    const model = poolProvider({ fetchImpl: fetchMock }).languageModel('default')
+    const sessionA = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_a' } })
+    const sessionB = generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_b' } })
+    await model.doGenerate(sessionA) // first account 429s, second answers -> pinned to second
+    // Drop the 429 cooldown so session B can reach the first account.
+    await markCooldownInStore({ dataDir, poolId: SHARED_POOL_ID, accountId: first.id, untilMs: NOW })
+    await model.doGenerate(sessionB) // first account answers -> pinned to first
+    await model.doGenerate(sessionA) // held: straight to second
+    await model.doGenerate(sessionB) // held: straight to first (B is pinned to it)
+    // key1: A's 429, B's fresh resolution, B's held request — never A's.
+    expect(key1Calls()).toBe(3)
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_a', now: NOW })).toMatchObject({ accountId: second.id })
+    expect(readSessionRoute({ dataDir, sessionId: 'ses_b', now: NOW })).toMatchObject({ accountId: first.id })
   })
 })
 

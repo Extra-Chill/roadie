@@ -12,7 +12,14 @@
 //      single id behaves exactly as before) and strip every `x-roadie-*`
 //      header from the call options so nothing internal reaches upstream,
 //   2. resolve the pool's rotation into ordered candidates with the existing
-//      router (per-pool rotation, per-pool cooldowns, OAuth refresh),
+//      router (per-pool rotation, per-pool cooldowns, OAuth refresh), then
+//      apply turn affinity: when `x-roadie-session` names a held route
+//      (credentials/routes.ts) whose candidate is still in the resolved list,
+//      that candidate is tried first, so tool follow-ups stay on one account
+//      until the session is idle (the plugin's event hook clears the route on
+//      session.idle / session.deleted; a TTL bounds a missed idle). Only the
+//      held account itself failing (429 cooldown or a failed refresh) moves
+//      the turn to the next candidate, and success re-pins the route,
 //   3. per candidate, build that provider's SDK language model for the
 //      candidate's real model id with the account's credentials — the
 //      provider comes from the models.dev catalog
@@ -59,6 +66,7 @@ import {
 } from './store.js'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
 import { parsePoolListHeader } from './person-pool.js'
+import { readSessionRoute, setSessionRoute } from './routes.js'
 import {
   resolveCandidateModelFactory,
   resolveCatalog,
@@ -274,28 +282,37 @@ export function noUsableAccountsMessage({
 }): string {
   return (
     `no usable accounts in pool ${requestedPool}; ` +
-    `add one with roadie credentials add-key --pool ${firstPoolId} ` +
-    `or roadie credentials login anthropic --pool ${firstPoolId}`
+    `add one with /credentials add-key or /credentials login-anthropic ` +
+    `(operators: roadie credentials add-key --pool ${firstPoolId} ` +
+    `or roadie credentials login anthropic --pool ${firstPoolId})`
   )
 }
 
 /**
  * Strip every `x-roadie-*` header from the call options and return the pool
- * list they carried, so nothing internal reaches the upstream provider.
+ * list and session id they carried, so nothing internal reaches the upstream
+ * provider. The session id is read here, before the header is stripped, and
+ * only ever keys the route store — it never reaches upstream.
  */
 function stripRoadieHeaders(
   headers: Record<string, string | undefined> | undefined,
-): { headers: Record<string, string | undefined>; requestedPool: string | null } {
+): {
+  headers: Record<string, string | undefined>
+  requestedPool: string | null
+  sessionId: string | null
+} {
   const clean: Record<string, string | undefined> = {}
   let requestedPool: string | null = null
+  let sessionId: string | null = null
   for (const [name, value] of Object.entries(headers ?? {})) {
     if (name.toLowerCase().startsWith(ROADIE_INTERNAL_HEADER_PREFIX)) {
       if (name.toLowerCase() === POOL_HEADER) requestedPool = value ?? null
+      if (name.toLowerCase() === SESSION_HEADER) sessionId = value ?? null
       continue
     }
     clean[name] = value
   }
-  return { headers: clean, requestedPool }
+  return { headers: clean, requestedPool, sessionId }
 }
 
 /**
@@ -383,9 +400,46 @@ async function buildCandidateModel({
 }
 
 /**
+ * The resolved candidate a session's held route points at, or null. The route
+ * only applies when it was pinned under this rotation and its exact
+ * (pool, account, provider, model) is still in the resolved candidate list:
+ * a cooling-down or removed account never pins, a pool that fell out of the
+ * request's list never pins, and a /model switch (a different rotation name)
+ * starts a fresh resolution. The candidate set itself is never expanded, so
+ * fail-closed 401s and fallback lists behave exactly as without affinity.
+ */
+function heldCandidate({
+  sessionId,
+  rotationName,
+  candidates,
+  dataDir,
+  now,
+}: {
+  sessionId: string | null
+  rotationName: string
+  candidates: PoolCandidate[]
+  dataDir: string
+  now: number
+}): PoolCandidate | null {
+  if (!sessionId) return null
+  const route = readSessionRoute({ dataDir, sessionId, now })
+  if (!route || route.rotation !== rotationName) return null
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.poolId === route.poolId &&
+        candidate.account.id === route.accountId &&
+        candidate.provider === route.provider &&
+        candidate.modelId === route.modelId,
+    ) ?? null
+  )
+}
+
+/**
  * Route one doGenerate/doStream call: resolve the pool list from the (then
- * stripped) x-roadie-* headers, try the candidates in order, cool accounts
- * down on a 429 and serve from the first candidate that answers.
+ * stripped) x-roadie-* headers, hold the session's live route so a turn never
+ * splits across accounts, try the candidates in order, cool accounts down on
+ * a 429 and serve from the first candidate that answers.
  */
 async function routeLanguageModelCall<TResult>({
   rotationName,
@@ -399,7 +453,7 @@ async function routeLanguageModelCall<TResult>({
   /** Invoke one candidate model with the stripped call options. */
   call: (model: LanguageModelV3, callOptions: LanguageModelV3CallOptions) => Promise<TResult>
 }): Promise<TResult> {
-  const { headers, requestedPool } = stripRoadieHeaders(options.headers)
+  const { headers, requestedPool, sessionId } = stripRoadieHeaders(options.headers)
   const timestamp = deps.now()
   if (!requestedPool?.trim()) {
     throw poolAuthError('no credential pool on request')
@@ -438,10 +492,24 @@ async function routeLanguageModelCall<TResult>({
     throw poolAuthError(noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }))
   }
 
+  // Turn affinity: hold the live route per session so tool follow-ups stay on
+  // one account until the session is idle. The held candidate is only moved
+  // ahead of the resolved order — never added to it.
+  const held = heldCandidate({
+    sessionId,
+    rotationName,
+    candidates,
+    dataDir: deps.dataDir,
+    now: timestamp,
+  })
+  const orderedCandidates = held
+    ? [held, ...candidates.filter((candidate) => candidate !== held)]
+    : candidates
+
   const callOptions: LanguageModelV3CallOptions = { ...options, headers }
   let lastRateLimitError: APICallError | null = null
   let firstCandidateError: Error | null = null
-  for (const candidate of candidates) {
+  for (const candidate of orderedCandidates) {
     const account = await ensureFreshOAuthAccount({
       dataDir: deps.dataDir,
       poolId: candidate.poolId,
@@ -464,6 +532,33 @@ async function routeLanguageModelCall<TResult>({
     }
     try {
       const result = await call(model, callOptions)
+      if (sessionId) {
+        // Pin (or re-pin) the turn's route so the rest of the turn stays on
+        // this account. The route only moves here when the held account
+        // itself failed (429 cooldown or a failed refresh). Best-effort like
+        // markUsed: a failed write only means the next request of the turn
+        // re-resolves candidates fresh.
+        try {
+          const pinned = await setSessionRoute({
+            dataDir: deps.dataDir,
+            sessionId,
+            route: {
+              poolId: candidate.poolId,
+              accountId: account.id,
+              provider: candidate.provider,
+              modelId: candidate.modelId,
+              rotation: rotationName,
+              pinnedAt: timestamp,
+            },
+            now: timestamp,
+          })
+          if (pinned instanceof Error) {
+            // Swallowed on purpose.
+          }
+        } catch {
+          // Swallowed on purpose.
+        }
+      }
       // Best-effort metadata: a failed last-used write never changes the
       // routing outcome (markUsed can also reject on an fs error, so this has
       // its own guard), and cooldowns (the state that matters) are persisted
