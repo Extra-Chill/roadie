@@ -1011,7 +1011,6 @@ async function startSingleServer({
   if (roadieShimDirectory instanceof Error) {
     opencodeLogger.warn(roadieShimDirectory.message)
   }
-  const gatewayToken = store.getState().gatewayToken
   const vitestOpencodeEnv = (() => {
     if (process.env.ROADIE_VITEST !== '1') {
       return {}
@@ -1121,7 +1120,6 @@ async function startSingleServer({
           [CREDENTIALS_MODE_ENV]: store.getState().credentialsMode,
           [THREAD_BILLING_ENV]: store.getState().threadBilling,
         }),
-        ...(gatewayToken && !process.env.ROADIE_DB_AUTH_TOKEN_FILE && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `roadie` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
         ROADIE_OPENCODE_PROCESS: '1',
