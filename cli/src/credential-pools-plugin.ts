@@ -29,7 +29,8 @@ import {
   type ThreadBilling,
 } from './credentials/person-pool.js'
 import { SHARED_POOL_ID } from './credentials/store.js'
-import { POOL_HEADER, ROADIE_PROVIDER_ID, SESSION_HEADER } from './credentials/provider.js'
+import { POOL_HEADER, ROADIE_PROVIDER_ID, SESSION_HEADER, resolvePoolDataDir } from './credentials/provider.js'
+import { clearSessionRoute } from './credentials/routes.js'
 import { getSessionCredentialOwner, getSessionTurnAttribution } from './database.js'
 
 export const CREDENTIAL_POOLS_ENV = 'ROADIE_CREDENTIAL_POOLS'
@@ -62,6 +63,7 @@ export const credentialPoolsPlugin: Plugin = async () => {
   if (process.env[CREDENTIAL_POOLS_ENV] !== '1') {
     return {}
   }
+  const dataDir = resolvePoolDataDir()
   return {
     'chat.headers': async (input, output) => {
       // Only the roadie provider strips x-roadie-* before sending upstream.
@@ -80,6 +82,31 @@ export const credentialPoolsPlugin: Plugin = async () => {
         }
       }
       output.headers[SESSION_HEADER] = input.sessionID
+    },
+    event: async ({ event }) => {
+      // Turn affinity ends with the turn: when the session goes idle (or is
+      // deleted) the next turn resolves candidates fresh, so a 429 that moved
+      // the route mid-turn does not pin later turns to the moved account.
+      // Best-effort and silent: a missed clear is bounded by the routes TTL.
+      if (event.type === 'session.idle') {
+        const cleared = await clearSessionRoute({
+          dataDir,
+          sessionId: event.properties.sessionID,
+        })
+        if (cleared instanceof Error) {
+          // Swallowed on purpose.
+        }
+        return
+      }
+      if (event.type === 'session.deleted') {
+        const cleared = await clearSessionRoute({
+          dataDir,
+          sessionId: event.properties.info.id,
+        })
+        if (cleared instanceof Error) {
+          // Swallowed on purpose.
+        }
+      }
     },
   }
 }
