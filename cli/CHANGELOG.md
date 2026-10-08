@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.48.0] - 2026-10-08
+
+### Added
+- /login writes into credential pools; /credentials reorder
+
 ## [0.47.0] - 2026-10-08
 
 ### Added
