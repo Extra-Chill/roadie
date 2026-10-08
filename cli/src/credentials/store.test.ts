@@ -9,6 +9,7 @@ import {
   isValidPoolId,
   markCooldown,
   markUsed,
+  movePoolAccount,
   readPoolAccounts,
   readPoolRotations,
   readPoolState,
@@ -372,6 +373,116 @@ describe('removePoolAccount', () => {
     expect(
       await removePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: 'missing' }),
     ).toBe(false)
+  })
+})
+
+describe('movePoolAccount', () => {
+  async function addThreeAccounts(): Promise<Array<{ id: string; provider: string }>> {
+    const accounts: Array<{ id: string; provider: string }> = []
+    for (const provider of ['anthropic', 'openai', 'groq']) {
+      const account = await addPoolAccount({
+        dataDir,
+        poolId: SHARED_POOL_ID,
+        provider,
+        key: `sk-${provider}-secret`,
+      })
+      if (account instanceof Error) throw account
+      accounts.push({ id: account.id, provider })
+    }
+    return accounts
+  }
+
+  test('moves an account to a 1-based position and persists the new order', async () => {
+    const [first, second, third] = await addThreeAccounts()
+    const moved = await movePoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      accountId: third!.id,
+      position: 1,
+    })
+    expect(moved).not.toBeInstanceOf(Error)
+    expect((moved as Array<{ id: string }>).map((account) => account.id)).toEqual([
+      third!.id,
+      first!.id,
+      second!.id,
+    ])
+    const reread = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (reread instanceof Error) throw reread
+    expect(reread.map((account) => account.id)).toEqual([
+      third!.id,
+      first!.id,
+      second!.id,
+    ])
+  })
+
+  test('moving an account later in the list keeps the relative order', async () => {
+    const [first, second, third] = await addThreeAccounts()
+    const moved = await movePoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      accountId: first!.id,
+      position: 3,
+    })
+    expect(moved).not.toBeInstanceOf(Error)
+    expect((moved as Array<{ id: string }>).map((account) => account.id)).toEqual([
+      second!.id,
+      third!.id,
+      first!.id,
+    ])
+  })
+
+  test('moving to the current position is a no-op reorder', async () => {
+    const [first, second] = await addThreeAccounts()
+    const moved = await movePoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      accountId: second!.id,
+      position: 2,
+    })
+    expect(moved).not.toBeInstanceOf(Error)
+    expect((moved as Array<{ id: string }>).map((account) => account.id)).toEqual([
+      first!.id,
+      second!.id,
+      expect.any(String),
+    ])
+  })
+
+  test('rejects unknown accounts, out-of-range and non-integer positions', async () => {
+    const [first] = await addThreeAccounts()
+    expect(
+      await movePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: 'missing', position: 1 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await movePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: first!.id, position: 0 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await movePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: first!.id, position: 4 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await movePoolAccount({ dataDir, poolId: SHARED_POOL_ID, accountId: first!.id, position: 1.5 }),
+    ).toBeInstanceOf(Error)
+    expect(
+      await movePoolAccount({ dataDir, poolId: 'BAD POOL', accountId: first!.id, position: 1 }),
+    ).toBeInstanceOf(Error)
+    // Nothing was moved by the failed calls.
+    const reread = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (reread instanceof Error) throw reread
+    expect(reread.map((account) => account.provider)).toEqual(['anthropic', 'openai', 'groq'])
+  })
+
+  test('keeps cooldown and last-used state keyed by account id', async () => {
+    const [first, second] = await addThreeAccounts()
+    await markCooldown({ dataDir, poolId: SHARED_POOL_ID, accountId: second!.id, untilMs: 5000 })
+    const moved = await movePoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      accountId: second!.id,
+      position: 1,
+    })
+    expect(moved).not.toBeInstanceOf(Error)
+    const state = await readPoolState({ dataDir, poolId: SHARED_POOL_ID })
+    if (state instanceof Error) throw state
+    expect(state.cooldowns).toEqual({ [second!.id]: 5000 })
   })
 })
 

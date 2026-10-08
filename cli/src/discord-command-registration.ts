@@ -103,7 +103,7 @@ export function buildCredentialsSlashCommand() {
     .setName('credentials')
     .setDescription(
       truncateCommandDescription(
-        'Manage your AI credential pool: list accounts, add a key, Anthropic login, remove',
+        'Manage your AI credential pool: list accounts, add a key, Anthropic login, remove, reorder',
       ),
     )
     .addSubcommand((subcommand) =>
@@ -171,6 +171,34 @@ export function buildCredentialsSlashCommand() {
             .setName('account')
             .setDescription('Account id from /credentials list')
             .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('pool')
+            .setDescription('Target the shared pool instead (admin only)')
+            .addChoices({ name: 'shared', value: 'shared' }),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('reorder')
+        .setDescription(
+          truncateCommandDescription(
+            'Move an account to a position in the pool order (which account is tried first)',
+          ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('account')
+            .setDescription('Account id from /credentials list')
+            .setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName('position')
+            .setDescription('New 1-based position, e.g. 1 tries this account first')
+            .setRequired(true)
+            .setMinValue(1),
         )
         .addStringOption((option) =>
           option
