@@ -40,6 +40,8 @@ export type ApiPoolAccount = {
   provider: string
   type: 'api'
   key: string
+  /** Optional base URL override; wins over the models.dev catalog `api` URL. */
+  baseURL?: string
   label?: string
   addedAt: string
   lastUsed: string | null
@@ -167,6 +169,7 @@ function normalizePoolAccount(account: unknown): PoolAccount | null {
   const base = {
     id: record.id,
     provider: record.provider,
+    ...(typeof record.baseURL === 'string' && record.baseURL && { baseURL: record.baseURL }),
     ...(typeof record.label === 'string' && { label: record.label }),
     addedAt: typeof record.addedAt === 'string' ? record.addedAt : '',
     lastUsed: typeof record.lastUsed === 'string' ? record.lastUsed : null,
@@ -239,6 +242,7 @@ export async function addPoolAccount({
   poolId,
   provider,
   key,
+  baseURL,
   label,
   now = new Date(),
   isDuplicate,
@@ -247,6 +251,8 @@ export async function addPoolAccount({
   poolId: string
   provider: string
   key: string
+  /** Optional base URL override; wins over the models.dev catalog `api` URL. */
+  baseURL?: string
   label?: string
   now?: Date
   /** Checked under the pool lock; a match returns DuplicatePoolAccountError. */
@@ -257,6 +263,7 @@ export async function addPoolAccount({
   }
   const trimmedProvider = provider.trim()
   const trimmedKey = key.trim()
+  const trimmedBaseURL = baseURL?.trim()
   if (!trimmedProvider) {
     return new Error('Account provider is required')
   }
@@ -272,6 +279,7 @@ export async function addPoolAccount({
       provider: trimmedProvider,
       type: 'api',
       key: trimmedKey,
+      ...(trimmedBaseURL && { baseURL: trimmedBaseURL }),
       ...(label?.trim() && { label: label.trim() }),
       addedAt: now.toISOString(),
       lastUsed: null,

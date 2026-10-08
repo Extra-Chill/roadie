@@ -82,6 +82,32 @@ describe('addPoolAccount', () => {
     expect(await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([account])
   })
 
+  test('an optional baseURL round-trips, and absent means absent (legacy files)', async () => {
+    const account = await addPoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'zai-coding-plan',
+      key: 'zai-secret',
+      baseURL: ' https://self-hosted.example.com/v4 ',
+    })
+    expect(account).not.toBeInstanceOf(Error)
+    if (account instanceof Error) return
+    expect(account.baseURL).toBe('https://self-hosted.example.com/v4')
+    const reread = await readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
+    if (reread instanceof Error) throw reread
+    expect(reread[0]).toMatchObject({ provider: 'zai-coding-plan', baseURL: 'https://self-hosted.example.com/v4' })
+
+    const without = await addPoolAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'anthropic',
+      key: 'sk-ant-no-base',
+    })
+    expect(without).not.toBeInstanceOf(Error)
+    if (without instanceof Error) return
+    expect('baseURL' in without).toBe(false)
+  })
+
   test('rejects invalid pool ids and empty provider/key', async () => {
     expect(
       await addPoolAccount({ dataDir, poolId: 'BAD POOL', provider: 'anthropic', key: 'k' }),

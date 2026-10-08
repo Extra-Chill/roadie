@@ -132,33 +132,62 @@ Discord message
   -> session created: owner = person key   (credential_owners table)
 OpenCode server (one)
   -> roadie plugin  chat.headers: x-roadie-session, x-roadie-pool
-  -> roadie provider fetch:
-       read + strip x-roadie-*
-       resolve pool -> rotation -> account (skip cooldowns)
-       adapter shapes the request for the provider (OAuth headers etc.)
-       429 / usage limit -> mark cooldown, next account
+  -> roadie LanguageModel (roadie/<rotation>):
+       read + strip x-roadie-* call headers
+       resolve pool -> rotation -> candidates (skip cooldowns)
+       per candidate: build the provider's SDK model from the models.dev
+         catalog + that account's credentials, call doGenerate/doStream
+       429 APICallError -> mark cooldown, next candidate
 ```
+
+Routing happens at the LanguageModel level, not the HTTP level (issue #136):
+`createRoadiePoolProvider().languageModel(rotationName)` returns one
+delegating `LanguageModelV3` whose `doGenerate`/`doStream` resolve the pool
+list from the (then stripped) `x-roadie-*` call headers, resolve candidates
+with the router, and dispatch each candidate through **that provider's own AI
+SDK model** — so one rotation can mix providers (e.g.
+`anthropic/claude-sonnet-5-5` then `zai-coding-plan/glm-5.3-flash`), and a
+z.ai key is never sent to OpenAI. Rate limits are `APICallError`s with status
+429 (`retry-after` from `responseHeaders`); every other error is returned
+as-is. Per-person/fallback routing and fail-closed 401s are unchanged.
 
 Components:
 
 1. **Pool store** (`cli/src/credentials/store.ts`). One directory per pool
    under `<dataDir>/credentials/<poolId>/` with `accounts.json` (mode 0600)
-   and `state.json` (cooldowns, last used). One lock per pool, so people
-   never contend with each other. Token refresh writes back under that
-   pool's lock, which removes the shared-`auth.json` refresh race.
+   and `state.json` (cooldowns, last used). API-key accounts carry an
+   optional `baseURL` override. One lock per pool, so people never contend
+   with each other. Token refresh writes back under that pool's lock, which
+   removes the shared-`auth.json` refresh race.
 2. **Owner table** (`credential_owners`: `session_id`, `pool_id`,
    `person_key`, `created_at`). New table, so `schema.sql` creates it with
    no migration.
 3. **Router** (`cli/src/credentials/router.ts`). Pool + rotation + cooldowns
    -> candidate list. Keeps the live route per session until idle so tool
    follow-ups stay on one account.
-4. **Adapters** (`cli/src/credentials/adapters/`). Anthropic OAuth first,
-   then OpenAI/Codex OAuth, then plain API keys for any provider. Written
-   from provider docs and our own traces, not copied.
-5. **OpenCode integration.** The Roadie OpenCode plugin adds the
+4. **Adapters** (`cli/src/credentials/adapters/`). Anthropic OAuth first
+   (per-provider adapters are for subscriptions only), then plain API keys
+   for **any** provider through the catalog below. Written from provider
+   docs and our own traces, not copied.
+5. **Provider catalog** (`cli/src/credentials/provider-catalog.ts`). The
+   models.dev data opencode already caches
+   (`$XDG_CACHE_HOME/opencode/models.json`; when missing,
+   `https://models.dev/api.json` is fetched once and cached under
+   `<dataDir>/credentials/models-dev.json`). A provider resolves to a
+   bundled AI SDK package (`@ai-sdk/anthropic`, `@ai-sdk/openai`,
+   `@ai-sdk/openai-compatible`, `@ai-sdk/google`, `@ai-sdk/groq`,
+   `@ai-sdk/xai`, `@ai-sdk/mistral`, `@openrouter/ai-sdk-provider`), else to
+   `@ai-sdk/openai-compatible` against the catalog's `api` URL (185+
+   providers), else to the account's `baseURL` override (custom endpoints,
+   providers declared only in opencode config), else unsupported with a
+   clear error. `credentials add-key` (CLI and `/credentials` modal)
+   validates the free-text provider against the catalog and lists close
+   matches; no provider names are hardcoded.
+6. **OpenCode integration.** The Roadie OpenCode plugin adds the
    `chat.headers` hook; a `roadie` provider module is loaded through
-   `provider.roadie.npm` (file:// URL). Models are `roadie/<rotation>`.
-6. **`/login` changes.** In `global` mode it adds an account to `shared`
+   `provider.roadie.npm` (file:// URL) and exposes one delegating
+   LanguageModel per rotation. Models are `roadie/<rotation>`.
+7. **`/login` changes.** In `global` mode it adds an account to `shared`
    (admin capability, as today). In per-person modes it adds to the
    caller's pool; the flow runs in an ephemeral reply so codes never land
    in a public channel. New `/credentials` to list, reorder and remove
@@ -168,10 +197,12 @@ Components:
 
 `spikes/credential-pools/` runs a real `opencode serve` (1.18.31) with a
 stub upstream that speaks both the Anthropic Messages and OpenAI chat
-wire formats, two pool-aware providers (one per wire) sharing one pool
-fetch, and a `chat.headers` plugin. Three sessions prompt concurrently on
+wire formats, three pool-aware providers (one per wire, plus a second
+OpenAI-compatible provider with its own base URL), and a `chat.headers`
+plugin. Three sessions prompt concurrently on
 one server, then a fourth session runs three turns that alternate payer and
-provider (alice on Anthropic, bob on OpenAI, alice on Anthropic):
+provider (alice on Anthropic, bob on OpenAI, alice on Anthropic), and a
+fifth session prompts through the second OpenAI-compatible endpoint:
 
 ```
 PASS  A+B alice session billed to alice pool        [ok:alice-2]
@@ -184,6 +215,8 @@ PASS  F turns billed to alternating payers          [anth:alice-2 | ok:bob-1 | a
 PASS  F turn 2 (bob, OpenAI wire) saw turn 1 prompt and Anthropic reply
 PASS  F turn 3 (alice, Anthropic wire) saw turns 1-2 including the OpenAI reply
 PASS  F turn 1 request went out on the Anthropic wire
+PASS  G second OpenAI-compatible provider routed to its own base URL
+PASS  G the zai provider never used the first provider base URL
 ```
 
 Wire-level history for the hand-off session, from the stub's request log:

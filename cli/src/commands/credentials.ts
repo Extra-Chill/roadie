@@ -5,6 +5,7 @@
 // Subcommands:
 //   /credentials list                        — accounts + rotations (no secrets)
 //   /credentials add-key provider:<p>        — modal for the key (never an option)
+//                                              and an optional base URL override
 //   /credentials login-anthropic             — OAuth: authorize URL + paste modal
 //   /credentials remove account:<id>         — remove an account
 //
@@ -61,6 +62,7 @@ import {
   generatePKCE,
   parseManualInput,
 } from '../credentials/adapters/anthropic-oauth.js'
+import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 
 const credentialsLogger = createLogger(LogPrefix.CREDENTIALS)
 
@@ -376,8 +378,15 @@ async function handleCredentialsAddKey(
     .setPlaceholder('sk-...')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
+  const baseURLInput = new TextInputBuilder()
+    .setCustomId('baseurl')
+    .setLabel('Base URL (optional, for custom endpoints)')
+    .setPlaceholder('https://self-hosted.example.com/v1')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
   modal.addComponents(
     new ActionRowBuilder<TextInputBuilder>().addComponents(apiKeyInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(baseURLInput),
   )
   await command.showModal(modal)
 }
@@ -402,6 +411,10 @@ export async function handleCredentialsApiKeyModalSubmit(
     await interaction.editReply({ content: 'API key is required.' })
     return
   }
+  // Optional base URL override for custom or self-hosted endpoints; it wins
+  // over the models.dev catalog and is the one case that skips provider
+  // validation (a custom endpoint is exactly what the catalog cannot know).
+  const baseURL = interaction.fields.getTextInputValue('baseurl')?.trim() || undefined
   // Re-check the target pool and permissions at submit time; the intent from
   // the click is re-validated, never trusted.
   const target = await resolveTargetPoolForInteraction({
@@ -413,11 +426,30 @@ export async function handleCredentialsApiKeyModalSubmit(
     await interaction.editReply({ content: target.message })
     return
   }
+  // The provider stays free text; unknown names get close matches from the
+  // models.dev catalog. When the catalog cannot be loaded, adding proceeds —
+  // the account simply routes once the catalog is available.
+  if (!baseURL) {
+    const catalog = await resolveCatalog({ dataDir: getDataDir() })
+    if (catalog instanceof Error) {
+      credentialsLogger.warn(
+        `[CREDENTIALS] Could not load the models.dev catalog; skipping provider validation: ${catalog.message}`,
+      )
+    } else {
+      const invalid = validateCatalogProvider({ catalog, provider: context.provider })
+      if (invalid) {
+        deleteCredentialsContext(hash)
+        await interaction.editReply({ content: invalid.message })
+        return
+      }
+    }
+  }
   const account = await addPoolAccount({
     dataDir: getDataDir(),
     poolId: target.poolId,
     provider: context.provider,
     key,
+    ...(baseURL && { baseURL }),
   })
   if (account instanceof DuplicatePoolAccountError) {
     await interaction.editReply({
