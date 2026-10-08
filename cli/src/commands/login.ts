@@ -1,5 +1,14 @@
 // /login command — authenticate with AI providers (OAuth or API key).
 //
+// With --credential-pools off (the default) the flow is unchanged: it drives
+// the OpenCode auth API, which writes OpenCode's own auth.json.
+//
+// With --credential-pools on, /login never touches OpenCode auth.json. The
+// provider picker lists the models.dev catalog and the writes go through the
+// /credentials handlers (startCredentialsApiKeyModal +
+// startCredentialsAnthropicOAuth): same target-pool resolution, same
+// shared-pool admin rule, ephemeral replies, keys only ever via a modal.
+//
 // Uses a unified select handler (`login_select:<hash>`) for all sequential
 // select menus (provider → method → plugin prompts). The context tracks a
 // `step` field so one handler drives the whole flow.
@@ -8,6 +17,10 @@
 //   login_select:<hash>  — all select menus (provider, method, prompts)
 //   login_apikey:<hash>  — API key modal submission
 //   login_text:<hash>    — text prompt modal submission
+//
+// (The pool flow reuses login_select for its provider/method menus but hands
+// off to the credentials_apikey:/credentials_oauth_code_* customIds, whose
+// dispatch and gating live in interaction-handler.ts and commands/credentials.ts.)
 
 import {
   ChatInputCommandInteraction,
@@ -33,6 +46,16 @@ import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import { clearModelListCache } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
+import { getDataDir } from '../config.js'
+import { store } from '../store.js'
+import {
+  resolveCatalog,
+  type ModelsDevCatalog,
+} from '../credentials/provider-catalog.js'
+import {
+  startCredentialsApiKeyModal,
+  startCredentialsAnthropicOAuth,
+} from './credentials.js'
 
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
@@ -49,11 +72,15 @@ type ProviderAuthMethod = AgentAuthMethod
 type StepProvider = { type: 'provider' }
 type StepMethod = { type: 'method'; methods: ProviderAuthMethod[] }
 type StepPrompt = { type: 'prompt'; prompt: AuthPrompt }
-type LoginStep = StepProvider | StepMethod | StepPrompt
+/** Pool flow: the account-type menu for a provider (Anthropic OAuth vs API key). */
+type StepPoolMethod = { type: 'pool-method'; provider: string }
+type LoginStep = StepProvider | StepMethod | StepPrompt | StepPoolMethod
 
 type LoginContext = {
   dir: string
   channelId: string
+  /** Pool flow: writes go to credential pools via the /credentials handlers. */
+  pools?: boolean
   providerId?: string
   providerName?: string
   methodIndex?: number
@@ -159,6 +186,14 @@ export async function handleLoginCommand({
   appId: string
 }): Promise<void> {
   loginLogger.log('[LOGIN] handleLoginCommand called')
+
+  // Credential pools: /login adds an account to a pool through the
+  // /credentials handlers and never touches OpenCode's auth.json. It needs no
+  // opencode server or project directory, so the flow below skips all of that.
+  if (store.getState().credentialPoolsEnabled) {
+    await handlePoolLoginCommand({ command: interaction })
+    return
+  }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
@@ -280,6 +315,178 @@ export async function handleLoginCommand({
   }
 }
 
+// ── Credential-pool flow ────────────────────────────────────────
+// With --credential-pools on, /login adds an account to a pool. The provider
+// picker comes from the models.dev catalog (#136); the writes reuse the
+// /credentials handlers, so target-pool resolution, the shared-pool admin
+// rule, ephemeral replies and modal-only keys are identical. OpenCode's
+// auth.json is never read or written here.
+
+const POOL_LOGIN_PROVIDER_PROMPT = '**Add a provider account to your credential pool**\nSelect a provider:'
+
+/**
+ * Provider options for the pool picker: every models.dev provider, popular
+ * ids first (same ordering vocabulary as the auth.json picker), then
+ * alphabetical. The description shows the catalog id when the display name
+ * differs, since that id is what accounts are stored under.
+ */
+export function buildPoolLoginProviderOptions(
+  catalog: ModelsDevCatalog,
+): Array<{ label: string; value: string; description?: string }> {
+  return Object.values(catalog)
+    .sort((a, b) => {
+      const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
+      const rankB = PROVIDER_POPULARITY_ORDER.indexOf(b.id)
+      const posA = rankA === -1 ? Number.POSITIVE_INFINITY : rankA
+      const posB = rankB === -1 ? Number.POSITIVE_INFINITY : rankB
+      if (posA !== posB) {
+        return posA - posB
+      }
+      return (a.name ?? a.id).localeCompare(b.name ?? b.id)
+    })
+    .map((entry) => ({
+      label: (entry.name ?? entry.id).slice(0, 100),
+      value: entry.id,
+      ...(entry.name && entry.name !== entry.id
+        ? { description: entry.id.slice(0, 100) }
+        : {}),
+    }))
+}
+
+async function handlePoolLoginCommand({
+  command,
+}: {
+  command: ChatInputCommandInteraction
+}): Promise<void> {
+  await command.deferReply({ flags: MessageFlags.Ephemeral })
+  const catalog = await resolveCatalog({ dataDir: getDataDir() })
+  if (catalog instanceof Error) {
+    await command.editReply({
+      content: `Could not load the models.dev provider catalog: ${catalog.message}`,
+    })
+    return
+  }
+  const context: LoginContext = {
+    // The pool flow never talks to the opencode server: dir/channelId stay
+    // unused and the target pool is resolved from the interaction instead.
+    dir: '',
+    channelId: command.channelId ?? '',
+    pools: true,
+    steps: [{ type: 'provider' }],
+    stepIndex: 0,
+    inputs: {},
+  }
+  const hash = createContextHash(context)
+  const { options } = buildPaginatedOptions({
+    allOptions: buildPoolLoginProviderOptions(catalog),
+    page: 0,
+  })
+  await command.editReply({
+    content: POOL_LOGIN_PROVIDER_PROMPT,
+    components: [
+      buildSelectMenu({
+        customId: `login_select:${hash}`,
+        placeholder: 'Select a provider to add to your pool',
+        options,
+      }),
+    ],
+  })
+}
+
+async function handlePoolProviderStep(
+  interaction: StringSelectMenuInteraction,
+  ctx: LoginContext,
+  hash: string,
+  providerId: string,
+): Promise<void> {
+  // Pagination nav — re-render the same provider select from the catalog.
+  const navPage = parsePaginationValue(providerId)
+  if (navPage !== undefined) {
+    await interaction.deferUpdate()
+    ctx.providerPage = navPage
+    const catalog = await resolveCatalog({ dataDir: getDataDir() })
+    if (catalog instanceof Error) {
+      await interaction.editReply({
+        content: `Could not load the models.dev provider catalog: ${catalog.message}`,
+        components: [],
+      })
+      return
+    }
+    const { options } = buildPaginatedOptions({
+      allOptions: buildPoolLoginProviderOptions(catalog),
+      page: navPage,
+    })
+    await interaction.editReply({
+      content: POOL_LOGIN_PROVIDER_PROMPT,
+      components: [
+        buildSelectMenu({
+          customId: `login_select:${hash}`,
+          placeholder: 'Select a provider to add to your pool',
+          options,
+        }),
+      ],
+    })
+    return
+  }
+  ctx.providerId = providerId
+  if (providerId === 'anthropic') {
+    // Anthropic offers both a subscription (OAuth) and an API key account.
+    ctx.steps = [{ type: 'pool-method', provider: providerId }]
+    ctx.stepIndex = 0
+    await interaction.deferUpdate()
+    await interaction.editReply({
+      content: '**Add an Anthropic account to your credential pool**\nSelect account type:',
+      components: [
+        buildSelectMenu({
+          customId: `login_select:${hash}`,
+          placeholder: 'Select account type',
+          options: [
+            {
+              label: 'Claude subscription (OAuth)',
+              value: 'oauth',
+              description: 'Claude Pro/Max login — paste the authorization code',
+            },
+            {
+              label: 'API key',
+              value: 'api',
+              description: 'Add an Anthropic API key to the pool',
+            },
+          ],
+        }),
+      ],
+    })
+    return
+  }
+  // Every other provider is an API key account, entered through the same
+  // modal /credentials add-key uses (never a menu option, never a reply).
+  await startCredentialsApiKeyModal({
+    command: interaction,
+    provider: providerId,
+    requestShared: false,
+  })
+}
+
+async function handlePoolMethodStep(
+  interaction: StringSelectMenuInteraction,
+  value: string,
+  step: StepPoolMethod,
+): Promise<void> {
+  if (value === 'oauth') {
+    // Same ephemeral authorize-URL + paste-modal flow as
+    // /credentials login-anthropic.
+    await startCredentialsAnthropicOAuth({
+      command: interaction,
+      requestShared: false,
+    })
+    return
+  }
+  await startCredentialsApiKeyModal({
+    command: interaction,
+    provider: step.provider,
+    requestShared: false,
+  })
+}
+
 // ── Unified select handler ──────────────────────────────────────
 // Handles all select menu interactions for the login flow.
 // Reads the current step from context, processes the answer,
@@ -326,7 +533,13 @@ export async function handleLoginSelect(
 
   try {
     if (step.type === 'provider') {
-      await handleProviderStep(interaction, ctx, hash, value)
+      if (ctx.pools) {
+        await handlePoolProviderStep(interaction, ctx, hash, value)
+      } else {
+        await handleProviderStep(interaction, ctx, hash, value)
+      }
+    } else if (step.type === 'pool-method') {
+      await handlePoolMethodStep(interaction, value, step)
     } else if (step.type === 'method') {
       await handleMethodStep(interaction, ctx, hash, value, step)
     } else if (step.type === 'prompt') {

@@ -408,13 +408,19 @@ export function registerInteractionHandler({
               return
 
             case 'login':
-              if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
+              if (
+                !store.getState().credentialPoolsEnabled &&
+                !hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)
+              ) {
                 await interaction.reply({
                   content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                   flags: MessageFlags.Ephemeral,
                 })
                 return
               }
+              // With credential pools on, the flow enforces the stricter
+              // shared-pool admin rule itself and per-person callers manage
+              // their own pool, like /credentials.
               await handleLoginCommand({ interaction, appId })
               return
 
@@ -650,13 +656,18 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_select:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
+            if (
+              !store.getState().credentialPoolsEnabled &&
+              !hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)
+            ) {
               await interaction.reply({
                 content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
                 flags: MessageFlags.Ephemeral,
               })
               return
             }
+            // With credential pools on the pool flow re-checks the shared-pool
+            // admin rule at every write (same handlers as /credentials).
             await handleLoginSelect(interaction)
             return
           }

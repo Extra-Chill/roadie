@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import type { ModalSubmitInteraction } from 'discord.js'
+import type { ChatInputCommandInteraction, ModalSubmitInteraction } from 'discord.js'
 import {
   CREDENTIALS_APIKEY_MODAL_PREFIX,
   CREDENTIALS_CONTEXT_TTL_MS,
@@ -18,6 +18,7 @@ import {
   createCredentialsContext,
   getCredentialsContext,
   handleCredentialsApiKeyModalSubmit,
+  handleCredentialsCommand,
   handleCredentialsOAuthCodeModalSubmit,
 } from '../commands/credentials.js'
 import {
@@ -28,6 +29,7 @@ import {
 import { parseManualInput } from './adapters/anthropic-oauth.js'
 import {
   SHARED_POOL_ID,
+  addPoolAccount,
   readPoolAccounts,
   readPoolRotations,
   seedPoolRotations,
@@ -416,7 +418,7 @@ describe('/credentials registration gating', () => {
     )
   })
 
-  test('registered once when credential pools are on, with the four subcommands', () => {
+  test('registered once when credential pools are on, with the five subcommands', () => {
     const registered = buildRegistrableStaticCommands({ credentialPoolsEnabled: true })
     expect(registered.map((c) => c.name).filter((n) => n === 'credentials')).toHaveLength(1)
     const json = buildCredentialsSlashCommand().toJSON()
@@ -425,6 +427,7 @@ describe('/credentials registration gating', () => {
       'add-key',
       'login-anthropic',
       'remove',
+      'reorder',
     ])
   })
 
@@ -447,5 +450,101 @@ describe('/credentials registration gating', () => {
     expect(provider?.required).toBe(true)
     // Any models.dev provider must be addable: no hardcoded choice list.
     expect(provider?.choices).toBeUndefined()
+  })
+
+  test('the reorder subcommand takes an account, a 1-based position and the pool choice', () => {
+    type RegisteredOption = {
+      name: string
+      required?: boolean
+      min_value?: number
+    }
+    const json = buildCredentialsSlashCommand().toJSON()
+    const reorder = (json.options ?? []).find((o) => o.name === 'reorder')
+    expect(reorder).toBeDefined()
+    const options = ((reorder as unknown as { options?: RegisteredOption[] }).options ?? [])
+    expect(options.map((o) => o.name)).toEqual(['account', 'position', 'pool'])
+    expect(options.find((o) => o.name === 'account')?.required).toBe(true)
+    expect(options.find((o) => o.name === 'position')?.required).toBe(true)
+    expect(options.find((o) => o.name === 'position')?.min_value).toBe(1)
+  })
+})
+
+describe('/credentials reorder', () => {
+  function makeReorderCommandInteraction({
+    accountId,
+    position,
+    pool,
+    admin = false,
+  }: {
+    accountId: string
+    position: number
+    pool?: 'shared'
+    admin?: boolean
+  }): { interaction: ChatInputCommandInteraction; replies: string[] } {
+    const replies: string[] = []
+    const interaction = {
+      options: {
+        getSubcommand: () => 'reorder',
+        getString: (name: string) => (name === 'account' ? accountId : pool === 'shared' ? 'shared' : null),
+        getInteger: (name: string) => (name === 'position' ? position : null),
+      },
+      deferReply: async () => {},
+      editReply: async (options: EditReplyOptions) => {
+        replies.push(options.content ?? '')
+        return {}
+      },
+      guild: { id: 'guild-1' },
+      channelId: 'channel-1',
+      user: { id: USER_ID, displayName: 'Tester' },
+      member: {
+        user: { id: USER_ID },
+        roles: [],
+        permissions: admin ? '8' : '0',
+      },
+    }
+    return { interaction: interaction as unknown as ChatInputCommandInteraction, replies }
+  }
+
+  test('moves an account within the own pool and replies with the new order, no secrets', async () => {
+    const kept = await addPoolAccount({ dataDir, poolId: OWN_POOL, provider: 'openai', key: TEST_KEY })
+    const target = await addPoolAccount({ dataDir, poolId: OWN_POOL, provider: 'anthropic', key: TEST_KEY })
+    if (kept instanceof Error || target instanceof Error) throw new Error('seed failed')
+    const { interaction, replies } = makeReorderCommandInteraction({
+      accountId: target.id,
+      position: 1,
+    })
+    await handleCredentialsCommand({ command: interaction })
+    expect(replies).toHaveLength(1)
+    expect(replies[0]).toContain(`Moved account ${target.id} to position 1 in pool ${OWN_POOL}`)
+    expect(replies[0]).toContain(`Pool order: ${target.id} ${kept.id}`)
+    expect(replies.join('\n')).not.toContain(TEST_KEY)
+    const accounts = readPoolAccounts({ dataDir, poolId: OWN_POOL })
+    if (accounts instanceof Error) throw accounts
+    expect(accounts.map((account) => account.id)).toEqual([target.id, kept.id])
+  })
+
+  test('a non-admin cannot reorder the shared pool', async () => {
+    const { interaction, replies } = makeReorderCommandInteraction({
+      accountId: 'whatever',
+      position: 1,
+      pool: 'shared',
+    })
+    await handleCredentialsCommand({ command: interaction })
+    expect(replies.join('\n')).toContain('Only server admins')
+    expect(readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([])
+  })
+
+  test('an out-of-range position is refused without changing the order', async () => {
+    const only = await addPoolAccount({ dataDir, poolId: OWN_POOL, provider: 'groq', key: TEST_KEY })
+    if (only instanceof Error) throw only
+    const { interaction, replies } = makeReorderCommandInteraction({
+      accountId: only.id,
+      position: 5,
+    })
+    await handleCredentialsCommand({ command: interaction })
+    expect(replies.join('\n')).toContain('Invalid position 5')
+    const accounts = readPoolAccounts({ dataDir, poolId: OWN_POOL })
+    if (accounts instanceof Error) throw accounts
+    expect(accounts.map((account) => account.id)).toEqual([only.id])
   })
 })

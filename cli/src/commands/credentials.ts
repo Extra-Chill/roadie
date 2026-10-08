@@ -8,6 +8,12 @@
 //                                              and an optional base URL override
 //   /credentials login-anthropic             — OAuth: authorize URL + paste modal
 //   /credentials remove account:<id>         — remove an account
+//   /credentials reorder account:<id> position:<n> — move an account in the
+//                                              pool order (router tiebreaker)
+//
+// /login reuses the two write flows when --credential-pools is on
+// (startCredentialsApiKeyModal + startCredentialsAnthropicOAuth): same
+// target-pool resolution, same shared-pool admin rule, same ephemeral replies.
 //
 // CustomId patterns:
 //   credentials_apikey:<hash>       — API key modal submission
@@ -28,6 +34,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   ModalSubmitInteraction,
+  StringSelectMenuInteraction,
   ButtonBuilder,
   ButtonStyle,
   type ButtonInteraction,
@@ -48,6 +55,7 @@ import {
   SHARED_POOL_ID,
   addPoolAccount,
   addPoolOAuthAccount,
+  movePoolAccount,
   readPoolAccounts,
   readPoolRotations,
   readPoolState,
@@ -110,7 +118,10 @@ async function resolveTargetPoolForInteraction({
   interaction,
   requestShared,
 }: {
-  interaction: ChatInputCommandInteraction | ModalSubmitInteraction
+  interaction:
+    | ChatInputCommandInteraction
+    | ModalSubmitInteraction
+    | StringSelectMenuInteraction
   requestShared: boolean
 }): Promise<CredentialsTargetPool | Error> {
   let person: Person | undefined
@@ -237,8 +248,10 @@ function buildListContent({
   if (accounts.length === 0) {
     lines.push('No accounts yet. Use /credentials add-key or /credentials login-anthropic.')
   } else {
-    for (const account of accounts) {
-      lines.push(`${account.id} | ${describeAccount({ account, cooldownUntil: cooldowns[account.id], now })}`)
+    for (const [index, account] of accounts.entries()) {
+      lines.push(
+        `${index + 1}. ${account.id} | ${describeAccount({ account, cooldownUntil: cooldowns[account.id], now })}`,
+      )
     }
   }
   const rotationNames = Object.keys(rotations).sort()
@@ -298,6 +311,9 @@ export async function handleCredentialsCommand({
     case 'remove':
       await handleCredentialsRemove(command)
       return
+    case 'reorder':
+      await handleCredentialsReorder(command)
+      return
     default:
       await command.reply({
         content: 'Unknown subcommand.',
@@ -355,10 +371,31 @@ async function handleCredentialsAddKey(
   command: ChatInputCommandInteraction,
 ): Promise<void> {
   const provider = command.options.getString('provider', true)
-  // Fail fast before the modal; the modal submit re-checks everything.
+  await startCredentialsApiKeyModal({
+    command,
+    provider,
+    requestShared: requestSharedOption(command),
+  })
+}
+
+/**
+ * The /credentials add-key flow, shared with /login when credential pools are
+ * on: resolve the target pool (fail fast before the modal; the modal submit
+ * re-checks everything), then collect the key in a modal — never as an option
+ * and never in a reply.
+ */
+export async function startCredentialsApiKeyModal({
+  command,
+  provider,
+  requestShared,
+}: {
+  command: ChatInputCommandInteraction | StringSelectMenuInteraction
+  provider: string
+  requestShared: boolean
+}): Promise<void> {
   const target = await resolveTargetPoolForInteraction({
     interaction: command,
-    requestShared: requestSharedOption(command),
+    requestShared,
   })
   if (target instanceof Error) {
     await command.reply({ content: target.message, flags: MessageFlags.Ephemeral })
@@ -478,10 +515,29 @@ export async function handleCredentialsApiKeyModalSubmit(
 async function handleCredentialsLoginAnthropic(
   command: ChatInputCommandInteraction,
 ): Promise<void> {
+  await startCredentialsAnthropicOAuth({
+    command,
+    requestShared: requestSharedOption(command),
+  })
+}
+
+/**
+ * The /credentials login-anthropic flow, shared with /login when credential
+ * pools are on: everything runs in an ephemeral reply so codes never land in a
+ * public channel, and the paste modal goes through the same pending-PKCE
+ * context and button/modal handlers as the command.
+ */
+export async function startCredentialsAnthropicOAuth({
+  command,
+  requestShared,
+}: {
+  command: ChatInputCommandInteraction | StringSelectMenuInteraction
+  requestShared: boolean
+}): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   const target = await resolveTargetPoolForInteraction({
     interaction: command,
-    requestShared: requestSharedOption(command),
+    requestShared,
   })
   if (target instanceof Error) {
     await command.editReply({ content: target.message })
@@ -662,5 +718,38 @@ async function handleCredentialsRemove(
   }
   await command.editReply({
     content: `Removed account ${accountId} from pool ${target.poolId}.`,
+  })
+}
+
+// ── reorder ──────────────────────────────────────────────────────
+
+async function handleCredentialsReorder(
+  command: ChatInputCommandInteraction,
+): Promise<void> {
+  await command.deferReply({ flags: MessageFlags.Ephemeral })
+  const accountId = command.options.getString('account', true)
+  const position = command.options.getInteger('position', true)
+  const target = await resolveTargetPoolForInteraction({
+    interaction: command,
+    requestShared: requestSharedOption(command),
+  })
+  if (target instanceof Error) {
+    await command.editReply({ content: target.message })
+    return
+  }
+  const ordered = await movePoolAccount({
+    dataDir: getDataDir(),
+    poolId: target.poolId,
+    accountId,
+    position,
+  })
+  if (ordered instanceof Error) {
+    await command.editReply({ content: ordered.message })
+    return
+  }
+  await command.editReply({
+    content:
+      `Moved account ${accountId} to position ${position} in pool ${target.poolId}.\n` +
+      `Pool order: ${ordered.map((account) => account.id).join(' ')}`,
   })
 }

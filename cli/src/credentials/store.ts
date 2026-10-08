@@ -465,6 +465,51 @@ export async function removePoolAccount({
   })
 }
 
+/**
+ * Move an account to a 1-based position in the pool's account order, under the
+ * pool lock. The order is the tiebreaker the router uses between accounts of
+ * the same rotation entry, so this is how an owner decides which account is
+ * tried first. Returns the new ordered account list.
+ */
+export async function movePoolAccount({
+  dataDir,
+  poolId,
+  accountId,
+  position,
+}: {
+  dataDir: string
+  poolId: string
+  accountId: string
+  /** 1-based target position; must fall within the pool's current accounts. */
+  position: number
+}): Promise<PoolAccount[] | Error> {
+  if (!isValidPoolId(poolId)) {
+    return new Error(`Invalid pool id: ${poolId}`)
+  }
+  return await withPoolLock(poolId, () => {
+    const accounts = readAccountsFile({ dataDir, poolId })
+    const fromIndex = accounts.findIndex((account) => account.id === accountId)
+    if (fromIndex === -1) {
+      return new Error(`Account ${accountId} not found in pool ${poolId}`)
+    }
+    if (!Number.isInteger(position) || position < 1 || position > accounts.length) {
+      return new Error(
+        `Invalid position ${position}: pool ${poolId} has ${accounts.length} account${accounts.length === 1 ? '' : 's'}`,
+      )
+    }
+    const [moved] = accounts.splice(fromIndex, 1)
+    if (!moved) {
+      return new Error(`Account ${accountId} not found in pool ${poolId}`)
+    }
+    const ordered = [...accounts.slice(0, position - 1), moved, ...accounts.slice(position - 1)]
+    atomicWriteFileSync({
+      filePath: path.join(getPoolDir({ dataDir, poolId }), 'accounts.json'),
+      data: JSON.stringify({ accounts: ordered }, null, 2),
+    })
+    return ordered
+  })
+}
+
 // ── State (cooldowns + last used) ────────────────────────────────
 
 export function readPoolState({ dataDir, poolId }: { dataDir: string; poolId: string }): PoolState | Error {
