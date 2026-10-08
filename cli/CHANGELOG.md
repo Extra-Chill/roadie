@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.47.0] - 2026-10-08
+
+### Added
+- hold a credential pool route for the whole turn
+
 ## [0.46.3] - 2026-10-08
 
 ### Fixed
