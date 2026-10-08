@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.0] - 2026-10-08
+
+### Added
+- /credentials Discord command for your own credential pool
+
 ## [0.45.0] - 2026-10-07
 
 ### Added
