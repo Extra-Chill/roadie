@@ -613,3 +613,46 @@ export async function setPoolRotation({
     return true
   })
 }
+
+/**
+ * Copy the source pool's (default: shared) rotations into `poolId` under the
+ * same names, only when the target pool still has no rotations at all.
+ *
+ * The `roadie/<rotation>` models in the OpenCode config are named after the
+ * shared pool's rotations and routing looks rotations up by name in each
+ * pool, so a person pool with accounts but no rotation would 401 every
+ * request. Seeding runs under the target pool's lock and re-checks emptiness
+ * inside it, so a rotation the owner (or an import) wrote concurrently is
+ * never overwritten; later calls are no-ops. Returns the number of rotations
+ * copied (0 when skipped).
+ */
+export async function seedPoolRotations({
+  dataDir,
+  poolId,
+  sourcePoolId = SHARED_POOL_ID,
+}: {
+  dataDir: string
+  poolId: string
+  sourcePoolId?: string
+}): Promise<number | Error> {
+  if (!isValidPoolId(poolId) || !isValidPoolId(sourcePoolId)) {
+    return new Error(`Invalid pool id: ${poolId}`)
+  }
+  if (poolId === sourcePoolId) return 0
+  return await withPoolLock(poolId, () => {
+    const rotations = readRotationFile({ dataDir, poolId })
+    if (Object.keys(rotations).length > 0) return 0
+    const source = readRotationFile({ dataDir, poolId: sourcePoolId })
+    const names = Object.keys(source).filter((name) => (source[name] ?? []).length > 0)
+    if (names.length === 0) return 0
+    const seeded: Record<string, string[]> = {}
+    for (const name of names) {
+      seeded[name] = [...(source[name] ?? [])]
+    }
+    atomicWriteFileSync({
+      filePath: path.join(getPoolDir({ dataDir, poolId }), 'rotation.json'),
+      data: JSON.stringify(seeded, null, 2),
+    })
+    return names.length
+  })
+}

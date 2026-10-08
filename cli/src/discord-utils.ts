@@ -164,6 +164,38 @@ export function hasRoadieAdminPermission(
   return isOwner || isAdmin || canManageServer || hasRoadieRole
 }
 
+/**
+ * Strictest admin check, for writes to the shared credential pool (/credentials
+ * pool:shared): the identity hook's `admin` capability when a hook is
+ * configured, otherwise Discord Administrator or Manage Server (the guild
+ * owner passes, as in every other Roadie permission gate). Unlike
+ * hasRoadieAdminPermission this never accepts the "Roadie" role and ignores
+ * allowAllUsers: the shared pool holds everyone's billing credentials.
+ * Uncached actors under a hook are denied (fail closed).
+ */
+export function hasCredentialPoolAdminPermission(
+  member: GuildMemberType | APIInteractionGuildMember | null,
+  guild?: Guild | null,
+  channelId?: string | null,
+): boolean {
+  if (!member) {
+    return false
+  }
+  if (channelId && !channelAllowsCapability(channelId, 'admin')) return false
+  const hooked = hookCapability(member, 'admin')
+  if (hooked !== undefined) return hooked
+  const memberPermissions =
+    member instanceof GuildMember
+      ? member.permissions
+      : new PermissionsBitField(BigInt(member.permissions))
+  const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
+  const memberId = member instanceof GuildMember ? member.id : member.user.id
+  const isOwner = ownerId ? memberId === ownerId : false
+  const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
+  const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
+  return isOwner || isAdmin || canManageServer
+}
+
 export async function resolveGuildMessageMember(
   message: Message,
 ): Promise<GuildMemberType | null> {
