@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.2] - 2026-10-08
+
+### Fixed
+- credential pools accept API keys for any provider
+
 ## [0.46.1] - 2026-10-08
 
 ### Fixed
