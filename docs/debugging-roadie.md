@@ -25,6 +25,20 @@ roadie writes logs to `<dataDir>/roadie.log` (default `~/.roadie/roadie.log`). T
 
 The OpenCode server's own log goes to `<dataDir>/opencode-server.log`, kept across restarts and capped at 10 MB (the previous file is kept as `opencode-server.log.1`). It runs at INFO by default; set `ROADIE_OPENCODE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARN`, `ERROR`) to change that. WARN and ERROR lines also appear in `roadie.log`. When a run ends in `MessageAbortedError` without an `[ABORT]` line in `roadie.log`, roadie logs `Run aborted by the agent backend`; look in `opencode-server.log` at that time for `message=cancel session.id=...` (someone called the abort API) or `message="disposing instance"` (the instance was torn down).
 
+## IPC database authentication after restart
+
+The local database service keeps its default credential in
+`<dataDir>/secrets/db-auth-token` with owner-only permissions. OpenCode children
+inherit `ROADIE_DB_AUTH_TOKEN_FILE`, and authenticated HTTP requests read the
+current credential at dispatch time. Configured inline or file credentials use
+the existing `ROADIE_DB_AUTH_TOKEN` / `ROADIE_DB_AUTH_TOKEN_FILE` contract.
+
+For repeated `thread_sessions` or `session_actors` query failures, compare the
+long-lived plugin's failure with a fresh authenticated client. Retained session
+events include the failing sleep tool result. The restart regression exercises a
+cached database handle, credential-file rotation, actual sleep persistence, and
+a response lost after a committed write to verify single-dispatch behavior.
+
 ## session event JSONL
 
 To debug OpenCode event ordering, set `ROADIE_LOG_OPENCODE_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). Use `ROADIE_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.

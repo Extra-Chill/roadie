@@ -1121,7 +1121,7 @@ async function startSingleServer({
           [CREDENTIALS_MODE_ENV]: store.getState().credentialsMode,
           [THREAD_BILLING_ENV]: store.getState().threadBilling,
         }),
-        ...(gatewayToken && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
+        ...(gatewayToken && !process.env.ROADIE_DB_AUTH_TOKEN_FILE && { ROADIE_DB_AUTH_TOKEN: gatewayToken }),
         // Guard: prevents agents from running `roadie` root command inside
         // an OpenCode session, which would steal the lock port and break the bot.
         ROADIE_OPENCODE_PROCESS: '1',

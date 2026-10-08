@@ -4,8 +4,9 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test, vi } from 'vitest'
 import Database from 'libsql'
 import { createClient, type Client } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
@@ -16,6 +17,12 @@ import {
   libsqlExecutor,
 } from 'libsqlproxy'
 import * as schema from './schema.js'
+import { closeDb, getDb } from './db.js'
+import { getDataDir, setDataDir } from './config.js'
+import { startHranaServer, stopHranaServer } from './hrana-server.js'
+import { store } from './store.js'
+import { chooseAvailableLockPort } from './test-utils.js'
+import { getThreadIdBySessionId, upsertSessionSleep, getSessionSleep } from './database.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -129,3 +136,102 @@ describe('hrana-server', () => {
     expect(deleted).toBeUndefined()
   }, 30_000)
 })
+
+test('cached IPC database follows credential-file rotation and server restart without replaying writes', async () => {
+  await closeDb()
+  const originalDir = getDataDir()
+  const originalToken = store.getState().gatewayToken
+  const previous = Object.fromEntries(['ROADIE_DB_URL', 'ROADIE_DB_AUTH_TOKEN', 'ROADIE_DB_AUTH_TOKEN_FILE', 'ROADIE_LOCK_PORT'].map((key) => [key, process.env[key]]))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-ipc-auth-'))
+  const tokenFile = path.join(root, 'auth-token')
+  const dbFile = path.join(root, 'ipc.sqlite')
+  const realFetch = globalThis.fetch
+  try {
+    setDataDir(root)
+    delete process.env.ROADIE_DB_AUTH_TOKEN
+    fs.writeFileSync(tokenFile, 'first-token\n', { mode: 0o600 })
+    process.env.ROADIE_DB_AUTH_TOKEN_FILE = tokenFile
+    process.env.ROADIE_LOCK_PORT = String(await chooseAvailableLockPort({ key: 'ipc-auth-rotation' }))
+    store.setState({ gatewayToken: null })
+    const started = await startHranaServer({ dbPath: dbFile })
+    if (started instanceof Error) throw started
+    process.env.ROADIE_DB_URL = started
+    const cached = await getDb()
+    await cached.insert(schema.thread_sessions).values({ thread_id: 'fork-thread', session_id: 'fork-session' })
+    expect(await getThreadIdBySessionId('fork-session')).toBe('fork-thread')
+    await stopHranaServer()
+    fs.writeFileSync(tokenFile, 'second-token\n', { mode: 0o600 })
+    store.setState({ gatewayToken: null })
+    const restarted = await startHranaServer({ dbPath: dbFile })
+    if (restarted instanceof Error) throw restarted
+    process.env.ROADIE_DB_URL = restarted
+    expect(await getDb()).toBe(cached)
+    expect(await getThreadIdBySessionId('fork-session')).toBe('fork-thread')
+    await upsertSessionSleep({ sessionId: 'fork-session', wakeAt: new Date('2030-01-01T00:00:00Z'), reason: 'restart proof' })
+    expect((await getSessionSleep({ sessionId: 'fork-session' }))?.reason).toBe('restart proof')
+    const stale = createClient({ url: restarted, authToken: 'first-token' })
+    await expect(stale.execute('SELECT 1')).rejects.toThrow(/401/)
+    stale.close()
+    let lost = false
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      const response = await realFetch(...args)
+      if (!lost && new URL(args[0] instanceof Request ? args[0].url : String(args[0])).pathname === '/v2/pipeline') {
+        lost = true
+        throw new TypeError('simulated lost response after execution')
+      }
+      return response
+    })
+    await expect(cached.insert(schema.thread_sessions).values({ thread_id: 'once-only', session_id: 'once-only' })).rejects.toThrow()
+    vi.stubGlobal('fetch', realFetch)
+    expect(await cached.select().from(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, 'once-only'))).toHaveLength(1)
+  } finally {
+    vi.unstubAllGlobals()
+    await closeDb()
+    await stopHranaServer()
+    store.setState({ gatewayToken: originalToken })
+    setDataDir(originalDir)
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30000)
+
+test('default IPC credential persists privately across a service restart', async () => {
+  const originalDir = getDataDir()
+  const originalToken = store.getState().gatewayToken
+  const previous = Object.fromEntries(['ROADIE_DB_AUTH_TOKEN', 'ROADIE_DB_AUTH_TOKEN_FILE', 'ROADIE_LOCK_PORT'].map((key) => [key, process.env[key]]))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-ipc-default-auth-'))
+  try {
+    setDataDir(root)
+    delete process.env.ROADIE_DB_AUTH_TOKEN
+    delete process.env.ROADIE_DB_AUTH_TOKEN_FILE
+    process.env.ROADIE_LOCK_PORT = String(await chooseAvailableLockPort({ key: 'ipc-default-auth' }))
+    store.setState({ gatewayToken: null })
+    const started = await startHranaServer({ dbPath: path.join(root, 'db.sqlite') })
+    if (started instanceof Error) throw started
+    const first = store.getState().gatewayToken
+    const file = process.env.ROADIE_DB_AUTH_TOKEN_FILE
+    if (!file) throw new Error('missing service credential file')
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    expect(process.env.ROADIE_DB_AUTH_TOKEN).toBeUndefined()
+    await stopHranaServer()
+    store.setState({ gatewayToken: null })
+    const restarted = await startHranaServer({ dbPath: path.join(root, 'db.sqlite') })
+    if (restarted instanceof Error) throw restarted
+    expect(store.getState().gatewayToken).toBe(first)
+    const client = createClient({ url: restarted, authToken: first ?? undefined })
+    expect((await client.execute('SELECT 1 AS ok')).rows[0]?.ok).toBe(1)
+    client.close()
+  } finally {
+    await stopHranaServer()
+    store.setState({ gatewayToken: originalToken })
+    setDataDir(originalDir)
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30000)
