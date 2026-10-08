@@ -23,7 +23,7 @@ import {
 } from 'libsqlproxy'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
-import { getLockPort } from './config.js'
+import { getLockPort, getDataDir, readRoadieSecret } from './config.js'
 import {
   buildRemoteSendArgs,
   getRemoteSendRunner,
@@ -90,14 +90,29 @@ function isAuthorizedRequest(req: http.IncomingMessage): boolean {
   return crypto.timingSafeEqual(expectedBuf, providedBuf)
 }
 
+let automaticAuthTokenFile: string | null = null
+
 function ensureServiceAuthTokenInStore(): string {
   const existingToken = store.getState().gatewayToken
   if (existingToken) {
     return existingToken
   }
-  const generatedToken = `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}`
-  store.setState({ gatewayToken: generatedToken })
-  return generatedToken
+  let token = readRoadieSecret('ROADIE_DB_AUTH_TOKEN')
+  if (!token) {
+    const file = path.join(getDataDir(), 'secrets', 'db-auth-token')
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+    try {
+      fs.writeFileSync(file, `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}\n`, { flag: 'wx', mode: 0o600 })
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error
+    }
+    process.env.ROADIE_DB_AUTH_TOKEN_FILE = file
+    automaticAuthTokenFile = file
+    token = readRoadieSecret('ROADIE_DB_AUTH_TOKEN')
+  }
+  if (!token) throw new Error('Roadie database service credential is unavailable')
+  store.setState({ gatewayToken: token })
+  return token
 }
 
 /**
@@ -125,7 +140,7 @@ export async function startHranaServer({
   const port = getLockPort()
   const bindHost = '127.0.0.1'
   const serviceAuthToken = ensureServiceAuthTokenInStore()
-  process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
+  if (!process.env.ROADIE_DB_AUTH_TOKEN_FILE) process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   await evictExistingInstance({ port })
@@ -236,6 +251,10 @@ export async function stopHranaServer() {
   hranaUrl = null
   discordGatewayReady = false
   chatReady = false
+  if (automaticAuthTokenFile && process.env.ROADIE_DB_AUTH_TOKEN_FILE === automaticAuthTokenFile) {
+    delete process.env.ROADIE_DB_AUTH_TOKEN_FILE
+  }
+  automaticAuthTokenFile = null
   hranaLogger.log('Hrana server stopped')
 }
 

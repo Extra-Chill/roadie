@@ -85,6 +85,15 @@ async function initializeDb(): Promise<RoadieDb> {
   const client = createClient({
     url: dbUrl,
     ...(dbAuthToken && { authToken: dbAuthToken }),
+    ...(!isFileMode && { fetch: async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = typeof input === 'string' || input instanceof URL
+        ? new Request(String(input), init)
+        : new Request(input, init)
+      const token = getDbAuthToken()
+      if (token) request.headers.set('authorization', `Bearer ${token}`)
+      else request.headers.delete('authorization')
+      return fetch(request)
+    } }),
   })
   const db = createDrizzleClient(client)
 
