@@ -73,8 +73,7 @@ function getRequestAuthToken(req: http.IncomingMessage): string | null {
 }
 
 // Timing-safe comparison of the service auth token.
-function isAuthorizedRequest(req: http.IncomingMessage): boolean {
-  const expectedToken = store.getState().gatewayToken
+function isAuthorizedRequest(req: http.IncomingMessage, expectedToken: string): boolean {
   if (!expectedToken) {
     return false
   }
@@ -93,10 +92,6 @@ function isAuthorizedRequest(req: http.IncomingMessage): boolean {
 let automaticAuthTokenFile: string | null = null
 
 function ensureServiceAuthTokenInStore(): string {
-  const existingToken = store.getState().gatewayToken
-  if (existingToken) {
-    return existingToken
-  }
   let token = readRoadieSecret('ROADIE_DB_AUTH_TOKEN')
   if (!token) {
     const file = path.join(getDataDir(), 'secrets', 'db-auth-token')
@@ -188,7 +183,7 @@ export async function startHranaServer({
     }
     // Hrana routes: /v2, /v2/pipeline — require auth
     if (pathname === '/v2' || pathname === '/v2/pipeline') {
-      if (!isAuthorizedRequest(req)) {
+      if (!isAuthorizedRequest(req, serviceAuthToken)) {
         res.writeHead(401, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: 'unauthorized' }))
         return

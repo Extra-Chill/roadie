@@ -32,6 +32,9 @@ The local database service keeps its default credential in
 inherit `ROADIE_DB_AUTH_TOKEN_FILE`, and authenticated HTTP requests read the
 current credential at dispatch time. Configured inline or file credentials use
 the existing `ROADIE_DB_AUTH_TOKEN` / `ROADIE_DB_AUTH_TOKEN_FILE` contract.
+The database listener binds authorization to that credential for its lifetime;
+later bot credential loading keeps its separate identity and does not replace
+the listener's expected credential.
 
 For repeated `thread_sessions` or `session_actors` query failures, compare the
 long-lived plugin's failure with a fresh authenticated client. Retained session
