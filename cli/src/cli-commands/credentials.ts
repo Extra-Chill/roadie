@@ -39,6 +39,7 @@ import {
   formatSubrouterImportReport,
   importSubrouterCredentials,
 } from '../credentials/import-subrouter.js'
+import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -121,14 +122,15 @@ cli
     'credentials add-key',
     'Add an API key account to a credential pool (default: shared). The key is read from stdin: echo <key> | roadie credentials add-key --provider <provider>',
   )
-  .option('--provider <provider>', 'Provider the key belongs to (anthropic, openai, openrouter, ...)')
+  .option('--provider <provider>', 'Provider the key belongs to, as named in the models.dev catalog (anthropic, zai-coding-plan, groq, ...)')
+  .option('--base-url <url>', 'Optional base URL override for custom or self-hosted endpoints (wins over the models.dev catalog)')
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (options) => {
     const poolId = resolvePoolId(options.pool)
     const provider = options.provider?.trim()
     if (!provider) {
-      exitWithError('Provider is required. Use --provider <anthropic|openai|...>')
+      exitWithError('Provider is required. Use --provider <anthropic|zai-coding-plan|groq|...>')
     }
     if (process.stdin.isTTY) {
       exitWithError('Pipe the API key on stdin: echo <key> | roadie credentials add-key --provider <provider>')
@@ -145,11 +147,25 @@ cli
       exitWithError('No API key received on stdin')
     }
 
+    // Free text provider, checked against the models.dev catalog; an explicit
+    // --base-url bypasses the check (custom endpoints are exactly the case the
+    // catalog cannot know).
+    if (!options.baseUrl) {
+      const catalog = await resolveCatalog({ dataDir: getDataDir() })
+      if (catalog instanceof Error) {
+        cliLogger.warn(`[CLI] Could not load the models.dev catalog; skipping provider validation: ${catalog.message}`)
+      } else {
+        const invalid = validateCatalogProvider({ catalog, provider })
+        if (invalid) exitWithError(invalid.message)
+      }
+    }
+
     const account = await addPoolAccount({
       dataDir: getDataDir(),
       poolId,
       provider,
       key,
+      ...(options.baseUrl && { baseURL: options.baseUrl }),
       ...(options.label && { label: options.label }),
     })
     if (account instanceof Error) exitWithError(account.message)

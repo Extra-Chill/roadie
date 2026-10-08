@@ -4,35 +4,48 @@
 // the first export whose name starts with `create` — so
 // `createRoadiePoolProvider` must remain the only `create*` export here.
 //
-// Every LLM request goes through `poolFetch`, which:
-//   1. reads the ordered pool list the roadie plugin put in `x-roadie-pool`
+// `createRoadiePoolProvider().languageModel(rotationName)` returns ONE
+// delegating LanguageModel (AI SDK `LanguageModelV3`). Its `doGenerate` and
+// `doStream`:
+//   1. read the ordered pool list the roadie plugin put in `x-roadie-pool`
 //      (chat.headers hook; global mode sends the single `shared` pool, and a
-//      single id behaves exactly as before),
-//   2. strips every `x-roadie-*` header plus the SDK placeholder auth headers
-//      so nothing internal reaches upstream,
-//   3. resolves the pool's rotation into ordered candidates, skipping
-//      cooled-down accounts,
-//   4. refreshes OAuth accounts whose access token expires within 60s (under
-//      the pool lock, so concurrent requests refresh only once; a permanent
-//      refresh failure cools the account down for 1h and skips it),
-//   5. sets the auth header per account (`x-api-key` for api keys on the
-//      Anthropic wire, `authorization: Bearer` for OAuth and
-//      OpenAI-compatible) and rewrites the body's `model` to the candidate's
-//      real model id; Anthropic OAuth candidates additionally get the Claude
-//      Code payload shaping (system prefix, tool names) with the response
-//      stream's tool names reversed,
-//   6. on HTTP 429 marks the account cooling down (`retry-after` when
-//      present, else 60s) and tries the next candidate.
+//      single id behaves exactly as before) and strip every `x-roadie-*`
+//      header from the call options so nothing internal reaches upstream,
+//   2. resolve the pool's rotation into ordered candidates with the existing
+//      router (per-pool rotation, per-pool cooldowns, OAuth refresh),
+//   3. per candidate, build that provider's SDK language model for the
+//      candidate's real model id with the account's credentials — the
+//      provider comes from the models.dev catalog
+//      (credentials/provider-catalog.ts): bundled SDK when known, else
+//      OpenAI-compatible against the catalog base URL, else the account's own
+//      `baseURL` override — and call its `doGenerate`/`doStream` with the same
+//      options, and
+//   4. on an `APICallError` with status 429 mark the account cooling down
+//      (`retry-after` when present, else 60s) and try the next candidate; any
+//      other error is returned as-is. `markUsed` runs on success.
 //
-// A missing pool tag or an empty pool fails closed with a 401 JSON error; the
-// request never reaches upstream. State lives in <dataDir>/credentials/ via
-// credentials/store.ts; the data directory comes from ROADIE_DATA_DIR, which
-// opencode.ts sets on the server process.
+// Because routing happens per candidate, one rotation can mix providers
+// (e.g. `anthropic/claude-sonnet-5-5` then `zai-coding-plan/glm-5.3-flash`).
+// OAuth accounts keep per-provider adapters (credentials/adapters/): the
+// Anthropic adapter builds `@ai-sdk/anthropic` with a shaping fetch that
+// carries the existing Bearer/beta/system-prefix/tool-name round-trip.
+// Unknown OAuth providers are unsupported with a clear error.
+//
+// A missing pool tag or an empty pool fails closed with a 401 APICallError;
+// the request never reaches upstream. State lives in <dataDir>/credentials/
+// via credentials/store.ts; the data directory comes from ROADIE_DATA_DIR,
+// which opencode.ts sets on the server process.
 
 import os from 'node:os'
 import path from 'node:path'
 import { createAnthropic } from '@ai-sdk/anthropic'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import {
+  APICallError,
+  type LanguageModelV3,
+  type LanguageModelV3CallOptions,
+  type LanguageModelV3GenerateResult,
+  type LanguageModelV3StreamResult,
+} from '@ai-sdk/provider'
 import {
   SHARED_POOL_ID,
   markCooldownLocked,
@@ -47,6 +60,12 @@ import {
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
 import { parsePoolListHeader } from './person-pool.js'
 import {
+  resolveCandidateModelFactory,
+  resolveCatalog,
+  type CandidateModelFactory,
+  type ModelsDevCatalog,
+} from './provider-catalog.js'
+import {
   applyAnthropicOAuthRequestHeaders,
   isPermanentRefreshFailure,
   refreshAnthropicToken,
@@ -60,7 +79,6 @@ export const POOL_HEADER = 'x-roadie-pool'
 export const SESSION_HEADER = 'x-roadie-session'
 export const ROADIE_INTERNAL_HEADER_PREFIX = 'x-roadie-'
 export const POOL_MANAGED_API_KEY = 'roadie-pool-managed'
-export const DEFAULT_OPENAI_COMPATIBLE_BASE_URL = 'https://api.openai.com/v1'
 
 const DEFAULT_COOLDOWN_MS = 60_000
 const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000
@@ -68,19 +86,6 @@ const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000
 export const OAUTH_REFRESH_LEAD_MS = 60_000
 /** Cooldown after a permanent (HTTP 400/401) refresh failure. */
 export const OAUTH_REFRESH_FAILURE_COOLDOWN_MS = 60 * 60 * 1000
-
-/** 'anthropic' speaks the Anthropic Messages wire; anything else is treated as OpenAI-compatible. */
-export type RequestWire = 'anthropic' | 'openai-compatible'
-
-export function wireForProvider(provider: string): RequestWire {
-  return provider === 'anthropic' ? 'anthropic' : 'openai-compatible'
-}
-
-/** The request URL path tells which wire serialized the body. */
-export function wireFromRequestUrl(input: string | URL): RequestWire {
-  const { pathname } = new URL(input.toString())
-  return pathname.endsWith('/messages') ? 'anthropic' : 'openai-compatible'
-}
 
 /** `retry-after` seconds when parseable (capped), else the 60s default. */
 export function cooldownUntilFromRetryAfter({ retryAfter, now }: { retryAfter: string | null; now: number }): number {
@@ -95,71 +100,34 @@ export function resolvePoolDataDir(dataDir?: string): string {
   return dataDir ?? process.env.ROADIE_DATA_DIR ?? path.join(os.homedir(), '.roadie')
 }
 
-function jsonErrorResponse(status: number, message: string): Response {
-  return new Response(JSON.stringify({ error: { message } }), {
-    status,
-    headers: { 'content-type': 'application/json' },
+/** The fail-closed 401 the delegating model throws; messages match the old wire-level bodies. */
+function poolAuthError(message: string): APICallError {
+  return new APICallError({
+    message,
+    url: 'roadie://credential-pools',
+    requestBodyValues: undefined,
+    statusCode: 401,
+    isRetryable: false,
   })
 }
 
-function discardResponseBody(response: Response): void {
-  void response.body?.cancel().catch(() => {})
+/** The global fetch type (bun-types) carries a preconnect member; match it so the fetch installs cleanly on the AI SDK providers. */
+export type PoolFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+export type PoolFetchWithPreconnect = PoolFetch & {
+  preconnect: (
+    url: string | URL,
+    options?: { dns?: boolean; tcp?: boolean; http?: boolean; https?: boolean },
+  ) => void
 }
 
-/**
- * Rewrite the serialized request body's `model` field to the candidate's real
- * upstream model id: the SDK model id is the rotation name (`default`), which
- * upstream would reject. Only string JSON bodies are rewritten; anything else
- * passes through untouched.
- */
-function rewriteBodyModel({
-  init,
-  headers,
-  modelId,
-}: {
-  init: RequestInit
-  headers: Headers
-  modelId: string
-}): RequestInit {
-  if (typeof init.body !== 'string') return { ...init, headers }
-  const parsed = (() => {
-    try {
-      return JSON.parse(init.body) as unknown
-    } catch {
-      return null
-    }
-  })()
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...init, headers }
-  const body = parsed as Record<string, unknown>
-  if (typeof body.model !== 'string' || body.model === modelId) return { ...init, headers }
-  const rewritten = new Headers(headers)
-  // The previous content-length no longer matches the rewritten body; let the
-  // runtime recompute it.
-  rewritten.delete('content-length')
-  return { ...init, headers: rewritten, body: JSON.stringify({ ...body, model: modelId }) }
-}
-
-function applyAccountAuth({ headers, candidate }: { headers: Headers; candidate: PoolCandidate }): void {
-  if (candidate.account.type === 'oauth') {
-    if (wireForProvider(candidate.provider) === 'anthropic') {
-      applyAnthropicOAuthRequestHeaders({
-        headers,
-        accessToken: candidate.account.access,
-        modelId: candidate.modelId,
-      })
-      return
-    }
-    headers.set('authorization', `Bearer ${candidate.account.access}`)
-    return
-  }
-  if (wireForProvider(candidate.provider) === 'anthropic') {
-    // An earlier oauth candidate on this wire may have set Bearer auth; api
-    // keys never carry it.
-    headers.delete('authorization')
-    headers.set('x-api-key', candidate.account.key)
-    return
-  }
-  headers.set('authorization', `Bearer ${candidate.account.key}`)
+function fetchWithPreconnect(fetchImpl: PoolFetch): PoolFetchWithPreconnect {
+  return Object.assign(fetchImpl, {
+    preconnect: (
+      _url: string | URL,
+      _options?: { dns?: boolean; tcp?: boolean; http?: boolean; https?: boolean },
+    ): void => {},
+  })
 }
 
 /**
@@ -238,56 +206,6 @@ async function ensureFreshOAuthAccount({
   }
 }
 
-type ShapedCandidateRequest = {
-  init: RequestInit
-  wrapResponse: (response: Response) => Response
-}
-
-/**
- * Auth headers + body for one candidate. API-key candidates get exactly the
- * phase 1a treatment (auth header per wire, model rewrite) so their requests
- * stay byte-for-byte unchanged. Anthropic OAuth candidates additionally send
- * Bearer auth with the merged beta header and get the Claude Code payload
- * shaping (system prefix, tool names), reversed in the streamed response.
- */
-function shapeCandidateRequest({
-  init,
-  headers,
-  candidate,
-}: {
-  init: RequestInit
-  headers: Headers
-  candidate: PoolCandidate
-}): ShapedCandidateRequest {
-  applyAccountAuth({ headers, candidate })
-  const withModel = rewriteBodyModel({ init, headers, modelId: candidate.modelId })
-  if (candidate.account.type !== 'oauth' || wireForProvider(candidate.provider) !== 'anthropic') {
-    return { init: withModel, wrapResponse: (response) => response }
-  }
-  if (typeof withModel.body !== 'string') {
-    return { init: withModel, wrapResponse: (response) => response }
-  }
-  const rewritten = rewriteRequestPayload(withModel.body)
-  const shapedHeaders = new Headers(withModel.headers)
-  // The rewritten body's old content-length no longer matches.
-  shapedHeaders.delete('content-length')
-  return {
-    init: { ...withModel, headers: shapedHeaders, body: rewritten.body },
-    wrapResponse: (response) => wrapResponseStream(response, rewritten.reverseToolNameMap),
-  }
-}
-
-export type PoolFetchOptions = {
-  /** Roadie data directory holding <dataDir>/credentials/. */
-  dataDir: string
-  /** Rotation (opencode model id) to resolve candidates from. */
-  rotationName: string
-  /** Pool to draw accounts from. Phase 1a is global mode: `shared`. */
-  poolId?: string
-  now?: () => number
-  fetchImpl?: PoolFetch
-}
-
 /**
  * Resolved candidates for one pool in the request's list, or why the pool was
  * skipped. An unusable pool (empty, cooling down, or missing the rotation)
@@ -361,207 +279,300 @@ export function noUsableAccountsMessage({
   )
 }
 
-/** The global fetch type (bun-types) carries a preconnect member; match it so the fetch installs cleanly on the AI SDK providers. */
-export type PoolFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
-
-export type PoolFetchWithPreconnect = PoolFetch & {
-  preconnect: (
-    url: string | URL,
-    options?: { dns?: boolean; tcp?: boolean; http?: boolean; https?: boolean },
-  ) => void
+/**
+ * Strip every `x-roadie-*` header from the call options and return the pool
+ * list they carried, so nothing internal reaches the upstream provider.
+ */
+function stripRoadieHeaders(
+  headers: Record<string, string | undefined> | undefined,
+): { headers: Record<string, string | undefined>; requestedPool: string | null } {
+  const clean: Record<string, string | undefined> = {}
+  let requestedPool: string | null = null
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase().startsWith(ROADIE_INTERNAL_HEADER_PREFIX)) {
+      if (name.toLowerCase() === POOL_HEADER) requestedPool = value ?? null
+      continue
+    }
+    clean[name] = value
+  }
+  return { headers: clean, requestedPool }
 }
 
 /**
- * Build the pool-aware fetch installed on both wire providers. Dependencies
- * are injectable so unit tests can stub time and upstream.
+ * Anthropic OAuth shaping fetch, ported from the old wire-level candidate
+ * shaping: `authorization: Bearer` with `x-api-key` removed, the merged beta
+ * header, the Claude Code system prefix and tool-name rewrite in the request
+ * body, and the tool-name reversal in the streamed response.
  */
-export function makePoolFetch({
-  dataDir,
-  rotationName,
-  poolId = SHARED_POOL_ID,
-  now = Date.now,
-  fetchImpl = fetch,
-}: PoolFetchOptions): PoolFetchWithPreconnect {
-  const poolFetch: PoolFetch = async (input, init = {}): Promise<Response> => {
-    const requestUrl = input instanceof Request ? input.url : input.toString()
-    const timestamp = now()
+function makeAnthropicOAuthFetch({
+  accessToken,
+  modelId,
+  fetchImpl,
+}: {
+  accessToken: string
+  modelId: string
+  fetchImpl: PoolFetch
+}): PoolFetchWithPreconnect {
+  const oauthFetch: PoolFetch = async (input, init = {}) => {
     const headers = new Headers(init.headers)
-    const requestedPool = headers.get(POOL_HEADER)
-    for (const name of [...headers.keys()]) {
-      if (name.toLowerCase().startsWith(ROADIE_INTERNAL_HEADER_PREFIX)) headers.delete(name)
-    }
-    headers.delete('x-api-key')
-    headers.delete('authorization')
-    if (!requestedPool) {
-      return jsonErrorResponse(401, 'no credential pool on request')
-    }
-    // `x-roadie-pool` carries an ordered comma-separated list (per-person
-    // fallback appends `shared`); a single pool id behaves exactly as before.
-    const poolIds = parsePoolListHeader(requestedPool)
-    if (poolIds.length === 0) {
-      return jsonErrorResponse(401, 'no credential pool on request')
-    }
-
-    const resolutions = resolvePoolListCandidates({
-      poolIds,
-      dataDir,
-      rotationName,
-      now: timestamp,
-    })
-    const candidates = resolutions.flatMap((resolution) => resolution.candidates)
-    if (candidates.length === 0) {
-      // Every listed pool is empty, cooling down, or otherwise unusable.
-      // Empty/cooling pools (the "nothing to bill" case, including a
-      // per-person pool) always get the actionable message; other reasons
-      // (e.g. a missing rotation on the only listed pool) keep their
-      // specific text, as before lists existed.
-      const isEmptyOrCooling = (resolution: PoolResolution): boolean =>
-        'skipped' in resolution
-          ? resolution.skipped.includes('has no accounts')
-          : resolution.candidates.length === 0
-      if (resolutions.every(isEmptyOrCooling)) {
-        return jsonErrorResponse(
-          401,
-          noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }),
-        )
-      }
-      const first = resolutions[0]
-      if (poolIds.length === 1 && first && 'skipped' in first) {
-        return jsonErrorResponse(401, first.skipped)
-      }
-      return jsonErrorResponse(
-        401,
-        noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }),
-      )
-    }
-
-    const requestWire = wireFromRequestUrl(requestUrl)
-    let lastResponse: Response | null = null
-    for (const candidate of candidates) {
-      // A request serialized on one wire can only be replayed to candidates
-      // on the same wire; other-wire candidates are skipped untouched (their
-      // cooldown state stays clean) and win on the next request.
-      if (wireForProvider(candidate.provider) !== requestWire) continue
-      const account = await ensureFreshOAuthAccount({
-        dataDir,
-        poolId: candidate.poolId,
-        account: candidate.account,
-        now: timestamp,
-        fetchImpl,
-      })
-      if (account instanceof Error) continue
-      const shaped = shapeCandidateRequest({ init, headers, candidate: { ...candidate, account } })
-      const response = await fetchImpl(input, shaped.init)
-      lastResponse = response
-      if (response.status !== 429) {
-        // Best-effort metadata: a failed last-used write never changes the
-        // routing outcome, and cooldowns (the state that matters) are
-        // persisted separately below.
-        void markUsed({ dataDir, poolId: candidate.poolId, accountId: account.id, now: timestamp })
-        return shaped.wrapResponse(response)
-      }
-      // Cooldowns are per pool: a rate-limited account in the billed pool
-      // never cools down the same provider's account in another pool.
-      const cooldown = markCooldown({
-        dataDir,
-        poolId: candidate.poolId,
-        accountId: candidate.account.id,
-        untilMs: cooldownUntilFromRetryAfter({
-          retryAfter: response.headers.get('retry-after'),
-          now: timestamp,
-        }),
-      })
-      if (cooldown instanceof Error) {
-        // Swallowed on purpose: losing one cooldown write only means the same
-        // account may be retried on the next request.
-      }
-      if (lastResponse.body) discardResponseBody(lastResponse)
-    }
-    if (!lastResponse) {
-      return jsonErrorResponse(
-        401,
-        `no account in pool ${requestedPool} matches the ${requestWire} endpoint`,
-      )
-    }
-    return lastResponse
+    applyAnthropicOAuthRequestHeaders({ headers, accessToken, modelId })
+    headers.delete('content-length')
+    const shaped =
+      typeof init.body === 'string'
+        ? rewriteRequestPayload(init.body)
+        : { body: init.body, reverseToolNameMap: new Map<string, string>() }
+    const response = await fetchImpl(input, { ...init, headers, body: shaped.body })
+    return wrapResponseStream(response, shaped.reverseToolNameMap)
   }
-  return Object.assign(poolFetch, {
-    preconnect: (
-      _url: string | URL,
-      _options?: { dns?: boolean; tcp?: boolean; http?: boolean; https?: boolean },
-    ): void => {},
+  return fetchWithPreconnect(oauthFetch)
+}
+
+type CandidateModelDeps = {
+  dataDir: string
+  /** Fixed upstream base URL (gateway/proxy); wins over the catalog and accounts. */
+  gatewayBaseURL?: string
+  now: () => number
+  fetchImpl: typeof fetch
+  getCatalog: () => Promise<ModelsDevCatalog | Error>
+}
+
+/**
+ * The provider's SDK language model for one candidate. OAuth accounts use the
+ * per-provider adapter (anthropic only; anything else is unsupported with a
+ * clear error); API-key accounts resolve through the models.dev catalog with
+ * the account's `baseURL` override when present.
+ */
+async function buildCandidateModel({
+  candidate,
+  account,
+  deps,
+}: {
+  candidate: PoolCandidate
+  account: PoolAccount
+  deps: CandidateModelDeps
+}): Promise<LanguageModelV3 | Error> {
+  if (account.type === 'oauth') {
+    if (candidate.provider !== 'anthropic') {
+      return new Error(
+        `no OAuth adapter for ${candidate.provider}; only anthropic subscriptions are supported`,
+      )
+    }
+    const anthropic = createAnthropic({
+      // The shaping fetch replaces auth per account; the SDK only needs a placeholder.
+      apiKey: POOL_MANAGED_API_KEY,
+      ...(deps.gatewayBaseURL && { baseURL: deps.gatewayBaseURL }),
+      fetch: makeAnthropicOAuthFetch({
+        accessToken: account.access,
+        modelId: candidate.modelId,
+        fetchImpl: deps.fetchImpl,
+      }),
+    })
+    return anthropic.languageModel(candidate.modelId)
+  }
+  const catalog = await deps.getCatalog()
+  if (catalog instanceof Error) return catalog
+  const factory: CandidateModelFactory | Error = resolveCandidateModelFactory({
+    catalog,
+    provider: candidate.provider,
+    apiKey: account.key,
+    baseURL: deps.gatewayBaseURL ?? account.baseURL,
+    fetchImpl: deps.fetchImpl,
   })
+  if (factory instanceof Error) return factory
+  return factory(candidate.modelId)
+}
+
+/**
+ * Route one doGenerate/doStream call: resolve the pool list from the (then
+ * stripped) x-roadie-* headers, try the candidates in order, cool accounts
+ * down on a 429 and serve from the first candidate that answers.
+ */
+async function routeLanguageModelCall<TResult>({
+  rotationName,
+  options,
+  deps,
+  call,
+}: {
+  rotationName: string
+  options: LanguageModelV3CallOptions
+  deps: CandidateModelDeps
+  /** Invoke one candidate model with the stripped call options. */
+  call: (model: LanguageModelV3, callOptions: LanguageModelV3CallOptions) => Promise<TResult>
+}): Promise<TResult> {
+  const { headers, requestedPool } = stripRoadieHeaders(options.headers)
+  const timestamp = deps.now()
+  if (!requestedPool?.trim()) {
+    throw poolAuthError('no credential pool on request')
+  }
+  // `x-roadie-pool` carries an ordered comma-separated list (per-person
+  // fallback appends `shared`); a single pool id behaves exactly as before.
+  const poolIds = parsePoolListHeader(requestedPool)
+  if (poolIds.length === 0) {
+    throw poolAuthError('no credential pool on request')
+  }
+
+  const resolutions = resolvePoolListCandidates({
+    poolIds,
+    dataDir: deps.dataDir,
+    rotationName,
+    now: timestamp,
+  })
+  const candidates = resolutions.flatMap((resolution) => resolution.candidates)
+  if (candidates.length === 0) {
+    // Every listed pool is empty, cooling down, or otherwise unusable.
+    // Empty/cooling pools (the "nothing to bill" case, including a
+    // per-person pool) always get the actionable message; other reasons
+    // (e.g. a missing rotation on the only listed pool) keep their
+    // specific text, as before lists existed.
+    const isEmptyOrCooling = (resolution: PoolResolution): boolean =>
+      'skipped' in resolution
+        ? resolution.skipped.includes('has no accounts')
+        : resolution.candidates.length === 0
+    if (resolutions.every(isEmptyOrCooling)) {
+      throw poolAuthError(noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }))
+    }
+    const first = resolutions[0]
+    if (poolIds.length === 1 && first && 'skipped' in first) {
+      throw poolAuthError(first.skipped)
+    }
+    throw poolAuthError(noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }))
+  }
+
+  const callOptions: LanguageModelV3CallOptions = { ...options, headers }
+  let lastRateLimitError: APICallError | null = null
+  let firstCandidateError: Error | null = null
+  for (const candidate of candidates) {
+    const account = await ensureFreshOAuthAccount({
+      dataDir: deps.dataDir,
+      poolId: candidate.poolId,
+      account: candidate.account,
+      now: timestamp,
+      fetchImpl: deps.fetchImpl,
+    })
+    if (account instanceof Error) {
+      firstCandidateError ??= account
+      continue
+    }
+    const model = await buildCandidateModel({
+      candidate,
+      account,
+      deps,
+    })
+    if (model instanceof Error) {
+      firstCandidateError ??= model
+      continue
+    }
+    try {
+      const result = await call(model, callOptions)
+      // Best-effort metadata: a failed last-used write never changes the
+      // routing outcome (markUsed can also reject on an fs error, so this has
+      // its own guard), and cooldowns (the state that matters) are persisted
+      // separately below.
+      try {
+        const used = await markUsed({
+          dataDir: deps.dataDir,
+          poolId: candidate.poolId,
+          accountId: account.id,
+          now: timestamp,
+        })
+        if (used instanceof Error) {
+          // Swallowed on purpose.
+        }
+      } catch {
+        // Swallowed on purpose.
+      }
+      return result
+    } catch (error) {
+      if (APICallError.isInstance(error) && error.statusCode === 429) {
+        lastRateLimitError = error
+        // Cooldowns are per pool: a rate-limited account in the billed pool
+        // never cools down the same provider's account in another pool.
+        const cooldown = markCooldown({
+          dataDir: deps.dataDir,
+          poolId: candidate.poolId,
+          accountId: candidate.account.id,
+          untilMs: cooldownUntilFromRetryAfter({
+            retryAfter: error.responseHeaders?.['retry-after'] ?? null,
+            now: timestamp,
+          }),
+        })
+        if (cooldown instanceof Error) {
+          // Swallowed on purpose: losing one cooldown write only means the
+          // same account may be retried on the next request.
+        }
+        continue
+      }
+      throw error
+    }
+  }
+  if (lastRateLimitError) {
+    // Every candidate answered 429: surface the last rate limit, exactly as
+    // the old wire-level loop returned the last 429 response.
+    throw lastRateLimitError
+  }
+  if (firstCandidateError) {
+    throw poolAuthError(
+      `no usable account in pool ${requestedPool}: ${firstCandidateError.message}`,
+    )
+  }
+  throw poolAuthError(noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }))
+}
+
+function makePoolLanguageModel({ rotationName, deps }: { rotationName: string; deps: CandidateModelDeps }): LanguageModelV3 {
+  return {
+    specificationVersion: 'v3',
+    provider: ROADIE_PROVIDER_ID,
+    modelId: rotationName,
+    supportedUrls: {},
+    doGenerate: (options) =>
+      routeLanguageModelCall<LanguageModelV3GenerateResult>({
+        rotationName,
+        options,
+        deps,
+        call: (model, callOptions) => Promise.resolve(model.doGenerate(callOptions)),
+      }),
+    doStream: (options) =>
+      routeLanguageModelCall<LanguageModelV3StreamResult>({
+        rotationName,
+        options,
+        deps,
+        call: (model, callOptions) => Promise.resolve(model.doStream(callOptions)),
+      }),
+  }
 }
 
 export type RoadiePoolProviderOptions = {
-  /** Fixed upstream base URL (gateway/proxy). Default: the official endpoints per wire. */
+  /** Fixed upstream base URL (gateway/proxy). Default: the catalog/SDK endpoints per provider. */
   baseURL?: string
   /** Roadie data directory. Default: ROADIE_DATA_DIR, then ~/.roadie. */
   dataDir?: string
+  /** Pre-resolved models.dev catalog (tests). Default: resolveCatalog. */
+  catalog?: ModelsDevCatalog
   now?: () => number
   fetchImpl?: typeof fetch
 }
 
 /**
- * Pool-dispatching provider: picks the wire per model id from the pool's
- * rotation (first available candidate wins) and returns that wire's AI SDK
- * language model, wired to the pool fetch.
+ * Pool-dispatching provider: one delegating LanguageModel per rotation name
+ * (`roadie/<rotation>`), resolving each request's candidates at the
+ * LanguageModel level so a rotation can mix providers.
  */
 export function createRoadiePoolProvider(options: RoadiePoolProviderOptions = {}): {
-  languageModel: (modelId: string) => ReturnType<ReturnType<typeof createAnthropic>['languageModel']>
-  chatModel: (modelId: string) => ReturnType<ReturnType<typeof createAnthropic>['languageModel']>
+  languageModel: (modelId: string) => LanguageModelV3
+  chatModel: (modelId: string) => LanguageModelV3
 } {
   const dataDir = resolvePoolDataDir(options.dataDir)
-  const poolFetchDeps = { dataDir, now: options.now, fetchImpl: options.fetchImpl }
-  let anthropicWire: ReturnType<typeof createAnthropic> | null = null
-  let openaiWire: ReturnType<typeof createOpenAICompatible> | null = null
-
-  const resolveWireModelId = (modelId: string): RequestWire => {
-    const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
-    const rotations = readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })
-    const state = readPoolState({ dataDir, poolId: SHARED_POOL_ID })
-    if (
-      accounts instanceof Error ||
-      rotations instanceof Error ||
-      state instanceof Error
-    ) {
-      return 'openai-compatible'
-    }
-    const candidates = resolveCandidates({
-      poolId: SHARED_POOL_ID,
-      rotation: rotations[modelId] ?? [],
-      accounts,
-      cooldowns: state.cooldowns,
-      now: options.now ? options.now() : Date.now(),
-    })
-    const first = candidates[0] ?? (() => {
-      const firstEntry = (rotations[modelId] ?? [])[0]
-      if (!firstEntry) return null
-      const provider = firstEntry.split('/')[0]
-      return provider ? { provider } : null
-    })()
-    return first ? wireForProvider(first.provider) : 'openai-compatible'
+  const getCatalog = async (): Promise<ModelsDevCatalog | Error> =>
+    options.catalog ?? (await resolveCatalog({ dataDir, fetchImpl: options.fetchImpl }))
+  const deps: CandidateModelDeps = {
+    dataDir,
+    ...(options.baseURL && { gatewayBaseURL: options.baseURL }),
+    now: options.now ?? Date.now,
+    fetchImpl: options.fetchImpl ?? fetch,
+    getCatalog,
   }
-
-  const languageModelFor = (modelId: string) => {
-    const wire = resolveWireModelId(modelId)
-    if (wire === 'anthropic') {
-      anthropicWire ??= createAnthropic({
-        // poolFetch replaces auth per account; the SDK only needs a placeholder.
-        apiKey: POOL_MANAGED_API_KEY,
-        baseURL: options.baseURL,
-        fetch: makePoolFetch({ rotationName: modelId, ...poolFetchDeps }),
-      })
-      return anthropicWire.languageModel(modelId)
-    }
-    openaiWire ??= createOpenAICompatible({
-      name: 'roadie',
-      baseURL: options.baseURL ?? DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
-      fetch: makePoolFetch({ rotationName: modelId, ...poolFetchDeps }),
-    })
-    return openaiWire.languageModel(modelId)
-  }
-
+  const languageModelFor = (modelId: string): LanguageModelV3 =>
+    makePoolLanguageModel({ rotationName: modelId, deps })
   return {
     languageModel: languageModelFor,
     chatModel: languageModelFor,

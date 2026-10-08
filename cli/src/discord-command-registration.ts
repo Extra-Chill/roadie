@@ -132,12 +132,13 @@ export function buildCredentialsSlashCommand() {
         .addStringOption((option) =>
           option
             .setName('provider')
-            .setDescription('Provider the key belongs to')
+            .setDescription(
+              truncateCommandDescription(
+                'Provider the key belongs to, as named in the models.dev catalog (anthropic, zai-coding-plan, groq, ...)',
+              ),
+            )
             .setRequired(true)
-            .addChoices(
-              { name: 'anthropic', value: 'anthropic' },
-              { name: 'openai', value: 'openai' },
-            ),
+            .setMaxLength(64),
         )
         .addStringOption((option) =>
           option

@@ -1,7 +1,7 @@
 // Credential pools plugin: tags every LLM request with the credential pool(s)
 // to bill. The provider module (cli/src/credentials/provider.ts) reads the tag
-// in its fetch, resolves each pool's rotation to an account, and strips these
-// headers before anything reaches upstream.
+// from the request's call headers, resolves each pool's rotation to an
+// account, and strips these headers before anything reaches upstream.
 //
 // Phase 1a is global mode only: every session tags the `shared` pool. Phase 2a
 // adds per-person routing (opt-in): `--credentials` picks the mode and

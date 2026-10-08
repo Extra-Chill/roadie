@@ -6,14 +6,16 @@
 // and planned before the first pool write, so a malformed subrouter file
 // reports the parse error and writes nothing.
 //
-// Mapping (issue #128): anthropic oauth accounts go in via addPoolOAuthAccount,
-// anthropic and openai api accounts via addPoolAccount; every other provider
-// or type is skipped with a per-entry reason. Presets become same-named
-// rotations via setPoolRotation with `#variant` suffixes stripped and
-// unroutable entries dropped; an existing rotation with the same name is never
-// overwritten. Runs are idempotent: dedupe compares inside the pool lock
-// (api keys by key, oauth accounts by refresh token or accountId/email) and an
-// existing match is reported as already present.
+// Mapping (issue #128, extended by issue #136): anthropic oauth accounts go in
+// via addPoolOAuthAccount, and api-key accounts for any provider the models.dev
+// catalog resolves (cli/src/credentials/provider-catalog.ts) go in via
+// addPoolAccount — only unsupported oauth providers and unresolvable providers
+// are skipped, with a per-entry reason. Presets become same-named rotations via
+// setPoolRotation with `#variant` suffixes stripped and unroutable entries
+// dropped; an existing rotation with the same name is never overwritten. Runs
+// are idempotent: dedupe compares inside the pool lock (api keys by key, oauth
+// accounts by refresh token or accountId/email) and an existing match is
+// reported as already present.
 //
 // Output is counts and labels only: email or accountId when present,
 // otherwise the last 4 characters of the secret. Keys and tokens are never
@@ -35,12 +37,22 @@ import {
   type PoolAccount,
 } from './store.js'
 import { parseRotationEntry } from './router.js'
+import { isCatalogProviderRoutable, resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 
-/** Providers credential pools can route today (adapters exist for these). */
-export const SUBROUTER_IMPORT_PROVIDERS = ['anthropic', 'openai'] as const
+/**
+ * Fallback when the models.dev catalog cannot be loaded (offline, no cache):
+ * keep the pre-#136 pair so an import never regresses for anthropic/openai.
+ */
+const LEGACY_IMPORT_PROVIDERS: readonly string[] = ['anthropic', 'openai']
 
-export function isImportRoutableProvider(provider: string): boolean {
-  return (SUBROUTER_IMPORT_PROVIDERS as readonly string[]).includes(provider)
+/**
+ * True when an api-key account for the provider can be routed: the models.dev
+ * catalog resolves it (a bundled SDK or an `api` base URL), or — only when the
+ * catalog itself is unavailable — it is one of the pre-#136 supported pair.
+ */
+export function isImportRoutableProvider(provider: string, catalog: ModelsDevCatalog | null): boolean {
+  if (catalog) return isCatalogProviderRoutable(catalog, provider)
+  return LEGACY_IMPORT_PROVIDERS.includes(provider)
 }
 
 // --- Resolving the subrouter home ---
@@ -228,19 +240,24 @@ function identityFields(record: Record<string, unknown>): { email?: string; acco
 }
 
 /**
- * Map one ordered subrouter account entry onto the pool. Only the provider +
- * type pairs with adapters import; everything else is skipped with a
- * per-entry reason. Malformed entries (missing key/tokens) are skipped too,
- * with the entry's own reason, and never block the rest of the import.
+ * Map one ordered subrouter account entry onto the pool. Api-key accounts for
+ * any catalog-resolvable provider and anthropic oauth accounts import;
+ * everything else is skipped with a per-entry reason. Malformed entries
+ * (missing key/tokens) are skipped too, with the entry's own reason, and
+ * never block the rest of the import.
  */
-export function planSubrouterAccount(entry: unknown, provider: string): SubrouterAccountPlanEntry {
+export function planSubrouterAccount(
+  entry: unknown,
+  provider: string,
+  catalog: ModelsDevCatalog | null,
+): SubrouterAccountPlanEntry {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return { action: 'skip', provider, display: '(no credentials)', reason: 'malformed account entry' }
   }
   const record = entry as Record<string, unknown>
   const display = accountDisplay(record)
   const identity = identityFields(record)
-  if (!isImportRoutableProvider(provider)) {
+  if (!isImportRoutableProvider(provider, catalog)) {
     return { action: 'skip', provider, display, reason: `no pool adapter for ${provider}` }
   }
   const type = record.type
@@ -283,18 +300,20 @@ export function planSubrouterAccount(entry: unknown, provider: string): Subroute
 
 /**
  * Map one preset onto a rotation. `#variant` suffixes are stripped (counted,
- * logged once per preset), entries whose provider has no pool adapter are
- * dropped, and a preset with nothing left — or a name that cannot be a
+ * logged once per preset), entries whose provider the catalog cannot resolve
+ * are dropped, and a preset with nothing left — or a name that cannot be a
  * rotation name — is skipped with a reason.
  */
 export function planSubrouterPreset({
   name,
   entries,
   existingRotations,
+  catalog,
 }: {
   name: string
   entries: unknown[]
   existingRotations: Record<string, string[]>
+  catalog: ModelsDevCatalog | null
 }): SubrouterRotationPlanEntry {
   if (!ROTATION_NAME_PATTERN.test(name)) {
     return {
@@ -319,7 +338,7 @@ export function planSubrouterPreset({
       droppedMalformed += 1
       continue
     }
-    if (!isImportRoutableProvider(parsed.provider)) {
+    if (!isImportRoutableProvider(parsed.provider, catalog)) {
       unroutable.add(parsed.provider)
       continue
     }
@@ -373,20 +392,22 @@ export function planSubrouterImport({
   files,
   existingAccounts,
   existingRotations,
+  catalog,
 }: {
   files: SubrouterFiles
   existingAccounts: PoolAccount[]
   existingRotations: Record<string, string[]>
+  catalog: ModelsDevCatalog | null
 }): SubrouterImportPlan {
   const accounts: SubrouterAccountPlanEntry[] = []
   for (const { provider, activeIndex, accounts: entries } of files.providers) {
     for (const entry of orderAccountsByActiveIndex(entries, activeIndex)) {
-      accounts.push(planSubrouterAccount(entry, provider))
+      accounts.push(planSubrouterAccount(entry, provider, catalog))
     }
   }
   const rotations: SubrouterRotationPlanEntry[] = []
   for (const [name, entries] of Object.entries(files.presets)) {
-    rotations.push(planSubrouterPreset({ name, entries, existingRotations }))
+    rotations.push(planSubrouterPreset({ name, entries, existingRotations, catalog }))
   }
   return { accounts, rotations }
 }
@@ -549,7 +570,10 @@ async function applyRotationPlanEntry({
 
 /**
  * Import subrouter accounts and presets into a credential pool. Read-only on
- * the subrouter files; `dryRun` also skips every pool write.
+ * the subrouter files; `dryRun` also skips every pool write. Providers are
+ * resolved through the models.dev catalog; when the catalog cannot be loaded
+ * the import falls back to the pre-#136 anthropic/openai pair so it never
+ * regresses for those.
  */
 export async function importSubrouterCredentials({
   dataDir,
@@ -571,7 +595,10 @@ export async function importSubrouterCredentials({
   const existingRotations = readPoolRotations({ dataDir, poolId })
   if (existingRotations instanceof Error) return existingRotations
 
-  const plan = planSubrouterImport({ files, existingAccounts, existingRotations })
+  const catalog = await resolveCatalog({ dataDir })
+  const routableCatalog: ModelsDevCatalog | null = catalog instanceof Error ? null : catalog
+
+  const plan = planSubrouterImport({ files, existingAccounts, existingRotations, catalog: routableCatalog })
 
   const accountEntries: SubrouterAccountReport[] = []
   // Dry runs preview against the pool as it is now plus earlier plan entries.

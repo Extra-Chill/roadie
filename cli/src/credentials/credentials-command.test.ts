@@ -33,22 +33,48 @@ import {
   seedPoolRotations,
   setPoolRotation,
 } from './store.js'
+import { resetCatalogCacheForTests } from './provider-catalog.js'
 import { setDataDir } from '../config.js'
 import { store } from '../store.js'
 import { setIdentityHookCommand } from '../identity.js'
 
 let dataDir: string
+let originalXdgCacheHome: string | undefined
+
+// Fixture models.dev catalog served through $XDG_CACHE_HOME/opencode/models.json
+// so the add-key modal's provider validation stays hermetic (no network).
+const TEST_CATALOG = {
+  anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
+  openai: { id: 'openai', npm: '@ai-sdk/openai' },
+  'zai-coding-plan': {
+    id: 'zai-coding-plan',
+    npm: '@ai-sdk/openai-compatible',
+    api: 'https://api.z.ai/api/coding/paas/v4',
+  },
+}
 
 beforeEach(() => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-command-'))
   setDataDir(dataDir)
   setIdentityHookCommand(null)
   store.setState({ credentialsMode: 'per-person' })
+  originalXdgCacheHome = process.env.XDG_CACHE_HOME
+  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-cache-'))
+  fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
+  fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
+  process.env.XDG_CACHE_HOME = cacheHome
+  resetCatalogCacheForTests()
 })
 
 afterEach(() => {
   store.setState({ credentialsMode: 'global' })
   setIdentityHookCommand(null)
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome
+  }
+  resetCatalogCacheForTests()
 })
 
 // Obviously fake key: the masked suffix (ZZ22) can never appear in a
@@ -62,18 +88,21 @@ type EditReplyOptions = { content?: string }
 function makeApiKeyModalInteraction({
   hash,
   key,
+  baseURL = '',
   userId = USER_ID,
   admin = false,
 }: {
   hash: string
   key: string
+  baseURL?: string
   userId?: string
   admin?: boolean
 }): { interaction: ModalSubmitInteraction; replies: string[] } {
   const replies: string[] = []
+  const fields: Record<string, string> = { apikey: key, baseurl: baseURL }
   const interaction = {
     customId: `${CREDENTIALS_APIKEY_MODAL_PREFIX}${hash}`,
-    fields: { getTextInputValue: (_name: string) => key },
+    fields: { getTextInputValue: (name: string) => fields[name] ?? '' },
     deferReply: async () => {},
     editReply: async (options: EditReplyOptions) => {
       replies.push(options.content ?? '')
@@ -194,6 +223,59 @@ describe('/credentials add-key modal', () => {
     expect(replies.join('\n')).not.toContain('Could not copy')
     expect(readPoolRotations({ dataDir, poolId: OWN_POOL })).toEqual({
       default: ['anthropic/claude-sonnet-4', 'openai/gpt-5'],
+    })
+  })
+
+  test('an unknown provider is refused with close catalog matches and nothing is stored', async () => {
+    const hash = createCredentialsContext({
+      kind: 'apikey',
+      provider: 'zai-coding',
+      shared: false,
+    })
+    const { interaction, replies } = makeApiKeyModalInteraction({ hash, key: TEST_KEY })
+    await handleCredentialsApiKeyModalSubmit(interaction)
+    const replyText = replies.join('\n')
+    expect(replyText).toContain("Unknown provider 'zai-coding'")
+    expect(replyText).toContain('zai-coding-plan')
+    expect(readPoolAccounts({ dataDir, poolId: OWN_POOL })).toEqual([])
+  })
+
+  test('a catalog-resolvable provider is accepted', async () => {
+    const hash = createCredentialsContext({
+      kind: 'apikey',
+      provider: 'zai-coding-plan',
+      shared: false,
+    })
+    const { interaction } = makeApiKeyModalInteraction({ hash, key: TEST_KEY })
+    await handleCredentialsApiKeyModalSubmit(interaction)
+    const accounts = readPoolAccounts({ dataDir, poolId: OWN_POOL })
+    expect(accounts).not.toBeInstanceOf(Error)
+    if (accounts instanceof Error) return
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0]).toMatchObject({ provider: 'zai-coding-plan', type: 'api' })
+  })
+
+  test('an optional base URL is stored on the account and skips provider validation', async () => {
+    const hash = createCredentialsContext({
+      kind: 'apikey',
+      provider: 'my-opencode-provider',
+      shared: false,
+    })
+    const { interaction, replies } = makeApiKeyModalInteraction({
+      hash,
+      key: TEST_KEY,
+      baseURL: 'https://self-hosted.example.com/v1',
+    })
+    await handleCredentialsApiKeyModalSubmit(interaction)
+    expect(replies.join('\n')).not.toContain('Unknown provider')
+    const accounts = readPoolAccounts({ dataDir, poolId: OWN_POOL })
+    expect(accounts).not.toBeInstanceOf(Error)
+    if (accounts instanceof Error) return
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0]).toMatchObject({
+      provider: 'my-opencode-provider',
+      type: 'api',
+      baseURL: 'https://self-hosted.example.com/v1',
     })
   })
 
@@ -346,7 +428,7 @@ describe('/credentials registration gating', () => {
     ])
   })
 
-  test('the key is never a slash-command option; provider is a required choice', () => {
+  test('the key is never a slash-command option; provider is free text, never a fixed choice', () => {
     type RegisteredOption = {
       name: string
       required?: boolean
@@ -360,10 +442,10 @@ describe('/credentials registration gating', () => {
       }
     }
     const addKey = (json.options ?? []).find((o) => o.name === 'add-key')
-    const provider = ((addKey as unknown as { options?: RegisteredOption[] }).options ?? []).find(
-      (o) => o.name === 'provider',
-    )
+    const options = ((addKey as unknown as { options?: RegisteredOption[] }).options ?? [])
+    const provider = options.find((o) => o.name === 'provider')
     expect(provider?.required).toBe(true)
-    expect(provider?.choices?.map((c) => c.value)).toEqual(['anthropic', 'openai'])
+    // Any models.dev provider must be addable: no hardcoded choice list.
+    expect(provider?.choices).toBeUndefined()
   })
 })

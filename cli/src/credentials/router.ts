@@ -3,8 +3,9 @@
 //
 // Pure where possible: resolveCandidates() takes plain data and is fully
 // deterministic given `now`. Persistence helpers (markCooldown) delegate to
-// the per-pool store. The provider fetch in credentials/provider.ts consumes
-// the candidate list top to bottom, cooling accounts down on HTTP 429.
+// the per-pool store. The delegating LanguageModel in credentials/provider.ts
+// consumes the candidate list top to bottom, cooling accounts down on a 429
+// APICallError.
 
 import * as errore from 'errore'
 import {

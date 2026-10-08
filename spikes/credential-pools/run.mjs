@@ -7,7 +7,9 @@
 //   E. an untagged session never reaches upstream (fail closed),
 //   F. one session hands off across providers AND payers (alice on the
 //      Anthropic wire, bob on the OpenAI wire, alice again) and every turn
-//      receives the full prior history, including the other provider's reply.
+//      receives the full prior history, including the other provider's reply,
+//   G. a third, OpenAI-compatible provider with its own base URL is routed to
+//      that base URL (and never to the first provider's).
 //
 // Fully isolated: temp HOME/XDG dirs, its own ports, no real credentials.
 // Usage: node spikes/credential-pools/run.mjs [path/to/opencode]
@@ -65,6 +67,12 @@ const config = file('opencode.json', {
       name: 'Roadie pool, Anthropic wire (spike)',
       npm: pathToFileURL(path.join(here, 'pool-provider-anthropic.mjs')).href,
       options: { baseURL: `http://127.0.0.1:${upstreamPort}/v1` },
+      models: { m: { name: 'spike model', tool_call: false } },
+    },
+    'pool-zai': {
+      name: 'Roadie pool, second OpenAI-compatible endpoint (spike)',
+      npm: pathToFileURL(path.join(here, 'pool-provider-zai.mjs')).href,
+      options: { baseURL: `http://127.0.0.1:${upstreamPort}/zai/v1` },
       models: { m: { name: 'spike model', tool_call: false } },
     },
   },
@@ -188,6 +196,13 @@ for (const t of turns) {
   handoffReplies.push(await send(handoff, t.provider, t.prompt))
 }
 
+// G. A third, OpenAI-compatible provider with its own base URL: its requests
+//    must land on that base URL.
+const zaiSession = (await api('POST', '/session', {})).id
+setPool(zaiSession, 'bob')
+progress('prompting the second OpenAI-compatible endpoint session')
+const zaiReply = await send(zaiSession, 'pool-zai', 'hello-from-zai-provider')
+
 const upstream = fs
   .readFileSync(log, 'utf8')
   .split('\n')
@@ -252,6 +267,30 @@ check(
   r3 ? r3.body.slice(0, 400) : 'no turn-3 request',
 )
 check('F turn 1 request went out on the Anthropic wire', r1 && r1.path.endsWith('/messages'), r1?.path)
+
+const zaiRequest = upstream.find(
+  (r) => r.status === 200 && r.path.startsWith('/zai/v1') && r.body.includes('hello-from-zai-provider'),
+)
+check(
+  'G second OpenAI-compatible provider routed to its own base URL',
+  Boolean(zaiRequest) && zaiRequest.key === 'bob-1',
+  zaiRequest ? zaiRequest.path : upstream.map((r) => r.path).join(' '),
+)
+check(
+  'G the zai provider never used the first provider base URL',
+  // Title generation always runs on small_model (pool/m) and quotes the prompt,
+  // so it is excluded here exactly as the hand-off checks exclude it.
+  !upstream.some(
+    (r) =>
+      r.body.includes('hello-from-zai-provider') &&
+      !r.body.toLowerCase().includes('title') &&
+      !r.path.startsWith('/zai/v1'),
+  ),
+  upstream
+    .filter((r) => r.body.includes('hello-from-zai-provider'))
+    .map((r) => r.path)
+    .join(' '),
+)
 
 for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  [${c.detail}]`)
 console.log(`upstream requests: ${upstream.length}, temp dir: ${root}`)
