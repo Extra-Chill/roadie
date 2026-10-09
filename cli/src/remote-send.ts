@@ -14,6 +14,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import type http from 'node:http'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { readRoadieSecret } from './config.js'
@@ -121,6 +122,55 @@ export type RemoteSendEvent =
   | { keepalive: true }
   | { exit: number }
 
+/** Read a request body, refusing anything past `limit` bytes. */
+export async function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | Error> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length
+    if (size > limit) return new Error(`Body exceeds ${limit} bytes`)
+    chunks.push(chunk as Buffer)
+  }
+  return Buffer.concat(chunks)
+}
+
+/**
+ * Relay a run's NDJSON event stream to stdout/stderr, resolving with the
+ * remote exit code. Shared by the cross-user send client and the agent
+ * endpoint client, which speak the same protocol.
+ */
+export async function relayRemoteRun(
+  body: unknown,
+  {
+    stdout = process.stdout,
+    stderr = process.stderr,
+  }: {
+    stdout?: NodeJS.WritableStream
+    stderr?: NodeJS.WritableStream
+  } = {},
+): Promise<number> {
+  let exitCode = 1
+  let buffered = ''
+  const decoder = new TextDecoder()
+  const handle = (line: string) => {
+    if (!line.trim()) return
+    const event = JSON.parse(line) as RemoteSendEvent
+    if ('exit' in event) exitCode = event.exit
+    else if ('stream' in event) (event.stream === 'stdout' ? stdout : stderr).write(event.data)
+  }
+  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+    buffered += decoder.decode(chunk, { stream: true })
+    let newline = buffered.indexOf('\n')
+    while (newline >= 0) {
+      handle(buffered.slice(0, newline))
+      buffered = buffered.slice(newline + 1)
+      newline = buffered.indexOf('\n')
+    }
+  }
+  handle(buffered)
+  return exitCode
+}
+
 export type RemoteSendRunner = (args: string[], emit: (event: RemoteSendEvent) => void) => Promise<number>
 
 /**
@@ -202,11 +252,14 @@ export function remoteSendOptions(options: Record<string, unknown>, cwd = proces
 
 /**
  * Post a send to the running bot and relay its output. Resolves with the
- * remote exit code.
+ * remote exit code. Agent tool shells post to the scoped agent endpoint
+ * (`path: AGENT_SEND_PATH`) with their per-session token; cross-user hosts
+ * keep the default /roadie/send path.
  */
 export async function sendViaRunningBot({
   port,
   token,
+  path: endpoint = '/roadie/send',
   options,
   filePaths = [],
   stdout = process.stdout,
@@ -214,6 +267,7 @@ export async function sendViaRunningBot({
 }: {
   port: number
   token: string
+  path?: string
   options: Record<string, unknown>
   filePaths?: string[]
   stdout?: NodeJS.WritableStream
@@ -223,7 +277,7 @@ export async function sendViaRunningBot({
     name: path.basename(file),
     contentBase64: fs.readFileSync(file).toString('base64'),
   }))
-  const response = await fetch(`http://127.0.0.1:${port}/roadie/send`, {
+  const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ options, files }),
@@ -236,24 +290,5 @@ export async function sendViaRunningBot({
     stderr.write(`Roadie bot rejected the send (${response.status}): ${await response.text()}\n`)
     return 1
   }
-  let exitCode = 1
-  let buffered = ''
-  const decoder = new TextDecoder()
-  const handle = (line: string) => {
-    if (!line.trim()) return
-    const event = JSON.parse(line) as RemoteSendEvent
-    if ('exit' in event) exitCode = event.exit
-    else if ('stream' in event) (event.stream === 'stdout' ? stdout : stderr).write(event.data)
-  }
-  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-    buffered += decoder.decode(chunk, { stream: true })
-    let newline = buffered.indexOf('\n')
-    while (newline >= 0) {
-      handle(buffered.slice(0, newline))
-      buffered = buffered.slice(newline + 1)
-      newline = buffered.indexOf('\n')
-    }
-  }
-  handle(buffered)
-  return exitCode
+  return relayRemoteRun(response.body, { stdout, stderr })
 }

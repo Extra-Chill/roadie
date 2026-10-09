@@ -26,6 +26,7 @@ import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir, getLockPort } from '../config.js'
 import { getSendToken, remoteSendOptions, sendViaRunningBot, shouldSendRemotely } from '../remote-send.js'
+import { AGENT_SEND_PATH, resolveAgentCredentials } from '../agent-remote.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
@@ -145,6 +146,24 @@ cli
          const exitCode = await sendViaRunningBot({ port: getLockPort(), token, options: picked, filePaths: (options.file ?? []).map((file: string) => path.resolve(file)) })
          process.exit(exitCode)
        }
+      // An agent tool shell holds a per-session agent token instead of the
+      // database credentials, so its send goes through the running bot
+      // (POST /roadie/agent/send, see agent-remote.ts).
+      const agentCredentials = resolveAgentCredentials()
+      if (!(agentCredentials instanceof Error)) {
+        if (options.preRun) {
+          cliLogger.error('--pre-run is not available when sending through the running bot')
+          process.exit(EXIT_NO_RESTART)
+        }
+        const exitCode = await sendViaRunningBot({
+          port: agentCredentials.port,
+          token: agentCredentials.token,
+          path: AGENT_SEND_PATH,
+          options: remoteSendOptions(options),
+          filePaths: (options.file ?? []).map((f: string) => path.resolve(f)),
+        })
+        process.exit(exitCode)
+      }
       // A host user with a send token but no access to the bot's data dir
       // sends through the running bot instead (see remote-send.ts).
       if (shouldSendRemotely({ dataDir: getDataDir() })) {

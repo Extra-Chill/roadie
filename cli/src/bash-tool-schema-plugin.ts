@@ -10,6 +10,11 @@
 //
 // And the current turn's attribution (thread, channel, speaker); see
 // turn-attribution-env.ts for the env contract.
+//
+// And the per-session agent token plus credential scrubbing: tool shells get
+// ROADIE_AGENT_TOKEN (HMAC-bound to this session) instead of the database
+// credentials, so `roadie` subcommands run through the bot's scoped agent
+// endpoints; see agent-token.ts and agent-remote.ts.
 
 import type { Plugin } from '@opencode-ai/plugin'
 import { z } from 'zod'
@@ -18,6 +23,7 @@ import {
   applyTurnAttributionEnv,
   resolveTurnAttribution,
 } from './turn-attribution-env.js'
+import { AGENT_TOKEN_SECRET_ENV, applyAgentShellEnv } from './agent-token.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
@@ -81,6 +87,13 @@ export const bashToolSchemaPlugin: Plugin = async () => {
       extendBashToolDefinition(output)
     },
     'shell.env': async (input, output) => {
+      // Tool shells hold a per-session agent token instead of the database
+      // credentials; OpenCode merges this env over the inherited env.
+      applyAgentShellEnv({
+        env: output.env,
+        secret: process.env[AGENT_TOKEN_SECRET_ENV],
+        sessionId: input.sessionID,
+      })
       injectRoadieSessionEnv({ sessionID: input.sessionID, env: output.env })
       if (!input.sessionID) {
         applyTurnAttributionEnv({ env: output.env, attribution: undefined })

@@ -40,6 +40,14 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import {
+  AGENT_SESSIONS_PATH,
+  AGENT_SESSION_SEARCH_PATH,
+  resolveAgentCredentials,
+  runAgentCommand,
+  sessionReadQuery,
+  sessionSearchQuery,
+} from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -422,6 +430,23 @@ cli
   .example('roadie session read ses_xxx --thinking --verbose')
   .action(async (sessionId, options) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot executes the read and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        // Resolve the caller's default project (cwd) explicitly: the bot's
+        // child process runs from the home directory.
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`,
+            query: sessionReadQuery({ ...options, project: path.resolve(options.project || '.') }),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       const projectDirectory = path.resolve(options.project || '.')
 
       await initDatabase()
@@ -502,6 +527,20 @@ cli
   )
   .action(async (sessionId) => {
     try {
+      // Agent tool shells wait through the running bot; the token only
+      // waits on its own session.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'POST',
+            path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/wait`,
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       const projectDirectory = await resolveSessionDirectoryFromDatabase({
@@ -547,6 +586,28 @@ cli
   .example('roadie session search "auth timeout" --all')
   .action(async (query, options) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot executes the search and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        // The bot's child process runs from the home directory, so the
+        // caller's implicit default project (cwd) must be sent explicitly.
+        // Keep --project present whenever the caller passed it so scope
+        // validation errors stay identical.
+        const project = options.project !== undefined
+          ? path.resolve(options.project)
+          : (options.all || options.channel ? undefined : path.resolve('.'))
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_SESSION_SEARCH_PATH,
+            query: { q: query, ...sessionSearchQuery({ ...options, project }) },
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       const scopeError = validateSessionSearchScope({

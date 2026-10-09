@@ -4,7 +4,8 @@
 //
 // Protocol logic is implemented in the `libsqlproxy` package.
 // This file handles: server lifecycle, single-instance enforcement,
-// auth, and roadie-specific endpoints (/health, /roadie/opencode-port).
+// auth, and roadie-specific endpoints (/health, /roadie/opencode-port,
+// /roadie/send, /roadie/agent/*).
 //
 // Hrana v2 protocol spec ("Hrana over HTTP"):
 //   https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
@@ -29,9 +30,12 @@ import {
   getRemoteSendRunner,
   getSendToken,
   isAuthorizedSend,
+  readBody,
   REMOTE_SEND_MAX_BODY_BYTES,
   type RemoteSendEvent,
 } from './remote-send.js'
+import { ensureAgentTokenSecret } from './agent-token.js'
+import { handleAgentRequest } from './agent-remote.js'
 import { store } from './store.js'
 // Circular import: opencode.ts → hrana-server.ts → opencode.ts.
 // Safe because both sides only use lazy runtime function calls, never
@@ -135,6 +139,9 @@ export async function startHranaServer({
   const port = getLockPort()
   const bindHost = '127.0.0.1'
   const serviceAuthToken = ensureServiceAuthTokenInStore()
+  // Shared with the OpenCode server process so its shell.env hook can mint
+  // per-session agent tokens for tool shells (see agent-token.ts).
+  const agentTokenSecret = ensureAgentTokenSecret()
   if (!process.env.ROADIE_DB_AUTH_TOKEN_FILE) process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
@@ -174,6 +181,13 @@ export async function startHranaServer({
       }
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ port }))
+      return
+    }
+    // Scoped agent endpoints for tool shells: typed JSON operations the bot
+    // executes itself (never SQL). Authorized by the per-session agent token
+    // only — an agent token is never valid on the hrana routes below.
+    if (pathname.startsWith('/roadie/agent/')) {
+      await handleAgentRequest(req, res, { secret: agentTokenSecret })
       return
     }
     // Cross-user send. Disabled unless the host configured a send token.
@@ -254,17 +268,6 @@ export async function stopHranaServer() {
 }
 
 // ── Cross-user send ──────────────────────────────────────────────────
-
-async function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | Error> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > limit) return new Error(`Body exceeds ${limit} bytes`)
-    chunks.push(chunk as Buffer)
-  }
-  return Buffer.concat(chunks)
-}
 
 async function handleRemoteSend(req: http.IncomingMessage, res: http.ServerResponse) {
   const token = getSendToken()

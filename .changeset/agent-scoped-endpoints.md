@@ -1,0 +1,5 @@
+---
+"@extrachill/roadie": minor
+---
+
+Hardening: agent tool shells no longer hold the bot's database credentials. The `shell.env` hook now exports `ROADIE_AGENT_TOKEN` — an HMAC of the OpenCode session id under a secret shared only between the bot and the OpenCode server process — and blanks `ROADIE_DB_URL`, `ROADIE_DB_AUTH_TOKEN`, `ROADIE_DB_AUTH_TOKEN_FILE` and `ROADIE_SERVICE_TOKEN_FILE` in tool shells; plugins in the server process keep their access. The `roadie` subcommands agents are told to run (`send`, `session search|read|wait`, `task list|edit`, `project list`) detect that mode and call new typed JSON endpoints on the bot's local HTTP server (`/roadie/agent/*`) instead of opening the database: the bot executes the same subcommand itself, does the database reads and writes and the Discord REST calls with its own credentials, and streams byte-identical output and exit codes back as NDJSON. Tasks are scoped to the token's session or thread, and the agent token is never accepted on the hrana `/v2` or `/v2/pipeline` routes, on `/roadie/send`, or by any other route. Operator use outside a session is unchanged.
