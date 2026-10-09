@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.51.0] - 2026-10-09
+
+### Added
+- opt-in isolated agent tool shells (--isolate-shells)
+
 ## [0.50.0] - 2026-10-09
 
 ### Added
