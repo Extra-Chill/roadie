@@ -88,6 +88,18 @@ import {
 
 // OpenCode provider id the pool provider is registered under (`provider.roadie`).
 export const ROADIE_PROVIDER_ID = 'roadie'
+/**
+ * After the subrouter handoff, `subrouter/<rotation>` is served by this same
+ * pool provider so host configs that still name subrouter models keep working
+ * without subrouter refreshing tokens the pool now owns.
+ */
+export const SUBROUTER_ALIAS_PROVIDER_ID = 'subrouter'
+export const SUBROUTER_ALIAS_ENV = 'ROADIE_SUBROUTER_ALIAS'
+
+/** Provider ids whose requests the pool handles (and the plugin tags). */
+export function isPoolProviderId(providerID: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return providerID === ROADIE_PROVIDER_ID || (providerID === SUBROUTER_ALIAS_PROVIDER_ID && env[SUBROUTER_ALIAS_ENV] === '1')
+}
 export const POOL_HEADER = 'x-roadie-pool'
 export const SESSION_HEADER = 'x-roadie-session'
 export const ROADIE_INTERNAL_HEADER_PREFIX = 'x-roadie-'

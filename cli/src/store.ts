@@ -7,6 +7,7 @@ import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './schema.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
 import {
+  parseCredentialPoolsEnabled,
   parseCredentialsMode,
   parseThreadBilling,
   type CredentialsMode,
@@ -136,9 +137,12 @@ export type RoadieState = {
 
   // Whether credential pools are enabled: pool store under
   // <dataDir>/credentials/, the roadie provider (roadie/<rotation> models),
-  // and the chat.headers tagging plugin in the OpenCode backend. Opt-in via
-  // --credential-pools or ROADIE_CREDENTIAL_POOLS=1; off by default so the
-  // generated OpenCode config and behavior are unchanged.
+  // and the chat.headers tagging plugin in the OpenCode backend. On by
+  // default since phase 4a; disable with --no-credential-pools or
+  // ROADIE_CREDENTIAL_POOLS=0 to fall back to OpenCode's own auth.json.
+  // With no rotations in the shared pool the generated OpenCode config is
+  // unchanged (no roadie provider), so servers that never used pools see no
+  // difference.
   // Changes: set once at startup.
   // Read by: opencode.ts when building the server config and env.
   credentialPoolsEnabled: boolean
@@ -221,7 +225,7 @@ export const store = createStore<RoadieState>(() => ({
   permissionTimeoutMs: 10 * 60 * 1000,
   autoUpgradeEnabled: true,
   subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
-  credentialPoolsEnabled: process.env.ROADIE_CREDENTIAL_POOLS === '1',
+  credentialPoolsEnabled: parseCredentialPoolsEnabled(process.env.ROADIE_CREDENTIAL_POOLS),
   credentialsMode: parseCredentialsMode(process.env.ROADIE_CREDENTIALS),
   threadBilling: parseThreadBilling(process.env.ROADIE_THREAD_BILLING),
   isolateShellsUser: process.env.ROADIE_ISOLATE_SHELLS?.trim() || null,

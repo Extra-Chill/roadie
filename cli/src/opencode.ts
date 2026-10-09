@@ -196,7 +196,8 @@ import {
   CREDENTIALS_MODE_ENV,
   THREAD_BILLING_ENV,
 } from './credentials/person-pool.js'
-import { ROADIE_PROVIDER_ID } from './credentials/provider.js'
+import { ROADIE_PROVIDER_ID, SUBROUTER_ALIAS_ENV, SUBROUTER_ALIAS_PROVIDER_ID } from './credentials/provider.js'
+import { hasSubrouterHandoff } from './credentials/migrate-subrouter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -211,11 +212,14 @@ export function buildOpencodeServerConfig({
   skillPermission,
   pluginList,
   roadiePoolProvider,
+  subrouterAlias = false,
 }: {
   externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'>
   skillPermission: ReturnType<typeof computeSkillPermission>
   pluginList: string[]
   roadiePoolProvider: RoadiePoolProviderConfig | null
+  /** Serve `subrouter/<rotation>` from the pool after the subrouter handoff. */
+  subrouterAlias?: boolean
 }) {
   return {
     $schema: 'https://opencode.ai/config.json',
@@ -282,6 +286,9 @@ export function buildOpencodeServerConfig({
         },
       },
       ...(roadiePoolProvider && { [ROADIE_PROVIDER_ID]: roadiePoolProvider }),
+      ...(roadiePoolProvider && subrouterAlias && {
+        [SUBROUTER_ALIAS_PROVIDER_ID]: { ...roadiePoolProvider, name: 'Roadie credential pool (subrouter names)' },
+      }),
     },
   } satisfies Config
 }
@@ -1069,6 +1076,7 @@ async function startSingleServer({
   // rotations as roadie/<rotation> models backed by the pool provider. Null
   // when disabled, so the generated config is unchanged with the flag off.
   const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
+  const subrouterHandedOff = credentialPoolsEnabled && hasSubrouterHandoff({ dataDir: getDataDir() })
   const roadiePoolProvider = credentialPoolsEnabled
     ? await buildRoadiePoolProviderConfig({
         dataDir: getDataDir(),
@@ -1084,11 +1092,15 @@ async function startSingleServer({
   const opencodeConfig = buildOpencodeServerConfig({
     externalDirectoryPermissions,
     skillPermission,
+    // After the subrouter handoff the pool is the only store that may refresh
+    // those accounts, so subrouter is not loaded and its model names are served
+    // from the pool instead.
     pluginList: buildServerPluginList({
       isDev,
-      subrouterEnabled: store.getState().subrouterEnabled,
+      subrouterEnabled: store.getState().subrouterEnabled && !subrouterHandedOff,
     }),
     roadiePoolProvider,
+    subrouterAlias: subrouterHandedOff,
   })
   const runtimeConfig = await applyFiltersAsync('opencode_server_config', opencodeConfig, {})
   if (runtimeConfig instanceof Error) return new ServerStartError({ port, reason: runtimeConfig.message, cause: runtimeConfig })
@@ -1132,6 +1144,7 @@ async function startSingleServer({
         // Opt-in credential pools: the plugin and provider read this inside
         // the OpenCode process (config.ts state is not available there).
         ...(credentialPoolsEnabled && { [CREDENTIAL_POOLS_ENV]: '1' }),
+        ...(subrouterHandedOff && { [SUBROUTER_ALIAS_ENV]: '1' }),
         // Per-person routing (phase 2a): mode and billing for the
         // chat.headers hook. Set only with pools enabled, so the default
         // (global) environment is unchanged.

@@ -19,6 +19,11 @@ import {
   subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getDataDir } from '../config.js'
+import { store } from '../store.js'
+import { hasSubrouterHandoff } from '../credentials/migrate-subrouter.js'
+import { ROADIE_PROVIDER_ID } from '../credentials/provider.js'
+import { readSessionRoute } from '../credentials/routes.js'
 import type { ScheduledTaskScheduleKind } from '../database.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
@@ -186,7 +191,30 @@ export function formatDisplayedModelId({
   return `${providerID}/${displayedModelLabel({ modelID, name })}`
 }
 
-/** Subrouter presets resolve to the live cooldown-aware candidate. */
+/**
+ * `roadie/<rotation>` resolves to the live candidate the session's held route
+ * points at (credentials/routes.ts, pinned by the pool provider and cleared on
+ * session.idle). Without a route the rotation name itself is shown: the SDK
+ * name falls through `displayedModelLabel`, which keeps the model id.
+ */
+export function resolveRoadieRouteDisplayName({
+  dataDir,
+  rotation,
+  sessionID,
+  now = Date.now(),
+}: {
+  dataDir: string
+  rotation: string
+  sessionID?: string
+  now?: number
+}): string | undefined {
+  if (!sessionID) return undefined
+  const route = readSessionRoute({ dataDir, sessionId: sessionID, now })
+  if (!route || route.rotation !== rotation) return undefined
+  return `${rotation} (${route.provider}/${route.modelId})`
+}
+
+/** Subrouter presets and roadie rotations resolve to the live candidate. */
 export async function resolveDisplayedModelName({
   providers,
   providerID,
@@ -198,7 +226,13 @@ export async function resolveDisplayedModelName({
   modelID?: string
   sessionID?: string
 }): Promise<string | undefined> {
-  if (providerID === SUBROUTER_PROVIDER_ID && modelID) {
+  // After the subrouter handoff `subrouter/<preset>` is served by the pool, so
+  // it resolves like `roadie/<rotation>` and subrouter's own store is never read.
+  const subrouterServedByPool =
+    providerID === SUBROUTER_PROVIDER_ID &&
+    store.getState().credentialPoolsEnabled &&
+    hasSubrouterHandoff({ dataDir: getDataDir() })
+  if (providerID === SUBROUTER_PROVIDER_ID && modelID && !subrouterServedByPool) {
     const candidate = await resolveLiveModel({ preset: modelID, sessionID }).catch((e) => {
       sessionLogger.warn(
         `[MODEL] Failed to resolve subrouter candidate for ${modelID}:`,
@@ -207,6 +241,14 @@ export async function resolveDisplayedModelName({
       return null
     })
     if (candidate) return `${modelID} (${formatCandidateRef(candidate)})`
+  }
+  if ((providerID === ROADIE_PROVIDER_ID || subrouterServedByPool) && modelID) {
+    const live = resolveRoadieRouteDisplayName({
+      dataDir: getDataDir(),
+      rotation: modelID,
+      sessionID,
+    })
+    if (live) return live
   }
   return getProviderModelName({ providers, providerID, modelID })
 }

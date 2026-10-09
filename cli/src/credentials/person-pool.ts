@@ -180,3 +180,13 @@ export function parseThreadBillingStrict(value: string): ThreadBilling | Error {
   if (value === 'owner' || value === 'speaker') return value
   return new Error(`Invalid thread billing: ${value}. Use one of: owner, speaker`)
 }
+
+/**
+ * Credential pools are on by default (phase 4a): only `ROADIE_CREDENTIAL_POOLS=0`
+ * (or `--no-credential-pools`) turns them off, restoring OpenCode's own
+ * auth.json. Any other value — including unset and the legacy `1` — keeps
+ * pools enabled.
+ */
+export function parseCredentialPoolsEnabled(value: string | undefined | null): boolean {
+  return value !== '0'
+}

@@ -239,3 +239,38 @@ describe('credentialPoolsPlugin event hook (turn affinity cleanup)', () => {
     expect(readSessionRoute({ dataDir, sessionId: 'ses_live', now: NOW })).toEqual({ ...ROUTE, pinnedAt: NOW })
   })
 })
+
+describe('subrouter alias after the handoff', () => {
+  test('isPoolProviderId accepts subrouter only when the alias is on', async () => {
+    const { isPoolProviderId, SUBROUTER_ALIAS_ENV } = await import('./provider.js')
+    expect(isPoolProviderId('roadie', {})).toBe(true)
+    expect(isPoolProviderId('subrouter', {})).toBe(false)
+    expect(isPoolProviderId('subrouter', { [SUBROUTER_ALIAS_ENV]: '1' })).toBe(true)
+    expect(isPoolProviderId('anthropic', { [SUBROUTER_ALIAS_ENV]: '1' })).toBe(false)
+  })
+
+  test('requests to subrouter/<preset> are tagged for the pool once handed off', async () => {
+    const { SUBROUTER_ALIAS_ENV } = await import('./provider.js')
+    setRoutingEnv({})
+    process.env[SUBROUTER_ALIAS_ENV] = '1'
+    try {
+      const hooks = await credentialPoolsPlugin({} as Parameters<typeof credentialPoolsPlugin>[0])
+      const hook = hooks && 'chat.headers' in hooks ? hooks['chat.headers'] : undefined
+      if (!hook) throw new Error('chat.headers hook missing')
+      const output = { headers: {} as Record<string, string> }
+      await hook(
+        {
+          sessionID: 'ses_alias',
+          agent: 'build',
+          model: { id: 'anthropic-claude-haiku-5-5', providerID: 'subrouter' },
+          provider: { source: 'config', info: {}, options: {} },
+          message: {},
+        } as Parameters<NonNullable<typeof hook>>[0],
+        output,
+      )
+      expect(output.headers['x-roadie-pool']).toBe('shared')
+    } finally {
+      delete process.env[SUBROUTER_ALIAS_ENV]
+    }
+  })
+})

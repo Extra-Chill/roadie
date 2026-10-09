@@ -7,6 +7,8 @@
 //   roadie credentials remove <id> [--pool <id>]
 //   roadie credentials rotation set <name> <provider/model>... [--pool <id>]
 //   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
+//   roadie credentials import-opencode --opencode-data <dir> [--pool <id>] [--dry-run]
+//   roadie credentials export-opencode --opencode-data <dir> [--pool <id>]
 // API keys are read from stdin (never argv) and never printed; only the last
 // 4 characters are shown. OAuth tokens are never printed; `list` shows the
 // access token's expiry instead.
@@ -40,6 +42,14 @@ import {
   formatSubrouterImportReport,
   importSubrouterCredentials,
 } from '../credentials/import-subrouter.js'
+import {
+  formatOpencodeImportReport,
+  importOpencodeCredentials,
+} from '../credentials/import-opencode.js'
+import {
+  exportOpencodeCredentials,
+  formatOpencodeExportReport,
+} from '../credentials/export-opencode.js'
 import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -257,6 +267,56 @@ cli
     })
     if (result instanceof Error) exitWithError(result.message)
     for (const line of formatSubrouterImportReport(result)) {
+      cliLogger.log(line)
+    }
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials import-opencode',
+    'Import OpenCode-managed credentials (auth.json and <provider>-oauth-accounts.json rotation files) into a credential pool (default: shared). Read-only on OpenCode files: they are never written, moved or deleted.',
+  )
+  .option(
+    '--opencode-data <dir>',
+    'OpenCode data directory holding auth.json (e.g. ~/.local/share/opencode)',
+  )
+  .option('--pool <id>', 'Pool to add the accounts to (default: shared)')
+  .option('--dry-run', 'Print the import plan without writing anything')
+  .action(async (options) => {
+    refuseAgentMode()
+    const result = await importOpencodeCredentials({
+      dataDir: getDataDir(),
+      poolId: resolvePoolId(options.pool),
+      opencodeData: options.opencodeData,
+      dryRun: options.dryRun === true,
+    })
+    if (result instanceof Error) exitWithError(result.message)
+    for (const line of formatOpencodeImportReport(result)) {
+      cliLogger.log(line)
+    }
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials export-opencode',
+    'Export a credential pool\'s (default: shared) OAuth accounts back to OpenCode\'s auth.json (the first account per provider) and <provider>-oauth-accounts.json rotation files. The rollback direction of import-opencode: refresh tokens rotate on use, so a pre-migration copy of auth.json goes stale.',
+  )
+  .option(
+    '--opencode-data <dir>',
+    'OpenCode data directory to write auth.json and the rotation files into (e.g. ~/.local/share/opencode)',
+  )
+  .option('--pool <id>', 'Pool to export the accounts from (default: shared)')
+  .action(async (options) => {
+    refuseAgentMode()
+    const result = await exportOpencodeCredentials({
+      dataDir: getDataDir(),
+      poolId: resolvePoolId(options.pool),
+      opencodeData: options.opencodeData,
+    })
+    if (result instanceof Error) exitWithError(result.message)
+    for (const line of formatOpencodeExportReport(result)) {
       cliLogger.log(line)
     }
     process.exit(0)

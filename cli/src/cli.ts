@@ -142,7 +142,11 @@ cli
   )
   .option(
     '--credential-pools',
-    'Enable credential pools: manage API keys per pool (roadie credentials ...) and expose the shared pool rotations as roadie/<rotation> models. Same as ROADIE_CREDENTIAL_POOLS=1',
+    'No-op: credential pools are enabled by default (the shared pool rotations are exposed as roadie/<rotation> models). Kept for compatibility with earlier invocations',
+  )
+  .option(
+    '--no-credential-pools',
+    'Disable credential pools entirely: OpenCode\'s own auth.json applies and /credentials is not registered. Same as ROADIE_CREDENTIAL_POOLS=0',
   )
   .option(
     '--credentials <mode>',
@@ -402,8 +406,10 @@ cli
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.subrouter === false && { subrouterEnabled: false }),
-          ...(options.credentialPools && { credentialPoolsEnabled: true }),
+          // An explicit --no-credential-pools wins even over a per-person
+          // --credentials mode: the user asked to turn pools off entirely.
           ...(perPersonCredentials && { credentialPoolsEnabled: true }),
+          ...(options.credentialPools === false && { credentialPoolsEnabled: false }),
           ...(credentialsMode && { credentialsMode }),
           ...(threadBilling && { threadBilling }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
@@ -514,9 +520,16 @@ cli
             'Auto-upgrade disabled: roadie will not check for updates on startup',
           )
         }
-        if (options.credentialPools) {
+        if (options.credentialPools === true) {
+          cliLogger.log('--credential-pools is a no-op: credential pools are enabled by default')
+        }
+        if (store.getState().credentialPoolsEnabled) {
           cliLogger.log(
             'Credential pools enabled: the shared pool rotations are exposed as roadie/<rotation> models',
+          )
+        } else {
+          cliLogger.log(
+            'Credential pools disabled: OpenCode auth.json applies (subrouter account rotation still loads unless --no-subrouter)',
           )
         }
         if (perPersonCredentials) {
