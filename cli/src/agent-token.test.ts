@@ -125,7 +125,7 @@ describe('applyAgentShellEnv (shell.env contract)', () => {
     for (const name of SCRUBBED_SHELL_ENV_NAMES) {
       expect(env[name]).toBe('')
     }
-    expect(env[AGENT_TOKEN_SECRET_ENV]).toBeUndefined()
+    expect(env[AGENT_TOKEN_SECRET_ENV]).toBe('')
     expect(env.PATH).toBe('/usr/bin')
     const token = env[AGENT_TOKEN_ENV]
     expect(typeof token).toBe('string')
@@ -141,8 +141,8 @@ describe('applyAgentShellEnv (shell.env contract)', () => {
       [AGENT_TOKEN_SECRET_ENV]: secret,
     }
     applyAgentShellEnv({ env, secret, sessionId: undefined })
-    expect(env[AGENT_TOKEN_ENV]).toBeUndefined()
-    expect(env[AGENT_TOKEN_SECRET_ENV]).toBeUndefined()
+    expect(env[AGENT_TOKEN_ENV]).toBe('')
+    expect(env[AGENT_TOKEN_SECRET_ENV]).toBe('')
   })
 
   test('without a secret no token is exported and a stale one is removed', () => {
@@ -150,8 +150,41 @@ describe('applyAgentShellEnv (shell.env contract)', () => {
       [AGENT_TOKEN_ENV]: mintAgentToken({ secret, sessionId: 'ses_stale' }),
     }
     applyAgentShellEnv({ env, secret: undefined, sessionId: 'ses_shell' })
-    expect(env[AGENT_TOKEN_ENV]).toBeUndefined()
+    expect(env[AGENT_TOKEN_ENV]).toBe('')
     expect(env.ROADIE_DB_URL).toBe('')
+  })
+})
+
+describe('applyAgentShellEnv as OpenCode merges it', () => {
+  // OpenCode's ShellTool.shellEnv returns {...process.env, ...hookEnv}; assert
+  // on that merged result, which is what a tool shell actually receives.
+  const serverEnv = {
+    PATH: '/usr/bin',
+    [AGENT_TOKEN_SECRET_ENV]: 'server-secret',
+    ROADIE_DB_URL: 'http://127.0.0.1:1/',
+    ROADIE_DB_AUTH_TOKEN: 'db-token',
+    ROADIE_DB_AUTH_TOKEN_FILE: '/x/token',
+    ROADIE_SERVICE_TOKEN_FILE: '/x/send-token',
+    [AGENT_TOKEN_ENV]: 'stale.token',
+  }
+  const merged = (sessionId: string | undefined, secret: string | undefined) => {
+    const overlay: Record<string, string> = {}
+    applyAgentShellEnv({ env: overlay, secret, sessionId })
+    return { ...serverEnv, ...overlay }
+  }
+
+  test('the token secret and database credentials never reach the shell', () => {
+    const shell = merged('ses_a', 'server-secret')
+    expect(shell[AGENT_TOKEN_SECRET_ENV]).toBe('')
+    for (const name of SCRUBBED_SHELL_ENV_NAMES) expect(shell[name]).toBe('')
+    expect(shell[AGENT_TOKEN_ENV]).toBe(mintAgentToken({ secret: 'server-secret', sessionId: 'ses_a' }))
+    expect(shell.PATH).toBe('/usr/bin')
+  })
+
+  test('a session-less shell gets neither a token nor the secret', () => {
+    const shell = merged(undefined, 'server-secret')
+    expect(shell[AGENT_TOKEN_SECRET_ENV]).toBe('')
+    expect(shell[AGENT_TOKEN_ENV]).toBe('')
   })
 })
 

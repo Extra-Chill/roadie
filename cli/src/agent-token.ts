@@ -116,13 +116,14 @@ export function applyAgentShellEnv({
   secret: string | undefined
   sessionId: string | undefined
 }): void {
+  // OpenCode builds a tool shell's environment as {...process.env, ...env}:
+  // this object is an overlay, so `delete` cannot remove an inherited value.
+  // Every name that must not reach the shell is overwritten with '' instead.
+  // The token secret is in the server's own environment, so leaving it
+  // inherited would let a shell mint a token for any session.
   for (const name of SCRUBBED_SHELL_ENV_NAMES) {
     env[name] = ''
   }
-  delete env[AGENT_TOKEN_SECRET_ENV]
-  if (secret && sessionId) {
-    env[AGENT_TOKEN_ENV] = mintAgentToken({ secret, sessionId })
-    return
-  }
-  delete env[AGENT_TOKEN_ENV]
+  env[AGENT_TOKEN_SECRET_ENV] = ''
+  env[AGENT_TOKEN_ENV] = secret && sessionId ? mintAgentToken({ secret, sessionId }) : ''
 }
