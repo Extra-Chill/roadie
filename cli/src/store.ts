@@ -160,6 +160,18 @@ export type RoadieState = {
   // Read by: opencode.ts when passing ROADIE_THREAD_BILLING to the server.
   threadBilling: ThreadBilling
 
+  // Unprivileged user that agent tool shells run as (opt-in shell isolation,
+  // phase 3 step 2). When set, opencode.ts generates a setpriv + env -i
+  // wrapper under <dataDir>/bin/isolated-shell/bash and starts the OpenCode
+  // server with SHELL pointing at it, so bash tool calls run as this user
+  // with an allowlisted environment. Null (default, --isolate-shells unset)
+  // keeps today's behavior: shells run as the bot's own OS user and SHELL is
+  // unchanged.
+  // Changes: set once at startup from --isolate-shells or
+  // ROADIE_ISOLATE_SHELLS.
+  // Read by: opencode.ts startSingleServer().
+  isolateShellsUser: string | null
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -212,6 +224,7 @@ export const store = createStore<RoadieState>(() => ({
   credentialPoolsEnabled: process.env.ROADIE_CREDENTIAL_POOLS === '1',
   credentialsMode: parseCredentialsMode(process.env.ROADIE_CREDENTIALS),
   threadBilling: parseThreadBilling(process.env.ROADIE_THREAD_BILLING),
+  isolateShellsUser: process.env.ROADIE_ISOLATE_SHELLS?.trim() || null,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],

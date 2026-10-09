@@ -74,6 +74,7 @@ import {
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
 import { ensureAgentTokenSecret } from './agent-token.js'
+import { ensureIsolatedShellWrapper } from './isolated-shell.js'
 
 export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
   const require = createRequire(import.meta.url)
@@ -996,6 +997,23 @@ async function startSingleServer({
   // of known-safe paths is pre-allowed and everything else falls through to the
   // user's opencode.json default (which is 'ask' unless they changed it).
   const externalDirectoryPermissions = buildServerExternalDirectoryPermissions()
+  // Opt-in shell isolation (--isolate-shells): OpenCode picks its tool shell
+  // from $SHELL, so generate the setpriv + env -i wrapper and point SHELL at
+  // it. Fails fast with a clear reason when the bot lacks the privileges or
+  // the agent user/binaries are missing. With the flag unset (default) SHELL
+  // is inherited unchanged.
+  const isolateShellsUser = store.getState().isolateShellsUser
+  const shellIsolation = isolateShellsUser
+    ? await ensureIsolatedShellWrapper({ dataDir: getDataDir(), username: isolateShellsUser })
+    : null
+  if (shellIsolation instanceof Error) {
+    return new ServerStartError({ port, reason: shellIsolation.message })
+  }
+  if (shellIsolation) {
+    opencodeLogger.log(
+      `Shell isolation: tool shells run as ${isolateShellsUser} via ${shellIsolation.shellPath}`,
+    )
+  }
   const roadieShimDirectory = ensureRoadieCommandShim({
     dataDir: getDataDir(),
     execPath: process.execPath,
@@ -1130,6 +1148,9 @@ async function startSingleServer({
         // blanks it again in the same env, so shells hold a token bound to
         // their own session instead of the database credentials.
         ROADIE_AGENT_TOKEN_SECRET: ensureAgentTokenSecret(),
+        // Opt-in shell isolation: every bash tool call runs as the agent
+        // user through the generated wrapper (see isolated-shell.ts).
+        ...(shellIsolation && { SHELL: shellIsolation.shellPath }),
         ...(process.env.ROADIE_SENTRY_DSN && {
           ROADIE_SENTRY_DSN: process.env.ROADIE_SENTRY_DSN,
         }),

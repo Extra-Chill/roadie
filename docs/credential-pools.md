@@ -226,6 +226,50 @@ against other OS users, not against the agent your bot runs.
   and keep `!` shell-prefixed messages and similar power tools admin-only.
 
 Phase 3 removes the exposure: the bot process brokers short-lived access
-tokens to the OpenCode server per session, refresh tokens and API keys never
-enter the agent's process, and OpenCode runs as an unprivileged user that
-cannot read `<dataDir>`. Until then, treat shell access as credential access.
+tokens to the OpenCode server per session (#144), refresh tokens and API keys
+never enter the agent's process, and tool shells can be run as an unprivileged
+user (below). Until both are on, treat shell access as credential access.
+
+### `--isolate-shells <user>` (opt-in OS isolation)
+
+Step 2 of phase 3. `roadie --isolate-shells <user>` (or
+`ROADIE_ISOLATE_SHELLS=<user>`) makes every agent tool shell run as the given
+unprivileged user instead of the bot's own OS user. Off by default: with the
+flag unset, `SHELL` and the generated OpenCode config are unchanged.
+
+Roadie writes a shell wrapper to `<dataDir>/bin/isolated-shell/bash` (mode
+0755, root-owned) and starts `opencode serve` with `SHELL` pointing at it —
+OpenCode picks its tool shell from `$SHELL`, so every bash tool call goes
+through the wrapper. The wrapper uses util-linux `setpriv`
+(`--reuid`/`--regid`/`--init-groups`/`--no-new-privs`) to drop to the agent
+user and `env -i` to replace the environment with a fixed allowlist:
+`PATH` (a fixed value, not inherited), `HOME` (the agent user's home),
+`TERM`, `LANG`, and the `ROADIE_*` attribution vars, `ROADIE_SESSION_ID` and
+`ROADIE_AGENT_TOKEN` from #144. Nothing else is inherited — `ROADIE_DB_*`,
+`ROADIE_SERVICE_TOKEN_FILE`, `ROADIE_AGENT_TOKEN_SECRET` and provider keys
+never reach a tool shell, and the OpenCode server's `/proc/<pid>/environ` is
+unreadable for the agent user.
+
+Requirements, checked at startup (the bot fails fast with a clear message):
+
+- Linux with `setpriv` and `bash` on `PATH` (util-linux).
+- The bot runs as root, or with `CAP_SETUID` + `CAP_SETGID` (for example
+  `AmbientCapabilities=CAP_SETUID CAP_SETGID` in its service unit).
+- The agent user exists (`useradd --system --create-home ...`).
+
+Directory layout the startup check (and an operator should) confirm:
+
+- Project directories are readable **and writable** by the agent user — a
+  shared group plus setgid directories:
+  `chgrp <agent-group> <project> && chmod 2770 <project>`.
+- `<dataDir>`, `~/.local/share/opencode` and the pool files under
+  `<dataDir>/credentials/` are **not** readable by the agent user (root-owned,
+  mode 0700).
+
+What isolation costs: root-owned tools and credentials — `gh auth`, ssh keys,
+cloud CLIs — are gone from tool shells unless they are provisioned for the
+agent user too. That is the point (per-person servers no longer expose the
+operator's identity to every session), and it is why this is opt-in per
+server. Note the `~/.roadie/bin/roadie` shim is inside the private data dir,
+so agent-mode `roadie` subcommands need their own agent-user-accessible
+provisioning under this flag.

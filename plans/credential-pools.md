@@ -265,10 +265,11 @@ the OpenCode/plugin process, which share an OS user today:
   on the hrana `/v2` routes or any admin route, and tasks stay scoped to
   the token's session or thread. Plugins in the server process keep their
   access.
-- Step 2: run tool shells as a separate unprivileged user, so they cannot
-  read the server's `/proc/<pid>/environ`, `<dataDir>` or the pool files.
-  Without this step, step 1 scopes the CLI surface the agent drives but the
-  shared OS user still protects the files.
+- Step 2 (issue #145, shipped): with `--isolate-shells <user>`, tool shells
+  run as a separate unprivileged user through a generated setpriv + `env -i`
+  wrapper, so they cannot read the server's `/proc/<pid>/environ`,
+  `<dataDir>` or the pool files. Without this step, step 1 scopes the CLI
+  surface the agent drives but the shared OS user still protects the files.
 - With that boundary in place, a separate token broker is unnecessary.
 
 ## Migration from subrouter
