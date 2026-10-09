@@ -488,6 +488,32 @@ describe('languageModel doGenerate routing', () => {
     expect(state.lastUsed).toEqual({ [anthropic.id]: NOW })
   })
 
+  test('estimatePromptTokens ignores binary file payloads (an image must not skip every candidate)', () => {
+    const textOnly = [{ role: 'user', content: [{ type: 'text', text: 'what is in this screenshot?' }] }]
+    const withImage = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'file', mediaType: 'image/png', data: new Uint8Array(500_000) },
+        ],
+      },
+    ]
+    const withBase64 = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'file', mediaType: 'image/png', data: 'A'.repeat(700_000) },
+        ],
+      },
+    ]
+    const base = estimatePromptTokens({ prompt: textOnly })
+    // Only the part metadata (type, mediaType) is counted, never the bytes.
+    expect(estimatePromptTokens({ prompt: withImage })).toBeLessThan(base + 50)
+    expect(estimatePromptTokens({ prompt: withBase64 })).toBeLessThan(base + 50)
+  })
+
   test('estimatePromptTokens: ~4 chars per token, tools included, unserializable prompt estimates 0', () => {
     const small = generateOptions({ pool: 'shared' })
     expect(estimatePromptTokens({ prompt: small.prompt })).toBeGreaterThan(0)

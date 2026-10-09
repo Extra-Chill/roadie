@@ -114,10 +114,29 @@ export function cooldownUntilFromRetryAfter({ retryAfter, now }: { retryAfter: s
  * of the serialized prompt and tool definitions. Deliberately coarse — it
  * only decides whether a candidate's context window is worth trying, never
  * the request shape itself. 0 disables the check.
+ *
+ * Binary payloads are excluded: a file part's `data` (a Uint8Array, which
+ * JSON.stringify expands to `{"0":137,...}`, or a base64 string) would count
+ * an ordinary screenshot as millions of tokens and skip every candidate.
+ * Providers bill images and files by their own rules, not by byte length.
  */
+function withoutBinaryPayloads(this: unknown, key: string, value: unknown): unknown {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return undefined
+  if (
+    key === 'data' &&
+    typeof this === 'object' &&
+    this !== null &&
+    'type' in this &&
+    (this.type === 'file' || this.type === 'image')
+  ) {
+    return undefined
+  }
+  return value
+}
+
 export function estimatePromptTokens({ prompt, tools }: { prompt: unknown; tools?: unknown }): number {
   try {
-    let chars = JSON.stringify(prompt)?.length ?? 0
+    let chars = JSON.stringify(prompt, withoutBinaryPayloads)?.length ?? 0
     if (tools !== undefined) chars += JSON.stringify(tools)?.length ?? 0
     return Math.ceil(chars / 4)
   } catch {
