@@ -42,11 +42,21 @@ import {
 } from '../cli-runner.js'
 import {
   AGENT_SESSIONS_PATH,
+  AGENT_SESSION_ARCHIVE_PATH,
+  AGENT_SESSION_EDITORS_PATH,
   AGENT_SESSION_SEARCH_PATH,
+  AGENT_SESSION_TITLE_PATH,
+  AGENT_OPERATOR_ONLY_MESSAGE,
   resolveAgentCredentials,
   runAgentCommand,
+  sessionArchiveBody,
+  sessionDiscordUrlQuery,
+  sessionEditorsQuery,
+  sessionListQuery,
   sessionReadQuery,
   sessionSearchQuery,
+  sessionTitleBody,
+  isAgentMode,
 } from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -133,6 +143,28 @@ cli
   .option('--json', 'Output as JSON')
   .action(async (options) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot executes the listing and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        // The bot's child process runs from the home directory, so the
+        // caller's default project (cwd) must be sent explicitly. Keep
+        // --project present whenever the caller passed it so the child
+        // reproduces the use-either validation error identically.
+        const project = options.project !== undefined
+          ? path.resolve(options.project)
+          : (options.all ? undefined : path.resolve('.'))
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_SESSIONS_PATH,
+            query: sessionListQuery({ ...options, project }),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       if (options.all && options.project) {
@@ -345,6 +377,27 @@ cli
   .example('roadie session editors src/cli.ts --json')
   .action(async (file, options, { console, process }) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot executes the lookup and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        // The bot's child process runs from the home directory, so the
+        // caller's file path is resolved against the caller's cwd.
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_SESSION_EDITORS_PATH,
+            query: sessionEditorsQuery({
+              file: path.resolve(process.cwd, file),
+              json: options.json,
+              limit: options.limit,
+            }),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       const cwd = process.cwd
       const loaded = loadFileEditEvents({ dataDir: getDataDir() })
       if (loaded instanceof Error) {
@@ -878,6 +931,13 @@ cli
     'Output .jsonl path (useful for reproducing Roadie issues in event-stream-state tests)',
   )
   .action(async (options) => {
+    // Persisted event exports stay operator-only: agents never read the
+    // event store directly.
+    if (isAgentMode()) {
+      cliLogger.error(AGENT_OPERATOR_ONLY_MESSAGE)
+      process.exit(EXIT_NO_RESTART)
+    }
+
     const sessionId =
       typeof options.session === 'string' ? options.session.trim() : ''
     if (!sessionId) {
@@ -969,13 +1029,29 @@ cli
   .option('--session <sessionId>', 'Resolve thread from an OpenCode session ID')
   .action(async (threadIdArg: string | undefined, options: { session?: string }) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot does the Discord REST call and streams the same
+      // output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        if (threadIdArg && options.session) {
+          cliLogger.error('Use either a thread ID or --session, not both')
+          process.exit(EXIT_NO_RESTART)
+        }
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'POST',
+            path: AGENT_SESSION_ARCHIVE_PATH,
+            body: sessionArchiveBody({ threadId: threadIdArg, session: options.session }),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       // Resolve threadId from --session or positional arg
-      if (threadIdArg && options.session) {
-        cliLogger.error('Use either a thread ID or --session, not both')
-        process.exit(EXIT_NO_RESTART)
-      }
       const resolvedThreadId = await (async (): Promise<string> => {
         if (threadIdArg) {
           return threadIdArg
@@ -991,7 +1067,6 @@ cli
         cliLogger.error('Provide a thread ID or --session <sessionId>')
         process.exit(EXIT_NO_RESTART)
       })()
-
       const { token: botToken } = await resolveBotCredentials()
 
       const rest = createDiscordRest(botToken)
@@ -1063,6 +1138,21 @@ cli
   )
   .action(async (sessionId) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot does the abort and the Discord REST call and streams
+      // the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'POST',
+            path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/abort`,
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       const { token: botToken } = await resolveBotCredentials()
@@ -1127,6 +1217,30 @@ cli
   .example("roadie session title 'Fix queue draining' --session ses_xxx")
   .action(async (title, options) => {
     try {
+      // Agent tool shells retitle their own session through the running bot;
+      // the endpoint takes no session selector.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const trimmedTitle = title.trim()
+        if (!trimmedTitle) {
+          cliLogger.error('Title must not be empty')
+          process.exit(EXIT_NO_RESTART)
+        }
+        if (options.session || options.thread) {
+          cliLogger.error('--session and --thread are not available through the running bot; the command retitles the current session')
+          process.exit(EXIT_NO_RESTART)
+        }
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'POST',
+            path: AGENT_SESSION_TITLE_PATH,
+            body: sessionTitleBody({ title: trimmedTitle }),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       const trimmedTitle = title.trim()
@@ -1207,6 +1321,21 @@ cli
   )
   .option('--json', 'Output as JSON')
   .action(async (sessionId, options) => {
+    // Agent tool shells hold a per-session token, not database credentials;
+    // the running bot resolves the thread and streams the same output back.
+    const agent = resolveAgentCredentials()
+    if (!(agent instanceof Error)) {
+      const exitCode = await runAgentCommand({
+        agent,
+        request: {
+          method: 'GET',
+          path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/discord-url`,
+          query: sessionDiscordUrlQuery(options),
+        },
+      })
+      process.exit(exitCode)
+    }
+
     await initDatabase()
     const threadId = await getThreadIdBySessionId(sessionId)
     if (!threadId) {

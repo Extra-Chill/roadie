@@ -16,8 +16,9 @@ import os from 'node:os'
 import path from 'node:path'
 import type http from 'node:http'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { readRoadieSecret } from './config.js'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { getDataDir, readRoadieSecret } from './config.js'
 
 type OptionKind = 'string' | 'boolean' | 'strings'
 
@@ -175,10 +176,44 @@ export type RemoteSendRunner = (args: string[], emit: (event: RemoteSendEvent) =
 
 /**
  * Roadie's CLI entry next to this module: dist/cli.js when built, src/cli.ts
- * under tsx (whose loader arrives via process.execArgv).
+ * when running from source.
  */
 function roadieCliEntry(): string {
   return fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './cli.ts' : './cli.js', import.meta.url))
+}
+
+/**
+ * Node flags for the CLI child. From source the child must load TypeScript,
+ * and the parent's own loader is not always in process.execArgv: vitest
+ * transforms modules in-process, so a child given only the parent's execArgv
+ * cannot resolve src/*.ts and fails before running. Add the tsx loader
+ * explicitly whenever the entry is TypeScript and none is present.
+ */
+export function roadieCliChildExecArgv({
+  execArgv,
+  entry,
+}: {
+  execArgv: readonly string[]
+  entry: string
+}): string[] {
+  if (!entry.endsWith('.ts')) return [...execArgv]
+  const hasTsLoader = execArgv.some((arg, index) => {
+    const value = arg.startsWith('--import=') || arg.startsWith('--loader=') ? arg.split('=')[1] : (
+      (arg === '--import' || arg === '--loader') ? execArgv[index + 1] : undefined
+    )
+    return typeof value === 'string' && value.includes('tsx')
+  })
+  if (hasTsLoader) return [...execArgv]
+  // Resolve tsx from Roadie's own install, not the child's cwd (the bot runs
+  // the child from the home directory, where tsx is not installed).
+  const tsxLoader = (() => {
+    try {
+      return createRequire(import.meta.url).resolve('tsx')
+    } catch {
+      return 'tsx'
+    }
+  })()
+  return [...execArgv, '--import', tsxLoader.startsWith('/') ? pathToFileURL(tsxLoader).href : tsxLoader]
 }
 
 /** Runs `roadie send` as a child of the bot process, i.e. as the bot user. */
@@ -189,8 +224,16 @@ export const spawnRoadieSend: RemoteSendRunner = (args, emit) => {
   delete env.ROADIE_SERVICE_TOKEN
   delete env.ROADIE_SERVICE_TOKEN_FILE
   delete env.__ROADIE_CHILD
+  // The bot may have its data dir from --data-dir (set in memory, not in the
+  // env). Pass it explicitly or the child would open ~/.roadie instead.
+  env.ROADIE_DATA_DIR = getDataDir()
+  // ROADIE_VITEST makes getDataDir() pick its own temp dir and ignore
+  // ROADIE_DATA_DIR. The data dir above is explicit (already isolated when the
+  // bot itself runs under tests), so the child must use it.
+  delete env.ROADIE_VITEST
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [...process.execArgv, roadieCliEntry(), ...args], {
+    const entry = roadieCliEntry()
+    const child = spawn(process.execPath, [...roadieCliChildExecArgv({ execArgv: process.execArgv, entry }), entry, ...args], {
       env,
       cwd: os.homedir(),
       stdio: ['ignore', 'pipe', 'pipe'],

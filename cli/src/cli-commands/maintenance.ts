@@ -38,6 +38,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { AGENT_OPERATOR_ONLY_MESSAGE, isAgentMode } from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -49,6 +50,13 @@ cli
   )
   .option('--skip-restart', 'Only upgrade, do not restart the running bot')
   .action(async (options) => {
+    // Upgrading is an operator action: agent shells have neither the database
+    // credentials nor the daemon lifecycle. The system prompt tells agents to
+    // ask the user instead.
+    if (isAgentMode()) {
+      cliLogger.error(AGENT_OPERATOR_ONLY_MESSAGE)
+      process.exit(EXIT_NO_RESTART)
+    }
     if (isManagedInstall()) {
       // The host registers its upgrade path from a plugin (ROADIE_PLUGINS).
       const loaded = await loadPlugins(resolvePluginSpecs([]))

@@ -36,9 +36,21 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { AGENT_OPERATOR_ONLY_MESSAGE, isAgentMode } from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
+
+/**
+ * Bot administration never runs inside an agent tool shell: the shell has no
+ * database credentials, so refuse before touching anything.
+ */
+function refuseAgentMode(): void {
+  if (isAgentMode()) {
+    cliLogger.error(AGENT_OPERATOR_ONLY_MESSAGE)
+    process.exit(EXIT_NO_RESTART)
+  }
+}
 
 cli
   .command('discord-install-url', 'Print the bot install URL and exit')
@@ -48,6 +60,7 @@ cli
   )
   .action(async (options) => {
     try {
+      refuseAgentMode()
       if (options.dataDir) {
         setDataDir(options.dataDir)
         cliLogger.log(`Using data directory: ${getDataDir()}`)
@@ -92,6 +105,7 @@ cli
   )
   .action(async (options) => {
     try {
+      refuseAgentMode()
       if (options.dataDir) {
         setDataDir(options.dataDir)
         cliLogger.log(`Using data directory: ${getDataDir()}`)
@@ -177,6 +191,7 @@ cli
       },
     ) => {
       try {
+      refuseAgentMode()
         if (options.dataDir) {
           setDataDir(options.dataDir)
         }
@@ -267,6 +282,7 @@ cli
   )
   .action(async (options) => {
     try {
+      refuseAgentMode()
       if (options.dataDir) {
         setDataDir(options.dataDir)
       }
@@ -301,6 +317,7 @@ cli
   )
   .action(async (options: { dataDir?: string }) => {
     try {
+      refuseAgentMode()
       if (options.dataDir) {
         setDataDir(options.dataDir)
       }
