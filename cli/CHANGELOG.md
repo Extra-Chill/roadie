@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.53.0] - 2026-10-09
+
+### Added
+- credential pools on by default with automatic subrouter migration
+
 ## [0.52.0] - 2026-10-09
 
 ### Added
