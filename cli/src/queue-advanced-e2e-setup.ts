@@ -969,6 +969,7 @@ export function setupQueueAdvancedSuite({
   restrictExternalDirectories = false,
   projectPermission,
   extraMatchers = [],
+  isolateShellsUser,
 }: {
   channelId: string
   channelName: string
@@ -985,6 +986,11 @@ export function setupQueueAdvancedSuite({
   // real user would. Used to prove user rules still beat roadie's generated
   // config instead of being overridden by session-level rules.
   projectPermission?: Record<string, unknown>
+  // Opt into the --isolate-shells behaviour: the OpenCode server is started
+  // with SHELL pointing at the generated setpriv wrapper, so bash tool calls
+  // run as the given unprivileged user. Requires root (or CAP_SETUID/CAP_SETGID),
+  // setpriv, and an existing user; callers gate on that before enabling it.
+  isolateShellsUser?: string
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
     directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
@@ -995,6 +1001,7 @@ export function setupQueueAdvancedSuite({
 
   let previousDefaultVerbosity: VerbosityLevel | null = null
   let previousRestrictExternalDirectories: boolean | null = null
+  let previousIsolateShellsUser: string | null = null
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -1012,7 +1019,12 @@ export function setupQueueAdvancedSuite({
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
-    store.setState({ defaultVerbosity: 'tools_and_text', restrictExternalDirectories })
+    previousIsolateShellsUser = store.getState().isolateShellsUser
+    store.setState({
+      defaultVerbosity: 'tools_and_text',
+      restrictExternalDirectories,
+      ...(isolateShellsUser && { isolateShellsUser }),
+    })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -1124,6 +1136,7 @@ export function setupQueueAdvancedSuite({
         restrictExternalDirectories: previousRestrictExternalDirectories,
       })
     }
+    store.setState({ isolateShellsUser: previousIsolateShellsUser })
     if (ctx.directories) {
       removeTestDataDir(ctx.directories.dataDir)
     }

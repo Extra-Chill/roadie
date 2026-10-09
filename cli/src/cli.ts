@@ -40,6 +40,11 @@ import {
 import { setPromptConfigPath } from './prompt-config.js'
 import { setContextProviderCommand } from './context-provider.js'
 import {
+  checkIsolatedShellSetup,
+  ensureIsolatedShellWrapper,
+  ISOLATE_SHELLS_ENV,
+} from './isolated-shell.js'
+import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
   run,
@@ -118,6 +123,10 @@ cli
   .option(
     '--restrict-directories',
     'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed and you protect folders with deny/ask rules in opencode.json',
+  )
+  .option(
+    '--isolate-shells <user>',
+    'Run agent tool shells as the given unprivileged user through a setpriv wrapper (Linux only; the bot must run as root or with CAP_SETUID/CAP_SETGID). Off by default. Same as ROADIE_ISOLATE_SHELLS',
   )
   .option(
     '--permission-timeout-minutes <minutes>',
@@ -215,6 +224,7 @@ cli
       promptConfig?: string
       contextProvider?: string
       restrictDirectories?: boolean
+      isolateShells?: string
       permissionTimeoutMinutes?: string
       disableSync?: boolean
       subrouter?: boolean
@@ -362,6 +372,14 @@ cli
         // A per-person --credentials mode is itself an opt-in to pools.
         const perPersonCredentials = credentialsMode === 'per-person' || credentialsMode === 'per-person-fallback'
 
+        // Opt-in shell isolation (--isolate-shells / ROADIE_ISOLATE_SHELLS).
+        // The flag wins over the env, matching the other ROADIE_* flags.
+        const isolateShellsUser = (() => {
+          const requested = (options.isolateShells ?? process.env[ISOLATE_SHELLS_ENV])?.trim()
+          if (requested === undefined || requested === '') return undefined
+          return requested
+        })()
+
         if (
           publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
           !process.env.OPENCODE_SERVER_PASSWORD
@@ -380,6 +398,7 @@ cli
           ...(options.enableFooterMentions && { footerMentionsEnabled: true }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
+          ...(isolateShellsUser && { isolateShellsUser }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.subrouter === false && { subrouterEnabled: false }),
@@ -393,6 +412,36 @@ cli
           ...(opencodeHostname && { opencodeHostname }),
           ...(opencodePort !== undefined && { opencodePort }),
         })
+
+        // Fail fast on shell isolation before any Discord connection: wrong
+        // privileges, a missing agent user or missing binaries must stop the
+        // bot here, not when the first session starts the OpenCode server.
+        if (isolateShellsUser) {
+          const isolation = await ensureIsolatedShellWrapper({
+            dataDir: getDataDir(),
+            username: isolateShellsUser,
+          })
+          if (isolation instanceof Error) {
+            cliLogger.error(isolation.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          cliLogger.log(
+            `Shell isolation enabled: agent tool shells run as ${isolateShellsUser} (uid ${isolation.account.uid}) via ${isolation.shellPath}`,
+          )
+          const accessProblems = checkIsolatedShellSetup({
+            dataDir: getDataDir(),
+            projectDirectories: [getProjectsDir()],
+            account: isolation.account,
+          })
+          for (const problem of accessProblems) {
+            cliLogger.warn(`Shell isolation check: ${problem}`)
+          }
+          if (accessProblems.length === 0) {
+            cliLogger.log(
+              'Shell isolation check: project directories are agent-writable; the data dir and OpenCode home are not agent-readable',
+            )
+          }
+        }
 
         if (enabledSkills.length > 0) {
           cliLogger.log(
