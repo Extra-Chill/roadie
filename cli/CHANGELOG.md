@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.49.0] - 2026-10-09
+
+### Added
+- credential pools docs and speaker-billing safeguards
+
 ## [0.48.0] - 2026-10-08
 
 ### Added
