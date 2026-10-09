@@ -73,6 +73,7 @@ import {
 } from './config.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
+import { ensureAgentTokenSecret } from './agent-token.js'
 
 export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
   const require = createRequire(import.meta.url)
@@ -1124,6 +1125,11 @@ async function startSingleServer({
         // an OpenCode session, which would steal the lock port and break the bot.
         ROADIE_OPENCODE_PROCESS: '1',
         ...(getHranaUrl() && { ROADIE_DB_URL: getHranaUrl()! }),
+        // The shell.env hook (running in this server process) mints
+        // per-session agent tokens for tool shells from this secret and
+        // blanks it again in the same env, so shells hold a token bound to
+        // their own session instead of the database credentials.
+        ROADIE_AGENT_TOKEN_SECRET: ensureAgentTokenSecret(),
         ...(process.env.ROADIE_SENTRY_DSN && {
           ROADIE_SENTRY_DSN: process.env.ROADIE_SENTRY_DSN,
         }),

@@ -24,6 +24,12 @@ import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { applyScheduledTaskUserEdit, getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
+  AGENT_TASKS_PATH,
+  resolveAgentCredentials,
+  runAgentCommand,
+  taskEditBody,
+} from '../agent-remote.js'
+import {
   EXIT_NO_RESTART,
   formatMemberLookupUnavailableMessage,
   formatRelativeTime,
@@ -45,14 +51,42 @@ const cli = goke()
 cli
   .command('task list', 'List scheduled tasks created via send --send-at')
   .option('--all', 'Include terminal tasks (completed, cancelled, failed)')
-  .action(async (options: { all?: boolean }) => {
+  .option(
+    '--session <sessionId>',
+    'Only list tasks tied to this OpenCode session or its thread (set automatically inside agent tool shells)',
+  )
+  .action(async (options: { all?: boolean; session?: string }) => {
     try {
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot executes the command and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_TASKS_PATH,
+            query: options.all ? { all: '1' } : {},
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
 
       const statuses: Array<'planned' | 'running'> | undefined = options.all
         ? undefined
         : ['planned', 'running']
-      const tasks = await listScheduledTasks({ statuses })
+      let tasks = await listScheduledTasks({ statuses })
+      // Agent shells only see their own session's tasks (agent-remote.ts
+      // passes the token's session here; operators can pass it explicitly).
+      if (options.session) {
+        const scopeThreadId = await getThreadIdBySessionId(options.session)
+        tasks = tasks.filter((task) =>
+          task.session_id === options.session ||
+          (scopeThreadId !== undefined && task.thread_id === scopeThreadId),
+        )
+      }
       if (tasks.length === 0) {
         cliLogger.log('No scheduled tasks found')
         process.exit(0)
@@ -195,6 +229,21 @@ cli
   )
   .action(async (id, options) => {
     try {
+      // Agent tool shells edit through the running bot; out-of-scope tasks
+      // are rejected there like unknown tasks.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'PATCH',
+            path: `${AGENT_TASKS_PATH}/${encodeURIComponent(id)}`,
+            body: taskEditBody(options),
+          },
+        })
+        process.exit(exitCode)
+      }
+
       const trimmedPrompt =
         options.prompt === undefined ? undefined : options.prompt.trim()
       const hasAgent = options.agent !== undefined

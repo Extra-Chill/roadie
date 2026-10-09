@@ -250,14 +250,26 @@ agent with shell can read the credential directory. Acceptable for
 must be documented as a limit of per-person mode. Per-person servers
 should deny the `shell` capability to non-admins through the identity hook.
 
-Phase 3 removes the exposure:
+Phase 3 removes the exposure. The boundary that matters is tool shells vs.
+the OpenCode/plugin process, which share an OS user today:
 
-- The bot process owns the pool store. The provider asks the bot over the
-  existing hrana/IPC channel for a short-lived access token for
-  `(session, provider)`. Refresh tokens and API keys never enter the
-  OpenCode process.
-- OpenCode runs as an unprivileged user that cannot read `<dataDir>`.
-  Without this step the broker is defense in depth only.
+- Step 1 (issue #144, shipped): tool shells stop holding general database
+  access. The bot serves typed agent endpoints on its local HTTP server
+  (send, session search/read/wait, task list/edit, project list) authorized
+  by a per-session agent token — an HMAC of the session id that the
+  `shell.env` hook exports as `ROADIE_AGENT_TOKEN` while blanking
+  `ROADIE_DB_URL`, `ROADIE_DB_AUTH_TOKEN`, `ROADIE_DB_AUTH_TOKEN_FILE` and
+  `ROADIE_SERVICE_TOKEN_FILE` — so the `roadie` subcommands agents run do
+  their database reads and writes and Discord REST calls through the bot
+  instead of opening the database themselves. The token is never accepted
+  on the hrana `/v2` routes or any admin route, and tasks stay scoped to
+  the token's session or thread. Plugins in the server process keep their
+  access.
+- Step 2: run tool shells as a separate unprivileged user, so they cannot
+  read the server's `/proc/<pid>/environ`, `<dataDir>` or the pool files.
+  Without this step, step 1 scopes the CLI surface the agent drives but the
+  shared OS user still protects the files.
+- With that boundary in place, a separate token broker is unnecessary.
 
 ## Migration from subrouter
 
@@ -276,7 +288,8 @@ Phase 3 removes the exposure:
 2. **Per-person.** `--credentials`, owner table, `--thread-billing`,
    per-person `/login` and `/credentials`, identity hook
    `credential_pool`, OpenAI/Codex adapter.
-3. **Isolation.** Token broker in the bot, unprivileged OpenCode user.
+3. **Isolation.** Tool shells scoped to typed agent endpoints with
+   per-session tokens (#144), then an unprivileged OpenCode user.
 4. **Remove subrouter.**
 
 ## Open questions

@@ -37,6 +37,12 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import {
+  AGENT_PROJECTS_PATH,
+  projectListQuery,
+  resolveAgentCredentials,
+  runAgentCommand,
+} from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -133,6 +139,22 @@ cli
   .option('-g, --guild <guildId>', 'Discord guild/server ID to scan (used with --all when no local projects exist)')
   .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
   .action(async (options) => {
+    // Agent tool shells hold a per-session token, not database credentials;
+    // the running bot executes the listing and streams the same output back.
+    // (--prune is not reachable in agent mode.)
+    const agent = resolveAgentCredentials()
+    if (!(agent instanceof Error)) {
+      const exitCode = await runAgentCommand({
+        agent,
+        request: {
+          method: 'GET',
+          path: AGENT_PROJECTS_PATH,
+          query: projectListQuery(options),
+        },
+      })
+      process.exit(exitCode)
+    }
+
     await initDatabase()
 
     const db = await getDb()
