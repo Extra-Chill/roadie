@@ -147,6 +147,20 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
+      // Agent tool shells delete through the running bot; out-of-scope tasks
+      // are rejected there like unknown tasks.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'DELETE',
+            path: `${AGENT_TASKS_PATH}/${encodeURIComponent(id)}`,
+          },
+        })
+        process.exit(exitCode)
+      }
+
       await initDatabase()
       const cancelled = await cancelScheduledTask(taskId)
       if (!cancelled) {

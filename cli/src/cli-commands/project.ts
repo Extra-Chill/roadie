@@ -39,7 +39,15 @@ import {
 } from '../cli-runner.js'
 import {
   AGENT_PROJECTS_PATH,
+  AGENT_PROJECT_ADD_PATH,
+  AGENT_PROJECT_CREATE_PATH,
+  AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
+  AGENT_PROJECT_REMOVE_PATH,
+  projectAddBody,
+  projectCreateBody,
   projectListQuery,
+  projectOpenInDiscordBody,
+  projectRemoveBody,
   resolveAgentCredentials,
   runAgentCommand,
 } from '../agent-remote.js'
@@ -74,6 +82,25 @@ cli
       if (!fs.existsSync(absolutePath)) {
         cliLogger.error(`Directory does not exist: ${absolutePath}`)
         process.exit(EXIT_NO_RESTART)
+      }
+
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot creates the channels and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'POST',
+            path: AGENT_PROJECT_ADD_PATH,
+            body: projectAddBody({
+              directory: absolutePath,
+              guild: options.guild,
+              appId: options.appId,
+            }),
+          },
+        })
+        process.exit(exitCode)
       }
 
       await initDatabase()
@@ -387,6 +414,21 @@ cli
     'Remove a project channel mapping from the local database (does not delete the Discord channel)',
   )
   .action(async (channelId: string) => {
+    // Agent tool shells hold a per-session token, not database credentials;
+    // the running bot removes the mapping and streams the same output back.
+    const agent = resolveAgentCredentials()
+    if (!(agent instanceof Error)) {
+      const exitCode = await runAgentCommand({
+        agent,
+        request: {
+          method: 'POST',
+          path: AGENT_PROJECT_REMOVE_PATH,
+          body: projectRemoveBody({ channelId }),
+        },
+      })
+      process.exit(exitCode)
+    }
+
     await initDatabase()
 
     const db = await getDb()
@@ -413,10 +455,27 @@ cli
 
 cli
   .command(
-    'project open-in-discord',
-    'Open the current project channel in Discord',
+    'project open-in-discord [directory]',
+    'Open a project channel in Discord (defaults to the current project)',
   )
-  .action(async () => {
+  .action(async (directory: string | undefined) => {
+    // Agent tool shells hold a per-session token, not database credentials;
+    // the running bot resolves the channel and streams the same output back.
+    const agent = resolveAgentCredentials()
+    if (!(agent instanceof Error)) {
+      // The bot's child process runs from the home directory, so the
+      // caller's project directory (cwd default) is resolved here.
+      const exitCode = await runAgentCommand({
+        agent,
+        request: {
+          method: 'POST',
+          path: AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
+          body: projectOpenInDiscordBody({ directory: path.resolve(directory || '.') }),
+        },
+      })
+      process.exit(exitCode)
+    }
+
     await initDatabase()
 
     const botRow = await getBotTokenWithMode()
@@ -426,7 +485,7 @@ cli
     }
 
     const { token: botToken } = botRow
-    const absolutePath = path.resolve('.')
+    const absolutePath = path.resolve(directory || '.')
 
     // Walk up parent directories to find a matching channel
     const findChannelForPath = async (
@@ -500,6 +559,25 @@ cli
     'Directory where new projects are created (default: <data-dir>/projects)',
   )
   .action(async (name: string, options: { guild?: string; projectsDir?: string }) => {
+    // Agent tool shells hold a per-session token, not database credentials;
+    // the running bot creates the project and streams the same output back.
+    const agent = resolveAgentCredentials()
+    if (!(agent instanceof Error)) {
+      const exitCode = await runAgentCommand({
+        agent,
+        request: {
+          method: 'POST',
+          path: AGENT_PROJECT_CREATE_PATH,
+          body: projectCreateBody({
+            name,
+            guild: options.guild,
+            projectsDir: options.projectsDir,
+          }),
+        },
+      })
+      process.exit(exitCode)
+    }
+
     if (options.projectsDir) {
       setProjectsDir(options.projectsDir)
     }

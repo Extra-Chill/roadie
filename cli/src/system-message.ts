@@ -553,6 +553,8 @@ Use built-in upgrade commands when the user explicitly asks to update roadie:
 - CLI command: \`roadie upgrade\` upgrades and restarts the bot (or starts a fresh process if needed)
 - CLI command: \`roadie upgrade --skip-restart\` upgrades without restarting
 
+Inside an isolated tool shell \`roadie upgrade\` is operator-only. Ask the user to run the upgrade, or use the "/upgrade-and-restart" slash command.
+
 Do not restart the bot unless the user explicitly asks for it.
 ` },
     { id: 'debugging', text: `

@@ -11,8 +11,10 @@
 // zsh or fish by basename), so every bash tool call runs as the agent user.
 //
 // The wrapper passes an allowlist only: PATH (fixed value, not inherited),
-// HOME (the agent user's home), TERM, LANG, and the ROADIE_* attribution
-// vars, ROADIE_SESSION_ID and ROADIE_AGENT_TOKEN from #144. Nothing else is
+// HOME (the agent user's home), TERM, LANG, the ROADIE_* attribution vars,
+// ROADIE_SESSION_ID and ROADIE_AGENT_TOKEN from #144, plus the two names the
+// agent endpoints need (ROADIE_OPENCODE_PROCESS and ROADIE_LOCK_PORT, see
+// ISOLATED_SHELL_FORWARD_ENV_NAMES). Nothing else is
 // inherited, so ROADIE_DB_*, ROADIE_SERVICE_TOKEN_FILE,
 // ROADIE_AGENT_TOKEN_SECRET and provider keys never reach a tool shell.
 //
@@ -36,15 +38,21 @@ export const ISOLATED_SHELL_PATH = '/usr/local/bin:/usr/bin:/bin'
 
 /**
  * Env names forwarded from the shell env OpenCode gives $SHELL into the inner
- * bash. The attribution names mirror turn-attribution-env.ts
+ * bash. ROADIE_OPENCODE_PROCESS marks the shell as running inside OpenCode so
+ * the `roadie` subcommands use the scoped agent endpoints (agent-remote.ts),
+ * and ROADIE_LOCK_PORT tells them where the bot's local server listens — the
+ * port authorizes nothing by itself (every route still requires a token). The
+ * remaining names mirror turn-attribution-env.ts
  * (TURN_ATTRIBUTION_ENV_NAMES, prefixed with ROADIE_), ROADIE_SESSION_ID is
  * the bash env contract from bash-tool-schema-plugin.ts, and
  * ROADIE_AGENT_TOKEN is the #144 per-session agent token from agent-token.ts.
  * Credentials (ROADIE_DB_*, ROADIE_SERVICE_TOKEN_FILE,
- * ROADIE_AGENT_TOKEN_SECRET, provider keys) are never in this list, and
- * `env -i` drops everything else.
+ * ROADIE_AGENT_TOKEN_SECRET, provider keys, ROADIE_DATA_DIR) are never in
+ * this list, and `env -i` drops everything else.
  */
 export const ISOLATED_SHELL_FORWARD_ENV_NAMES = [
+  'ROADIE_OPENCODE_PROCESS',
+  'ROADIE_LOCK_PORT',
   'ROADIE_SESSION_ID',
   'ROADIE_AGENT_TOKEN',
   'ROADIE_THREAD_ID',

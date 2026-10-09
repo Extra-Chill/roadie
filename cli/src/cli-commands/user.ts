@@ -36,6 +36,12 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import {
+  AGENT_USERS_PATH,
+  resolveAgentCredentials,
+  runAgentCommand,
+  userListQuery,
+} from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -56,6 +62,22 @@ cli
       const guildId = String(options.guild)
       // Bare `--query` comes through as `''`; collapse it to undefined
       const query = options.query || undefined
+
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot does the member lookup and streams the same output
+      // back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_USERS_PATH,
+            query: userListQuery({ guild: guildId, query }),
+          },
+        })
+        process.exit(exitCode)
+      }
 
       await initDatabase()
       const { token: botToken } = await resolveBotCredentials()

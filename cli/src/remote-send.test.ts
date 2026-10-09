@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { buildRemoteSendArgs, isAuthorizedSend, remoteSendOptions, shouldSendRemotely } from './remote-send.js'
+import { buildRemoteSendArgs, isAuthorizedSend, remoteSendOptions, roadieCliChildExecArgv, shouldSendRemotely } from './remote-send.js'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-remote-send-'))
 
@@ -67,4 +67,45 @@ describe('remote send client', () => {
     expect(remoteSendOptions({ prompt: 'p' }, '/unrelated/repo')).toEqual({ prompt: 'p' })
     expect(remoteSendOptions({ prompt: 'p', thread: '1' }, '/work')).toEqual({ prompt: 'p', thread: '1' })
   })
+})
+
+describe('roadieCliChildExecArgv', () => {
+  test('a built entry keeps the parent execArgv unchanged', () => {
+    expect(roadieCliChildExecArgv({ execArgv: ['--max-old-space-size=4096'], entry: '/x/dist/cli.js' })).toEqual([
+      '--max-old-space-size=4096',
+    ])
+  })
+
+  test('a TypeScript entry gains the tsx loader when the parent has none (vitest)', () => {
+    const argv = roadieCliChildExecArgv({ execArgv: [], entry: '/x/src/cli.ts' })
+    expect(argv[0]).toBe('--import')
+    // Resolved to an absolute file URL from Roadie's own install, so it works
+    // whatever directory the child runs in.
+    expect(argv[1]).toMatch(/^file:\/\/.*tsx/)
+  })
+
+  test('an existing tsx loader is not duplicated', () => {
+    expect(roadieCliChildExecArgv({ execArgv: ['--import', 'tsx'], entry: '/x/src/cli.ts' })).toEqual(['--import', 'tsx'])
+    expect(roadieCliChildExecArgv({ execArgv: ['--import=tsx/esm'], entry: '/x/src/cli.ts' })).toEqual(['--import=tsx/esm'])
+  })
+})
+
+describe('spawnRoadieSend data dir', () => {
+  test('the CLI child uses the bot data dir set in memory (--data-dir), not ~/.roadie', async () => {
+    const { setDataDir, getDataDir } = await import('./config.js')
+    const { spawnRoadieSend } = await import('./remote-send.js')
+    const previous = getDataDir()
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-remote-send-datadir-'))
+    delete process.env.ROADIE_DATA_DIR
+    setDataDir(dataDir)
+    try {
+      // The child opens (and so creates) its database in the data dir it was
+      // given; without ROADIE_DATA_DIR it would open ~/.roadie instead.
+      const code = await spawnRoadieSend(['project', 'list', '--json'], () => {})
+      expect(code).toBe(0)
+      expect(fs.existsSync(path.join(dataDir, 'discord-sessions.db'))).toBe(true)
+    } finally {
+      setDataDir(previous)
+    }
+  }, 60_000)
 })

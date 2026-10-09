@@ -35,6 +35,7 @@ import {
   ANTHROPIC_OAUTH_REDIRECT_URI,
 } from '../credentials/adapters/anthropic-oauth.js'
 import { EXIT_NO_RESTART } from '../cli-runner.js'
+import { AGENT_OPERATOR_ONLY_MESSAGE, isAgentMode } from '../agent-remote.js'
 import {
   formatSubrouterImportReport,
   importSubrouterCredentials,
@@ -63,6 +64,11 @@ function exitWithError(message: string): never {
   process.exit(EXIT_NO_RESTART)
 }
 
+/** Credential pool management is operator-only: agent shells never read pool files. */
+function refuseAgentMode(): void {
+  if (isAgentMode()) exitWithError(AGENT_OPERATOR_ONLY_MESSAGE)
+}
+
 /** Resolve --pool (default `shared`), exiting when the id is malformed. */
 function resolvePoolId(poolId: string | undefined): string {
   const value = poolId?.trim() || SHARED_POOL_ID
@@ -78,6 +84,7 @@ cli
   .command('credentials list', 'List the accounts and rotations in a credential pool (default: shared)')
   .option('--pool <id>', 'Pool to list (default: shared)')
   .action(async (options) => {
+    refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const dataDir = getDataDir()
     const accounts = readPoolAccounts({ dataDir, poolId })
@@ -127,6 +134,7 @@ cli
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (options) => {
+    refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const provider = options.provider?.trim()
     if (!provider) {
@@ -181,6 +189,7 @@ cli
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (provider: string, options) => {
+    refuseAgentMode()
     if (provider !== 'anthropic') {
       exitWithError(`Unsupported OAuth provider: ${provider}. Only anthropic is supported.`)
     }
@@ -240,6 +249,7 @@ cli
     'Subrouter home directory (default: $SUBROUTER_HOME, then ~/.subrouter)',
   )
   .action(async (options) => {
+    refuseAgentMode()
     const result = await importSubrouterCredentials({
       dataDir: getDataDir(),
       ...(options.subrouterHome && { subrouterHome: options.subrouterHome }),
@@ -256,6 +266,7 @@ cli
   .command('credentials remove <id>', 'Remove an account from a credential pool (default: shared) by id')
   .option('--pool <id>', 'Pool to remove the account from (default: shared)')
   .action(async (id: string, options) => {
+    refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const removed = await removePoolAccount({
       dataDir: getDataDir(),
@@ -275,6 +286,7 @@ cli
   )
   .option('--pool <id>', 'Pool to set the rotation in (default: shared)')
   .action(async (name: string, models: string[] | undefined, options) => {
+    refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const result = await setPoolRotation({
       dataDir: getDataDir(),

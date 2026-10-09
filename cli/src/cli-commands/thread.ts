@@ -5,6 +5,12 @@ import { initDatabase } from '../discord-bot.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { EXIT_NO_RESTART, resolveBotCredentials } from '../cli-runner.js'
 import { listDiscordChannelThreads } from '../list-channel-threads.js'
+import {
+  AGENT_THREADS_PATH,
+  resolveAgentCredentials,
+  runAgentCommand,
+  threadListQuery,
+} from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -29,6 +35,25 @@ cli
           'Channel ID is required. Use --channel <channelId>. Find remote channels with `roadie project list --all --json`.',
         )
         process.exit(EXIT_NO_RESTART)
+      }
+
+      // Agent tool shells hold a per-session token, not database credentials;
+      // the running bot lists the threads and streams the same output back.
+      const agent = resolveAgentCredentials()
+      if (!(agent instanceof Error)) {
+        const exitCode = await runAgentCommand({
+          agent,
+          request: {
+            method: 'GET',
+            path: AGENT_THREADS_PATH,
+            query: threadListQuery({
+              channel: options.channel,
+              json: options.json,
+              limit: options.limit,
+            }),
+          },
+        })
+        process.exit(exitCode)
       }
 
       await initDatabase()

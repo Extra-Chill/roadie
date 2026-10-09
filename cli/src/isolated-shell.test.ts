@@ -65,6 +65,8 @@ describe('buildIsolatedShellScript', () => {
         HOME='/home/roadie-agent' \\
         TERM="\${TERM:-dumb}" \\
         LANG="\${LANG:-C.UTF-8}" \\
+        ROADIE_OPENCODE_PROCESS="\${ROADIE_OPENCODE_PROCESS-}" \\
+        ROADIE_LOCK_PORT="\${ROADIE_LOCK_PORT-}" \\
         ROADIE_SESSION_ID="\${ROADIE_SESSION_ID-}" \\
         ROADIE_AGENT_TOKEN="\${ROADIE_AGENT_TOKEN-}" \\
         ROADIE_THREAD_ID="\${ROADIE_THREAD_ID-}" \\
@@ -94,10 +96,11 @@ describe('buildIsolatedShellScript', () => {
       'ROADIE_SERVICE_TOKEN_FILE',
       // The token-minting secret must never reach a shell.
       'ROADIE_AGENT_TOKEN_SECRET',
-      // Server-process state that would let a shell act as the bot.
+      // Server-process state that would let a shell act as the bot: the data
+      // dir holds the database, secret files and credential pools. The lock
+      // port and OpenCode-process marker are forwarded deliberately — every
+      // route on that port still requires a token.
       'ROADIE_DATA_DIR',
-      'ROADIE_LOCK_PORT',
-      'ROADIE_OPENCODE_PROCESS',
       // Provider keys.
       'ANTHROPIC_API_KEY',
       'OPENAI_API_KEY',
@@ -109,17 +112,20 @@ describe('buildIsolatedShellScript', () => {
     }
   })
 
-  test('forwards exactly the #144 attribution, session and agent token names', async () => {
+  test('forwards the agent endpoint names, attribution, session and agent token names', async () => {
     const { AGENT_TOKEN_ENV } = await import('./agent-token.js')
     const { ROADIE_SESSION_ID_ENV } = await import('./bash-tool-schema-plugin.js')
     const { TURN_ATTRIBUTION_ENV_NAMES } = await import('./turn-attribution-env.js')
     expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toContain(AGENT_TOKEN_ENV)
     expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toContain(ROADIE_SESSION_ID_ENV)
+    // The agent subcommands need these to reach the bot's scoped endpoints.
+    expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toContain('ROADIE_OPENCODE_PROCESS')
+    expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toContain('ROADIE_LOCK_PORT')
     for (const name of TURN_ATTRIBUTION_ENV_NAMES) {
       expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toContain(`ROADIE_${name}`)
     }
-    // The allowlist is exactly the fixed names plus the #144 contract names.
-    expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toHaveLength(2 + TURN_ATTRIBUTION_ENV_NAMES.length)
+    // The allowlist is exactly the fixed names plus the contract names.
+    expect(ISOLATED_SHELL_FORWARD_ENV_NAMES).toHaveLength(4 + TURN_ATTRIBUTION_ENV_NAMES.length)
   })
 
   test('uses a fixed PATH, not the inherited one', () => {
