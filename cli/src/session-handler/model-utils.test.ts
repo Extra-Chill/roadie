@@ -14,6 +14,9 @@ import {
   type StoredAccount,
 } from '@subrouter/cli'
 import { InvalidModelError } from '../errors.js'
+import { setDataDir } from '../config.js'
+import { setSessionRoute } from '../credentials/routes.js'
+import { ROADIE_PROVIDER_ID } from '../credentials/provider.js'
 import {
   clearModelListCache,
   displayedModelLabel,
@@ -298,6 +301,84 @@ describe('resolveDisplayedModelId', () => {
         modelID: 'build',
       }),
     ).toMatchInlineSnapshot(`"subrouter/build (anthropic/claude-fake)"`)
+  })
+})
+
+describe('resolveDisplayedModelId for roadie rotations', () => {
+  // Temp data dir: the route store lives under <dataDir>/credentials/, and
+  // resolveDisplayedModelName reads it through getDataDir().
+  let poolDataDir: string
+
+  beforeEach(async () => {
+    poolDataDir = await mkdtemp(path.join(tmpdir(), 'roadie-roadie-model-'))
+    setDataDir(poolDataDir)
+  })
+
+  afterEach(async () => {
+    await rm(poolDataDir, { recursive: true, force: true })
+  })
+
+  const pinRoute = (rotation: string, overrides: Partial<Parameters<typeof setSessionRoute>[0]['route']> = {}) =>
+    setSessionRoute({
+      dataDir: poolDataDir,
+      sessionId: 'ses_pool',
+      route: {
+        poolId: 'shared',
+        accountId: 'acc-1',
+        provider: 'anthropic',
+        modelId: 'claude-fake',
+        rotation,
+        pinnedAt: Date.now(),
+        ...overrides,
+      },
+      now: Date.now(),
+    })
+
+  test('a held route resolves to the live candidate', async () => {
+    await pinRoute('build')
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: ROADIE_PROVIDER_ID, models: { build: { name: 'Roadie pool build' } } }],
+        providerID: ROADIE_PROVIDER_ID,
+        modelID: 'build',
+        sessionID: 'ses_pool',
+      }),
+    ).toMatchInlineSnapshot(`"roadie/build (anthropic/claude-fake)"`)
+  })
+
+  test('without a session route the rotation name shows', async () => {
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: ROADIE_PROVIDER_ID, models: { build: { name: 'Roadie pool build' } } }],
+        providerID: ROADIE_PROVIDER_ID,
+        modelID: 'build',
+        sessionID: 'ses_pool',
+      }),
+    ).toMatchInlineSnapshot(`"roadie/build"`)
+  })
+
+  test('a route pinned under another rotation does not apply', async () => {
+    await pinRoute('other')
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: ROADIE_PROVIDER_ID, models: { build: { name: 'Roadie pool build' } } }],
+        providerID: ROADIE_PROVIDER_ID,
+        modelID: 'build',
+        sessionID: 'ses_pool',
+      }),
+    ).toMatchInlineSnapshot(`"roadie/build"`)
+  })
+
+  test('an expired route falls back to the rotation name', async () => {
+    await pinRoute('build', { pinnedAt: Date.now() - 60 * 60 * 1000 })
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: ROADIE_PROVIDER_ID, models: { build: { name: 'Roadie pool build' } } }],
+        providerID: ROADIE_PROVIDER_ID,
+        modelID: 'build',
+        sessionID: 'ses_pool',
+      }),
+    ).toMatchInlineSnapshot(`"roadie/build"`)
   })
 })
 

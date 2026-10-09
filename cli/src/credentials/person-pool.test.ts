@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'vitest'
 import { createHash } from 'node:crypto'
 import {
+  parseCredentialPoolsEnabled,
   parseCredentialsMode,
   parseCredentialsModeStrict,
   parsePoolListHeader,
@@ -142,5 +143,13 @@ describe('env and flag parsing', () => {
     expect(parseThreadBillingStrict('speaker')).toBe('speaker')
     expect(parseCredentialsModeStrict('perons')).toBeInstanceOf(Error)
     expect(parseThreadBillingStrict('everyone')).toBeInstanceOf(Error)
+  })
+
+  test('credential pools are on by default; only 0 disables (phase 4a)', () => {
+    expect(parseCredentialPoolsEnabled(undefined)).toBe(true)
+    expect(parseCredentialPoolsEnabled(null)).toBe(true)
+    expect(parseCredentialPoolsEnabled('')).toBe(true)
+    expect(parseCredentialPoolsEnabled('1')).toBe(true)
+    expect(parseCredentialPoolsEnabled('0')).toBe(false)
   })
 })

@@ -440,7 +440,13 @@ export type SubrouterImportResult = {
   rotations: { set: number; skipped: number; failed: number; entries: SubrouterRotationReport[] }
 }
 
-async function applyAccountPlanEntry({
+/**
+ * Apply one planned account entry to the pool. Shared by the subrouter import
+ * and the OpenCode auth import: dedupe runs in the same pool-lock critical
+ * section as the write, and a dry run previews against the pool snapshot plus
+ * anything earlier in the same plan without writing.
+ */
+export async function applyAccountPlanEntry({
   dataDir,
   poolId,
   entry,

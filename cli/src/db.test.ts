@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { closeDb, getDb } from './db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
@@ -49,6 +49,19 @@ import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
 import { copySessionPreferences } from './commands/model.js'
 import type { initializeOpencodeForDirectory } from './opencode.js'
+import {
+  canRewriteSubrouterModel,
+  formatSubrouterStartupMigration,
+  hasSubrouterHandoff,
+  migrateSubrouterCredentialsAtStartup,
+} from './credentials/migrate-subrouter.js'
+import {
+  addPoolAccount,
+  readPoolAccounts,
+  setPoolRotation,
+  SHARED_POOL_ID,
+} from './credentials/store.js'
+import { resetCatalogCacheForTests } from './credentials/provider-catalog.js'
 
 // Created per run: a fresh checkout has no tmp/, and other test files only
 // create one as a side effect, so relying on it made these tests order-dependent.
@@ -1019,5 +1032,360 @@ describe('getDb', () => {
 
     await db.delete(schema.session_events).where(orm.eq(schema.session_events.session_id, sessionId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  })
+})
+
+// One-time startup migration from subrouter (credential pools phase 4a):
+// accounts into the shared pool and `subrouter/<preset>` stored model choices
+// rewritten to the imported `roadie/<preset>` rotations. Legacy databases are
+// built file-first (like real installs), then opened through getDb().
+describe('subrouter startup migration', () => {
+  let migrationDataDir: string
+  let subrouterHome: string
+  let originalXdgCacheHome: string | undefined
+
+  // Fixture catalog through $XDG_CACHE_HOME so the account import resolves
+  // providers without network and without ever touching the real home.
+  const TEST_CATALOG = {
+    anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
+    openai: { id: 'openai', npm: '@ai-sdk/openai' },
+  }
+
+  beforeEach(() => {
+    migrationDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-subrouter-migration-'))
+    subrouterHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subrouter-home-migration-'))
+    originalXdgCacheHome = process.env.XDG_CACHE_HOME
+    const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-migration-cache-'))
+    fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
+    fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
+    process.env.XDG_CACHE_HOME = cacheHome
+    resetCatalogCacheForTests()
+  })
+
+  afterEach(() => {
+    if (originalXdgCacheHome === undefined) {
+      delete process.env.XDG_CACHE_HOME
+    } else {
+      process.env.XDG_CACHE_HOME = originalXdgCacheHome
+    }
+    resetCatalogCacheForTests()
+    fs.rmSync(migrationDataDir, { recursive: true, force: true })
+    fs.rmSync(subrouterHome, { recursive: true, force: true })
+  })
+
+  // Legacy tables the migration rewrites, in their pre-phase-4a shape (the
+  // timestamp columns predate subrouter choices, so they are present).
+  async function createLegacyModelChoicesDb(dbPath: string): Promise<void> {
+    const client = createClient({ url: `file:${dbPath}` })
+    await client.execute('CREATE TABLE bot_tokens (app_id text PRIMARY KEY, token text NOT NULL)')
+    await client.execute(`
+      CREATE TABLE global_models (
+        app_id text PRIMARY KEY,
+        model_id text NOT NULL,
+        variant text,
+        created_at datetime,
+        updated_at datetime
+      )
+    `)
+    await client.execute(`
+      CREATE TABLE channel_directories (
+        channel_id text PRIMARY KEY,
+        directory text NOT NULL,
+        channel_type text NOT NULL
+      )
+    `)
+    await client.execute(`
+      CREATE TABLE channel_models (
+        channel_id text PRIMARY KEY,
+        model_id text NOT NULL,
+        variant text,
+        created_at datetime,
+        updated_at datetime
+      )
+    `)
+    await client.execute(`
+      CREATE TABLE session_models (
+        session_id text PRIMARY KEY,
+        model_id text NOT NULL,
+        variant text,
+        created_at datetime
+      )
+    `)
+    await client.execute("INSERT INTO bot_tokens (app_id, token) VALUES ('bot-legacy', 'tok')")
+    await client.execute(`
+      INSERT INTO global_models (app_id, model_id, variant)
+      VALUES ('bot-legacy', 'subrouter/max', 'high')
+    `)
+    await client.execute(`
+      INSERT INTO channel_directories (channel_id, directory, channel_type)
+      VALUES ('ch-legacy', '/tmp/legacy-project', 'text')
+    `)
+    await client.execute(`
+      INSERT INTO channel_models (channel_id, model_id, variant)
+      VALUES ('ch-legacy', 'subrouter/max', NULL)
+    `)
+    await client.execute(`
+      INSERT INTO session_models (session_id, model_id, variant)
+      VALUES
+        ('ses-mappable', 'subrouter/max', 'thinking'),
+        ('ses-unmappable', 'subrouter/copilot-only', NULL),
+        ('ses-other', 'anthropic/claude-sonnet-4', NULL)
+    `)
+    client.close()
+  }
+
+  function writeSubrouterHomeFixture(): void {
+    fs.writeFileSync(
+      path.join(subrouterHome, 'auth.json'),
+      JSON.stringify({
+        providers: {
+          anthropic: {
+            activeIndex: 0,
+            accounts: [
+              { type: 'oauth', refresh: 'rt-mig-1', access: 'at-mig-1', expires: 1893456000001, email: 'alice@example.com', addedAt: 1, lastUsed: 1 },
+            ],
+          },
+        },
+      }),
+    )
+    fs.writeFileSync(
+      path.join(subrouterHome, 'config.json'),
+      JSON.stringify({
+        presets: {
+          max: ['anthropic/claude-opus-4-6', 'anthropic/claude-sonnet-4'],
+          'copilot-only': ['github-copilot/gpt-5'],
+        },
+      }),
+    )
+  }
+
+  async function openLegacyDb(name: string): Promise<{ dbPath: string; restore: () => Promise<void> }> {
+    await closeDb()
+    const dbPath = path.join(testDbDir, `test-db-subrouter-migration-${name}.db`)
+    await createLegacyModelChoicesDb(dbPath)
+    const previousDbUrl = process.env['ROADIE_DB_URL']
+    process.env['ROADIE_DB_URL'] = `file:${dbPath}`
+    return {
+      dbPath,
+      restore: async () => {
+        await closeDb()
+        if (previousDbUrl === undefined) delete process.env['ROADIE_DB_URL']
+        else process.env['ROADIE_DB_URL'] = previousDbUrl
+      },
+    }
+  }
+
+  test('rewrites stored subrouter choices and never re-imports when the pool already has accounts', async () => {
+    const { dbPath, restore } = await openLegacyDb('existing-accounts')
+    try {
+      // The pool was already imported (or managed by hand): one account and
+      // the rotations the stored choices refer to.
+      await addPoolAccount({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: 'sk-existing' })
+      await setPoolRotation({
+        dataDir: migrationDataDir,
+        poolId: SHARED_POOL_ID,
+        name: 'max',
+        entries: ['anthropic/claude-opus-4-6', 'anthropic/claude-sonnet-4'],
+      })
+
+      const migration = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome,
+      })
+      expect(migration).not.toBeInstanceOf(Error)
+      if (migration instanceof Error) return
+      // Pool has accounts: the subrouter home is never even read.
+      expect(migration.handedOff).toBe(false)
+      expect(migration.import).toBeNull()
+      expect(migration.rewrites).toMatchObject({
+        globalModels: 1,
+        channelModels: 1,
+        sessionModels: 1,
+        unmapped: 1,
+        unmappedPresets: ['copilot-only'],
+      })
+
+      const db = await getDb()
+      const globalModel = await db.query.global_models.findFirst({ where: { app_id: 'bot-legacy' } })
+      expect(globalModel).toMatchObject({ model_id: 'roadie/max', variant: null })
+      const channelModel = await db.query.channel_models.findFirst({ where: { channel_id: 'ch-legacy' } })
+      expect(channelModel).toMatchObject({ model_id: 'roadie/max', variant: null })
+      const sessions = await db.query.session_models.findMany({
+        orderBy: { session_id: 'asc' },
+      })
+      expect(sessions).toMatchObject([
+        { session_id: 'ses-mappable', model_id: 'roadie/max', variant: null },
+        { session_id: 'ses-other', model_id: 'anthropic/claude-sonnet-4' },
+        { session_id: 'ses-unmappable', model_id: 'subrouter/copilot-only' },
+      ])
+
+      // Pool untouched: still exactly the one pre-existing account.
+      const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accounts instanceof Error) throw accounts
+      expect(accounts).toHaveLength(1)
+      expect(formatSubrouterStartupMigration(migration)).toEqual([
+        'Migrated 3 stored model choices from subrouter/ to roadie/ (global 1, channel 1, session 1)',
+        'Kept 1 subrouter model choice with no matching rotation: copilot-only',
+      ])
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('imports accounts into an empty pool, then maps the stored choices', async () => {
+    const { dbPath, restore } = await openLegacyDb('empty-pool')
+    writeSubrouterHomeFixture()
+    try {
+      const migration = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome,
+      })
+      expect(migration).not.toBeInstanceOf(Error)
+      if (migration instanceof Error) return
+      expect(migration.import).toMatchObject({
+        poolId: SHARED_POOL_ID,
+        accounts: { imported: 1, skipped: 0, failed: 0 },
+        rotations: { set: 1, skipped: 1 },
+      })
+      expect(migration.rewrites).toMatchObject({
+        globalModels: 1,
+        channelModels: 1,
+        sessionModels: 1,
+        unmapped: 1,
+        unmappedPresets: ['copilot-only'],
+      })
+
+      const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accounts instanceof Error) throw accounts
+      expect(accounts).toHaveLength(1)
+      expect(accounts[0]).toMatchObject({ provider: 'anthropic', type: 'oauth', label: 'alice@example.com' })
+
+      // Idempotent: a second startup imports nothing and rewrites nothing.
+      const second = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome,
+      })
+      // A clean import hands the accounts off: subrouter must stop refreshing them.
+      expect(migration.handedOff).toBe(true)
+      expect(hasSubrouterHandoff({ dataDir: migrationDataDir })).toBe(true)
+      expect(second).not.toBeInstanceOf(Error)
+      if (second instanceof Error) return
+      expect(second.import).toBeNull()
+      expect(second.rewrites).toMatchObject({
+        globalModels: 0,
+        channelModels: 0,
+        sessionModels: 0,
+        unmapped: 1,
+      })
+      const accountsAfter = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accountsAfter instanceof Error) throw accountsAfter
+      expect(accountsAfter).toHaveLength(1)
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('an empty pool with no subrouter home skips the import and still rewrites from existing rotations', async () => {
+    const { dbPath, restore } = await openLegacyDb('no-home')
+    try {
+      await setPoolRotation({
+        dataDir: migrationDataDir,
+        poolId: SHARED_POOL_ID,
+        name: 'max',
+        entries: ['anthropic/claude-opus-4-6'],
+      })
+      const migration = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome: path.join(subrouterHome, 'does-not-exist'),
+      })
+      expect(migration).not.toBeInstanceOf(Error)
+      if (migration instanceof Error) return
+      expect(migration.import).toBeNull()
+      expect(migration.importError).toBeNull()
+      expect(migration.home).toBeNull()
+      expect(migration.rewrites).toMatchObject({
+        globalModels: 1,
+        channelModels: 1,
+        sessionModels: 1,
+        unmapped: 1,
+      })
+      const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accounts instanceof Error) throw accounts
+      expect(accounts).toHaveLength(0)
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('an unmappable preset keeps its rows on subrouter with the variant untouched', async () => {
+    const { dbPath, restore } = await openLegacyDb('unmappable')
+    try {
+      await setPoolRotation({
+        dataDir: migrationDataDir,
+        poolId: SHARED_POOL_ID,
+        name: 'max',
+        entries: ['anthropic/claude-opus-4-6'],
+      })
+      const migration = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome: path.join(subrouterHome, 'does-not-exist'),
+      })
+      expect(migration).not.toBeInstanceOf(Error)
+      if (migration instanceof Error) return
+      // ses-unmappable's variant (NULL here) is untouched; the mappable one's
+      // variant is cleared.
+      const db = await getDb()
+      const unmappable = await db.query.session_models.findFirst({
+        where: { session_id: 'ses-unmappable' },
+      })
+      expect(unmappable).toMatchObject({ model_id: 'subrouter/copilot-only', variant: null })
+      const mappable = await db.query.session_models.findFirst({
+        where: { session_id: 'ses-mappable' },
+      })
+      expect(mappable).toMatchObject({ model_id: 'roadie/max', variant: null })
+      expect(formatSubrouterStartupMigration(migration)).toEqual([
+        'Migrated 3 stored model choices from subrouter/ to roadie/ (global 1, channel 1, session 1)',
+        'Kept 1 subrouter model choice with no matching rotation: copilot-only',
+      ])
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('canRewriteSubrouterModel matches exact rotation names with entries only', () => {
+    const rotations = { max: ['anthropic/claude-opus-4-6'], empty: [] }
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/max', rotations })).toBe(true)
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/empty', rotations })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/missing', rotations })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'roadie/max', rotations })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'anthropic/claude-opus-4-6', rotations })).toBe(false)
   })
 })

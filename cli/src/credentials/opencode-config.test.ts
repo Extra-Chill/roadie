@@ -18,6 +18,21 @@ const BASE_CONFIG_ARGS = {
 }
 
 describe('buildOpencodeServerConfig', () => {
+  test('subrouter alias serves subrouter/<rotation> from the pool provider, only with a pool provider', () => {
+    const pool = {
+      name: 'Roadie credential pool',
+      npm: 'file:///x/provider.js',
+      options: {},
+      models: { 'anthropic-claude-haiku-5-5': { name: 'Roadie pool anthropic-claude-haiku-5-5', tool_call: true } },
+    }
+    const aliased = buildOpencodeServerConfig({ ...BASE_CONFIG_ARGS, roadiePoolProvider: pool, subrouterAlias: true })
+    expect(aliased.provider?.subrouter).toMatchObject({ npm: pool.npm, models: pool.models })
+    const plain = buildOpencodeServerConfig({ ...BASE_CONFIG_ARGS, roadiePoolProvider: pool })
+    expect(plain.provider?.subrouter).toBeUndefined()
+    const noPool = buildOpencodeServerConfig({ ...BASE_CONFIG_ARGS, roadiePoolProvider: null, subrouterAlias: true })
+    expect(noPool.provider?.subrouter).toBeUndefined()
+  })
+
   test('flag off: no roadie provider, config unchanged', () => {
     const config = buildOpencodeServerConfig({ ...BASE_CONFIG_ARGS, roadiePoolProvider: null })
     expect(config.provider?.roadie).toBeUndefined()

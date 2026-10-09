@@ -29,7 +29,7 @@ import {
   type ThreadBilling,
 } from './credentials/person-pool.js'
 import { SHARED_POOL_ID } from './credentials/store.js'
-import { POOL_HEADER, ROADIE_PROVIDER_ID, SESSION_HEADER, resolvePoolDataDir } from './credentials/provider.js'
+import { POOL_HEADER, SESSION_HEADER, isPoolProviderId, resolvePoolDataDir } from './credentials/provider.js'
 import { clearSessionRoute } from './credentials/routes.js'
 import { getSessionCredentialOwner, getSessionTurnAttribution } from './database.js'
 
@@ -69,7 +69,7 @@ export const credentialPoolsPlugin: Plugin = async () => {
       // Only the roadie provider strips x-roadie-* before sending upstream.
       // Tagging any other provider's request would leak the session id and
       // pool name to that provider, so leave those requests untouched.
-      if (input.model.providerID !== ROADIE_PROVIDER_ID) return
+      if (!isPoolProviderId(input.model.providerID)) return
       const mode = parseCredentialsMode(process.env[CREDENTIALS_MODE_ENV])
       const billing = parseThreadBilling(process.env[THREAD_BILLING_ENV])
       if (mode === 'global') {

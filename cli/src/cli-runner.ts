@@ -75,6 +75,10 @@ import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import { type ParsedSendAt } from './task-schedule.js'
 import { store } from './store.js'
+import {
+  formatSubrouterStartupMigration,
+  migrateSubrouterCredentialsAtStartup,
+} from './credentials/migrate-subrouter.js'
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
 export const cliLogger = createLogger(LogPrefix.CLI)
@@ -1232,6 +1236,25 @@ export async function run({
 
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
+
+  // One-time migration from subrouter (credential pools phase 4a): import
+  // subrouter accounts into the shared pool and rewrite stored
+  // `subrouter/<preset>` model choices to the imported `roadie/<rotation>`
+  // models. Idempotent; subrouter itself still loads (removal is phase 4b).
+  // Counts and preset names only are logged, never secrets. A failed
+  // migration never blocks bot startup.
+  if (store.getState().credentialPoolsEnabled) {
+    const migration = await migrateSubrouterCredentialsAtStartup({
+      dataDir: getDataDir(),
+    })
+    if (migration instanceof Error) {
+      cliLogger.warn(`Subrouter migration skipped: ${migration.message}`)
+    } else {
+      for (const line of formatSubrouterStartupMigration(migration)) {
+        cliLogger.log(line)
+      }
+    }
+  }
 
   const { appId, token, credentialSource } = await resolveCredentials({
     forceRestartOnboarding,
