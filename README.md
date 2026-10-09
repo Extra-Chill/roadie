@@ -50,6 +50,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 ## Features
 
 - **All your models, including subscriptions.** Every model OpenCode supports. Run `/login` to authenticate a provider with an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
+- **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the identity hook's `credential_pool`, and the security limits.
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
 - **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
 - **Conversation intake.** Configure mention/command starts, natural participant follow-ups, and context-only messages with the same [intake policy](docs/conversation-intake.md) on Discord and Slack.

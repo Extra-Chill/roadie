@@ -34,6 +34,7 @@ import {
   listAllThreadQueueItems,
   listThreadQueueItems,
   recordCredentialOwner,
+  recordCredentialPayerNotice,
   setChannelDirectory,
   setChannelVerbosity,
   setSessionAgent,
@@ -588,6 +589,37 @@ describe('getDb', () => {
 
     // Sessions with no actor never get a row: callers default them to shared.
     expect(await getSessionCredentialOwner(`ses-unowned-${crypto.randomUUID()}`)).toBeUndefined()
+  })
+
+  test('credential payer notice: claimed exactly once per session', async () => {
+    const sessionId = `ses-payer-${crypto.randomUUID()}`
+    const db = await getDb()
+
+    // The first claim inserts and reports true; the caller posts the notice.
+    expect(await recordCredentialPayerNotice({
+      sessionId,
+      previousPoolId: 'alice',
+      poolId: 'bob',
+    })).toBe(true)
+
+    // Later turns on the same session (any payer pair) are no-ops, so the
+    // notice posts exactly once — across restarts too, the row is durable.
+    expect(await recordCredentialPayerNotice({ sessionId, previousPoolId: 'bob', poolId: 'alice' })).toBe(false)
+    expect(await recordCredentialPayerNotice({ sessionId, poolId: 'bob' })).toBe(false)
+
+    const rows = await db.select()
+      .from(schema.credential_payer_notices)
+      .where(orm.eq(schema.credential_payer_notices.session_id, sessionId))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      session_id: sessionId,
+      previous_pool_id: 'alice',
+      pool_id: 'bob',
+    })
+
+    // Another session claims independently.
+    const forkId = `ses-payer-${crypto.randomUUID()}`
+    expect(await recordCredentialPayerNotice({ sessionId: forkId, poolId: 'carol' })).toBe(true)
   })
 
   test('rebuilds session_sleeps that still have posted_at from the intermediate schema', async () => {

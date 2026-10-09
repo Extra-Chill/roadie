@@ -1044,6 +1044,33 @@ export async function getSessionCredentialOwner(
   }
 }
 
+/**
+ * Claim the one-time speaker-billing payer-change notice for a session
+ * (credential pools phase 2c). Insert-or-ignore + returning: true when this
+ * call inserted the row (the caller posts the notice), false when a notice
+ * already exists — exactly-once across turns and restarts.
+ */
+export async function recordCredentialPayerNotice({
+  sessionId,
+  previousPoolId,
+  poolId,
+}: {
+  sessionId: string
+  previousPoolId?: string
+  poolId: string
+}): Promise<boolean> {
+  const db = await getDb()
+  const inserted = await db.insert(schema.credential_payer_notices)
+    .values({
+      session_id: sessionId,
+      ...(previousPoolId ? { previous_pool_id: previousPoolId } : {}),
+      pool_id: poolId,
+    })
+    .onConflictDoNothing({ target: schema.credential_payer_notices.session_id })
+    .returning({ sessionId: schema.credential_payer_notices.session_id })
+  return inserted.length > 0
+}
+
 export async function appendSessionEventsSinceLastTimestamp({ sessionId, events }: { sessionId: string; events: Array<typeof schema.session_events.$inferInsert> }) {
   if (events.length === 0) return 0
   const db = await getDb()

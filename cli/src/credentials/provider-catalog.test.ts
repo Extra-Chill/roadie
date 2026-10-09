@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  catalogModelContextLimit,
   closestCatalogProviders,
   fallbackCatalogCachePath,
   opencodeCatalogCachePath,
@@ -277,6 +278,45 @@ describe('parseCatalog and validation', () => {
     expect(parseCatalog(null)).toBeInstanceOf(Error)
     expect(parseCatalog([1, 2])).toBeInstanceOf(Error)
     expect(parseCatalog('nope')).toBeInstanceOf(Error)
+  })
+
+  test('parseCatalog keeps per-model context limits and drops malformed ones', () => {
+    const catalog = parseCatalog({
+      anthropic: {
+        id: 'anthropic',
+        npm: '@ai-sdk/anthropic',
+        models: {
+          'claude-sonnet-4': { limit: { context: 200000, output: 64000 } },
+          'limitless-model': { limit: { context: 1 } },
+          'no-limit': {},
+          'bad-context': { limit: { context: 'big' } },
+          'negative-context': { limit: { context: -5 } },
+        },
+      },
+      'models-not-object': { id: 'x', models: 'nope' },
+    })
+    expect(catalog).not.toBeInstanceOf(Error)
+    if (catalog instanceof Error) return
+    expect(catalog['anthropic']?.models).toEqual({
+      'claude-sonnet-4': { context: 200000 },
+      'limitless-model': { context: 1 },
+    })
+    expect(catalog['models-not-object']?.models).toBeUndefined()
+  })
+
+  test('catalogModelContextLimit resolves per provider/model and is undefined when unknown', () => {
+    const catalog: ModelsDevCatalog = {
+      anthropic: {
+        id: 'anthropic',
+        models: { 'claude-sonnet-4': { context: 200000 } },
+      },
+      groq: { id: 'groq', npm: '@ai-sdk/groq' },
+    }
+    expect(catalogModelContextLimit({ catalog, provider: 'anthropic', modelId: 'claude-sonnet-4' })).toBe(200000)
+    // Unknown model, unknown provider, and a provider without limits all fail open.
+    expect(catalogModelContextLimit({ catalog, provider: 'anthropic', modelId: 'who-dis' })).toBeUndefined()
+    expect(catalogModelContextLimit({ catalog, provider: 'who-dis', modelId: 'claude-sonnet-4' })).toBeUndefined()
+    expect(catalogModelContextLimit({ catalog, provider: 'groq', modelId: 'llama-3.3-70b-versatile' })).toBeUndefined()
   })
 
   test('closestCatalogProviders ranks exact, substring and near matches', () => {
