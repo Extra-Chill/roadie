@@ -18,7 +18,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 
-const CHANNEL_ID = '200000000000001074'
+const CHANNEL_ID = '200000000000001126'
 const DIR_NAME = 'isolated-shell-e2e'
 const AGENT_USER = 'nobody'
 // The probe must live somewhere the agent user can traverse to. The repo
