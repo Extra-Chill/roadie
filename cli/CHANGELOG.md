@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.52.0] - 2026-10-09
+
+### Added
+- scoped agent endpoints for the remaining roadie subcommands
+
 ## [0.51.0] - 2026-10-09
 
 ### Added
