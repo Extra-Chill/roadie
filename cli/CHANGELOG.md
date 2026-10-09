@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.50.0] - 2026-10-09
+
+### Added
+- agent tool shells use scoped bot endpoints
+
 ## [0.49.0] - 2026-10-09
 
 ### Added
