@@ -26,8 +26,12 @@
 //      (credentials/provider-catalog.ts): bundled SDK when known, else
 //      OpenAI-compatible against the catalog base URL, else the account's own
 //      `baseURL` override — and call its `doGenerate`/`doStream` with the same
-//      options, and
-//   4. on an `APICallError` with status 429 mark the account cooling down
+//      options,
+//   4. skip a candidate whose catalog context-window limit is smaller than
+//      the request's estimated input size (a thread that fits one model may
+//      not fit the next payer's; unknown limits and a failed catalog load
+//      never skip), and
+//   5. on an `APICallError` with status 429 mark the account cooling down
 //      (`retry-after` when present, else 60s) and try the next candidate; any
 //      other error is returned as-is. `markUsed` runs on success.
 //
@@ -68,6 +72,7 @@ import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js
 import { parsePoolListHeader } from './person-pool.js'
 import { readSessionRoute, setSessionRoute } from './routes.js'
 import {
+  catalogModelContextLimit,
   resolveCandidateModelFactory,
   resolveCatalog,
   type CandidateModelFactory,
@@ -102,6 +107,42 @@ export function cooldownUntilFromRetryAfter({ retryAfter, now }: { retryAfter: s
     return Math.min(now + Math.round(seconds * 1000), now + MAX_COOLDOWN_MS)
   }
   return now + DEFAULT_COOLDOWN_MS
+}
+
+/**
+ * Rough token estimate for the context-window check: 1 token ≈ 4 characters
+ * of the serialized prompt and tool definitions. Deliberately coarse — it
+ * only decides whether a candidate's context window is worth trying, never
+ * the request shape itself. 0 disables the check.
+ *
+ * Binary payloads are excluded: a file part's `data` (a Uint8Array, which
+ * JSON.stringify expands to `{"0":137,...}`, or a base64 string) would count
+ * an ordinary screenshot as millions of tokens and skip every candidate.
+ * Providers bill images and files by their own rules, not by byte length.
+ */
+function withoutBinaryPayloads(this: unknown, key: string, value: unknown): unknown {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return undefined
+  if (
+    key === 'data' &&
+    typeof this === 'object' &&
+    this !== null &&
+    'type' in this &&
+    (this.type === 'file' || this.type === 'image')
+  ) {
+    return undefined
+  }
+  return value
+}
+
+export function estimatePromptTokens({ prompt, tools }: { prompt: unknown; tools?: unknown }): number {
+  try {
+    let chars = JSON.stringify(prompt, withoutBinaryPayloads)?.length ?? 0
+    if (tools !== undefined) chars += JSON.stringify(tools)?.length ?? 0
+    return Math.ceil(chars / 4)
+  } catch {
+    // An unserializable prompt only means "estimate unknown": never skip.
+    return 0
+  }
 }
 
 export function resolvePoolDataDir(dataDir?: string): string {
@@ -438,8 +479,10 @@ function heldCandidate({
 /**
  * Route one doGenerate/doStream call: resolve the pool list from the (then
  * stripped) x-roadie-* headers, hold the session's live route so a turn never
- * splits across accounts, try the candidates in order, cool accounts down on
- * a 429 and serve from the first candidate that answers.
+ * splits across accounts, skip candidates whose catalog context window is
+ * smaller than the request's estimated input size, try the candidates in
+ * order, cool accounts down on a 429 and serve from the first candidate that
+ * answers.
  */
 async function routeLanguageModelCall<TResult>({
   rotationName,
@@ -506,10 +549,33 @@ async function routeLanguageModelCall<TResult>({
     ? [held, ...candidates.filter((candidate) => candidate !== held)]
     : candidates
 
+  // Context-window check (credential pools phase 2c): a candidate whose
+  // catalog context limit is smaller than the request's estimated input size
+  // is skipped — a thread that fits one model may not fit the next payer's.
+  // Unknown limits (model or provider missing from the catalog) and a failed
+  // catalog load never skip anything.
+  const estimatedInputTokens = estimatePromptTokens({ prompt: options.prompt, tools: options.tools })
+  const contextCatalog: ModelsDevCatalog | Error | undefined =
+    estimatedInputTokens > 0 ? await deps.getCatalog() : undefined
+  const contextLimitFor = (candidate: PoolCandidate): number | undefined =>
+    contextCatalog === undefined || contextCatalog instanceof Error
+      ? undefined
+      : catalogModelContextLimit({
+          catalog: contextCatalog,
+          provider: candidate.provider,
+          modelId: candidate.modelId,
+        })
+
   const callOptions: LanguageModelV3CallOptions = { ...options, headers }
   let lastRateLimitError: APICallError | null = null
   let firstCandidateError: Error | null = null
+  let contextSkipped = 0
   for (const candidate of orderedCandidates) {
+    const contextLimit = contextLimitFor(candidate)
+    if (contextLimit !== undefined && contextLimit < estimatedInputTokens) {
+      contextSkipped++
+      continue
+    }
     const account = await ensureFreshOAuthAccount({
       dataDir: deps.dataDir,
       poolId: candidate.poolId,
@@ -608,6 +674,14 @@ async function routeLanguageModelCall<TResult>({
   if (firstCandidateError) {
     throw poolAuthError(
       `no usable account in pool ${requestedPool}: ${firstCandidateError.message}`,
+    )
+  }
+  if (contextSkipped > 0) {
+    // Every candidate was skipped for being too small for this request.
+    throw poolAuthError(
+      `no usable account in pool ${requestedPool}: every candidate's context window is ` +
+        `smaller than the request (~${estimatedInputTokens} tokens estimated); ` +
+        'compact the session or use a model with a larger context window',
     )
   }
   throw poolAuthError(noUsableAccountsMessage({ requestedPool, firstPoolId: poolIds[0]! }))

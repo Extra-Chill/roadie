@@ -20,16 +20,18 @@ import {
   readPoolState,
   setPoolRotation,
   SHARED_POOL_ID,
+  type PoolAccount,
   type PoolState,
 } from './store.js'
 import {
   cooldownUntilFromRetryAfter,
   createRoadiePoolProvider,
+  estimatePromptTokens,
   POOL_HEADER,
   SESSION_HEADER,
   type PoolFetch,
 } from './provider.js'
-import { ROUTES_TTL_MS, readSessionRoute } from './routes.js'
+import { ROUTES_TTL_MS, readSessionRoute, setSessionRoute } from './routes.js'
 import type { ModelsDevCatalog } from './provider-catalog.js'
 import {
   CLAUDE_CODE_BETA,
@@ -57,6 +59,18 @@ const TEST_CATALOG: ModelsDevCatalog = {
   },
   groq: { id: 'groq', npm: '@ai-sdk/groq' },
   'unbundled-no-api': { id: 'unbundled-no-api', npm: '@ai-sdk/does-not-exist' },
+}
+
+/** Catalog with context-window limits for the context-skip tests. */
+const LIMITED_CATALOG: ModelsDevCatalog = {
+  anthropic: {
+    id: 'anthropic',
+    npm: '@ai-sdk/anthropic',
+    models: {
+      'small-context': { context: 1_000 },
+      'big-context': { context: 200_000 },
+    },
+  },
 }
 
 /** Typed fetch mock with the preconnect member the AI SDK providers expect. */
@@ -220,6 +234,19 @@ function generateOptions({
     ...(tools && { tools }),
     headers: { [POOL_HEADER]: pool, ...extraHeaders },
   }
+}
+
+/** A request whose ~60k-token estimate exceeds the small catalog context limit. */
+function bigPromptOptions(extraHeaders: Record<string, string> = {}): LanguageModelV3CallOptions {
+  return {
+    prompt: [{ role: 'user', content: [{ type: 'text', text: 'x'.repeat(240_000) }] }],
+    headers: { [POOL_HEADER]: SHARED_POOL_ID, ...extraHeaders },
+  }
+}
+
+/** The JSON request body the SDK handed to the stub fetch. */
+function initBody(init: RequestInit | undefined): string {
+  return typeof init?.body === 'string' ? init.body : ''
 }
 
 async function collectStream(stream: ReadableStream<LanguageModelV3StreamPart>): Promise<LanguageModelV3StreamPart[]> {
@@ -459,6 +486,186 @@ describe('languageModel doGenerate routing', () => {
     expect(state.cooldowns[zai.id]).toBe(NOW + 45_000)
     expect(state.cooldowns[anthropic.id]).toBeUndefined()
     expect(state.lastUsed).toEqual({ [anthropic.id]: NOW })
+  })
+
+  test('estimatePromptTokens ignores binary file payloads (an image must not skip every candidate)', () => {
+    const textOnly = [{ role: 'user', content: [{ type: 'text', text: 'what is in this screenshot?' }] }]
+    const withImage = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'file', mediaType: 'image/png', data: new Uint8Array(500_000) },
+        ],
+      },
+    ]
+    const withBase64 = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'file', mediaType: 'image/png', data: 'A'.repeat(700_000) },
+        ],
+      },
+    ]
+    const base = estimatePromptTokens({ prompt: textOnly })
+    // Only the part metadata (type, mediaType) is counted, never the bytes.
+    expect(estimatePromptTokens({ prompt: withImage })).toBeLessThan(base + 50)
+    expect(estimatePromptTokens({ prompt: withBase64 })).toBeLessThan(base + 50)
+  })
+
+  test('estimatePromptTokens: ~4 chars per token, tools included, unserializable prompt estimates 0', () => {
+    const small = generateOptions({ pool: 'shared' })
+    expect(estimatePromptTokens({ prompt: small.prompt })).toBeGreaterThan(0)
+    const big = bigPromptOptions()
+    expect(estimatePromptTokens({ prompt: big.prompt })).toBeGreaterThan(10_000)
+    const withTools = generateOptions({
+      pool: 'shared',
+      tools: [
+        {
+          type: 'function',
+          name: 'bash',
+          description: 'x'.repeat(400),
+          inputSchema: { type: 'object', properties: {} },
+        },
+      ],
+    })
+    expect(estimatePromptTokens({ prompt: withTools.prompt, tools: withTools.tools })).toBeGreaterThan(
+      estimatePromptTokens({ prompt: withTools.prompt }),
+    )
+    const circular: Record<string, unknown> = {}
+    circular['self'] = circular
+    expect(estimatePromptTokens({ prompt: circular })).toBe(0)
+  })
+
+  test('a candidate whose context limit is smaller than the estimated input is skipped and the next one answers', async () => {
+    await seedPool({
+      provider: 'anthropic',
+      keys: ['sk-ant-context'],
+      rotation: ['anthropic/small-context', 'anthropic/big-context'],
+    })
+    const requestedModels: string[] = []
+    const fetchImpl = stubFetch(async (_input, init) => {
+      const body = JSON.parse(initBody(init) || '{}') as { model?: string }
+      requestedModels.push(body.model ?? '')
+      return jsonResponse(200, ANTHROPIC_OK_RESPONSE)
+    })
+    const model = poolProvider({ fetchImpl, catalog: LIMITED_CATALOG }).languageModel('default')
+    const result = await model.doGenerate(bigPromptOptions())
+    expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
+    // The small candidate never reached upstream; the big one answered.
+    expect(requestedModels).toEqual(['big-context'])
+    const state = readStateOrThrow()
+    expect(state.cooldowns).toEqual({})
+  })
+
+  test('when every candidate is too small for the request, the 401 says so without touching upstream', async () => {
+    await seedPool({
+      provider: 'anthropic',
+      keys: ['sk-ant-small'],
+      rotation: ['anthropic/small-context'],
+    })
+    const fetchImpl = stubFetch(async () => jsonResponse(200, ANTHROPIC_OK_RESPONSE))
+    const model = poolProvider({ fetchImpl, catalog: LIMITED_CATALOG }).languageModel('default')
+    const error = await model.doGenerate(bigPromptOptions()).then(
+      () => null,
+      (cause: unknown) => cause,
+    )
+    if (!(error instanceof APICallError)) throw error
+    expect(error.statusCode).toBe(401)
+    expect(error.message).toContain('context window is')
+    expect(error.message).toContain('tokens estimated')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('a model unknown to the catalog has no limit and is never skipped for context', async () => {
+    await seedPool({
+      provider: 'unbundled-no-api',
+      keys: ['key-custom'],
+      rotation: ['unbundled-no-api/custom-model'],
+    })
+    const fetchImpl = stubFetch(async (input, init) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer key-custom')
+      return jsonResponse(200, OPENAI_OK_RESPONSE)
+    })
+    const model = poolProvider({
+      fetchImpl,
+      catalog: { 'unbundled-no-api': { id: 'unbundled-no-api', api: 'https://custom.example.com/v1' } },
+    }).languageModel('default')
+    const result = await model.doGenerate(bigPromptOptions())
+    expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  test('a held route that is too small for the request is skipped and the answering candidate re-pins', async () => {
+    await seedPool({
+      provider: 'anthropic',
+      keys: ['sk-ant-affinity'],
+      rotation: ['anthropic/small-context', 'anthropic/big-context'],
+    })
+    const pinned = await setSessionRoute({
+      dataDir,
+      sessionId: 'ses_ctx',
+      route: {
+        poolId: SHARED_POOL_ID,
+        accountId: (readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID }) as PoolAccount[])[0]!.id,
+        provider: 'anthropic',
+        modelId: 'small-context',
+        rotation: 'default',
+        pinnedAt: NOW,
+      },
+      now: NOW,
+    })
+    expect(pinned).toBe(true)
+
+    const requestedModels: string[] = []
+    const fetchImpl = stubFetch(async (_input, init) => {
+      const body = JSON.parse(initBody(init) || '{}') as { model?: string }
+      requestedModels.push(body.model ?? '')
+      return jsonResponse(200, ANTHROPIC_OK_RESPONSE)
+    })
+    const model = poolProvider({ fetchImpl, catalog: LIMITED_CATALOG }).languageModel('default')
+    const result = await model.doGenerate(bigPromptOptions({ [SESSION_HEADER]: 'ses_ctx' }))
+    expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
+    // The held small-context candidate was skipped for context; a normal
+    // small request afterwards still holds the re-pinned big-context route.
+    expect(requestedModels).toEqual(['big-context'])
+    const route = readSessionRoute({ dataDir, sessionId: 'ses_ctx', now: NOW + 1 })
+    expect(route).toMatchObject({ provider: 'anthropic', modelId: 'big-context' })
+  })
+
+  test('a request within the held candidate\'s context limit keeps turn affinity unchanged', async () => {
+    await seedPool({
+      provider: 'anthropic',
+      keys: ['sk-ant-affinity-2'],
+      rotation: ['anthropic/small-context', 'anthropic/big-context'],
+    })
+    const pinned = await setSessionRoute({
+      dataDir,
+      sessionId: 'ses_ctx2',
+      route: {
+        poolId: SHARED_POOL_ID,
+        accountId: (readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID }) as PoolAccount[])[0]!.id,
+        provider: 'anthropic',
+        modelId: 'small-context',
+        rotation: 'default',
+        pinnedAt: NOW,
+      },
+      now: NOW,
+    })
+    expect(pinned).toBe(true)
+
+    const requestedModels: string[] = []
+    const fetchImpl = stubFetch(async (_input, init) => {
+      const body = JSON.parse(initBody(init) || '{}') as { model?: string }
+      requestedModels.push(body.model ?? '')
+      return jsonResponse(200, ANTHROPIC_OK_RESPONSE)
+    })
+    const model = poolProvider({ fetchImpl, catalog: LIMITED_CATALOG }).languageModel('default')
+    // A small request fits small-context, so the held candidate answers first.
+    const result = await model.doGenerate(generateOptions({ pool: 'shared', extraHeaders: { [SESSION_HEADER]: 'ses_ctx2' } }))
+    expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
+    expect(requestedModels).toEqual(['small-context'])
   })
 
   test('a 429 without retry-after cools the account down for 60s and surfaces the rate limit', async () => {

@@ -51,6 +51,8 @@ export type ModelsDevCatalogEntry = {
   api?: string
   env?: string[]
   name?: string
+  /** Per-model context-window limits (tokens), keyed by model id. */
+  models?: Record<string, { context: number }>
 }
 
 export type ModelsDevCatalog = Record<string, ModelsDevCatalogEntry>
@@ -96,6 +98,21 @@ export function fallbackCatalogCachePath({ dataDir }: { dataDir: string }): stri
   return path.join(dataDir, 'credentials', 'models-dev.json')
 }
 
+/** Reduce a provider's models map to context-window limits only. */
+function parseCatalogModelLimits(models: Record<string, unknown>): Record<string, { context: number }> {
+  const limits: Record<string, { context: number }> = {}
+  for (const [modelId, value] of Object.entries(models)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const limit = (value as Record<string, unknown>).limit
+    if (!limit || typeof limit !== 'object' || Array.isArray(limit)) continue
+    const context = (limit as Record<string, unknown>).context
+    if (typeof context === 'number' && Number.isFinite(context) && context > 0) {
+      limits[modelId] = { context }
+    }
+  }
+  return limits
+}
+
 /** Reduce a parsed models.dev payload to the entries routing needs. */
 export function parseCatalog(json: unknown): ModelsDevCatalog | Error {
   if (!json || typeof json !== 'object' || Array.isArray(json)) {
@@ -105,6 +122,10 @@ export function parseCatalog(json: unknown): ModelsDevCatalog | Error {
   for (const [id, value] of Object.entries(json as Record<string, unknown>)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue
     const record = value as Record<string, unknown>
+    const models =
+      record.models && typeof record.models === 'object' && !Array.isArray(record.models)
+        ? parseCatalogModelLimits(record.models as Record<string, unknown>)
+        : undefined
     catalog[id] = {
       id,
       ...(typeof record.npm === 'string' && { npm: record.npm }),
@@ -113,9 +134,27 @@ export function parseCatalog(json: unknown): ModelsDevCatalog | Error {
         env: record.env.filter((name): name is string => typeof name === 'string'),
       }),
       ...(typeof record.name === 'string' && { name: record.name }),
+      ...(models && Object.keys(models).length > 0 && { models }),
     }
   }
   return catalog
+}
+
+/**
+ * The catalog context-window limit (tokens) for one provider/model, or
+ * undefined when the provider, the model, or its limit is unknown — callers
+ * never skip a candidate they know nothing about.
+ */
+export function catalogModelContextLimit({
+  catalog,
+  provider,
+  modelId,
+}: {
+  catalog: ModelsDevCatalog
+  provider: string
+  modelId: string
+}): number | undefined {
+  return catalog[provider]?.models?.[modelId]?.context
 }
 
 /** Read a catalog JSON file; an Error means "no usable catalog here". */

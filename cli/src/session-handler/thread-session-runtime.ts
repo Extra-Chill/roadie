@@ -91,7 +91,9 @@ import {
 } from '../message-formatting.js'
 import {
   setSessionTurnAttribution,
+  getSessionTurnAttribution,
   recordCredentialOwner,
+  recordCredentialPayerNotice,
   getChannelVerbosity,
   getPartMessageIds,
   getDb,
@@ -3524,6 +3526,10 @@ export class ThreadSessionRuntime {
    * pool (person id, else `<platform>:<actorId>`, with the identity hook's
    * `credential_pool` override) onto the attribution row, and claims session
    * ownership for the first human speaker (insert-or-ignore).
+   *
+   * In `speaker` billing (per-person modes only) it also detects the turn
+   * where the payer first changes — the previous turn's pool differs from
+   * this turn's — and posts the thread's one-time payer-change notice.
    */
   private async recordTurnAttribution({
     sessionId,
@@ -3532,7 +3538,7 @@ export class ThreadSessionRuntime {
     sessionId: string
     input: Pick<IngressInput, 'userId' | 'username' | 'actorVia' | 'personId' | 'credentialPool'>
   }): Promise<void> {
-    const credentialPoolsEnabled = store.getState().credentialPoolsEnabled
+    const { credentialPoolsEnabled, credentialsMode, threadBilling } = store.getState()
     const billing = input.userId
       ? resolvePersonBillingPool({
           person: {
@@ -3541,6 +3547,20 @@ export class ThreadSessionRuntime {
           },
           platform: this.chat.platform,
           actorId: input.userId,
+        })
+      : undefined
+    // Speaker billing: read the previous turn's payer before this turn's
+    // attribution overwrites the row. Global mode never changes payer (the
+    // shared pool bills everything), and neither does owner billing.
+    const speakerBilling =
+      credentialPoolsEnabled &&
+      credentialsMode !== 'global' &&
+      threadBilling === 'speaker' &&
+      billing !== undefined
+    const previousAttribution = speakerBilling
+      ? await getSessionTurnAttribution(sessionId).catch((e) => {
+          logger.warn(`[ACTOR] Failed to read the previous turn's payer for session ${sessionId}: ${String(e)}`)
+          return undefined
         })
       : undefined
     const result = await setSessionTurnAttribution({
@@ -3562,6 +3582,20 @@ export class ThreadSessionRuntime {
     }).catch((e) => new Error('Failed to record session turn attribution', { cause: e }))
     if (result instanceof Error) {
       logger.warn(`[ACTOR] ${result.message} for session ${sessionId}: ${String(result.cause)}`)
+    } else if (
+      speakerBilling &&
+      billing &&
+      previousAttribution?.credentialPool &&
+      previousAttribution.credentialPool !== billing.poolId
+    ) {
+      // Only on a successful attribution write: the notice compares the
+      // previous row's pool, which this write has just replaced.
+      await this.postPayerChangeNoticeOnce({
+        sessionId,
+        previousPoolId: previousAttribution.credentialPool,
+        poolId: billing.poolId,
+        username: input.username,
+      })
     }
     if (credentialPoolsEnabled && billing) {
       // First human speaker owns the session; insert-or-ignore keeps later
@@ -3574,6 +3608,48 @@ export class ThreadSessionRuntime {
       }).catch((e) =>
         logger.warn(`[ACTOR] Failed to record credential owner for session ${sessionId}: ${String(e)}`),
       )
+    }
+  }
+
+  /**
+   * The thread's one-time speaker-billing notice: when the payer first
+   * changes, say that earlier messages in the thread go to the new payer's
+   * provider account (its provider sees the whole earlier conversation,
+   * including other people's messages). The claim is recorded in sqlite
+   * (credential_payer_notices) before posting, so the notice posts at most
+   * once per session — never again on later turns or after a restart.
+   * Best-effort: failures are logged, never fatal.
+   */
+  private async postPayerChangeNoticeOnce({
+    sessionId,
+    previousPoolId,
+    poolId,
+    username,
+  }: {
+    sessionId: string
+    previousPoolId: string
+    poolId: string
+    username: string
+  }): Promise<void> {
+    try {
+      const claimed = await recordCredentialPayerNotice({
+        sessionId,
+        previousPoolId,
+        poolId,
+      }).catch((e) => {
+        logger.warn(`[ACTOR] Failed to record the payer-change notice for session ${sessionId}: ${String(e)}`)
+        return false
+      })
+      if (!claimed) return
+      const notice = asSubtext(
+        `Speaker billing: this thread now bills through ${username}'s credential pool (${poolId}). Earlier messages in this thread are sent to that pool's provider account.`,
+      )
+      const sent = await this.chat.sendNotice(notice)
+      if (sent instanceof Error) {
+        discordLogger.error('Failed to send the speaker-billing payer-change notice:', sent)
+      }
+    } catch (e) {
+      logger.warn(`[ACTOR] Failed to post the payer-change notice for session ${sessionId}: ${String(e)}`)
     }
   }
 

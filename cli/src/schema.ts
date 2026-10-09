@@ -228,6 +228,21 @@ export const credential_owners = sqliteCore.sqliteTable('credential_owners', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+// One-time speaker-billing payer-change notice (credential pools phase 2c).
+// In `speaker` billing a thread's payer can change between turns, and the new
+// payer's provider then receives the whole earlier conversation. When the
+// payer first changes, the thread gets exactly one notice saying so. The row
+// is written insert-or-ignore when the notice posts, so it posts once per
+// session — across restarts too.
+export const credential_payer_notices = sqliteCore.sqliteTable('credential_payer_notices', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  // Pool billed before the change.
+  previous_pool_id: sqliteCore.text('previous_pool_id'),
+  // Pool billed after the change (the new payer).
+  pool_id: sqliteCore.text('pool_id').notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const channel_agents = sqliteCore.sqliteTable('channel_agents', {
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   agent_name: sqliteCore.text('agent_name').notNull(),
@@ -409,6 +424,7 @@ export const relations = defineRelations({
   session_sleeps,
   ipc_requests,
   credential_owners,
+  credential_payer_notices,
 }, (r) => ({
   thread_sessions: {
     session_events: r.many.session_events(),
@@ -487,6 +503,7 @@ export const relations = defineRelations({
     thread: r.one.thread_sessions({ from: r.ipc_requests.thread_id, to: r.thread_sessions.thread_id }),
   },
   credential_owners: {},
+  credential_payer_notices: {},
 }))
 
 export type BotMode = typeof bot_tokens.$inferSelect.bot_mode

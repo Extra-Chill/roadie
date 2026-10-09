@@ -110,6 +110,13 @@ CREATE TABLE IF NOT EXISTS `credential_owners` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS `credential_payer_notices` (
+	`session_id` text PRIMARY KEY,
+	`previous_pool_id` text,
+	`pool_id` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `forum_sync_configs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`app_id` text NOT NULL,
