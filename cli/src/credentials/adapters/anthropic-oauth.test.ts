@@ -14,6 +14,7 @@ import {
   rewriteRequestPayload,
   wrapResponseStream,
   CLAUDE_CODE_IDENTITY,
+  CLAUDE_CODE_USER_AGENT,
   OAUTH_BETA,
   INTERLEAVED_THINKING_BETA,
   CLAUDE_CODE_BETA,
@@ -68,6 +69,15 @@ describe('token endpoint', () => {
       client_id: ANTHROPIC_OAUTH_CLIENT_ID,
       refresh_token: 'rt-1',
     })
+  })
+
+  test('token requests identify as claude-cli', async () => {
+    const fetchImpl = vi.fn<TokenFetch>(async () =>
+      tokenResponse({ access_token: 'at-2', refresh_token: 'rt-2', expires_in: 3600 }),
+    )
+    await refreshAnthropicToken({ refreshToken: 'rt-1', fetchImpl, now: NOW })
+    const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('user-agent')).toBe(CLAUDE_CODE_USER_AGENT)
   })
 
   test('an HTTP 400 answer becomes a permanent refresh failure', async () => {
@@ -204,6 +214,61 @@ describe('request/response shaping', () => {
     expect(rewriteRequestPayload(undefined).body).toBeUndefined()
     expect(rewriteRequestPayload('not json').body).toBe('not json')
     expect(rewriteRequestPayload('not json').reverseToolNameMap.size).toBe(0)
+  })
+
+  test('rewriteRequestPayload returns the payload model id', () => {
+    expect(rewriteRequestPayload(JSON.stringify({ model: 'claude-opus-4-6' })).modelId).toBe('claude-opus-4-6')
+    expect(rewriteRequestPayload(JSON.stringify({})).modelId).toBeUndefined()
+    expect(rewriteRequestPayload('not json').modelId).toBeUndefined()
+  })
+
+  test('rewriteRequestPayload replaces the opencode identity block with the Claude Code environment block', () => {
+    const system =
+      'Preamble.\n' +
+      'You are OpenCode, the best coding agent on the planet.\n' +
+      '<env>\nWorking directory: /srv/app\nPlatform: linux\n</env>\n' +
+      'Project rules follow.'
+    const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
+      system: Array<{ type: string; text: string }>
+    }
+    expect(payload.system).toEqual([
+      { type: 'text', text: CLAUDE_CODE_IDENTITY },
+      {
+        type: 'text',
+        text:
+          'Preamble.\n' +
+          '\n<environment>\n<cwd>/srv/app</cwd>\n</environment>\n' +
+          'Read, write, and edit files under /srv/app.\n\n' +
+          'Project rules follow.',
+      },
+    ])
+  })
+
+  test('rewriteRequestPayload sanitizes subagent identities and text parts of an array system', () => {
+    const system = [
+      { type: 'text', text: 'You are powered by the model named x.\n<env>\n<cwd>/srv/sub</cwd>\n</env>\nTail.', cache_control: { type: 'ephemeral' } },
+      'Plain part.',
+    ]
+    const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
+      system: Array<{ type: string; text: string; cache_control?: unknown }>
+    }
+    expect(payload.system).toEqual([
+      { type: 'text', text: CLAUDE_CODE_IDENTITY },
+      {
+        type: 'text',
+        text: '\n<environment>\n<cwd>/srv/sub</cwd>\n</environment>\nRead, write, and edit files under /srv/sub.\n\nTail.',
+        cache_control: { type: 'ephemeral' },
+      },
+      { type: 'text', text: 'Plain part.' },
+    ])
+  })
+
+  test('rewriteRequestPayload leaves an identity block without a closing env tag untouched', () => {
+    const system = 'You are OpenCode, the best coding agent on the planet. No env block.'
+    const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
+      system: Array<{ type: string; text: string }>
+    }
+    expect(payload.system[1]?.text).toBe(system)
   })
 
   test('wrapResponseStream reverses tool names in the streamed body', async () => {

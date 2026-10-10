@@ -1209,6 +1209,8 @@ describe('oauth accounts', () => {
     if (!dead || !alive) throw new Error('seed failed')
     const fetchImpl = stubFetch(async (input, init) => {
       if (isTokenUrl(input)) {
+        // Token requests identify as claude-cli, never the runtime's default agent.
+        expect(new Headers(init?.headers).get('user-agent')).toBe(CLAUDE_CODE_USER_AGENT)
         return jsonResponse(400, { error: 'invalid_grant' })
       }
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer at-alive')
@@ -1270,7 +1272,10 @@ describe('oauth accounts', () => {
     const result = await model.doGenerate(
       generateOptions({
         pool: 'shared',
-        system: 'You are OpenCode.',
+        system:
+          'You are OpenCode, the best coding agent on the planet.\n' +
+          '<env>\nWorking directory: /workspace/project\n</env>\n' +
+          'Continue helping.',
         tools: [
           {
             type: 'function',
@@ -1305,10 +1310,19 @@ describe('oauth accounts', () => {
       tools: Array<{ name: string }>
     }
     expect(body.model).toBe('claude-sonnet-4')
+    // The opencode identity block is replaced by the compact Claude Code
+    // environment block, behind the Claude Code identity.
     expect(body.system).toEqual([
       { type: 'text', text: CLAUDE_CODE_IDENTITY },
-      { type: 'text', text: 'You are OpenCode.' },
+      {
+        type: 'text',
+        text:
+          '\n<environment>\n<cwd>/workspace/project</cwd>\n</environment>\n' +
+          'Read, write, and edit files under /workspace/project.\n\n' +
+          'Continue helping.',
+      },
     ])
+    expect(body.system.map((part) => part.text).join('')).not.toContain('You are OpenCode')
     expect(body.tools[0]?.name).toBe('Bash')
 
     const state = readStateOrThrow()
