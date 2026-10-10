@@ -9,6 +9,9 @@
 //   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
 //   roadie credentials import-opencode --opencode-data <dir> [--pool <id>] [--dry-run]
 //   roadie credentials export-opencode --opencode-data <dir> [--pool <id>]
+//   roadie credentials mcp set --person <key> --credential <name>   (OAuth token JSON on stdin)
+//   roadie credentials mcp list --person <key>
+//   roadie credentials mcp remove --person <key> --credential <name>
 // API keys are read from stdin (never argv) and never printed; only the last
 // 4 characters are shown. OAuth tokens are never printed; `list` shows the
 // access token's expiry instead.
@@ -50,6 +53,11 @@ import {
   exportOpencodeCredentials,
   formatOpencodeExportReport,
 } from '../credentials/export-opencode.js'
+import {
+  listPersonMcpCredentials,
+  removePersonMcpToken,
+  setPersonMcpToken,
+} from '../credentials/person-mcp-store.js'
 import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -360,6 +368,85 @@ cli
     } else {
       cliLogger.log(`Set rotation ${name} in pool ${poolId}: ${(models ?? []).join(' ')}`)
     }
+    process.exit(0)
+  })
+
+function requirePersonKey(person: string | undefined): string {
+  const key = person?.trim()
+  if (!key) exitWithError('--person is required: the identity hook person_id, or <platform>:<actorId>')
+  return key
+}
+
+cli
+  .command(
+    'credentials mcp set',
+    'Store a person\'s own OAuth token for an MCP server. Token JSON on stdin: {"access_token","refresh_token","expires_in","token_endpoint","client_id","client_secret"} (only access_token is required)',
+  )
+  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
+  .option('--credential <name>', 'Credential name referenced by the identity hook mcp_servers entry (default: the server name)')
+  .action(async (options) => {
+    refuseAgentMode()
+    const personKey = requirePersonKey(options.person)
+    const credential = options.credential?.trim()
+    if (!credential) exitWithError('--credential is required')
+    if (process.stdin.isTTY) {
+      exitWithError('Pipe the token JSON on stdin: cat token.json | roadie credentials mcp set --person <key> --credential <name>')
+    }
+    const raw = (() => {
+      try {
+        return JSON.parse(fs.readFileSync(0, 'utf8')) as unknown
+      } catch (cause) {
+        return new Error('Stdin must be a JSON object', { cause })
+      }
+    })()
+    if (raw instanceof Error) exitWithError(raw.message)
+    const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+    const str = (field: string) => (typeof record[field] === 'string' && record[field] ? (record[field] as string) : undefined)
+    const access = str('access_token')
+    if (!access) exitWithError('Token JSON needs an access_token')
+    const expiresIn = typeof record.expires_in === 'number' && record.expires_in > 0 ? record.expires_in : undefined
+    const result = await setPersonMcpToken({
+      dataDir: getDataDir(),
+      personKey,
+      credential,
+      token: {
+        access,
+        ...(expiresIn && { expires: Date.now() + expiresIn * 1000 }),
+        ...(str('refresh_token') && { refresh: str('refresh_token')! }),
+        ...(str('token_endpoint') && { tokenEndpoint: str('token_endpoint')! }),
+        ...(str('client_id') && { clientId: str('client_id')! }),
+        ...(str('client_secret') && { clientSecret: str('client_secret')! }),
+      },
+    })
+    if (result instanceof Error) exitWithError(result.message)
+    cliLogger.log(`Stored MCP credential ${credential} for ${personKey}`)
+    process.exit(0)
+  })
+
+cli
+  .command('credentials mcp list', 'List the MCP credential names stored for a person (never the tokens)')
+  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
+  .action(async (options) => {
+    refuseAgentMode()
+    const personKey = requirePersonKey(options.person)
+    const names = listPersonMcpCredentials({ dataDir: getDataDir(), personKey })
+    cliLogger.log(names.length === 0 ? `No MCP credentials stored for ${personKey}` : names.join('\n'))
+    process.exit(0)
+  })
+
+cli
+  .command('credentials mcp remove', 'Remove a person\'s stored MCP credential')
+  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
+  .option('--credential <name>', 'Credential name to remove')
+  .action(async (options) => {
+    refuseAgentMode()
+    const personKey = requirePersonKey(options.person)
+    const credential = options.credential?.trim()
+    if (!credential) exitWithError('--credential is required')
+    const removed = await removePersonMcpToken({ dataDir: getDataDir(), personKey, credential })
+    if (removed instanceof Error) exitWithError(removed.message)
+    if (!removed) exitWithError(`No MCP credential ${credential} for ${personKey}`)
+    cliLogger.log(`Removed MCP credential ${credential} for ${personKey}`)
     process.exit(0)
   })
 
