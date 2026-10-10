@@ -17,6 +17,9 @@
 //            "capabilities": ["sessions", "shell", "admin"],
 //            "agent": "…", "model": "…",                // optional overrides
 //            "permissions": ["bash:deny", …],           // optional session rules
+//            "mcp_servers": [{ "name": "extrachill",     // optional per-person MCP servers
+//                              "url": "https://…/mcp",    // https (http only for loopback)
+//                              "credential": "extrachill" }], // optional token reference
 //            "ttl_seconds": 300 }                       // optional cache TTL
 //
 // Capabilities:
@@ -34,6 +37,7 @@ import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { isValidPoolId } from './credentials/store.js'
+import { MCP_NAME_PATTERN, isAllowedMcpUrl } from './credentials/person-mcp-store.js'
 
 const logger = createLogger(LogPrefix.DISCORD)
 
@@ -56,6 +60,18 @@ export type IdentityContext = {
   channelId?: string
 }
 
+/**
+ * One MCP server a person's sessions may use, authenticated as that person.
+ * Carries a reference to the person's stored OAuth token, never the token.
+ */
+export type PersonMcpServer = {
+  /** Short server name; tools surface as `<scope>_<name>_<tool>`. */
+  name: string
+  url: string
+  /** Name of the person's stored credential (defaults to `name`). */
+  credential: string
+}
+
 export type Person = {
   allowed: boolean
   personId?: string
@@ -67,6 +83,9 @@ export type Person = {
   // puts a team on one pool or pins a guest to `shared`. Optional; hooks that
   // do not send it behave as before. Invalid pool ids are ignored.
   credentialPool?: string
+  // Per-person MCP servers (identity hook `mcp_servers`). Empty or absent
+  // means the person gets no extra MCP servers.
+  mcpServers?: PersonMcpServer[]
 }
 
 const hookOutputSchema = z.object({
@@ -77,6 +96,16 @@ const hookOutputSchema = z.object({
   model: z.string().min(1).max(200).optional(),
   permissions: z.array(z.string().min(1).max(500)).max(100).optional(),
   credential_pool: z.string().min(1).max(200).optional(),
+  mcp_servers: z
+    .array(
+      z.object({
+        name: z.string(),
+        url: z.string().max(2000),
+        credential: z.string().optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   ttl_seconds: z.number().int().min(0).max(MAX_TTL_SECONDS).optional(),
 })
 
@@ -229,6 +258,9 @@ async function runHook({
   const credentialPool = out.credential_pool && isValidPoolId(out.credential_pool)
     ? out.credential_pool
     : undefined
+  // A denied person never gets MCP servers. Invalid or duplicate entries are
+  // dropped individually (and logged), not the whole person.
+  const mcpServers = out.allowed ? parseMcpServers(out.mcp_servers) : []
   const person: Person = {
     allowed: out.allowed,
     ...(out.person_id ? { personId: out.person_id } : {}),
@@ -237,8 +269,29 @@ async function runHook({
     ...(out.model ? { model: out.model } : {}),
     permissions: out.permissions ?? [],
     ...(credentialPool ? { credentialPool } : {}),
+    ...(mcpServers.length > 0 ? { mcpServers } : {}),
   }
   return { person, ttlSeconds: out.ttl_seconds ?? DEFAULT_TTL_SECONDS }
+}
+
+function parseMcpServers(
+  raw: Array<{ name: string; url: string; credential?: string }> | undefined,
+): PersonMcpServer[] {
+  const servers: PersonMcpServer[] = []
+  for (const entry of raw ?? []) {
+    const credential = entry.credential ?? entry.name
+    if (!MCP_NAME_PATTERN.test(entry.name) || !MCP_NAME_PATTERN.test(credential)) {
+      logger.warn('[IDENTITY] ignoring mcp_servers entry with an invalid name or credential reference')
+      continue
+    }
+    if (!isAllowedMcpUrl(entry.url)) {
+      logger.warn(`[IDENTITY] ignoring mcp_servers entry ${entry.name}: url must be https (http only for loopback)`)
+      continue
+    }
+    if (servers.some((server) => server.name === entry.name)) continue
+    servers.push({ name: entry.name, url: entry.url, credential })
+  }
+  return servers
 }
 
 function execHook({ command, input }: { command: string; input: string }): Promise<string> {

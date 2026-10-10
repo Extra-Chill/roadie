@@ -69,6 +69,7 @@ describe('buildOpencodeServerConfig', () => {
           "external_directory": {
             "*": "allow",
           },
+          "roadie_pm_*": "deny",
           "webfetch": "allow",
         },
         "plugin": [
