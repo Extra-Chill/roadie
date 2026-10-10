@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.53.1] - 2026-10-10
+
+### Fixed
+- restore subrouter's Claude Code signature in the anthropic oauth adapter
+
 ## [0.53.0] - 2026-10-09
 
 ### Added
