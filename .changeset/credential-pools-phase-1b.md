@@ -1,5 +1,0 @@
----
-"@extrachill/roadie": minor
----
-
-Credential pools phase 1b: Anthropic OAuth subscription accounts (Claude Pro/Max) in pools. `roadie credentials login anthropic [--label]` runs the PKCE flow (print the authorize URL, paste back `code#state`) and adds the account to the shared pool; pools now hold `api` and `oauth` accounts side by side and existing `accounts.json` files load unchanged. OAuth accounts refresh under the pool lock when the access token is within 60s of expiry (concurrent requests refresh once, rotated refresh token written back), a refresh rejected with 400/401 cools the account down for an hour and moves to the next candidate, and requests are shaped as Claude Code: `authorization: Bearer` with `x-api-key` removed, the merged `anthropic-beta` header (`oauth-2025-04-20`), the Claude Code system-prompt prefix, and opencode tool names rewritten in both requests and responses. API-key requests are byte-for-byte unchanged. `roadie credentials list` shows account type and access-token expiry and never prints tokens.
