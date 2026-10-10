@@ -384,14 +384,28 @@ function makeAnthropicOAuthFetch({
   fetchImpl: PoolFetch
 }): PoolFetchWithPreconnect {
   const oauthFetch: PoolFetch = async (input, init = {}) => {
-    const headers = new Headers(init.headers)
-    applyAnthropicOAuthRequestHeaders({ headers, accessToken, modelId })
-    headers.delete('content-length')
-    const shaped =
+    // Mirrors @subrouter/cli's anthropic buildFetch: the body may arrive on a
+    // Request rather than init.body, and must be shaped either way or the
+    // request goes out without the Claude Code signature.
+    const originalBody =
       typeof init.body === 'string'
-        ? rewriteRequestPayload(init.body)
-        : { body: init.body, reverseToolNameMap: new Map<string, string>() }
-    const response = await fetchImpl(input, { ...init, headers, body: shaped.body })
+        ? init.body
+        : input instanceof Request
+          ? await input
+              .clone()
+              .text()
+              .catch(() => undefined)
+          : undefined
+    const shaped = rewriteRequestPayload(originalBody)
+    const headers = new Headers(init.headers)
+    if (input instanceof Request) {
+      input.headers.forEach((value, name) => {
+        if (!headers.has(name)) headers.set(name, value)
+      })
+    }
+    applyAnthropicOAuthRequestHeaders({ headers, accessToken, modelId: shaped.modelId ?? modelId })
+    headers.delete('content-length')
+    const response = await fetchImpl(input, { ...init, headers, body: shaped.body ?? init.body })
     return wrapResponseStream(response, shaped.reverseToolNameMap)
   }
   return fetchWithPreconnect(oauthFetch)

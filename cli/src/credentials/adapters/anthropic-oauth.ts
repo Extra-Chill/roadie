@@ -116,6 +116,9 @@ async function postTokenRequest({
     headers: {
       'accept': 'application/json',
       'content-type': 'application/json',
+      // The token endpoint rejects non-claude-cli agents (inside OpenCode,
+      // Bun's default `opencode/<version>` user-agent) with refused requests.
+      'user-agent': CLAUDE_CODE_USER_AGENT,
     },
     body: JSON.stringify(body),
   }).catch((cause: unknown) =>
@@ -266,8 +269,58 @@ export function parseManualInput(input: string): { code: string; state: string }
 
 // --- Request/response shaping (ported) ---
 
+// Mirrors `sanitizeSystemText` in `@subrouter/cli` `src/adapters/anthropic.ts`
+// (0.6.1), including the inlined identity constants: keep the two synchronized.
+// Anthropic's OAuth gate rejects requests whose system prompt does not present
+// as Claude Code, so opencode's own identity blocks are replaced by a compact
+// Claude-Code-style environment block that preserves the working directory.
+const OPENCODE_IDENTITY = 'You are OpenCode, the best coding agent on the planet.'
+const SUBAGENT_MODEL_IDENTITY = 'You are powered by the model named'
+const ENV_CLOSE_TAG = '</env>'
+
+function sanitizeSystemText(text: string): string {
+  const replaceBlock = (startIdx: number) => {
+    const envCloseIdx = text.indexOf(ENV_CLOSE_TAG, startIdx)
+    if (envCloseIdx === -1) return text
+    const endIdx = envCloseIdx + ENV_CLOSE_TAG.length
+    const afterEnd = text[endIdx] === '\n' ? endIdx + 1 : endIdx
+    const strippedBlock = text.slice(startIdx, afterEnd)
+    const cwdMatch =
+      strippedBlock.match(/Working directory:\s*(.+)/)?.[1]?.trim() ||
+      strippedBlock.match(/<cwd>([^<]+)<\/cwd>/)?.[1]
+    const cwd = cwdMatch || process.cwd()
+    const envContext =
+      `\n<environment>\n<cwd>${cwd}</cwd>\n</environment>\n` +
+      `Read, write, and edit files under ${cwd}.\n\n`
+    return text.slice(0, startIdx) + envContext + text.slice(afterEnd)
+  }
+
+  const startIdx = text.indexOf(OPENCODE_IDENTITY)
+  if (startIdx !== -1) return replaceBlock(startIdx)
+  const subagentIdx = text.indexOf(SUBAGENT_MODEL_IDENTITY)
+  if (subagentIdx !== -1) return replaceBlock(subagentIdx)
+  return text
+}
+
 function toClaudeCodeToolName(name: string): string {
   return OPENCODE_TO_CLAUDE_CODE_TOOL_NAME[name.toLowerCase()] ?? name
+}
+
+function mapSystemTextPart(part: unknown): unknown {
+  if (typeof part === 'string') {
+    return { type: 'text', text: sanitizeSystemText(part) }
+  }
+  if (
+    part &&
+    typeof part === 'object' &&
+    'type' in part &&
+    part.type === 'text' &&
+    'text' in part &&
+    typeof part.text === 'string'
+  ) {
+    return { ...part, text: sanitizeSystemText(part.text) }
+  }
+  return part
 }
 
 function prependClaudeCodeIdentity(system: unknown): unknown[] {
@@ -279,20 +332,16 @@ function prependClaudeCodeIdentity(system: unknown): unknown[] {
   if (typeof system === 'undefined') return [identityBlock]
 
   if (typeof system === 'string') {
-    if (system === CLAUDE_CODE_IDENTITY) return [identityBlock]
-    return [identityBlock, { type: 'text', text: system }]
+    const sanitized = sanitizeSystemText(system)
+    if (sanitized === CLAUDE_CODE_IDENTITY) return [identityBlock]
+    return [identityBlock, { type: 'text', text: sanitized }]
   }
 
   if (!Array.isArray(system)) return [identityBlock, system]
 
-  const mapped = system.map((item) => {
-    if (typeof item === 'string') {
-      return { type: 'text', text: item }
-    }
-    return item
-  })
+  const sanitized = system.map((item) => mapSystemTextPart(item))
 
-  const first = mapped[0]
+  const first = sanitized[0]
   if (
     first &&
     typeof first === 'object' &&
@@ -301,32 +350,36 @@ function prependClaudeCodeIdentity(system: unknown): unknown[] {
     'text' in first &&
     first.text === CLAUDE_CODE_IDENTITY
   ) {
-    return mapped
+    return sanitized
   }
-  return [identityBlock, ...mapped]
+  return [identityBlock, ...sanitized]
 }
 
 /**
  * Shape a serialized Messages request as Claude Code: rename opencode tool
- * names in `tools`, `tool_choice` and `tool_use` blocks, and prepend the
- * Claude Code identity to the system prompt. Returns the rewritten body plus
- * the reverse map to apply to the streamed response.
+ * names in `tools`, `tool_choice` and `tool_use` blocks, sanitize opencode
+ * identity blocks out of the system prompt, and prepend the Claude Code
+ * identity to it. Returns the rewritten body, the payload's model id (for
+ * model-dependent betas), and the reverse map to apply to the streamed
+ * response.
  */
 export function rewriteRequestPayload(body: string | undefined): {
   body: string | undefined
+  modelId: string | undefined
   reverseToolNameMap: Map<string, string>
 } {
   if (!body) {
-    return { body, reverseToolNameMap: new Map<string, string>() }
+    return { body, modelId: undefined, reverseToolNameMap: new Map<string, string>() }
   }
   const parse = errore.try({
     try: () => JSON.parse(body) as Record<string, unknown>,
     catch: () => null,
   })
   if (!parse || typeof parse !== 'object') {
-    return { body, reverseToolNameMap: new Map<string, string>() }
+    return { body, modelId: undefined, reverseToolNameMap: new Map<string, string>() }
   }
   const payload = parse
+  const modelId = typeof payload.model === 'string' ? payload.model : undefined
   const reverseToolNameMap = new Map<string, string>()
 
   if (Array.isArray(payload.tools)) {
@@ -376,7 +429,7 @@ export function rewriteRequestPayload(body: string | undefined): {
     })
   }
 
-  return { body: JSON.stringify(payload), reverseToolNameMap }
+  return { body: JSON.stringify(payload), modelId, reverseToolNameMap }
 }
 
 /**
