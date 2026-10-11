@@ -12,6 +12,7 @@ import {
 import {
   getSessionEventSnapshot,
   getThreadSession,
+  recordSessionForkOrigin,
   setThreadSession,
 } from '../database.js'
 import {
@@ -217,6 +218,11 @@ export async function handleForkSubagentSelectMenu(
   })
 
   await setThreadSession(forkedThread.id, forkedSession.id)
+  await recordSessionForkOrigin({
+    sessionId: forkedSession.id,
+    sourceSessionId: selectedSessionId,
+    sourceThreadId: threadChannel.id,
+  })
   await forkedThread.members.add(interaction.user.id)
 
   forkLogger.log(

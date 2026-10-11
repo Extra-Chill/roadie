@@ -25,6 +25,7 @@ import {
 import {
   getThreadSession,
   getThreadWorkingDirectory,
+  recordSessionForkOrigin,
   setThreadSession,
   setThreadWorkingDirectory,
 } from '../database.js'
@@ -259,6 +260,11 @@ export async function forkSessionToThread({
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
       await setThreadSession(thread.id, forkedSession.id)
+      await recordSessionForkOrigin({
+        sessionId: forkedSession.id,
+        sourceSessionId: sessionId,
+        sourceThreadId: sourceThread.id,
+      })
       if (workspace.binding) {
         await setThreadWorkingDirectory({ threadId: thread.id, ...workspace.binding })
         return

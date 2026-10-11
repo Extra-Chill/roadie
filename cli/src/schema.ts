@@ -49,6 +49,15 @@ export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles',
   task_prompt: sqliteCore.text('task_prompt'),
 })
 
+// Where a forked session came from. The fork's system prompt may be the
+// source's pinned prompt, so this is the only durable record of the origin.
+export const session_fork_origins = sqliteCore.sqliteTable('session_fork_origins', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  source_session_id: sqliteCore.text('source_session_id').notNull(),
+  source_thread_id: sqliteCore.text('source_thread_id').notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 // Chat admission is conversation attribution, never an execution principal or
 // permission grant. Platform + space scope prevents cross-workspace reuse.
 export const conversation_admissions = sqliteCore.sqliteTable('conversation_admissions', {
@@ -395,6 +404,7 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 
 export const relations = defineRelations({
   pending_fork_titles,
+  session_fork_origins,
   conversation_admissions,
   conversation_participants,
   chat_ingress_events,
