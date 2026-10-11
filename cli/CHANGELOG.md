@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.54.0] - 2026-10-11
+
+### Added
+- per-person MCP servers authenticated with the person's own OAuth credential
+
 ## [0.53.1] - 2026-10-10
 
 ### Fixed
