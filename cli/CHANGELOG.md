@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.54.1] - 2026-10-11
+
+### Fixed
+- tell forked sessions they are forks reliably (persist fork origin, stop false-positive fork notice)
+
 ## [0.54.0] - 2026-10-11
 
 ### Added
