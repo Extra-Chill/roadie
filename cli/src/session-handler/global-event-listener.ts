@@ -12,8 +12,6 @@ import { createLogger, LogPrefix } from '../logger.js'
 import type { AgentBackendEvent } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 
-type OpenCodeEvent = AgentBackendEvent
-
 const logger = createLogger(LogPrefix.SESSION)
 
 function isAbortError(err: unknown): boolean {
@@ -38,7 +36,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 
 // ── Types ──────────────────────────────────────────────────────
 
-type EventCallback = (event: OpenCodeEvent) => void
+type EventCallback = (event: AgentBackendEvent) => void
 
 // ── State ──────────────────────────────────────────────────────
 
@@ -132,7 +130,7 @@ function ensureListenerRunning(): void {
   void runEventLoop()
 }
 
-function dispatchEvent(event: OpenCodeEvent): void {
+function dispatchEvent(event: AgentBackendEvent): void {
   for (const callback of callbacks.values()) {
     callback(event)
   }

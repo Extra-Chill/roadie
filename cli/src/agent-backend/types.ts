@@ -7,9 +7,8 @@
 // Keep this list in sync with real call sites. Add an operation only when the
 // runtime starts using it.
 
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
-import type { AgentMessage, AgentPart, AgentSession, AgentStatus } from './events.js'
+import type { AgentEvent, AgentMessage, AgentPart, AgentSession, AgentStatus } from './events.js'
 
 /**
  * The backend rejected a request (as opposed to the request never arriving,
@@ -203,11 +202,17 @@ export type AgentBackend = AgentCatalog & {
 }
 
 /**
- * One raw event from the backend's stream. The runtime translates it into an
- * AgentEvent (./opencode-events.ts) and keeps the raw form only for the opt-in
- * backend event log.
+ * One item from the backend's event stream, already in Roadie's terms. A single
+ * native backend event can imply several Roadie events (a delegation tool part
+ * also carries child-session lifecycle), or none (an event Roadie ignores).
+ *
+ * `raw` is the backend's native payload, opaque to everything but the opt-in
+ * backend event log. Consumers must not branch on it.
  */
-export type AgentBackendEvent = OpenCodeEvent
+export type AgentBackendEvent = {
+  events: AgentEvent[]
+  raw: unknown
+}
 
 /** Lazily returns the catalog for a directory once it has been initialized. */
 export type AgentCatalogGetter = () => AgentCatalog
