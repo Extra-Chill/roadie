@@ -7,7 +7,6 @@ import { getDb } from '../database.js'
 import * as schema from '../schema.js'
 import { getPermissionTimeoutMs, getDataDir } from '../config.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
-import { getOpencodeClient } from '../opencode.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger } from '../logger.js'
 import type { ChatThread, ChatInteractions } from './types.js'
@@ -443,22 +442,22 @@ export class SlackChatThread implements ChatThread {
   }
 
   private async replyQuestion(hash: string, item: Pending) {
-    const client = getOpencodeClient(item.directory)
-    if (!client)
+    const client = getAgentBackendProvider().getBackend(item.directory)
+    if (!client?.sessions.replyQuestion)
       return new SlackApiError({
         operation: 'question',
         detail: 'agent backend is unavailable; retry after it restarts',
       })
-    const result = await client.question.reply({
+    const result = await client.sessions.replyQuestion({
       directory: item.directory,
-      requestID: item.requestIds[0]!,
+      requestId: item.requestIds[0]!,
       answers: item.questions.map((_, i) => item.answers[String(i)] ?? []),
     })
-    if (result.error)
+    if (result instanceof Error)
       return new SlackApiError({
         operation: 'question',
         detail: 'agent rejected answer',
-        cause: result.error,
+        cause: result,
       })
     await this.remove(hash)
     return this.options.api.edit({

@@ -90,7 +90,7 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
       return title || new AgentRequestError({ detail: 'Small model returned an empty fork title' })
     },
     async setTitle({ sessionId, directory, title }) {
-      const result = await call('session.update', () => client.session.update({ sessionID: sessionId, directory, title }))
+      const result = await call('session.update', () => client.session.update({ sessionID: sessionId, ...(directory !== undefined && { directory }), title }))
       return result instanceof Error ? result : undefined
     },
     async create({ directory, permission }) {
@@ -100,7 +100,7 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
       return toAgentSession(session)
     },
     async get({ sessionId, directory }) {
-      const session = await call('session.get', () => client.session.get({ sessionID: sessionId, directory }))
+      const session = await call('session.get', () => client.session.get({ sessionID: sessionId, ...(directory !== undefined && { directory }) }))
       if (session instanceof Error) return session
       return session ? toAgentSession(session) : undefined
     },
@@ -145,7 +145,7 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
       return result instanceof Error ? result : undefined
     },
     async abort({ sessionId, directory }) {
-      const result = await call('session.abort', () => client.session.abort({ sessionID: sessionId, directory }))
+      const result = await call('session.abort', () => client.session.abort({ sessionID: sessionId, ...(directory !== undefined && { directory }) }))
       return result instanceof Error ? result : undefined
     },
     async status({ directory }) {
@@ -155,8 +155,17 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
         Object.entries(statuses ?? {}).map(([id, status]) => [id, toStatus(status)]),
       )
     },
-    async replyPermission({ requestId, directory, reply }) {
-      const result = await call('permission.reply', () => client.permission.reply({ requestID: requestId, directory, reply }))
+    async replyPermission({ requestId, directory, reply, message }) {
+      const result = await call('permission.reply', () => client.permission.reply({ requestID: requestId, directory, reply, ...(message !== undefined && { message }) }))
+      return result instanceof Error ? result : undefined
+    },
+    async questions({ directory }) {
+      const requests = await call('question.list', () => client.question.list({ directory }))
+      if (requests instanceof Error) return requests
+      return (requests ?? []).map((request) => ({ id: request.id, sessionId: request.sessionID }))
+    },
+    async replyQuestion({ requestId, directory, answers }) {
+      const result = await call('question.reply', () => client.question.reply({ requestID: requestId, directory, answers }))
       return result instanceof Error ? result : undefined
     },
   }

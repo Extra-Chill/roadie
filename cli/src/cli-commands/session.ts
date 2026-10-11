@@ -5,7 +5,7 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { OpencodeClient, Event as OpenCodeEvent, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError, type AgentBackend } from '../agent-backend/types.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorkingDirectory, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
@@ -22,7 +24,6 @@ import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
-import { OpenCodeSdkError } from '../errors.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -1083,7 +1084,7 @@ cli
       }
 
       const sessionId = options.session || await getThreadSession(resolvedThreadId)
-      let client: OpencodeClient | null = null
+      let client: AgentBackend | null = null
       if (sessionId && threadData.parent_id) {
         const channelConfig = await getChannelDirectory(threadData.parent_id)
         if (!channelConfig) {
@@ -1091,15 +1092,15 @@ cli
             `No channel directory mapping found for parent channel ${threadData.parent_id}`,
           )
         } else {
-          const getClient = await initializeOpencodeForDirectory(
+          const getBackend = await getAgentBackendProvider().initializeForDirectory(
             channelConfig.directory,
           )
-          if (getClient instanceof Error) {
+          if (getBackend instanceof Error) {
             cliLogger.warn(
-              `Could not initialize OpenCode for ${channelConfig.directory}: ${getClient.message}`,
+              `Could not initialize OpenCode for ${channelConfig.directory}: ${getBackend.message}`,
             )
           } else {
-            client = getClient()
+            client = getBackend()
           }
         }
       } else {
@@ -1165,7 +1166,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const serverResult = await initializeOpencodeForDirectory(directory)
+      const serverResult = await getAgentBackendProvider().initializeForDirectory(directory)
       if (serverResult instanceof Error) {
         cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
         process.exit(EXIT_NO_RESTART)
@@ -1175,11 +1176,10 @@ cli
       // Don't pass directory — the server resolves sessions by ID regardless
       // of the x-opencode-directory header, matching archiveThread's pattern.
       // This avoids issues when --cwd was used (session directory != project directory).
-      const abortResult = await client.session.abort({
-        sessionID: sessionId,
-      }).catch((e) => new Error('Failed to abort session', { cause: e }))
-      if (abortResult instanceof Error) {
-        cliLogger.error(abortResult.message)
+      // A rejection was not treated as failure before; only a transport error.
+      const abortResult = await client.sessions.abort({ sessionId })
+      if (abortResult instanceof Error && !(abortResult instanceof AgentRequestError)) {
+        cliLogger.error('Failed to abort session')
         process.exit(EXIT_NO_RESTART)
       }
 
@@ -1280,26 +1280,27 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const serverResult = await initializeOpencodeForDirectory(directory)
+      const serverResult = await getAgentBackendProvider().initializeForDirectory(directory)
       if (serverResult instanceof Error) {
         cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
         process.exit(EXIT_NO_RESTART)
       }
 
-      const updateResult = await serverResult()
-        .session.update({
-          sessionID: sessionId,
-          title: trimmedTitle,
-        })
-        .catch((e) =>
-          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
-        )
-      if (updateResult instanceof Error) {
-        cliLogger.error(updateResult.message)
+      const setTitle = serverResult().sessions.setTitle
+      if (!setTitle) {
+        cliLogger.error('The agent backend cannot rename sessions')
         process.exit(EXIT_NO_RESTART)
       }
-      if (updateResult.error) {
+      const updateResult = await setTitle({
+        sessionId,
+        title: trimmedTitle,
+      })
+      if (updateResult instanceof AgentRequestError) {
         cliLogger.error('OpenCode rejected the session title update')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (updateResult instanceof Error) {
+        cliLogger.error(updateResult.message)
         process.exit(EXIT_NO_RESTART)
       }
 

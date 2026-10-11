@@ -12,7 +12,7 @@ import {
   deleteThreadQueueItems,
   getThreadSession,
 } from '../database.js'
-import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -90,18 +90,16 @@ export async function handleAbortCommand({
       logger.error(`[ABORT] ${deleteResult.message}:`, deleteResult.cause)
     }
     // No runtime but session exists — fall back to direct API abort
-    const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+    const provider = getAgentBackendProvider()
+    const serverResult = await provider.initializeForDirectory(projectDirectory)
     if (serverResult instanceof Error) {
       await command.editReply(`Failed to abort: ${serverResult.message}`)
       return
     }
-    try {
-      const client = getOpencodeClient(workingDirectory)
-      if (client) {
-        await client.session.abort({ sessionID: sessionId, directory: workingDirectory })
-      }
-    } catch (error) {
-      logger.error('[ABORT] API abort failed:', error)
+    const backend = provider.getBackend(workingDirectory)
+    const abortResult = await backend?.sessions.abort({ sessionId, directory: workingDirectory })
+    if (abortResult instanceof Error) {
+      logger.error('[ABORT] API abort failed:', abortResult)
     }
   }
 

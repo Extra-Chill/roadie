@@ -24,7 +24,7 @@ import type {
   ThreadChannel,
 } from 'discord.js'
 const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { AgentRequestError, type AgentBackend } from './agent-backend/types.js'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
@@ -335,7 +335,7 @@ export async function archiveThread({
   threadId: string
   parentChannelId?: string
   sessionId?: string
-  client?: OpencodeClient | null
+  client?: AgentBackend | null
   archiveDelay?: number
 }): Promise<void> {
   await reactToThread({
@@ -347,20 +347,21 @@ export async function archiveThread({
 
   if (client && sessionId) {
     const updateResult = await (async () => {
-        const sessionResponse = await client.session.get({
-          sessionID: sessionId,
-        })
-        if (!sessionResponse.data) {
+        // Rejections were ignored here before; only transport failures warned.
+        const session = await client.sessions.get({ sessionId })
+        if (session instanceof Error) {
+          if (session instanceof AgentRequestError) return
+          throw session
+        }
+        if (!session) {
           return
         }
-        const currentTitle = sessionResponse.data.title || ''
+        const currentTitle = session.title || ''
         const newTitle = currentTitle.startsWith('📁')
           ? currentTitle
           : `📁 ${currentTitle}`.trim()
-        await client.session.update({
-          sessionID: sessionId,
-          title: newTitle,
-        })
+        const updated = await client.sessions.setTitle?.({ sessionId, title: newTitle })
+        if (updated instanceof Error && !(updated instanceof AgentRequestError)) throw updated
     })().catch((e) => new Error('Failed to update session title', { cause: e }))
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
