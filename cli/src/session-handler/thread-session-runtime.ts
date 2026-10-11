@@ -9,7 +9,7 @@
 import { resolveSessionPermissionRules } from '../permission-policy.js'
 import { forkTitlePrompt, schedulePendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
-import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
+import { toAgentMessage } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
 import {
   consumeInterruptedSessions,
@@ -23,10 +23,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { type Client, type ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
 import { createDiscordChatThread } from '../chat-platform/discord.js'
-import type {
-  Event as OpenCodeEvent,
-  Message as OpenCodeMessage,
-} from '@opencode-ai/sdk/v2'
+import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -45,7 +42,7 @@ import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
-import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
+import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
@@ -1750,16 +1747,17 @@ export class ThreadSessionRuntime {
   // Global events (tui.toast.show) bypass the guard.
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
-  private async handleEvent(event: OpenCodeEvent): Promise<void> {
+  private async handleEvent(event: AgentBackendEvent): Promise<void> {
     // One backend event can imply several Roadie agent events (a task tool
-    // part update also carries child-session lifecycle). Each runs the full
-    // pipeline: buffer check, append, log, and its own switch case. The raw
-    // backend event is logged once, with the first implied agent event.
-    const agentEvents = toAgentEvents(event)
+    // part update also carries child-session lifecycle); the backend already
+    // translated them. Each runs the full pipeline: buffer check, append, log,
+    // and its own switch case. The raw backend payload is logged once, with
+    // the first implied agent event.
+    const agentEvents = event.events
     for (let i = 0; i < agentEvents.length; i++) {
       await this.handleAgentEvent({
         agentEvent: agentEvents[i]!,
-        ...(i === 0 && { rawBackendEvent: event }),
+        ...(i === 0 && { rawBackendEvent: event.raw }),
       })
     }
   }
@@ -1770,7 +1768,7 @@ export class ThreadSessionRuntime {
   }: {
     agentEvent: AgentEvent
     /** Present on the first agent event derived from one backend event; the opt-in jsonl log writes it. */
-    rawBackendEvent?: OpenCodeEvent
+    rawBackendEvent?: unknown
   }): Promise<void> {
     const sessionId = this.state?.sessionId
     if (!shouldBufferSessionEvent({
@@ -1848,7 +1846,7 @@ export class ThreadSessionRuntime {
       }
     }
 
-    if (rawBackendEvent && isOpencodeSessionEventLogEnabled()) {
+    if (rawBackendEvent !== undefined && isOpencodeSessionEventLogEnabled()) {
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
