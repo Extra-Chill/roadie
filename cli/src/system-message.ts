@@ -424,7 +424,7 @@ export function getOpencodePromptContext({
     ...(forkOrigin ? [getForkOriginNotice(forkOrigin)] : []),
     ...(systemPromptFromSourceSession && (sessionId || threadId)
       ? [
-          'This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).',
+          `${forkOrigin ? '' : 'This session was forked. '}The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).`,
         ]
       : []),
     ...(parentSessionId ? [getParentSessionInstructions(parentSessionId)] : []),

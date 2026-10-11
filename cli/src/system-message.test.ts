@@ -186,7 +186,7 @@ describe('system-message', () => {
       Your current OpenCode session ID is: ses_fork
       Your current Discord thread ID is: thread_fork
       This session was forked from thread thread_source (session ses_source). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.
-      This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
+      The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
       Your parent OpenCode session ID is: ses_parent_added_later
       You can send a message back to the parent session with:
       roadie send --session ses_parent_added_later --prompt 'your update here' --agent <current_agent>
