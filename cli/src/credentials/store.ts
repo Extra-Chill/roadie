@@ -117,7 +117,7 @@ let tempWriteCounter = 0
  * partial file. The temp file is created with the final mode so the secret
  * bytes are never world-readable, even briefly.
  */
-function atomicWriteFileSync({ filePath, data }: { filePath: string; data: string }): void {
+export function atomicWriteFileSync({ filePath, data }: { filePath: string; data: string }): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true, mode: CREDENTIALS_DIR_MODE })
   const tempPath = path.join(

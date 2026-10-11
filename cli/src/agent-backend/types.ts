@@ -179,9 +179,27 @@ export type AgentAuthOperations = {
   setApiKey(input: { directory: string; providerId: string; key: string }): Promise<void | Error>
 }
 
+/**
+ * Tool servers (MCP) the backend can connect to. Optional: a backend without
+ * dynamic MCP registration simply gives people no per-person servers.
+ */
+export type AgentMcpOperations = {
+  /**
+   * Add or replace a remote MCP server for a project directory. `headers`
+   * carry the credential and must never be logged.
+   */
+  addRemote(input: {
+    directory: string
+    name: string
+    url: string
+    headers: Record<string, string>
+  }): Promise<void | Error>
+}
+
 export type AgentBackend = AgentCatalog & {
   sessions: AgentSessionOperations
   auth: AgentAuthOperations
+  mcp?: AgentMcpOperations
 }
 
 /**

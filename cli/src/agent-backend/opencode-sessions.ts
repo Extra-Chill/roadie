@@ -17,6 +17,7 @@ import {
   type AgentAuthOperations,
   type AgentBackend,
   type AgentCatalogOperations,
+  type AgentMcpOperations,
   type AgentProviderInfo,
   type AgentModelSelection,
   type AgentPromptPart,
@@ -275,6 +276,22 @@ export function openCodeAuthOperations(client: OpencodeClient): AgentAuthOperati
 const backends = new WeakMap<OpencodeClient, AgentBackend>()
 
 /** The Roadie backend for an OpenCode client. Cached per client. */
+export function openCodeMcpOperations(client: OpencodeClient): AgentMcpOperations {
+  return {
+    async addRemote({ directory, name, url, headers }) {
+      const result = await call('mcp.add', () =>
+        client.mcp.add({
+          directory,
+          name,
+          // oauth: false keeps OpenCode from starting its own shared OAuth flow.
+          config: { type: 'remote', url, headers, oauth: false },
+        }),
+      )
+      return result instanceof Error ? result : undefined
+    },
+  }
+}
+
 export function toOpenCodeBackend(client: OpencodeClient): AgentBackend {
   const cached = backends.get(client)
   if (cached) return cached
@@ -282,6 +299,7 @@ export function toOpenCodeBackend(client: OpencodeClient): AgentBackend {
     sessions: openCodeSessionOperations(client),
     catalog: openCodeCatalogOperations(client),
     auth: openCodeAuthOperations(client),
+    mcp: openCodeMcpOperations(client),
   }
   backends.set(client, backend)
   return backend

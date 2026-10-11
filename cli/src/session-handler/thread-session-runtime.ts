@@ -47,7 +47,8 @@ import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
-import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
+import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from '../identity.js'
+import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
@@ -124,7 +125,7 @@ import {
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
-import { resolvePersonBillingPool } from '../credentials/person-pool.js'
+import { personKeyFrom, resolvePersonBillingPool } from '../credentials/person-pool.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
@@ -853,15 +854,24 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
   if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
   const person = getCachedPerson({ platform: input.actorPlatform ?? 'discord', id: input.userId })
   if (!person?.allowed) return input
+  // Every person turn resets the session's person-scoped MCP access to the
+  // speaker's own servers (none when they have no config).
+  const mcpPermissions = personMcpPermissions({
+    personKey: personKeyFrom({
+      personId: person.personId,
+      platform: input.actorPlatform ?? 'discord',
+      actorId: input.userId,
+    }) ?? undefined,
+    hasServers: (person.mcpServers?.length ?? 0) > 0,
+  })
   return {
     ...input,
     ...(person.personId ? { personId: person.personId } : {}),
     ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
     ...(input.agent || !person.agent ? {} : { agent: person.agent }),
     ...(input.model || !person.model ? {} : { model: person.model }),
-    ...(person.permissions.length > 0
-      ? { permissions: [...(input.permissions ?? []), ...person.permissions] }
-      : {}),
+    // The MCP pair goes before the hook's own rules, which may refine it.
+    permissions: [...(input.permissions ?? []), ...mcpPermissions, ...person.permissions],
   }
 }
 
@@ -3734,6 +3744,7 @@ export class ThreadSessionRuntime {
       const { session, getClient, createdNewSession } = sessionResult
       schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
+      await this.registerSpeakerMcpServers({ client: getClient(), input })
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
         sessionId: session.id,
@@ -4752,6 +4763,7 @@ export class ThreadSessionRuntime {
     const { session, getClient, createdNewSession } = sessionResult
     schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
+    await this.registerSpeakerMcpServers({ client: getClient(), input })
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
       sessionId: session.id,
@@ -5245,6 +5257,35 @@ export class ThreadSessionRuntime {
     if (!parentSessionId) return undefined
     if (systemPromptHasParentSession({ system, parentSessionId })) return undefined
     return parentSessionId
+  }
+
+  /**
+   * Connect the speaker's own MCP servers, authenticated with their stored
+   * credential. Only chat speakers the identity hook allows get any; the
+   * hook result is read again here (cached) rather than carried on the queued
+   * turn so no credential material ever travels with it. Never fatal.
+   */
+  private async registerSpeakerMcpServers({
+    client,
+    input,
+  }: {
+    client: AgentBackend
+    input: Pick<IngressInput, 'userId' | 'actorVia' | 'personId'>
+  }): Promise<void> {
+    if (!isIdentityHookConfigured()) return
+    if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
+    const actor = { platform: this.chat.platform, id: input.userId }
+    const person = await resolvePerson({ actor }).catch(() => null)
+    if (!person?.allowed || !person.mcpServers?.length) return
+    const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
+    if (!personKey) return
+    await registerPersonMcpServers({
+      backend: client,
+      directory: this.sdkDirectory,
+      dataDir: getDataDir(),
+      personKey,
+      servers: person.mcpServers,
+    }).catch((e: unknown) => logger.warn(`[PERSON-MCP] registration failed: ${String(e)}`))
   }
 
   private async updateExistingSessionPermissions({

@@ -198,6 +198,7 @@ import {
 } from './credentials/person-pool.js'
 import { ROADIE_PROVIDER_ID, SUBROUTER_ALIAS_ENV, SUBROUTER_ALIAS_PROVIDER_ID } from './credentials/provider.js'
 import { hasSubrouterHandoff } from './credentials/migrate-subrouter.js'
+import { PERSON_MCP_TOOL_GLOB } from './person-mcp.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -234,6 +235,9 @@ export function buildOpencodeServerConfig({
       bash: 'allow',
       external_directory: externalDirectoryPermissions,
       webfetch: 'allow',
+      // Per-person MCP servers (person-mcp.ts) are denied to every session by
+      // default; a person's own turns re-allow only their own scope.
+      [PERSON_MCP_TOOL_GLOB]: 'deny',
       ...(skillPermission && { skill: skillPermission }),
     },
     agent: {

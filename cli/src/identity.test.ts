@@ -232,7 +232,7 @@ describe('applyPersonToIngress', () => {
       personId: 'host:38',
       agent: 'team-bot',
       model: 'anthropic/claude-sonnet-5-5',
-      permissions: ['edit:deny', 'bash:deny'],
+      permissions: ['edit:deny', 'roadie_pm_*:deny', 'bash:deny'],
     })
   })
 

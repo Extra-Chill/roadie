@@ -21,6 +21,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { isPersonMcpServerName } from '../person-mcp.js'
 
 const logger = createLogger(LogPrefix.MCP)
 
@@ -142,7 +143,8 @@ export async function handleMcpCommand({
     return
   }
 
-  const servers = Object.entries(data)
+  // Per-person servers carry someone's own credential; never list or toggle them here.
+  const servers = Object.entries(data).filter(([name]) => !isPersonMcpServerName(name))
   if (servers.length === 0) {
     await command.editReply({
       content:
@@ -239,7 +241,7 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  if (!statusData[serverName]) {
+  if (!statusData[serverName] || isPersonMcpServerName(serverName)) {
     await interaction.editReply({
       content: `Server **${serverName}** not found.`,
       components: [],
