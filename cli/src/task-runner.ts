@@ -29,7 +29,7 @@ import {
 import { execAsync } from './exec-async.js'
 import { QUEUE_PREFIX } from './message-formatting.js'
 import { prepareDiscordPromptMessage } from './discord-prompt-message.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
@@ -429,17 +429,16 @@ async function hasRunningSession(task: ScheduledTask): Promise<boolean | Error> 
       active = true
       continue
     }
-    const getClient = await initializeOpencodeForDirectory(run.project_directory)
-    if (getClient instanceof Error) return getClient
-    const statusResponse = await getClient().session.status({
+    const getBackend = await getAgentBackendProvider().initializeForDirectory(run.project_directory)
+    if (getBackend instanceof Error) return getBackend
+    const statuses = await getBackend().sessions.status({
       directory: run.project_directory,
-    }).catch((error) => new Error('Failed to check scheduled session status', {
-      cause: error,
-    }))
-    if (statusResponse instanceof Error) return statusResponse
-    if (statusResponse.error) return new Error('Failed to check scheduled session status')
-    const status = statusResponse.data?.[run.session_id]
-    if (status && status.type !== 'idle') {
+    })
+    if (statuses instanceof Error) {
+      return new Error('Failed to check scheduled session status', { cause: statuses })
+    }
+    const status = statuses[run.session_id]
+    if (status && status.state !== 'idle') {
       active = true
       continue
     }

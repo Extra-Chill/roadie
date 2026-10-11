@@ -147,6 +147,44 @@ describe('openCodeSessionOperations', () => {
     expect(await ops.create({ directory: '/p', permission: [rule] })).toEqual({ id: 'new', title: '' })
     expect(create).toHaveBeenCalledWith({ directory: '/p', permission: [rule] })
   })
+
+  test('replyPermission forwards rejection feedback only when given', async () => {
+    const reply = vi.fn(async () => ({ data: true }))
+    const ops = openCodeSessionOperations(fakeClient({}, { reply }))
+    await ops.replyPermission({ requestId: 'r1', directory: '/p', reply: 'reject', message: 'away' })
+    expect(reply).toHaveBeenCalledWith({ requestID: 'r1', directory: '/p', reply: 'reject', message: 'away' })
+  })
+
+  test('get, abort and setTitle omit directory when the caller does', async () => {
+    const get = vi.fn(async () => ({ data: { id: 's1', title: 'T' } }))
+    const abort = vi.fn(async () => ({ data: true }))
+    const update = vi.fn(async () => ({ data: {} }))
+    const ops = openCodeSessionOperations(fakeClient({ get, abort, update }))
+    await ops.get({ sessionId: 's1' })
+    await ops.abort({ sessionId: 's1' })
+    await ops.setTitle?.({ sessionId: 's1', title: 'New' })
+    expect(get).toHaveBeenCalledWith({ sessionID: 's1' })
+    expect(abort).toHaveBeenCalledWith({ sessionID: 's1' })
+    expect(update).toHaveBeenCalledWith({ sessionID: 's1', title: 'New' })
+  })
+
+  test('questions list pending requests by session; replyQuestion maps ids', async () => {
+    const list = vi.fn(async () => ({ data: [{ id: 'q1', sessionID: 's1', questions: [] }] }))
+    const reply = vi.fn(async () => ({ data: true }))
+    const client = { session: {}, permission: {}, question: { list, reply } } as unknown as OpencodeClient
+    const ops = openCodeSessionOperations(client)
+    expect(await ops.questions?.({ directory: '/p' })).toEqual([{ id: 'q1', sessionId: 's1' }])
+    expect(list).toHaveBeenCalledWith({ directory: '/p' })
+    expect(await ops.replyQuestion?.({ requestId: 'q1', directory: '/p', answers: [['yes']] })).toBeUndefined()
+    expect(reply).toHaveBeenCalledWith({ requestID: 'q1', directory: '/p', answers: [['yes']] })
+  })
+
+  test('a rejected question reply is an AgentRequestError', async () => {
+    const reply = vi.fn(async () => ({ error: { data: { message: 'gone' } } }))
+    const client = { session: {}, permission: {}, question: { reply } } as unknown as OpencodeClient
+    const result = await openCodeSessionOperations(client).replyQuestion?.({ requestId: 'q1', directory: '/p', answers: [] })
+    expect(result).toBeInstanceOf(AgentRequestError)
+  })
 })
 
 test('toOpenCodeBackend caches one backend per client', () => {

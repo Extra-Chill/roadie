@@ -4,7 +4,7 @@
 //
 // The `directory` stored in PendingPermissionContext is the session directory
 // (sdkDirectory), which is the thread's working directory when it has one.
-// This is used for both getOpencodeClient() (so the client header matches)
+// This is used for both the agent backend lookup (so the client header matches)
 // and for explicit `directory` params in SDK calls.
 
 import { matchesPermissionPattern } from '../permission-policy.js'
@@ -17,12 +17,20 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { AgentPermissionRequest } from '../agent-backend/events.js'
-import { getOpencodeClient } from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError, type AgentBackend } from '../agent-backend/types.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+
+/**
+ * Permission replies used to ignore OpenCode's rejection responses and only
+ * fail on transport errors. Keep that: rethrow anything but a rejection.
+ */
+function throwUnlessRejected(result: void | Error): void {
+  if (result instanceof Error && !(result instanceof AgentRequestError)) throw result
+}
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
@@ -31,7 +39,7 @@ async function resumeSessionIfIdleAfterPermission({
   sessionId,
   directory,
 }: {
-  client: OpencodeClient
+  client: AgentBackend
   sessionId: string
   directory: string
 }): Promise<Error | boolean> {
@@ -39,24 +47,26 @@ async function resumeSessionIfIdleAfterPermission({
     setTimeout(resolve, 100)
   })
 
-  const statusResponse = await client.session.status({ directory })
-  if (statusResponse.error) {
+  const statuses = await client.sessions.status({ directory })
+  if (statuses instanceof AgentRequestError) {
     return new Error('Failed to check session status')
   }
+  if (statuses instanceof Error) throw statuses
 
-  const sessionStatus = statusResponse.data?.[sessionId]
-  if (!sessionStatus || sessionStatus.type !== 'idle') {
+  const sessionStatus = statuses[sessionId]
+  if (!sessionStatus || sessionStatus.state !== 'idle') {
     return false
   }
 
-  const resumeResponse = await client.session.promptAsync({
-    sessionID: sessionId,
+  const resumeResult = await client.sessions.prompt({
+    sessionId,
     directory,
     parts: [],
   })
-  if (resumeResponse.error) {
+  if (resumeResult instanceof AgentRequestError) {
     return new Error('Failed to resume session')
   }
+  if (resumeResult instanceof Error) throw resumeResult
 
   return true
 }
@@ -153,7 +163,7 @@ export async function showPermissionButtons({
     if (!ctx) {
       return
     }
-    const client = getOpencodeClient(ctx.directory)
+    const client = getAgentBackendProvider().getBackend(ctx.directory)
     if (client) {
       const requestIds = ctx.requestIds.length > 0
         ? ctx.requestIds
@@ -165,12 +175,12 @@ export async function showPermissionButtons({
         `If not, continue normally — work around it, skip the tool, or use an alternative approach.`
       await Promise.all(
         requestIds.map((requestId) => {
-          return client.permission.reply({
-            requestID: requestId,
+          return client.sessions.replyPermission({
+            requestId,
             directory: ctx.directory,
             reply: 'reject',
             message: timeoutFeedback,
-          })
+          }).then(throwUnlessRejected)
         }),
       ).catch((error) => {
         logger.error('Failed to auto-reject expired permission:', error)
@@ -280,7 +290,7 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
       continue
     }
 
-    const client = getOpencodeClient(pendingContext.directory)
+    const client = getAgentBackendProvider().getBackend(pendingContext.directory)
     if (!client) {
       pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
       logger.error('Failed to dismiss pending permission: OpenCode server not found')
@@ -293,11 +303,11 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
 
     const result = await Promise.all(
       requestIds.map((requestId) => {
-        return client.permission.reply({
-          requestID: requestId,
+        return client.sessions.replyPermission({
+          requestId,
           directory: pendingContext.directory,
           reply: 'reject',
-        })
+        }).then(throwUnlessRejected)
       }),
     ).then(() => {
       return 'ok' as const
@@ -358,7 +368,7 @@ export async function handlePermissionButton(
   await interaction.deferUpdate()
 
   try {
-    const permClient = getOpencodeClient(context.directory)
+    const permClient = getAgentBackendProvider().getBackend(context.directory)
     if (!permClient) {
       throw new Error('OpenCode server not found for directory')
     }
@@ -368,11 +378,11 @@ export async function handlePermissionButton(
         : [context.permission.id]
     await Promise.all(
       requestIds.map((requestId) => {
-        return permClient.permission.reply({
-          requestID: requestId,
+        return permClient.sessions.replyPermission({
+          requestId,
           directory: context.directory,
           reply: response,
-        })
+        }).then(throwUnlessRejected)
       }),
     )
 

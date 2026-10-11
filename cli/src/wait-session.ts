@@ -4,9 +4,9 @@
 // permission) OR pauses for a user question. A session parked on a `question`
 // tool never completes on its own, so it is treated as done for automation.
 
-import { toAgentMessage } from './agent-backend/opencode-events.js'
+import type { AgentMessage } from './agent-backend/events.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { parsePersistedEvents } from './session-handler/persisted-events.js'
-import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { ShareMarkdown } from './markdown.js'
@@ -71,25 +71,25 @@ export async function waitForSessionComplete({
   const startTime = Date.now()
   let completedSinceMs: number | null = null
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
+  const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  if (getBackend instanceof Error) {
     throw new Error(
-      `Failed to connect to OpenCode server: ${getClient.message}`,
+      `Failed to connect to OpenCode server: ${getBackend.message}`,
       {
-        cause: getClient,
+        cause: getBackend,
       },
     )
   }
 
   while (Date.now() - startTime < timeoutMs) {
-    const statusResponse = await getClient().session.status({
+    const statuses = await getBackend().sessions.status({
       directory: projectDirectory,
     })
-    if (statusResponse.error) {
-      throw new Error('Failed to check session status')
+    if (statuses instanceof Error) {
+      throw new Error('Failed to check session status', { cause: statuses })
     }
-    const sessionStatus = statusResponse.data?.[sessionId]
-    const isBusy = Boolean(sessionStatus && sessionStatus.type !== 'idle')
+    const sessionStatus = statuses[sessionId]
+    const isBusy = Boolean(sessionStatus && sessionStatus.state !== 'idle')
 
     // A session parked on a `question` tool reports busy but will never complete
     // on its own, so treat a live question as done for automation and stop
@@ -97,11 +97,9 @@ export async function waitForSessionComplete({
     // (session idle) must fall through to the normal idle/completion checks
     // instead of returning early.
     if (isBusy) {
-      const questionsResponse = await getClient().question
-        .list({ directory: projectDirectory })
-        .catch(() => null)
-      const hasPendingQuestion = (questionsResponse?.data || []).some((request) => {
-        return request.sessionID === sessionId
+      const questions = await getBackend().sessions.questions?.({ directory: projectDirectory })
+      const hasPendingQuestion = (questions instanceof Error ? [] : questions ?? []).some((request) => {
+        return request.sessionId === sessionId
       })
       if (hasPendingQuestion) {
         waitLogger.log(`Session ${sessionId} is showing a user question; treating as complete`)
@@ -109,18 +107,18 @@ export async function waitForSessionComplete({
       }
     }
 
-    const messagesResponse = await getClient().session.messages({
-      sessionID: sessionId,
+    const messagesResult = await getBackend().sessions.messages({
+      sessionId,
       directory: projectDirectory,
     })
-    const messages = messagesResponse.data || []
+    const messages = messagesResult instanceof Error ? [] : messagesResult.map((entry) => entry.message)
     const events = await loadPersistedSessionEvents({ sessionId })
     const pendingPermissions = derivePendingPermissionRequests({
       events,
       sessionId,
     })
 
-    const isIdle = !sessionStatus || sessionStatus.type === 'idle'
+    const isIdle = !sessionStatus || sessionStatus.state === 'idle'
     const hasPendingPermissions = pendingPermissions.length > 0
     const hasCompletedTurn = hasCompletedUserTurn({
       messages,
@@ -224,17 +222,16 @@ function hasCompletedUserTurn({
   sessionId,
   waitStartedAtMs,
 }: {
-  messages: Array<{ info: OpenCodeMessage }>
+  messages: AgentMessage[]
   sessionId: string
   waitStartedAtMs: number
 }): boolean {
   const latestUserMessage = [...messages]
     .reverse()
-    .map((message) => message.info)
     .find((message) => {
-      return message.sessionID === sessionId
+      return message.sessionId === sessionId
         && message.role === 'user'
-        && message.time.created >= waitStartedAtMs
+        && message.createdAt >= waitStartedAtMs
     })
   if (!latestUserMessage) {
     return false
@@ -242,17 +239,16 @@ function hasCompletedUserTurn({
 
   const latestAssistant = [...messages]
     .reverse()
-    .map((message) => message.info)
-    .find((message): message is Extract<OpenCodeMessage, { role: 'assistant' }> => {
-      return message.sessionID === sessionId
+    .find((message) => {
+      return message.sessionId === sessionId
         && message.role === 'assistant'
-        && message.parentID === latestUserMessage.id
+        && message.parentId === latestUserMessage.id
     })
   if (!latestAssistant) {
     return false
   }
 
-  return isAssistantMessageNaturalCompletion({ message: toAgentMessage(latestAssistant) })
+  return isAssistantMessageNaturalCompletion({ message: latestAssistant })
 }
 
 /**

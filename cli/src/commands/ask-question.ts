@@ -11,7 +11,8 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { getOpencodeClient } from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError } from '../agent-backend/types.js'
 import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
@@ -207,11 +208,12 @@ export async function showAskUserQuestionDropdowns({
     if (sendResult instanceof Error) {
       logger.error('Failed to send question dropdown:', sendResult)
       deletePendingQuestionContextsForRequest({ threadId: thread.id, requestId })
-      const client = getOpencodeClient(directory)
+      const client = getAgentBackendProvider().getBackend(directory)
       if (client) {
-        await client.session.abort({ sessionID: sessionId }).catch((error) => {
-          logger.error('Failed to abort session after question send failure:', error)
-        })
+        const abortResult = await client.sessions.abort({ sessionId })
+        if (abortResult instanceof Error) {
+          logger.error('Failed to abort session after question send failure:', abortResult)
+        }
       }
       return
     }
@@ -368,7 +370,7 @@ async function resumeSessionWithAnswers(
 async function submitQuestionAnswers(
   context: PendingQuestionContext,
 ): Promise<void> {
-  const client = getOpencodeClient(context.directory)
+  const client = getAgentBackendProvider().getBackend(context.directory)
   if (!client) {
     logger.error('OpenCode server not found for directory')
     return
@@ -388,12 +390,13 @@ async function submitQuestionAnswers(
     return context.answers[i] || []
   })
 
-  // throwOnError is off on this client, so failures come back in `.error`.
-  const replyResult = await client.question
-    .reply({ requestID: context.requestId, directory: context.directory, answers })
-    .catch((error) => ({ error }))
+  // A backend without a question tool cannot take the reply; resuming with the
+  // answers below still gets them to the model.
+  const replyResult = client.sessions.replyQuestion
+    ? await client.sessions.replyQuestion({ requestId: context.requestId, directory: context.directory, answers })
+    : new Error('Agent backend cannot reply to questions')
 
-  if (!replyResult.error) {
+  if (!(replyResult instanceof Error)) {
     logger.log(
       `Submitted answers for question ${context.requestId} in session ${context.sessionId}`,
     )
@@ -501,20 +504,28 @@ export async function cancelPendingQuestion(
   }
 
   try {
-    const client = getOpencodeClient(context.directory)
+    const client = getAgentBackendProvider().getBackend(context.directory)
     if (!client) {
       throw new Error('OpenCode server not found for directory')
+    }
+    if (!client.sessions.replyQuestion) {
+      throw new Error('Agent backend cannot reply to questions')
     }
 
     const answers = context.questions.map((_, i) => {
       return context.answers[i] || [userMessage]
     })
 
-    await client.question.reply({
-      requestID: context.requestId,
+    // A rejected reply used to be ignored here; only a transport failure
+    // reached the catch below. Keep that.
+    const replyResult = await client.sessions.replyQuestion({
+      requestId: context.requestId,
       directory: context.directory,
       answers,
     })
+    if (replyResult instanceof Error && !(replyResult instanceof AgentRequestError)) {
+      throw replyResult
+    }
 
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {

@@ -39,11 +39,17 @@ export type AgentSessionMessage = { message: AgentMessage; parts: AgentPart[] }
 export type AgentSessionOperations = {
   /** A bounded title-only model request, without the source conversation. */
   generateTitle?(input: { directory: string; prompt: string }): Promise<string | Error>
-  /** Optional backend title mutation; it never starts an agent/model turn. */
-  setTitle?(input: { sessionId: string; directory: string; title: string }): Promise<void | Error>
+  /**
+   * Optional backend title mutation; it never starts an agent/model turn.
+   * Omit `directory` to let the backend resolve the session by id alone.
+   */
+  setTitle?(input: { sessionId: string; directory?: string; title: string }): Promise<void | Error>
   create(input: { directory: string; permission?: AgentPermissionRule[] }): Promise<AgentSession | Error>
-  /** Undefined when the backend has no such session. */
-  get(input: { sessionId: string; directory: string }): Promise<AgentSession | undefined | Error>
+  /**
+   * Undefined when the backend has no such session. Omit `directory` to let
+   * the backend resolve the session by id alone.
+   */
+  get(input: { sessionId: string; directory?: string }): Promise<AgentSession | undefined | Error>
   setPermissions(input: { sessionId: string; permission: AgentPermissionRule[] }): Promise<void | Error>
   messages(input: { sessionId: string; directory: string }): Promise<AgentSessionMessage[] | Error>
   /** Queue a prompt. Resolves once accepted; output arrives as events. */
@@ -71,14 +77,34 @@ export type AgentSessionOperations = {
     },
     options?: { signal?: AbortSignal },
   ): Promise<void | Error>
-  abort(input: { sessionId: string; directory: string }): Promise<void | Error>
+  /** Omit `directory` to let the backend resolve the session by id alone. */
+  abort(input: { sessionId: string; directory?: string }): Promise<void | Error>
   /** Status of every session with a known status; absent means idle. */
   status(input: { directory: string }): Promise<Record<string, AgentStatus> | Error>
   replyPermission(input: {
     requestId: string
     directory: string
     reply: 'once' | 'always' | 'reject'
+    /** Feedback for the agent, sent with a rejection. */
+    message?: string
   }): Promise<void | Error>
+  /**
+   * Questions the agent is waiting on, across sessions in `directory`.
+   * Absent when the backend has no question tool.
+   */
+  questions?(input: { directory: string }): Promise<AgentQuestionRequest[] | Error>
+  /** Answer a pending question. One answer list per question, in order. */
+  replyQuestion?(input: {
+    requestId: string
+    directory: string
+    answers: string[][]
+  }): Promise<void | Error>
+}
+
+/** A question the agent asked and is blocked on. */
+export type AgentQuestionRequest = {
+  id: string
+  sessionId: string
 }
 
 /** A model a provider offers. */
