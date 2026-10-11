@@ -103,6 +103,7 @@ import {
   setThreadSession,
   getThreadParentSessionId,
   setThreadParentSessionId,
+  getSessionForkOrigin,
   getThreadWorkingDirectory,
   setSessionAgent,
   setSessionModel,
@@ -160,7 +161,7 @@ import {
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
-  isSystemPromptForSession,
+  systemPromptNamesOtherSession,
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
   type AgentInfo,
@@ -3930,7 +3931,8 @@ export class ThreadSessionRuntime {
         workingDirectory,
         currentAgent: resolvedAgent,
         workingDirectoryChanged,
-        systemPromptFromSourceSession: !isSystemPromptForSession({ system, sessionId: session.id }),
+        systemPromptFromSourceSession: systemPromptNamesOtherSession({ system, sessionId: session.id }),
+        forkOrigin: await getSessionForkOrigin(session.id),
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
       const turnContext = await this.resolveTurnContext({
@@ -4946,7 +4948,8 @@ export class ThreadSessionRuntime {
       await this.chat.sendMessage(`✗ Failed to prepare system prompt: ${system.message}`, { notify: true })
       return false
     }
-    const systemPromptFromSourceSession = !isSystemPromptForSession({ system, sessionId: session.id })
+    const systemPromptFromSourceSession = systemPromptNamesOtherSession({ system, sessionId: session.id })
+    const forkOrigin = await getSessionForkOrigin(session.id)
     const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
     const syntheticContext = getOpencodePromptContext({
       platform: this.chat.platform,
@@ -4962,6 +4965,7 @@ export class ThreadSessionRuntime {
       currentAgent: earlyAgentPreference,
       workingDirectoryChanged,
       systemPromptFromSourceSession,
+      forkOrigin,
       parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
     })
     const turnContext = await this.resolveTurnContext({
@@ -4997,6 +5001,7 @@ export class ThreadSessionRuntime {
         threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
         systemPromptFromSourceSession,
+        forkOrigin,
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
       await this.recordTurnAttribution({ sessionId: session.id, input })

@@ -190,6 +190,32 @@ export function isSystemPromptForSession({
   return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
 }
 
+/**
+ * True when the pinned system prompt names a session ID other than this one.
+ * Prompts without a session line (managed prompt configs) name no session.
+ */
+export function systemPromptNamesOtherSession({
+  system,
+  sessionId,
+}: {
+  system: string
+  sessionId: string
+}) {
+  return system.split('\n').some((line) => {
+    return line.startsWith(SESSION_ID_LINE_PREFIX) && line !== `${SESSION_ID_LINE_PREFIX}${sessionId}`
+  })
+}
+
+/** Where a forked session came from, persisted when the fork is created. */
+export type ForkOrigin = {
+  sourceSessionId: string
+  sourceThreadId: string
+}
+
+function getForkOriginNotice({ sourceSessionId, sourceThreadId }: ForkOrigin): string {
+  return `This session was forked from thread ${sourceThreadId} (session ${sourceSessionId}). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.`
+}
+
 /** A thread bound to a directory other than its project root. */
 export type WorkingDirectoryInfo = {
   /** Where the session works (cwd). */
@@ -350,14 +376,17 @@ export function getOpencodePromptContext({
   workingDirectoryChanged,
   systemPromptFromSourceSession,
   parentSessionId,
+  forkOrigin,
 }: {
   platform?: string
   sessionId?: string
   threadId?: string
   /** Set only when the pinned system prompt does not name this parent yet. */
   parentSessionId?: string
-  /** Fork reuses the source session's system prompt, so its IDs are stale. */
+  /** The pinned system prompt names a different session, so its IDs are stale. */
   systemPromptFromSourceSession?: boolean
+  /** Persisted origin of a forked session; shown on every turn. */
+  forkOrigin?: ForkOrigin
   username?: string
   userId?: string
   sourceMessageId?: string
@@ -392,9 +421,10 @@ export function getOpencodePromptContext({
     ...(threadId
       ? [`Your current ${platform === 'discord' ? 'Discord' : 'Slack'} thread ID is: ${threadId}`]
       : []),
+    ...(forkOrigin ? [getForkOriginNotice(forkOrigin)] : []),
     ...(systemPromptFromSourceSession && (sessionId || threadId)
       ? [
-          'This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).',
+          `${forkOrigin ? '' : 'This session was forked. '}The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).`,
         ]
       : []),
     ...(parentSessionId ? [getParentSessionInstructions(parentSessionId)] : []),

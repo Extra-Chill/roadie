@@ -52,7 +52,7 @@ import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
-import { setThreadSession } from './database.js'
+import { recordSessionForkOrigin, setThreadSession } from './database.js'
 import { copySessionPreferences } from './commands/model.js'
 import { copySessionSystemPrompt } from './system-message.js'
 import {
@@ -1227,6 +1227,11 @@ export class NativeSlackBot {
         threadTs: root.id,
       })
       await setThreadSession(id, forked.data.id)
+      await recordSessionForkOrigin({
+        sessionId: forked.data.id,
+        sourceSessionId: sessionId,
+        sourceThreadId: runtime.threadId,
+      })
       await markPendingForkTitle(forked.data)
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (workspace.binding) {

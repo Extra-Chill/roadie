@@ -237,6 +237,13 @@ CREATE TABLE IF NOT EXISTS `session_events` (
 	CONSTRAINT `fk_session_events_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `session_fork_origins` (
+	`session_id` text PRIMARY KEY,
+	`source_session_id` text NOT NULL,
+	`source_thread_id` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `session_models` (
 	`session_id` text PRIMARY KEY,
 	`model_id` text NOT NULL,

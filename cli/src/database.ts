@@ -779,6 +779,28 @@ export async function getThreadSession(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId } }))?.session_id
 }
 
+/** Records which session and thread a fork was created from. */
+export async function recordSessionForkOrigin({
+  sessionId,
+  sourceSessionId,
+  sourceThreadId,
+}: {
+  sessionId: string
+  sourceSessionId: string
+  sourceThreadId: string
+}) {
+  const db = await getDb()
+  await db.insert(schema.session_fork_origins)
+    .values({ session_id: sessionId, source_session_id: sourceSessionId, source_thread_id: sourceThreadId })
+    .onConflictDoNothing()
+}
+
+export async function getSessionForkOrigin(sessionId: string) {
+  const db = await getDb()
+  const row = await db.query.session_fork_origins.findFirst({ where: { session_id: sessionId } })
+  return row ? { sourceSessionId: row.source_session_id, sourceThreadId: row.source_thread_id } : undefined
+}
+
 export async function insertThreadQueueItem({
   queueId,
   threadId,

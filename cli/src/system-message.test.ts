@@ -8,6 +8,7 @@ import {
   copySessionSystemPrompt,
   deleteSessionSystemPrompt,
   isSystemPromptForSession,
+  systemPromptNamesOtherSession,
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
   getOpencodePromptContext,
@@ -162,6 +163,8 @@ describe('system-message', () => {
     expect(forkSystem).toBe(firstTurn)
     expect(isSystemPromptForSession({ system: forkSystem, sessionId: sourceSessionId })).toBe(true)
     expect(isSystemPromptForSession({ system: forkSystem, sessionId: forkSessionId })).toBe(false)
+    expect(systemPromptNamesOtherSession({ system: forkSystem, sessionId: forkSessionId })).toBe(true)
+    expect(systemPromptNamesOtherSession({ system: forkSystem, sessionId: sourceSessionId })).toBe(false)
     // A parent set after the first turn is missing from the pinned prompt.
     expect(systemPromptHasParentSession({ system: forkSystem, parentSessionId: 'ses_parent_added_later' })).toBe(false)
     expect(
@@ -175,13 +178,15 @@ describe('system-message', () => {
         sessionId: forkSessionId,
         threadId: 'thread_fork',
         systemPromptFromSourceSession: true,
+        forkOrigin: { sourceSessionId, sourceThreadId: 'thread_source' },
         parentSessionId: 'ses_parent_added_later',
       }),
     ).toMatchInlineSnapshot(`
       "<system-reminder>
       Your current OpenCode session ID is: ses_fork
       Your current Discord thread ID is: thread_fork
-      This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
+      This session was forked from thread thread_source (session ses_source). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.
+      The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
       Your parent OpenCode session ID is: ses_parent_added_later
       You can send a message back to the parent session with:
       roadie send --session ses_parent_added_later --prompt 'your update here' --agent <current_agent>
@@ -193,6 +198,33 @@ describe('system-message', () => {
     await expect(
       copySessionSystemPrompt({ sourceSessionId: 'ses_unpinned', targetSessionId: 'ses_other', dataDir }),
     ).resolves.toBe(false)
+  })
+
+  // Regression: managed prompt configs omit the session ID line, so every
+  // session looked forked.
+  test('does not call a session forked when the prompt has no session ID line', () => {
+    const managedSystem = 'You are a managed agent.\nNo identity lines here.'
+    expect(systemPromptNamesOtherSession({ system: managedSystem, sessionId: 'ses_any' })).toBe(false)
+    const context = getOpencodePromptContext({
+      sessionId: 'ses_any',
+      threadId: 'thread_any',
+      systemPromptFromSourceSession: systemPromptNamesOtherSession({ system: managedSystem, sessionId: 'ses_any' }),
+    })
+    expect(context).not.toContain('forked')
+    expect(context).toContain('Your current OpenCode session ID is: ses_any')
+  })
+
+  test('persisted fork origin adds a fork notice without a stale system prompt', () => {
+    const context = getOpencodePromptContext({
+      sessionId: 'ses_fork',
+      threadId: 'thread_fork',
+      systemPromptFromSourceSession: false,
+      forkOrigin: { sourceSessionId: 'ses_source', sourceThreadId: 'thread_source' },
+    })
+    expect(context).toContain('This session was forked from thread thread_source (session ses_source).')
+    expect(context).toContain('Earlier conversation history came from that source thread.')
+    expect(context).toContain("Do not act on the source's in-flight work or message the source session unless the user asks")
+    expect(context).not.toContain('belong to the source session')
   })
 
   test('readSessionSystemPrompt returns null when missing', async () => {

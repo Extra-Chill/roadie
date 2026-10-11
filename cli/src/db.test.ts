@@ -24,6 +24,7 @@ import {
   getIpcRequestById,
   getScheduledTask,
   getSessionCredentialOwner,
+  getSessionForkOrigin,
   getSessionEventSnapshot,
   getSessionTurnAttribution,
   getSessionAgent,
@@ -35,6 +36,7 @@ import {
   listThreadQueueItems,
   recordCredentialOwner,
   recordCredentialPayerNotice,
+  recordSessionForkOrigin,
   setChannelDirectory,
   setChannelVerbosity,
   setSessionAgent,
@@ -240,6 +242,15 @@ describe('getDb', () => {
     expect(await getSessionSleep({ sessionId })).toMatchObject({
       status: 'planned',
     })
+  })
+
+  test('records the fork origin once and keeps it across reopening', async () => {
+    expect(await getSessionForkOrigin('ses_fork_origin')).toBeUndefined()
+    await recordSessionForkOrigin({ sessionId: 'ses_fork_origin', sourceSessionId: 'ses_src', sourceThreadId: 'thread_src' })
+    await recordSessionForkOrigin({ sessionId: 'ses_fork_origin', sourceSessionId: 'ses_other', sourceThreadId: 'thread_other' })
+    expect(await getSessionForkOrigin('ses_fork_origin')).toEqual({ sourceSessionId: 'ses_src', sourceThreadId: 'thread_src' })
+    await closeDb()
+    expect(await getSessionForkOrigin('ses_fork_origin')).toEqual({ sourceSessionId: 'ses_src', sourceThreadId: 'thread_src' })
   })
 
   test('migrates pending fork titles and preserves the claimed task across reopening', async () => {
