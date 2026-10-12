@@ -25,8 +25,8 @@ import {
   collectSessionChunks,
   batchChunksForDiscord,
 } from '../message-formatting.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError } from '../agent-backend/types.js'
 import {
   getDerivedSubagentSessions,
   type EventBufferEntry,
@@ -189,7 +189,7 @@ export async function handleForkSubagentSelectMenu(
     return candidate.childSessionId === selectedSessionId
   })
 
-  const getClient = await initializeOpencodeForDirectory(
+  const getClient = await getAgentBackendProvider().initializeForDirectory(
     resolved.projectDirectory,
   )
   if (getClient instanceof Error) {
@@ -197,10 +197,8 @@ export async function handleForkSubagentSelectMenu(
     return
   }
 
-  const backend = getAgentBackendProvider().getBackend(resolved.projectDirectory)
-  const forkedSession = backend
-    ? await backend.sessions.fork({ sessionId: selectedSessionId })
-    : new Error('Agent backend is unavailable')
+  const backend = getClient()
+  const forkedSession = await backend.sessions.fork({ sessionId: selectedSessionId })
   if (forkedSession instanceof Error) {
     forkLogger.error('Failed to fork subagent session:', forkedSession)
     await interaction.editReply('Failed to fork session')
@@ -240,12 +238,12 @@ export async function handleForkSubagentSelectMenu(
   )
 
   try {
-    const messagesResponse = await getClient().session.messages({
-      sessionID: forkedSession.id,
-    })
-    if (messagesResponse.data) {
+    const messages = await backend.sessions.messages({ sessionId: forkedSession.id })
+    // A rejection skipped the replay before; only a transport failure reported.
+    if (messages instanceof Error && !(messages instanceof AgentRequestError)) throw messages
+    if (!(messages instanceof Error)) {
       const { chunks } = collectSessionChunks({
-        messages: messagesResponse.data,
+        messages: messages.map(({ message, parts }) => ({ info: message, parts })),
         limit: 30,
       })
       const batched = batchChunksForDiscord(chunks)

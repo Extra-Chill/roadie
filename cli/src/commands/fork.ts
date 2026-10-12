@@ -10,7 +10,7 @@
 // works in a freshly provisioned host worktree; without one it stays in the
 // source directory.
 
-import { getAgentBackendProvider, openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { parsePersistedEvents } from '../session-handler/persisted-events.js'
 import type { EventBufferEntry } from '../session-handler/event-stream-state.js'
 import {
@@ -239,18 +239,18 @@ export async function forkSessionToThread({
       targetSessionId: forkedSession.id,
       channelId,
       appId,
-      getClient: () => ({ ...openCodeCatalogGetter(getClientResult)(), session: getClientResult().session }),
+      getClient: () => backend,
       directory: sdkDirectory,
     }),
     copySessionSystemPrompt({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
     }),
-    getClientResult().session.messages({
-      sessionID: forkedSession.id,
+    backend.sessions.messages({
+      sessionId: forkedSession.id,
       directory: forkDirectory,
       limit: 10,
-    }).catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause })),
+    }),
   ])
   if (copiedSystem instanceof Error) {
     await cleanup()
@@ -313,13 +313,13 @@ export async function forkSessionToThread({
     appId,
     sessionId: forkedSession.id,
   })
-  if (history instanceof Error || history.error) {
+  if (history instanceof Error) {
     forkLogger.warn('Could not load copied messages for fork cache diagnostics:', history)
   } else {
-    const last = history.data?.findLast(({ info }) =>
-      info.role === 'assistant' && typeof info.time.completed === 'number',
-    )?.info
-    if (last?.role === 'assistant') {
+    const last = history.findLast(({ message }) =>
+      message.role === 'assistant' && typeof message.completedAt === 'number',
+    )?.message
+    if (last) {
       runtime.seedForkPromptCacheBaseline(last)
     }
   }
@@ -425,29 +425,29 @@ export async function handleForkAutocomplete({
     await respondEmpty()
     return
   }
-  const getClient = await initializeOpencodeForDirectory(resolved.projectDirectory)
-  if (getClient instanceof Error) {
+  const getBackend = await getAgentBackendProvider().initializeForDirectory(resolved.projectDirectory)
+  if (getBackend instanceof Error) {
     await respondEmpty()
     return
   }
-  const response = await getClient().session.messages({
-    sessionID: sessionId,
+  const messages = await getBackend().sessions.messages({
+    sessionId,
     directory: resolved.workingDirectory,
   }).catch(() => undefined)
-  if (!response?.data) {
+  if (!messages || messages instanceof Error) {
     await respondEmpty()
     return
   }
   const query = interaction.options.getFocused().toLowerCase()
-  const choices = response.data
-    .filter((m) => m.info.role === 'user')
+  const choices = messages
+    .filter((m) => m.message.role === 'user')
     .flatMap((m) => {
       // Synthetic parts (context, reminders) would clutter the preview.
-      const text = m.parts.find((p) => p.type === 'text' && !p.synthetic && typeof p.text === 'string')
-      if (!text || text.type !== 'text') return []
+      const text = m.parts.find((p) => p.kind === 'text' && !p.synthetic)
+      if (!text || text.kind !== 'text') return []
       const preview = text.text.replace(/\s+/g, ' ').trim()
       if (!preview) return []
-      return [{ preview, id: m.info.id }]
+      return [{ preview, id: m.message.id }]
     })
     .reverse()
     .filter(({ preview }) => !query || preview.toLowerCase().includes(query))

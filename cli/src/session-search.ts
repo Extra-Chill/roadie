@@ -1,6 +1,9 @@
 // Session search helpers for roadie CLI commands.
 // Parses string/regex queries and builds readable snippets from matched content.
 
+import type { AgentPart } from './agent-backend/events.js'
+import type { AgentSessionMessage } from './agent-backend/types.js'
+
 export type SessionSearchPattern =
   | {
       mode: 'literal'
@@ -31,6 +34,37 @@ export type SessionSearchPart = {
     output?: unknown
     error?: string
   }
+}
+
+/** A Roadie part in the shape search reads (the shape OpenCode parts already had). */
+export function toSearchPart(part: AgentPart): SessionSearchPart {
+  switch (part.kind) {
+    case 'text':
+      return { type: 'text', text: part.text, ...(part.synthetic && { synthetic: true }) }
+    case 'reasoning':
+      return { type: 'reasoning', text: part.text }
+    case 'tool':
+      return {
+        type: 'tool',
+        tool: part.tool,
+        state: {
+          input: part.input,
+          status: part.status,
+          ...(part.output !== undefined && { output: part.output }),
+          ...(part.error !== undefined && { error: part.error }),
+        },
+      }
+    case 'file':
+      return { type: 'file', url: part.url, ...(part.filename && { filename: part.filename }) }
+    case 'other':
+      return { type: part.type }
+    default:
+      return { type: part.kind }
+  }
+}
+
+export function toSearchableMessage({ message, parts }: AgentSessionMessage): SessionSearchableMessage {
+  return { info: { role: message.role }, parts: parts.map(toSearchPart) }
 }
 
 export type SessionSearchableMessage = {

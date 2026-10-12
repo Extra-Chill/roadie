@@ -62,6 +62,8 @@ export type AgentSession = {
   updatedAt?: number
   /** The session has a pending revert (history rewound but not committed). */
   reverted?: boolean
+  /** Version of the backend that created the session, when reported. */
+  version?: string
   parentId?: string
   agent?: string
   model?: AgentModelRef

@@ -50,6 +50,13 @@ function toOpenCodeParts(parts: AgentPromptPart[]) {
   })
 }
 
+function toAgentSessionMessage(entry: { info: Parameters<typeof toAgentMessage>[0]; parts: unknown[] }) {
+  return {
+    message: toAgentMessage(entry.info),
+    parts: (entry.parts as OpenCodePart[]).map(toAgentPart),
+  }
+}
+
 function toOpenCodeModel(model: AgentModelSelection | undefined) {
   return model ? { providerID: model.providerId, modelID: model.modelId } : undefined
 }
@@ -94,8 +101,8 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
       const result = await call('session.update', () => client.session.update({ sessionID: sessionId, ...(directory !== undefined && { directory }), title }))
       return result instanceof Error ? result : undefined
     },
-    async create({ directory, permission }) {
-      const session = await call('session.create', () => client.session.create({ directory, permission }))
+    async create({ directory, permission, title }) {
+      const session = await call('session.create', () => client.session.create({ directory, permission, ...(title !== undefined && { title }) }))
       if (session instanceof Error) return session
       if (!session) return new AgentRequestError({ detail: 'OpenCode returned no session' })
       return toAgentSession(session)
@@ -109,13 +116,28 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
       const result = await call('session.update', () => client.session.update({ sessionID: sessionId, permission }))
       return result instanceof Error ? result : undefined
     },
-    async messages({ sessionId, directory }) {
-      const messages = await call('session.messages', () => client.session.messages({ sessionID: sessionId, directory }))
-      if (messages instanceof Error) return messages
-      return (messages ?? []).map((entry) => ({
-        message: toAgentMessage(entry.info),
-        parts: (entry.parts as OpenCodePart[]).map(toAgentPart),
+    async messages({ sessionId, directory, limit }) {
+      const messages = await call('session.messages', () => client.session.messages({
+        sessionID: sessionId,
+        ...(directory !== undefined && { directory }),
+        ...(limit !== undefined && { limit }),
       }))
+      if (messages instanceof Error) return messages
+      return (messages ?? []).map(toAgentSessionMessage)
+    },
+    async messagePage({ sessionId, directory, limit, before }) {
+      const response = await client.session.messages({
+        sessionID: sessionId,
+        ...(directory !== undefined && { directory }),
+        limit,
+        ...(before !== undefined && { before }),
+      }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
+      if (response instanceof Error) return response
+      if (response.error || !response.data) {
+        return new AgentRequestError({ detail: extractSdkErrorMessage(response.error as Parameters<typeof extractSdkErrorMessage>[0]) })
+      }
+      const nextCursor = response.response?.headers.get('X-Next-Cursor') ?? undefined
+      return { messages: response.data.map(toAgentSessionMessage), ...(nextCursor && { nextCursor }) }
     },
     async prompt({ sessionId, directory, parts, system, agent, model, variant, noReply }) {
       const result = await call('session.promptAsync', () => client.session.promptAsync({

@@ -64,6 +64,7 @@ export function toAgentSession(info: OpenCodeSession): AgentSession {
     ...(info.time?.created !== undefined && { createdAt: info.time.created }),
     ...(info.time?.updated !== undefined && { updatedAt: info.time.updated }),
     ...(info.revert && { reverted: true }),
+    ...(info.version && { version: info.version }),
     ...(info.parentID && { parentId: info.parentID }),
     ...(info.agent && { agent: info.agent }),
     ...(info.model && {

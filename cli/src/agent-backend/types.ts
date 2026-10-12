@@ -44,14 +44,29 @@ export type AgentSessionOperations = {
    * Omit `directory` to let the backend resolve the session by id alone.
    */
   setTitle?(input: { sessionId: string; directory?: string; title: string }): Promise<void | Error>
-  create(input: { directory: string; permission?: AgentPermissionRule[] }): Promise<AgentSession | Error>
+  create(input: { directory: string; permission?: AgentPermissionRule[]; title?: string }): Promise<AgentSession | Error>
   /**
    * Undefined when the backend has no such session. Omit `directory` to let
    * the backend resolve the session by id alone.
    */
   get(input: { sessionId: string; directory?: string }): Promise<AgentSession | undefined | Error>
   setPermissions(input: { sessionId: string; permission: AgentPermissionRule[] }): Promise<void | Error>
-  messages(input: { sessionId: string; directory: string }): Promise<AgentSessionMessage[] | Error>
+  /**
+   * Messages in order, oldest first. With `limit`, only the newest `limit`.
+   * Omit `directory` to let the backend resolve the session by id alone.
+   */
+  messages(input: { sessionId: string; directory?: string; limit?: number }): Promise<AgentSessionMessage[] | Error>
+  /**
+   * One page of messages ending before `before` (a cursor from a previous
+   * page), oldest first. `nextCursor` is set when older messages remain.
+   * Absent when the backend cannot page; callers fall back to `messages`.
+   */
+  messagePage?(input: {
+    sessionId: string
+    directory?: string
+    limit: number
+    before?: string
+  }): Promise<{ messages: AgentSessionMessage[]; nextCursor?: string } | Error>
   /** Queue a prompt. Resolves once accepted; output arrives as events. */
   prompt(input: {
     sessionId: string

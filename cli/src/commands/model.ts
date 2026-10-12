@@ -27,11 +27,10 @@ import {
   setGlobalModel,
   getVariantCascade,
 } from '../database.js'
-import type { AgentCatalog, AgentCatalogGetter } from '../agent-backend/types.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { AgentBackend, AgentCatalogGetter } from '../agent-backend/types.js'
 
-// Forks are OpenCode sessions read through its paged history API.
-type ForkHistoryGetter = () => AgentCatalog & { session: Pick<OpencodeClient['session'], 'messages'> }
+// A fork's agent is read from its own history, newest page first.
+type ForkHistoryGetter = () => Pick<AgentBackend, 'catalog' | 'sessions'>
 import { resolveWorkingDirectory } from '../discord-utils.js'
 import {
   getDefaultModel,
@@ -312,26 +311,27 @@ async function getLastUserMessageAgent({
   page?: number
 }): Promise<OpenCodeSdkError | string | undefined> {
   if (page >= LAST_USER_AGENT_MAX_PAGES) return undefined
-  const response = await (async () => {
-    return getClient().session.messages({
-      sessionID: sessionId,
-      directory,
-      limit: LAST_USER_AGENT_PAGE_SIZE,
-      before,
-    })
-  })().catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause }))
-  if (response instanceof Error) return response
-  if (response.error || !response.data) {
-    return new OpenCodeSdkError({ operation: 'session.messages', cause: response.error })
+  const result = await (async () => {
+    const sessions = getClient().sessions
+    if (sessions.messagePage) {
+      return sessions.messagePage({ sessionId, directory, limit: LAST_USER_AGENT_PAGE_SIZE, before })
+    }
+    // A backend that cannot page returns the whole history as one page.
+    const all = await sessions.messages({ sessionId, directory })
+    return all instanceof Error ? all : { messages: all }
+  })().catch((cause: unknown) => new OpenCodeSdkError({ operation: 'session.messages', cause }))
+  if (result instanceof Error) {
+    return result instanceof OpenCodeSdkError
+      ? result
+      : new OpenCodeSdkError({ operation: 'session.messages', cause: result })
   }
-  const newestUser = response.data
-    .map((message) => message.info)
-    .filter((info) => info.role === 'user')
-    .sort((a, b) => b.time.created - a.time.created)[0]
-  if (newestUser?.role === 'user') return newestUser.agent
-  const cursor = response.response.headers.get('X-Next-Cursor')
-  if (!cursor) return undefined
-  return getLastUserMessageAgent({ getClient, sessionId, directory, before: cursor, page: page + 1 })
+  const newestUser = result.messages
+    .map((entry) => entry.message)
+    .filter((message) => message.role === 'user')
+    .sort((a, b) => b.createdAt - a.createdAt)[0]
+  if (newestUser) return newestUser.agent
+  if (!result.nextCursor) return undefined
+  return getLastUserMessageAgent({ getClient, sessionId, directory, before: result.nextCursor, page: page + 1 })
 }
 
 /**

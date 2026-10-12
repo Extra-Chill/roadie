@@ -9,7 +9,7 @@
 import { resolveSessionPermissionRules } from '../permission-policy.js'
 import { forkTitlePrompt, schedulePendingForkTitle } from '../fork-title.js'
 import { doAction } from '../hooks.js'
-import { toAgentEvents, toAgentMessage } from '../agent-backend/opencode-events.js'
+import { toAgentEvents } from '../agent-backend/opencode-events.js'
 import { parsePersistedEvents } from './persisted-events.js'
 import {
   consumeInterruptedSessions,
@@ -23,10 +23,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { type Client, type ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
 import { createDiscordChatThread } from '../chat-platform/discord.js'
-import type {
-  Event as OpenCodeEvent,
-  Message as OpenCodeMessage,
-} from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -1673,9 +1670,10 @@ export class ThreadSessionRuntime {
     this.persistEventBufferDebounced.trigger()
   }
 
-  seedForkPromptCacheBaseline(message: Extract<OpenCodeMessage, { role: 'assistant' }>): void {
-    if (message.sessionID !== this.state?.sessionId || this.eventBuffer.length > 0) return
-    this.appendEventToBuffer({ type: 'message', message: toAgentMessage(message) })
+  seedForkPromptCacheBaseline(message: AgentMessage): void {
+    if (message.role !== 'assistant') return
+    if (message.sessionId !== this.state?.sessionId || this.eventBuffer.length > 0) return
+    this.appendEventToBuffer({ type: 'message', message })
   }
 
   // Queue-dispatch lifecycle markers are synthetic buffer-only events.
