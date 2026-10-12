@@ -166,7 +166,7 @@ export async function showModelVariantPicker({
     return
   }
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: targetChannelId })
   if (getClient instanceof Error) {
     await editReply({ content: getClient.message, components: [] })
     return

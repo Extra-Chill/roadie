@@ -14,7 +14,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import type { AgentMcpServerStatus } from '../agent-backend/types.js'
 import {
   resolveWorkingDirectory,
@@ -120,7 +120,7 @@ export async function handleMcpCommand({
 
   await command.deferReply({ flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS })
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(command.channel as Parameters<typeof backendChannelId>[0]) })
   if (getClient instanceof Error) {
     await command.editReply({
       content: `Failed to connect to OpenCode server: ${getClient.message}`,
@@ -213,7 +213,7 @@ export async function handleMcpSelectMenu(
 
   pendingMcpContexts.delete(contextHash)
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(interaction.channel as Parameters<typeof backendChannelId>[0]) })
   if (getClient instanceof Error) {
     await interaction.editReply({
       content: `Failed to connect to OpenCode server: ${getClient.message}`,

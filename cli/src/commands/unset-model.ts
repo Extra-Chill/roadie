@@ -108,7 +108,7 @@ export async function clearModelOverride({
   }
 
   // Get the new model that will be used
-  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: targetChannelId })
   let newModelText = 'unknown'
 
   if (!(getClient instanceof Error)) {

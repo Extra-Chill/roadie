@@ -454,12 +454,19 @@ export async function getDefaultModel({
 > {
   if (getClient instanceof Error) return undefined
 
+  // Fast path: the project's opencode.json model, read from disk. Only when the
+  // backend reports the same model, so a non-OpenCode backend (Pi, #51) is not
+  // handed a model it does not have.
   const configModel = getModelFromProjectConfig({ directory })
   if (configModel) {
-    sessionLogger.log(
-      `[MODEL] Using project config model: ${configModel.providerID}/${configModel.modelID}`,
-    )
-    return { ...configModel, source: 'opencode-config' }
+    const backendConfig = await getClient().catalog.config({ directory })
+    const backendModel = backendConfig instanceof Error ? undefined : backendConfig.model
+    if (!backendModel || backendModel === `${configModel.providerID}/${configModel.modelID}`) {
+      sessionLogger.log(
+        `[MODEL] Using project config model: ${configModel.providerID}/${configModel.modelID}`,
+      )
+      return { ...configModel, source: 'opencode-config' }
+    }
   }
 
   // Fetch connected providers to validate any model we return

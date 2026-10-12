@@ -8,7 +8,7 @@ import {
 } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError } from '../agent-backend/types.js'
 import {
   resolveWorkingDirectory,
@@ -72,7 +72,7 @@ export async function handleCompactCommand({
 
   // Ensure server is running for the base project directory
   const provider = getAgentBackendProvider()
-  const getBackend = await provider.initializeForDirectory(projectDirectory)
+  const getBackend = await provider.initializeForDirectory(projectDirectory, { channelId: backendChannelId(channel as Parameters<typeof backendChannelId>[0]) })
   if (getBackend instanceof Error) {
     await command.reply({
       content: `Failed to compact: ${getBackend.message}`,

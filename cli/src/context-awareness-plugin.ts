@@ -15,7 +15,7 @@
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import { FilesystemOperationError, OpenCodeSdkError } from './errors.js'
+import { OpenCodeSdkError } from './errors.js'
 import crypto from 'node:crypto'
 import {
   createPluginLogger,
@@ -25,7 +25,7 @@ import {
 import { setDataDir } from './config.js'
 import { createPluginClient } from './plugin-opencode-client.js'
 import { initSentry, notifyError } from './sentry.js'
-import { execAsync } from './exec-async.js'
+import { resolveGitState, shouldInjectBranch, type GitState } from './git-context.js'
 import {
   deleteSessionSystemPrompt,
   readSessionSystemPrompt,
@@ -35,12 +35,6 @@ const logger = createPluginLogger('OPENCODE')
 
 // ── Types ────────────────────────────────────────────────────────
 
-type GitState = {
-  key: string
-  kind: 'branch' | 'detached-head' | 'detached-submodule'
-  label: string
-  warning: string | null
-}
 
 // All per-session mutable state in one place. One Map entry, one delete.
 type SessionState = {
@@ -64,24 +58,8 @@ type PluginClient = {
 // These take state + fresh input and return whether to inject.
 // No side effects, no mutations — easy to test with fixtures.
 
-export function shouldInjectBranch({
-  previousGitState,
-  currentGitState,
-}: {
-  previousGitState: GitState | undefined
-  currentGitState: GitState | null
-}): { inject: false } | { inject: true; text: string } {
-  if (!currentGitState) {
-    return { inject: false }
-  }
-  if (previousGitState && previousGitState.key === currentGitState.key) {
-    return { inject: false }
-  }
-  // Trailing newline so this synthetic part does not fuse with the next text
-  // part when the model concatenates message parts.
-  const base = currentGitState.warning || `\n[current git branch is ${currentGitState.label}]`
-  return { inject: true, text: `${base}\n` }
-}
+
+export { shouldInjectBranch } from './git-context.js'
 
 export function shouldInjectPwd({
   currentDir,
@@ -119,59 +97,6 @@ export function shouldInjectPwd({
 
 // ── Impure helpers (I/O) ─────────────────────────────────────────
 
-async function resolveGitState({
-  directory,
-}: {
-  directory: string
-}): Promise<GitState | null> {
-  const branchResult = await execAsync('git symbolic-ref --short HEAD', { cwd: directory })
-    .catch((e) => new FilesystemOperationError({ operation: 'gitBranch', cause: e }))
-  if (!(branchResult instanceof Error)) {
-    const branch = branchResult.stdout.trim()
-    if (branch) {
-      return {
-        key: `branch:${branch}`,
-        kind: 'branch',
-        label: branch,
-        warning: null,
-      }
-    }
-  }
-
-  const shaResult = await execAsync('git rev-parse --short HEAD', { cwd: directory })
-    .catch((e) => new FilesystemOperationError({ operation: 'gitRevParse', cause: e }))
-  if (shaResult instanceof Error) return null
-
-  const shortSha = shaResult.stdout.trim()
-  if (!shortSha) {
-    return null
-  }
-
-  const superprojectResult = await execAsync('git rev-parse --show-superproject-working-tree', {
-    cwd: directory,
-  }).catch((e) => new FilesystemOperationError({ operation: 'gitSuperproject', cause: e }))
-  const superproject =
-    superprojectResult instanceof Error ? '' : superprojectResult.stdout.trim()
-  if (superproject) {
-    return {
-      key: `detached-submodule:${shortSha}`,
-      kind: 'detached-submodule',
-      label: `detached submodule @ ${shortSha}`,
-      warning:
-        `\n[warning: submodule is in detached HEAD at ${shortSha}. ` +
-        'create or switch to a branch before committing.]',
-    }
-  }
-
-  return {
-    key: `detached-head:${shortSha}`,
-    kind: 'detached-head',
-    label: `detached HEAD @ ${shortSha}`,
-    warning:
-      `\n[warning: repository is in detached HEAD at ${shortSha}. ` +
-      'create or switch to a branch before committing.]',
-  }
-}
 
 // Resolve the last observed session directory via the SDK.
 // Refreshed on every real user message because sessions can switch directories

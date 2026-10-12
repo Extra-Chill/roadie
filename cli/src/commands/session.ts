@@ -4,7 +4,7 @@
 // user stays in the same folder context.
 // Also owns the fresh-thread creation flow used by voice routing.
 
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -212,7 +212,7 @@ async function handleAgentAutocomplete({
   }
 
   try {
-    const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+    const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(interaction.channel as Parameters<typeof backendChannelId>[0]) ?? interaction.channelId })
     if (getBackend instanceof Error) {
       await interaction.respond([])
       return

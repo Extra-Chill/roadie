@@ -4,7 +4,7 @@
 // the prompt is sent with that agent and the session keeps that agent afterwards.
 // Optional last `variant` option sets the model thinking level for that agent.
 
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError } from '../agent-backend/types.js'
 import {
   ChatInputCommandInteraction,
@@ -295,7 +295,7 @@ async function applyQuickAgentVariant({
     return undefined
   }
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir, { channelId: context.channelId })
   if (getClient instanceof Error) return undefined
 
   const catalog = await getClient()
@@ -382,7 +382,7 @@ async function resolveAgentModelInfo({
   context: AgentCommandContext
   agentName: string
 }): Promise<CurrentModelInfo> {
-  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir, { channelId: context.channelId })
   if (getClient instanceof Error) return { type: 'none' }
   return getCurrentModelInfo({
     sessionId: context.sessionId,
@@ -409,7 +409,7 @@ export async function handleAgentCommand({
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
@@ -810,7 +810,7 @@ export async function handleQuickAgentAutocomplete({
     return
   }
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(interaction.channel as Parameters<typeof backendChannelId>[0]) ?? interaction.channelId })
   if (getClient instanceof Error) {
     await interaction.respond([])
     return

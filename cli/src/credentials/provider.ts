@@ -65,7 +65,7 @@ import {
   readPoolRotations,
   readPoolState,
   updatePoolAccountLocked,
-  withPoolLock,
+  withPoolLockAt,
   type PoolAccount,
 } from './store.js'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
@@ -85,6 +85,13 @@ import {
   rewriteRequestPayload,
   wrapResponseStream,
 } from './adapters/anthropic-oauth.js'
+import { refreshCodexToken } from './adapters/openai-codex-oauth.js'
+
+/** OAuth providers the pool can refresh, by pool provider id. */
+const OAUTH_REFRESHERS: Record<string, (input: { refreshToken: string; fetchImpl: PoolFetch }) => Promise<{ refresh: string; access: string; expires: number } | Error>> = {
+  anthropic: refreshAnthropicToken,
+  'openai-codex': refreshCodexToken,
+}
 
 // OpenCode provider id the pool provider is registered under (`provider.roadie`).
 export const ROADIE_PROVIDER_ID = 'roadie'
@@ -205,7 +212,7 @@ function fetchWithPreconnect(fetchImpl: PoolFetch): PoolFetchWithPreconnect {
  * this request without a cooldown. A returned Error never escapes as a crash;
  * it only means "skip this candidate".
  */
-async function ensureFreshOAuthAccount({
+export async function ensureFreshOAuthAccount({
   dataDir,
   poolId,
   account,
@@ -221,9 +228,9 @@ async function ensureFreshOAuthAccount({
   try {
     // Shaping and refresh are Anthropic-specific; other oauth providers have
     // no adapter yet and are dispatched with the stored access token as-is.
-    if (account.type !== 'oauth' || account.provider !== 'anthropic') return account
+    if (account.type !== 'oauth' || !OAUTH_REFRESHERS[account.provider]) return account
     if (account.expires > now + OAUTH_REFRESH_LEAD_MS) return account
-    return await withPoolLock(poolId, async () => {
+    return await withPoolLockAt(dataDir, poolId, async () => {
       // Re-read under the lock: a concurrent request may have refreshed already.
       const accounts = readPoolAccounts({ dataDir, poolId })
       if (accounts instanceof Error) return accounts
@@ -235,7 +242,7 @@ async function ensureFreshOAuthAccount({
         return new Error(`account ${latest.id} is no longer an oauth account`)
       }
       if (latest.expires > now + OAUTH_REFRESH_LEAD_MS) return latest
-      const refreshed = await refreshAnthropicToken({ refreshToken: latest.refresh, fetchImpl })
+      const refreshed = await OAUTH_REFRESHERS[latest.provider]!({ refreshToken: latest.refresh, fetchImpl })
       if (refreshed instanceof Error) {
         if (isPermanentRefreshFailure(refreshed)) {
           const cooldown = markCooldownLocked({
@@ -273,11 +280,11 @@ async function ensureFreshOAuthAccount({
  * never fails the request on its own: the next pool answers, and only when
  * every listed pool is unusable does the request fail.
  */
-type PoolResolution =
+export type PoolResolution =
   | { poolId: string; candidates: PoolCandidate[] }
   | { poolId: string; candidates: PoolCandidate[]; skipped: string }
 
-function resolvePoolListCandidates({
+export function resolvePoolListCandidates({
   poolIds,
   dataDir,
   rotationName,
@@ -374,7 +381,7 @@ function stripRoadieHeaders(
  * header, the Claude Code system prefix and tool-name rewrite in the request
  * body, and the tool-name reversal in the streamed response.
  */
-function makeAnthropicOAuthFetch({
+export function makeAnthropicOAuthFetch({
   accessToken,
   modelId,
   fetchImpl,
@@ -475,7 +482,7 @@ async function buildCandidateModel({
  * starts a fresh resolution. The candidate set itself is never expanded, so
  * fail-closed 401s and fallback lists behave exactly as without affinity.
  */
-function heldCandidate({
+export function heldCandidate({
   sessionId,
   rotationName,
   candidates,
@@ -674,7 +681,7 @@ async function routeLanguageModelCall<TResult>({
         lastRateLimitError = error
         // Cooldowns are per pool: a rate-limited account in the billed pool
         // never cools down the same provider's account in another pool.
-        const cooldown = markCooldown({
+        const cooldown = await markCooldown({
           dataDir: deps.dataDir,
           poolId: candidate.poolId,
           accountId: candidate.account.id,

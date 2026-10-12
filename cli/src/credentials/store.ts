@@ -24,6 +24,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import * as errore from 'errore'
+import lockfile from 'proper-lockfile'
 
 export const SHARED_POOL_ID = 'shared'
 export const POOL_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
@@ -84,18 +85,50 @@ export function getPoolDir({ dataDir, poolId }: { dataDir: string; poolId: strin
   return path.join(dataDir, 'credentials', poolId)
 }
 
-// ── Per-pool in-process lock ─────────────────────────────────────
+// ── Per-pool lock ────────────────────────────────────────────────
+//
+// Two layers. In process, work per pool is chained. Across processes (the
+// bot, the OpenCode server, Pi's pool proxy all read and refresh the same
+// accounts), a lock directory next to the pool serializes them: an OAuth
+// refresh rotates the refresh token, so two processes refreshing one account
+// at once would leave one holding a revoked token. A holder that dies leaves
+// a stale lock, which is taken over after POOL_LOCK_STALE_MS.
 
 const poolLocks = new Map<string, Promise<unknown>>()
 
+export const POOL_LOCK_STALE_MS = 30_000
+
+async function withFileLock<T>(lockfilePath: string, fn: () => Promise<T> | T): Promise<T> {
+  fs.mkdirSync(path.dirname(lockfilePath), { recursive: true, mode: 0o700 })
+  const release = await lockfile.lock(path.dirname(lockfilePath), {
+    lockfilePath,
+    realpath: false,
+    stale: POOL_LOCK_STALE_MS,
+    update: POOL_LOCK_STALE_MS / 3,
+    retries: { retries: 200, minTimeout: 25, maxTimeout: 250 },
+    // A lost lock only means another process may write concurrently once; it
+    // must not crash the bot (the default handler throws).
+    onCompromised: () => {},
+  })
+  try {
+    return await fn()
+  } finally {
+    await release().catch(() => {})
+  }
+}
+
 /**
- * Serialize async work per pool id within this process. The chain swallows
- * the previous task's rejection (its own caller already received it) so one
- * failed write never poisons later ones.
+ * Serialize work per pool: within this process always, and across processes
+ * when `dataDir` is given. The chain swallows the previous task's rejection
+ * (its own caller already received it) so one failed write never poisons
+ * later ones.
  */
-export async function withPoolLock<T>(poolId: string, fn: () => Promise<T> | T): Promise<T> {
+export async function withPoolLock<T>(poolId: string, fn: () => Promise<T> | T, options?: { dataDir?: string }): Promise<T> {
+  const run = options?.dataDir
+    ? () => withFileLock(path.join(options.dataDir!, 'credentials', `.${poolId}.lock`), fn)
+    : fn
   const previous = poolLocks.get(poolId) ?? Promise.resolve()
-  const task = previous.then(fn, fn)
+  const task = previous.then(run, run)
   const tail = task.then(
     () => undefined,
     () => undefined,
@@ -106,6 +139,11 @@ export async function withPoolLock<T>(poolId: string, fn: () => Promise<T> | T):
       poolLocks.delete(poolId)
     }
   })
+}
+
+/** withPoolLock across processes: the lock lives under `dataDir`. */
+export function withPoolLockAt<T>(dataDir: string, poolId: string, fn: () => Promise<T> | T): Promise<T> {
+  return withPoolLock(poolId, fn, { dataDir })
 }
 
 // ── File primitives ──────────────────────────────────────────────
@@ -270,7 +308,7 @@ export async function addPoolAccount({
   if (!trimmedKey) {
     return new Error('Account key is required')
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
     const duplicate = isDuplicate ? accounts.find(isDuplicate) : undefined
     if (duplicate) return new DuplicatePoolAccountError(duplicate)
@@ -332,7 +370,7 @@ export async function addPoolOAuthAccount({
   if (!Number.isFinite(expires) || expires <= 0) {
     return new Error('Account expiry must be a positive epoch-ms number')
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
     const duplicate = isDuplicate ? accounts.find(isDuplicate) : undefined
     if (duplicate) return new DuplicatePoolAccountError(duplicate)
@@ -425,7 +463,7 @@ export async function updatePoolAccount({
   if (!Number.isFinite(expires) || expires <= 0) {
     return new Error('Account expiry must be a positive epoch-ms number')
   }
-  return await withPoolLock(poolId, () =>
+  return await withPoolLockAt(dataDir, poolId, () =>
     updatePoolAccountLocked({ dataDir, poolId, accountId, refresh, access, expires }),
   )
 }
@@ -442,7 +480,7 @@ export async function removePoolAccount({
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
     const remaining = accounts.filter((account) => account.id !== accountId)
     if (remaining.length === accounts.length) {
@@ -486,7 +524,7 @@ export async function movePoolAccount({
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const accounts = readAccountsFile({ dataDir, poolId })
     const fromIndex = accounts.findIndex((account) => account.id === accountId)
     if (fromIndex === -1) {
@@ -561,7 +599,7 @@ export async function markCooldown({
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
-  return await withPoolLock(poolId, () => markCooldownLocked({ dataDir, poolId, accountId, untilMs }))
+  return await withPoolLockAt(dataDir, poolId, () => markCooldownLocked({ dataDir, poolId, accountId, untilMs }))
 }
 
 export async function markUsed({
@@ -578,7 +616,7 @@ export async function markUsed({
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const state = readStateFile({ dataDir, poolId })
     atomicWriteFileSync({
       filePath: path.join(getPoolDir({ dataDir, poolId }), 'state.json'),
@@ -651,7 +689,7 @@ export async function setPoolRotation({
       return new Error(`Invalid rotation entry: ${entry}. Expected provider/model, e.g. anthropic/claude-sonnet-4`)
     }
   }
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const rotations = readRotationFile({ dataDir, poolId })
     if (onlyIfAbsent && rotations[name]) return 'exists'
     if (entries.length === 0) {
@@ -692,7 +730,7 @@ export async function seedPoolRotations({
     return new Error(`Invalid pool id: ${poolId}`)
   }
   if (poolId === sourcePoolId) return 0
-  return await withPoolLock(poolId, () => {
+  return await withPoolLockAt(dataDir, poolId, () => {
     const rotations = readRotationFile({ dataDir, poolId })
     if (Object.keys(rotations).length > 0) return 0
     const source = readRotationFile({ dataDir, poolId: sourcePoolId })

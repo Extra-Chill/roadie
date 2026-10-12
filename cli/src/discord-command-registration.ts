@@ -9,7 +9,7 @@ import {
   Routes,
   SlashCommandBuilder,
 } from 'discord.js'
-import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
+import type { AgentCommand } from './agent-backend/types.js'
 import { createDiscordRest } from './discord-urls.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { store, type RegisteredUserCommand } from './store.js'
@@ -32,7 +32,7 @@ export type AgentInfo = {
 }
 
 function getDiscordCommandSuffix(
-  command: OpencodeCommand,
+  command: AgentCommand,
 ): '-cmd' | '-skill' | '-mcp-prompt' {
   if (command.source === 'skill') {
     return '-skill'
@@ -480,7 +480,7 @@ export async function registerCommands({
   token: string
   appId: string
   guildIds: string[]
-  userCommands?: OpencodeCommand[]
+  userCommands?: AgentCommand[]
   agents?: AgentInfo[]
 }) {
   const commands = [
