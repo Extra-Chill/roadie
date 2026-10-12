@@ -329,6 +329,34 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     editProvider.dispose()
   }, 40_000)
 
+  test('the model hears the git branch once, and again when it changes; titles come from an isolated request', async () => {
+    const dir = path.join(root, 'git-project')
+    fs.mkdirSync(dir, { recursive: true })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir })
+    const session = await provider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    const userTexts = async (text: string) => {
+      const before = idleCount(session.id)
+      const bodies = server.bodies.length
+      await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text }] })
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+      const body = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }> }
+      return JSON.stringify(body.messages.findLast((m) => m.role === 'user')?.content)
+    }
+    expect(await userTexts('first')).toContain('[current git branch is main]')
+    expect(await userTexts('second')).not.toContain('current git branch')
+    execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: dir })
+    expect(await userTexts('third')).toContain('[current git branch is feature]')
+
+    const bodies = server.bodies.length
+    const title = await provider.getBackend().sessions.generateTitle!({ directory: dir, prompt: 'Fix the login flow' })
+    expect(title).toBe('hello from the fake model')
+    const request = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }>; tools?: unknown[] }
+    expect(JSON.stringify(request.messages[0]?.content)).toContain('Generate a concise descriptive chat title')
+    expect(request.tools ?? []).toEqual([])
+  }, 40_000)
+
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
     if (catalog instanceof Error) throw catalog

@@ -44,7 +44,7 @@ function routedSessions({
 
   return {
     generateTitle: (input) => (createInPi || !fallback?.sessions.generateTitle
-      ? Promise.resolve(new AgentRequestError({ detail: 'Title generation is not available for Pi sessions' }))
+      ? piOps.generateTitle!(input)
       : fallback.sessions.generateTitle(input)),
     create: (input) => (createInPi ? piOps.create(input) : fallback?.sessions.create(input) ?? Promise.resolve(new AgentRequestError({ detail: 'Agent backend is unavailable' }))),
     get: bySession('get'),

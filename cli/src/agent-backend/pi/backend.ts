@@ -37,6 +37,8 @@ import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { openCodeResourceArgs } from './resources.js'
 import { appendFileEditEvents, extractEditedFiles } from '../../file-edit-log.js'
+import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
+import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
 import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
 import { applyTurnAttributionEnv, resolveTurnAttribution } from '../../turn-attribution-env.js'
 
@@ -72,6 +74,8 @@ export type PiBackendOptions = {
   idleTimeoutMs?: number
   /** Roadie data dir for the file-edit log (`roadie session editors`). */
   fileEditLogDir?: string
+  /** Model for title generation (a small one), as "provider/model". Defaults to `model`. */
+  titleModel?: string
   /** Base system prompt replacing Pi's default. Defaults to ROADIE_PI_BASE_PROMPT. */
   systemPrompt?: string
   /** Load the project's AGENTS.md / CLAUDE.md files, like OpenCode. Default true. */
@@ -107,6 +111,8 @@ type RunningSession = {
   createdAt: number
   updatedAt: number
   busy: boolean
+  /** Git state last announced to the model (branch notes). */
+  gitState?: GitState
   idleTimer?: ReturnType<typeof setTimeout>
   model?: { provider: string; id: string }
   thinking?: string
@@ -313,6 +319,41 @@ export class PiBackendProvider implements AgentBackendProvider {
       // Pi writes a session file with its first entry; a fork has entries already.
       if (!fs.existsSync(state.sessionFile)) return new AgentRequestError({ detail: 'Pi fork file was not written' })
       return state
+    } finally {
+      child.kill()
+    }
+  }
+
+  /**
+   * A bounded, isolated title request: a throwaway Pi process with only Roadie's
+   * title prompt, no tools, no session, no project context.
+   */
+  private async generateTitle({ directory, prompt }: { directory: string; prompt: string }): Promise<string | Error> {
+    const model = this.options.titleModel ?? this.options.model
+    if (!model) return new AgentRequestError({ detail: 'No model configured for Pi titles' })
+    const child = new PiProcess({
+      bin: this.options.bin,
+      args: ['--no-session', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
+        '--system-prompt', TITLE_REQUEST_SYSTEM, '--model', model, '--thinking', 'off'],
+      cwd: directory,
+      env: { ...scrubbedProcessEnv(), ...this.options.env },
+    })
+    try {
+      const done = new Promise<PiMessage | undefined>((resolve) => {
+        child.onRecord((record) => {
+          if (record.type === 'agent_end') {
+            resolve((record.messages as PiMessage[] | undefined)?.findLast((m) => m.role === 'assistant'))
+          }
+        })
+        child.onExit(() => resolve(undefined))
+      })
+      const accepted = await child.request({ type: 'prompt', message: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) })
+      if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
+      const reply = await Promise.race([done, new Promise<undefined>((resolve) => setTimeout(resolve, 15_000))])
+      const text = reply && Array.isArray(reply.content)
+        ? (reply.content as Array<{ type: string; text?: string }>).flatMap((c) => (c.type === 'text' && c.text ? [c.text] : [])).join('').trim()
+        : ''
+      return text || new AgentRequestError({ detail: 'Pi returned an empty title' })
     } finally {
       child.kill()
     }
@@ -746,6 +787,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   private sessionOperations(): AgentSessionOperations {
     return {
+      generateTitle: async ({ directory, prompt }) => this.generateTitle({ directory, prompt }),
       create: async ({ directory, permission, title }) => {
         const session = await this.start({ directory, extra: [], ...(title && { title }) })
         if (session instanceof Error) return session
@@ -797,7 +839,13 @@ export class PiBackendProvider implements AgentBackendProvider {
           const set = await session.process.request({ type: 'set_thinking_level', level: variant })
           if (!(set instanceof Error)) session.thinking = variant
         }
-        const { message, images } = promptText(parts)
+        // Branch awareness, as OpenCode's context-awareness plugin: a note when the
+        // checkout's branch (or detached HEAD) differs from the last one announced.
+        const gitState = await resolveGitState({ directory: session.directory }).catch(() => null)
+        const branch = shouldInjectBranch({ previousGitState: session.gitState, currentGitState: gitState })
+        if (branch.inject) session.gitState = gitState!
+        const { message: typed, images } = promptText(parts)
+        const message = branch.inject ? `${typed}\n${branch.text}` : typed
         const accepted = await session.process.request({
           type: 'prompt',
           message,
