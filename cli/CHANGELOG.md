@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.56.1] - 2026-10-12
+
+### Fixed
+- declare image input on vision-capable pool models
+
 ## [0.56.0] - 2026-10-12
 
 ### Added
