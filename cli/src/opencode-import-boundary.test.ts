@@ -34,7 +34,6 @@ const ALLOWED: Record<string, string> = {
   // Not on the seam yet.
   'discord-command-registration.ts': 'project slash commands come from OpenCode command.list',
   'commands/restart-opencode-server.ts': 'project slash commands come from OpenCode command.list',
-  'session-handler/thread-session-runtime.ts': 'raw event type until #164 lands',
 }
 
 const SRC = import.meta.dirname
