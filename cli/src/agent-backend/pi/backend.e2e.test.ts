@@ -173,6 +173,38 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     quick.dispose()
   }, 30_000)
 
+  test('project MCP servers reach Pi; calls go through Roadie permissions', async () => {
+    const mcpProject = path.join(root, 'mcp-project')
+    fs.mkdirSync(mcpProject, { recursive: true })
+    fs.writeFileSync(path.join(mcpProject, 'opencode.json'), JSON.stringify({
+      mcp: { echo: { type: 'local', command: [process.execPath, path.join(import.meta.dirname, 'fake-mcp-server.mjs')] } },
+    }))
+    const status = await provider.getBackend().mcp!.status({ directory: mcpProject })
+    expect(status).toEqual({ echo: { status: 'connected' } })
+    const session = await provider.getBackend().sessions.create({ directory: mcpProject })
+    if (session instanceof Error) throw session
+    const run = async (text: string) => {
+      const before = idleCount(session.id)
+      await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: mcpProject, parts: [{ kind: 'text', text }] })
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+      return events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+    }
+    const allowed = await run('CALL_TOOL mcp__echo__say {"text":"from pi"}')
+    expect(allowed?.type === 'part' && allowed.part.kind === 'tool' && allowed.part.output).toContain('mcp says: from pi')
+    await provider.getBackend().sessions.setPermissions({ sessionId: session.id, permission: [{ permission: 'echo_*', pattern: '*', action: 'deny' }] })
+    const denied = await run('CALL_TOOL mcp__echo__say {"text":"blocked"}')
+    expect(denied?.type === 'part' && denied.part.kind === 'tool' && denied.part.status).toBe('error')
+  }, 40_000)
+
+  test('added and disabled MCP servers show in status', async () => {
+    const dir = path.join(root, 'mcp-added')
+    fs.mkdirSync(dir, { recursive: true })
+    await provider.getBackend().mcp!.addRemote({ directory: dir, name: 'roadie_pm_x_docs', url: 'https://example.invalid/mcp', headers: { Authorization: 'Bearer t' } })
+    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'connected' } })
+    await provider.getBackend().mcp!.disconnect({ directory: dir, name: 'roadie_pm_x_docs' })
+    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'disabled' } })
+  })
+
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
     if (catalog instanceof Error) throw catalog

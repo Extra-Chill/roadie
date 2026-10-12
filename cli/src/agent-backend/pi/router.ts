@@ -12,6 +12,7 @@ import {
   type AgentBackend,
   type AgentBackendEvent,
   type AgentBackendProvider,
+  type AgentMcpOperations,
   type AgentSessionOperations,
 } from '../types.js'
 import type { PiBackendProvider } from './backend.js'
@@ -92,11 +93,34 @@ function routedSessions({
   }
 }
 
+/** MCP across both backends: additions reach both; status merges; toggles apply where the server exists. */
+function routedMcp(fallback: AgentBackend | null, pi: PiBackendProvider): AgentMcpOperations {
+  const own = pi.getBackend().mcp!
+  const other = fallback?.mcp
+  const toggle = (name: 'connect' | 'disconnect') => async (input: { directory: string; name: string }) => {
+    const results = await Promise.all([own[name](input), other?.[name](input)])
+    return results.some((result) => result === undefined) ? undefined : (results.find((r) => r instanceof Error) ?? undefined)
+  }
+  return {
+    addRemote: async (input) => {
+      const [a, b] = await Promise.all([own.addRemote(input), other?.addRemote(input)])
+      return b instanceof Error ? b : a
+    },
+    status: async (input) => {
+      const [a, b] = await Promise.all([own.status(input), other?.status(input)])
+      return { ...(b instanceof Error ? {} : b ?? {}), ...(a instanceof Error ? {} : a) }
+    },
+    connect: toggle('connect'),
+    disconnect: toggle('disconnect'),
+  }
+}
+
 function composite(fallback: AgentBackend | null, pi: PiBackendProvider, piChannel: boolean): AgentBackend {
   const base = piChannel || !fallback ? pi.getBackend() : fallback
   return {
     ...base,
     sessions: routedSessions({ fallback, pi, createInPi: piChannel }),
+    mcp: routedMcp(fallback, pi),
   }
 }
 

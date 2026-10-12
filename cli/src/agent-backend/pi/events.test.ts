@@ -7,6 +7,7 @@ import type { AgentEvent, AgentPart } from '../events.js'
 import { PiEventTranslator, piMessageId, toAgentHistory, type PiMessage } from './events.js'
 import { splitRecords, type PiRecord } from './rpc.js'
 import { decidePermission } from './backend.js'
+import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
 
 const fixtures = path.join(import.meta.dirname, 'fixtures')
 
@@ -137,6 +138,24 @@ describe('Pi 1.x stream shape', () => {
     expect(delta).toEqual([{ type: 'part.delta', sessionId: 'ses-pi', messageId: 'pi-assistant-7', partId: 'pi-assistant-7-0', field: 'text', delta: 'hi' }])
     expect(end[0]?.type === 'part' && end[0].part.kind === 'text' && end[0].part.startedAt).toBe(7)
     expect(translator.translate({ type: 'agent_settled', aborted: false })).toEqual([])
+  })
+})
+
+describe('MCP config for Pi', () => {
+  test('OpenCode mcp entries convert to Pi servers with direct exposure', () => {
+    expect(fromOpenCodeMcp({
+      fs: { type: 'local', command: ['npx', '-y', 'server-fs', '.'], environment: { TOKEN: '{env:FS_TOKEN}' } },
+      docs: { type: 'remote', url: 'https://x/mcp', headers: { Authorization: 'Bearer {env:DOCS}' }, enabled: false },
+    })).toEqual({
+      fs: { command: 'npx', args: ['-y', 'server-fs', '.'], env: { TOKEN: '${FS_TOKEN}' }, enabled: true, exposure: 'direct' },
+      docs: { url: 'https://x/mcp', headers: { Authorization: 'Bearer ${DOCS}' }, enabled: false, exposure: 'direct' },
+    })
+  })
+  test('Pi MCP tool names map to OpenCode names, so person-scoped rules still match', () => {
+    expect(openCodeToolName('mcp__roadie_pm_abc_jira__search')).toBe('roadie_pm_abc_jira_search')
+    expect(openCodeToolName('bash')).toBe('bash')
+    const rules = [{ permission: 'roadie_pm_*', pattern: '*', action: 'deny' as const }]
+    expect(decidePermission({ rules, tool: 'mcp__roadie_pm_abc_jira__search', input: {}, cwd: '/r' }).action).toBe('deny')
   })
 })
 

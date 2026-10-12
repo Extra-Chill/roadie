@@ -33,6 +33,7 @@ import { PiEventTranslator, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
+import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
@@ -79,6 +80,7 @@ type RunningSession = {
   directory: string
   sessionFile: string
   systemFile: string
+  mcpFile: string
   process: PiProcess
   translator: PiEventTranslator
   title: string
@@ -103,7 +105,7 @@ export function permissionForToolCall({ tool, input, cwd }: { tool: string; inpu
   if (tool === 'bash') checks.push({ permission: 'bash', targets: [String(input.command ?? '')] })
   else if (tool === 'edit' || tool === 'write') checks.push({ permission: 'edit', targets: filePath ? [filePath] : [] })
   else if (tool === 'read' || tool === 'grep' || tool === 'find' || tool === 'ls') checks.push({ permission: tool === 'read' ? 'read' : tool, targets: filePath ? [filePath] : [] })
-  else checks.push({ permission: tool, targets: [] })
+  else checks.push({ permission: openCodeToolName(tool), targets: [] })
   if (filePath) {
     const resolved = path.resolve(cwd, filePath)
     const inside = resolved === cwd || resolved.startsWith(`${cwd}${path.sep}`)
@@ -170,6 +172,9 @@ export class PiBackendProvider implements AgentBackendProvider {
   private pendingQuestions = new Map<string, { sessionId: string; session: RunningSession }>()
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
   private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
+  /** Servers added through the backend (per-person MCP), and enabled-state overrides, by directory. */
+  private addedMcp = new Map<string, Record<string, PiMcpServer>>()
+  private mcpEnabled = new Map<string, Map<string, boolean>>()
   private backend: AgentBackend
   private toolsFile: string
 
@@ -184,6 +189,18 @@ export class PiBackendProvider implements AgentBackendProvider {
         config: async () => (options.model ? { model: options.model } : {}),
         agents: async () => [{ name: 'build', description: 'Pi coding agent', mode: 'primary' }],
       },
+      mcp: {
+        addRemote: async ({ directory, name, url, headers }) => {
+          this.addedMcp.set(directory, { ...this.addedMcp.get(directory), [name]: { url, headers, enabled: true, exposure: 'direct' } })
+          this.refreshMcp(directory)
+        },
+        status: async ({ directory }) => Object.fromEntries(Object.entries(this.mcpServersFor(directory)).map(([name, server]) => [
+          name,
+          { status: server.enabled ? 'connected' as const : 'disabled' as const },
+        ])),
+        connect: async ({ directory, name }) => this.setMcpEnabled(directory, name, true),
+        disconnect: async ({ directory, name }) => this.setMcpEnabled(directory, name, false),
+      },
       auth: {
         methods: async () => ({}),
         startOAuth: async () => new AgentRequestError({ detail: 'Sign in to providers with `pi` itself; Roadie does not manage Pi credentials yet.' }),
@@ -191,6 +208,14 @@ export class PiBackendProvider implements AgentBackendProvider {
         setApiKey: async () => new AgentRequestError({ detail: 'Configure Pi API keys in its auth.json; Roadie does not manage Pi credentials yet.' }),
       },
     }
+  }
+
+  private setMcpEnabled(directory: string, name: string, enabled: boolean): void | AgentRequestError {
+    if (!this.mcpServersFor(directory)[name]) return new AgentRequestError({ detail: `No MCP server ${name}` })
+    const overrides = this.mcpEnabled.get(directory) ?? new Map<string, boolean>()
+    overrides.set(name, enabled)
+    this.mcpEnabled.set(directory, overrides)
+    this.refreshMcp(directory)
   }
 
   /** Whether `sessionId` is a Pi session this provider runs or can resume. */
@@ -260,8 +285,10 @@ export class PiBackendProvider implements AgentBackendProvider {
     return [
       '--session-dir', this.options.sessionDir,
       '--system-prompt', this.options.systemPrompt ?? ROADIE_PI_BASE_PROMPT,
-      // Roadie supplies the tools, prompt and extension; Pi's own discovery stays off.
-      '--no-extensions', '--no-skills', '--no-prompt-templates',
+      // Roadie supplies the tools, prompt and extension; Pi's skill and template
+      // discovery stays off. Extensions stay on: built-in MCP is one, and the
+      // agent dir is Roadie's own.
+      '--no-skills', '--no-prompt-templates',
       ...(this.options.contextFiles === false ? ['--no-context-files'] : []),
       '-e', extensionPath(),
       ...(this.options.model ? ['--model', this.options.model] : []),
@@ -271,8 +298,11 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /** Start a Pi process and wire it to the event stream. */
   private async start({ directory, extra, title }: { directory: string; extra: string[]; title?: string }): Promise<RunningSession | Error> {
-    const systemFile = path.join(this.options.sessionDir, `system-${crypto.randomUUID()}.md`)
+    const processId = crypto.randomUUID()
+    const systemFile = path.join(this.options.sessionDir, `system-${processId}.md`)
     fs.writeFileSync(systemFile, '')
+    const mcpFile = path.join(this.options.sessionDir, `mcp-${processId}.json`)
+    writeMcpFile(mcpFile, this.mcpServersFor(directory))
     let ownSessionId: string | undefined
     const poolKey = this.options.pool?.issueKey(() => ownSessionId)
     const child = new PiProcess({
@@ -284,12 +314,14 @@ export class PiBackendProvider implements AgentBackendProvider {
         ...this.options.env,
         ROADIE_PI_SYSTEM_FILE: systemFile,
         ROADIE_PI_TOOLS_FILE: this.toolsFile,
+        ROADIE_PI_MCP_FILE: mcpFile,
         ...(poolKey && { ROADIE_PI_KEY: poolKey }),
       },
     })
     const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' })
     if (state instanceof Error) {
       child.kill()
+      fs.rmSync(mcpFile, { force: true })
       if (poolKey) this.options.pool?.revokeKey(poolKey)
       return state
     }
@@ -300,6 +332,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       directory,
       sessionFile: state.sessionFile,
       systemFile,
+      mcpFile,
       process: child,
       translator: new PiEventTranslator(state.sessionId),
       title: title ?? state.sessionName ?? this.titles.get(state.sessionId) ?? '',
@@ -317,6 +350,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       if (poolKey) this.options.pool?.revokeKey(poolKey)
       if (this.sessions.get(session.id) === session) this.sessions.delete(session.id)
       fs.rmSync(systemFile, { force: true })
+      fs.rmSync(mcpFile, { force: true })
       if (session.busy) {
         session.busy = false
         this.emit([
@@ -460,6 +494,22 @@ export class PiBackendProvider implements AgentBackendProvider {
       ? { error: result.message }
       : typeof result === 'string' ? { output: result } : result
     session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify(answer) })
+  }
+
+  private mcpServersFor(directory: string): Record<string, PiMcpServer> {
+    const servers = { ...projectMcpServers(directory), ...this.addedMcp.get(directory) }
+    for (const [name, enabled] of this.mcpEnabled.get(directory) ?? []) {
+      if (servers[name]) servers[name] = { ...servers[name], enabled }
+    }
+    return servers
+  }
+
+  /** Rewrite the MCP file of every running session in a directory; Pi picks it up before the next run. */
+  private refreshMcp(directory: string) {
+    const servers = this.mcpServersFor(directory)
+    for (const session of this.sessions.values()) {
+      if (session.directory === directory && !session.process.exited) writeMcpFile(session.mcpFile, servers)
+    }
   }
 
   private touch(session: RunningSession) {

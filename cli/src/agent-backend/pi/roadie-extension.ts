@@ -72,6 +72,8 @@ type Context = {
 type ToolSchema = { name: string; description: string; parameters: Record<string, unknown> }
 type ToolOutput = { content: Array<{ type: 'text'; text: string }>; details: { title?: string } }
 type ExtensionApi = {
+  registerMcpServer?(name: string, config: Record<string, unknown>): void
+  unregisterMcpServer?(name: string): void
   registerTool(tool: {
     name: string
     label: string
@@ -93,7 +95,39 @@ function readToolSchemas(): ToolSchema[] {
   }
 }
 
+/** Register the MCP servers Roadie wrote for this process; re-read before each run so additions apply. */
+function syncMcpServers(pi: ExtensionApi, registered: Map<string, string>) {
+  const file = process.env['ROADIE_PI_MCP_FILE']
+  if (!file || !pi.registerMcpServer || !pi.unregisterMcpServer) return
+  let servers: Record<string, Record<string, unknown>> = {}
+  try {
+    servers = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return
+  }
+  for (const [name, config] of Object.entries(servers)) {
+    const key = JSON.stringify(config)
+    if (registered.get(name) === key) continue
+    if (config.enabled === false) {
+      if (registered.has(name)) pi.unregisterMcpServer(name)
+      registered.delete(name)
+      continue
+    }
+    pi.registerMcpServer(name, config)
+    registered.set(name, key)
+  }
+  for (const name of [...registered.keys()]) {
+    if (!(name in servers)) {
+      pi.unregisterMcpServer(name)
+      registered.delete(name)
+    }
+  }
+}
+
 export default function roadieExtension(pi: ExtensionApi) {
+  const mcpServers = new Map<string, string>()
+  syncMcpServers(pi, mcpServers)
+
   pi.registerTool({
     name: 'question',
     label: 'question',
@@ -131,6 +165,7 @@ export default function roadieExtension(pi: ExtensionApi) {
   }
 
   pi.on('before_agent_start', async (event) => {
+    syncMcpServers(pi, mcpServers)
     const file = process.env['ROADIE_PI_SYSTEM_FILE']
     if (!file) return undefined
     let roadie = ''
