@@ -7,7 +7,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { AgentUsage } from '../agent-backend/events.js'
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError, type AgentSessionMessage } from '../agent-backend/types.js'
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
@@ -127,7 +127,7 @@ export async function handleContextUsageCommand({
     return
   }
 
-  const serverResult = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  const serverResult = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(channel as Parameters<typeof backendChannelId>[0]) })
   if (serverResult instanceof Error) {
     await command.reply({
       content: `Failed to get context usage: ${serverResult.message}`,

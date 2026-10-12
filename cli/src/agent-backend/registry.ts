@@ -49,6 +49,15 @@ function defaultProvider(): AgentBackendProvider {
 // Pi is added only in resolveAgentBackendProvider(), after the data dir is set.
 let currentProvider: AgentBackendProvider = withProviderFilters(openCodeBackendProvider)
 
+/**
+ * The channel a backend choice is keyed on: a thread's parent, else the channel
+ * itself. Backend selection (e.g. Pi channels) is per parent channel.
+ */
+export function backendChannelId(channel: { id: string; isThread?: () => boolean; parentId?: string | null } | null | undefined): string | undefined {
+  if (!channel) return undefined
+  return channel.isThread?.() ? (channel.parentId ?? channel.id) : channel.id
+}
+
 export function getAgentBackendProvider(): AgentBackendProvider {
   return currentProvider
 }

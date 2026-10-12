@@ -543,7 +543,7 @@ export async function handleModelCommand({
   const sessionId = thread ? await getThreadSession(thread.id) : undefined
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: targetChannelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
@@ -840,7 +840,7 @@ export async function handleProviderSelectMenu(
     context.providerPage = providerNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
@@ -877,7 +877,7 @@ export async function handleProviderSelectMenu(
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -1014,7 +1014,7 @@ export async function handleModelSelectMenu(
     context.modelPage = modelNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
@@ -1060,7 +1060,7 @@ export async function handleModelSelectMenu(
     setModelContext(contextHash, context)
 
     // Check if model has variants (thinking levels) - if so, show variant picker first
-    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (!(getClient instanceof Error)) {
       const providersResponse = await getClient().catalog.providers({
         directory: context.dir,

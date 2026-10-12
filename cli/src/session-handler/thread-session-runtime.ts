@@ -3688,7 +3688,7 @@ export class ThreadSessionRuntime {
           return
         }
         if (input.contextOnly) {
-          const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory)
+          const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory, { channelId: this.channelId })
           if (backend instanceof Error) {
             logger.warn(`[CONTEXT] Cannot record message: ${backend.message}`)
             return
@@ -4589,7 +4589,7 @@ export class ThreadSessionRuntime {
       return 'idle'
     }
     await this.hydrateSessionEventsFromDatabase({ sessionId })
-    const getClient = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory, { channelId: this.channelId })
     if (getClient instanceof Error) {
       logger.warn(
         `[QUEUE] OpenCode unavailable while restoring queue for ${this.threadId}: ${getClient.message}`,

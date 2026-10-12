@@ -239,7 +239,7 @@ export async function handleLoginCommand({
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: targetChannelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
@@ -571,7 +571,7 @@ async function handleProviderStep(
     await interaction.deferUpdate()
     ctx.providerPage = navPage
 
-    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir, { channelId: ctx.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
       return
@@ -615,7 +615,7 @@ async function handleProviderStep(
     return
   }
 
-  const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir, { channelId: ctx.channelId })
   if (getClient instanceof Error) {
     await interaction.deferUpdate()
     await interaction.editReply({ content: getClient.message, components: [] })
@@ -1068,7 +1068,7 @@ export async function handleOAuthCodeModalSubmit(
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir, { channelId: ctx.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
@@ -1142,7 +1142,7 @@ export async function handleApiKeyModalSubmit(
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir, { channelId: ctx.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
@@ -1188,7 +1188,7 @@ async function startOAuthFlow(
   }
 
   try {
-    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(ctx.dir, { channelId: ctx.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({
         content: getClient.message,
