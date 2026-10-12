@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { buildOpencodeServerConfig, buildRoadiePoolProviderConfig } from '../opencode.js'
+import { buildOpencodeServerConfig, buildRoadiePoolProviderConfig, rotationSupportsImageInput } from '../opencode.js'
 import { setPoolRotation, SHARED_POOL_ID } from './store.js'
 
 let dataDir: string
@@ -155,10 +155,55 @@ describe('buildRoadiePoolProviderConfig', () => {
     expect(config?.npm.startsWith('file://')).toBe(true)
   })
 
+  test('rotations of vision-capable upstreams declare image and PDF input', async () => {
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'opus', entries: ['anthropic/claude-opus-5-5'] })
+    await setPoolRotation({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      name: 'gpt',
+      entries: ['github-copilot/gpt-5.4', 'openai/gpt-5.1'],
+    })
+    const config = await buildRoadiePoolProviderConfig({ dataDir, isDev: false })
+    const vision = { input: ['text', 'image', 'pdf'], output: ['text'] }
+    expect(config?.models).toEqual({
+      gpt: { name: 'Roadie pool gpt', tool_call: true, attachment: true, modalities: vision },
+      opus: { name: 'Roadie pool opus', tool_call: true, attachment: true, modalities: vision },
+    })
+  })
+
+  test('a rotation with any text-only or unknown upstream stays text-only', async () => {
+    await setPoolRotation({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      name: 'mixed',
+      entries: ['anthropic/claude-sonnet-4', 'zai-coding-plan/glm-5.3-flash'],
+    })
+    const config = await buildRoadiePoolProviderConfig({ dataDir, isDev: false })
+    expect(config?.models).toEqual({ mixed: { name: 'Roadie pool mixed', tool_call: true } })
+  })
+
   test('dev mode points the npm URL at the TypeScript source', async () => {
     await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['anthropic/claude-sonnet-4'] })
     const config = await buildRoadiePoolProviderConfig({ dataDir, isDev: true, baseURL: 'http://127.0.0.1:9/v1' })
     expect(config?.npm.endsWith('credentials/provider.ts')).toBe(true)
     expect(config?.options).toEqual({ baseURL: 'http://127.0.0.1:9/v1' })
+  })
+})
+
+describe('rotationSupportsImageInput', () => {
+  test.each([
+    [['anthropic/claude-opus-5-5'], true],
+    [['openai/gpt-4o'], true],
+    [['openai/gpt-4.1-mini'], true],
+    [['github-copilot/gpt-5.3-codex'], true],
+    [['anthropic/claude-haiku-4-5', 'openai/gpt-5.1'], true],
+    [[], false],
+    [['claude-opus-5-5'], false],
+    [['anthropic/not-claude'], false],
+    [['openai/o3'], false],
+    [['zai-coding-plan/glm-5.3-flash'], false],
+    [['anthropic/claude-opus-5-5', 'xai/grok-4'], false],
+  ])('%j -> %s', (entries, expected) => {
+    expect(rotationSupportsImageInput(entries)).toBe(expected)
   })
 })
