@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.54.5] - 2026-10-12
+
+### Changed
+- catalog and MCP calls on the agent backend seam, with an OpenCode import guard
+
 ## [0.54.4] - 2026-10-12
 
 ### Changed
