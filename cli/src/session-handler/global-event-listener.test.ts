@@ -61,7 +61,10 @@ function fakeProvider() {
   return { provider, streams, restart: () => started?.({ description: 'fake backend' }) }
 }
 
-const event = (id: string) => ({ type: 'session.idle', properties: { sessionID: id } }) as unknown as AgentBackendEvent
+const event = (id: string): AgentBackendEvent => ({
+  events: [{ type: 'idle', sessionId: id }],
+  raw: { type: 'session.idle', properties: { sessionID: id } },
+})
 
 async function until(check: () => boolean) {
   for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 10))

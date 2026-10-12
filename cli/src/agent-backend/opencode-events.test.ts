@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { agentEventSessionId } from './events.js'
-import { toAgentEvent, toAgentEvents, toAgentError } from './opencode-events.js'
+import { toAgentBackendEvent, toAgentEvent, toAgentEvents, toAgentError } from './opencode-events.js'
 
 const fixturesDir = path.join(import.meta.dirname, '..', 'session-handler', 'event-stream-fixtures')
 
@@ -210,5 +210,31 @@ describe('child-session events from delegation', () => {
   test('non-delegation tools never imply child-session events', () => {
     const nonTaskOnly = loadFixtureEvents().filter((e) => !(e.type === 'message.part.updated' && e.properties.part.type === 'tool' && e.properties.part.tool === 'task'))
     expect(nonTaskOnly.flatMap(toAgentEvents).some((e) => e.type === 'child_session_started' || e.type === 'child_session_finished')).toBe(false)
+  })
+})
+
+describe('backend stream events', () => {
+  test('each OpenCode event carries its translated Roadie events and itself as raw', () => {
+    for (const event of loadFixtureEvents()) {
+      const backendEvent = toAgentBackendEvent(event)
+      expect(backendEvent.raw).toBe(event)
+      expect(backendEvent.events).toEqual(toAgentEvents(event))
+    }
+  })
+
+  test('a delegation part yields the part and its child-session event together', () => {
+    const fixture = fs
+      .readFileSync(path.join(fixturesDir, 'real-session-task-three-parallel-sleeps.jsonl'), 'utf8')
+      .split('\n')
+      .filter((line) => line.trim())
+      .map((line) => (JSON.parse(line) as { event: OpenCodeEvent }).event)
+    const withChild = fixture.map(toAgentBackendEvent).find((e) => e.events.some((a) => a.type === 'child_session_started'))
+    expect(withChild?.events[0]?.type).toBe('part')
+    expect(withChild?.events.length).toBeGreaterThan(1)
+  })
+
+  test('an event Roadie ignores yields no Roadie events but keeps its payload', () => {
+    const ignored = { type: 'lsp.updated', properties: {} } as unknown as OpenCodeEvent
+    expect(toAgentBackendEvent(ignored)).toEqual({ events: [], raw: ignored })
   })
 })
