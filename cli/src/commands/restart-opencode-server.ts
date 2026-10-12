@@ -13,7 +13,7 @@ import {
   type ThreadChannel,
   type TextChannel,
 } from 'discord.js'
-import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
+import type { AgentCommand } from '../agent-backend/types.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory, restartOpencodeServer } from '../opencode.js'
 import {
@@ -130,21 +130,23 @@ export async function handleRestartOpencodeServerCommand({
   const guildIds = [...command.client.guilds.cache.keys()]
 
   const opencodeResult = await initializeOpencodeForDirectory(projectDirectory)
-  const [userCommands, agents]: [OpencodeCommand[], AgentInfo[]] =
-    await (async (): Promise<[OpencodeCommand[], AgentInfo[]]> => {
+  const [userCommands, agents]: [AgentCommand[], AgentInfo[]] =
+    await (async (): Promise<[AgentCommand[], AgentInfo[]]> => {
       if (opencodeResult instanceof Error) {
         logger.warn('[RESTART] OpenCode init failed, registering without user commands:', opencodeResult.message)
         return [[], []]
       }
-      const getClient = opencodeResult
       const [cmds, ags] = await Promise.all([
-        getClient()
-          .command.list({ directory: projectDirectory })
-          .then((r) => r.data || [])
-          .catch((e) => {
-            logger.warn('[RESTART] Failed to load user commands:', e instanceof Error ? e.stack : String(e))
-            return [] as OpencodeCommand[]
-          }),
+        (async (): Promise<AgentCommand[]> => {
+          const catalog = getAgentBackendProvider().getBackend(projectDirectory)?.catalog
+          const commands = await catalog?.commands?.({ directory: projectDirectory })
+            .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
+          if (commands instanceof Error) {
+            logger.warn('[RESTART] Failed to load user commands:', commands.stack)
+            return []
+          }
+          return commands ?? []
+        })(),
         (async (): Promise<AgentInfo[]> => {
           const agents = await getAgentBackendProvider().getBackend(projectDirectory)?.catalog
             .agents({ directory: projectDirectory })

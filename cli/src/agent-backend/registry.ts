@@ -70,6 +70,7 @@ export function withCatalogFilters(catalog: AgentCatalogOperations): AgentCatalo
       return result instanceof Error ? result : applyFiltersAsync('agent_providers', result, input)
     },
     config: (input) => catalog.config(input),
+    ...(catalog.commands && { commands: catalog.commands.bind(catalog) }),
     async agents(input) {
       const result = await catalog.agents(input)
       return result instanceof Error ? result : applyFiltersAsync('agent_definitions', result, input)

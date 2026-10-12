@@ -184,11 +184,20 @@ export type AgentDefinition = {
 }
 
 /** Model/provider, configuration and agent listings, in Roadie terms. */
+/** A project command the backend can run by name (slash commands, skills, MCP prompts). */
+export type AgentCommand = {
+  name: string
+  description?: string
+  source?: 'command' | 'mcp' | 'skill'
+}
+
 export type AgentCatalogOperations = {
   providers(input: { directory?: string }): Promise<AgentProviderCatalog | Error>
   /** Backend-configured default models, as "provider/model" ids. */
   config(input: { directory?: string }): Promise<{ model?: string; smallModel?: string } | Error>
   agents(input: { directory?: string }): Promise<AgentDefinition[] | Error>
+  /** Project commands for `directory`, runnable through `sessions.command`. */
+  commands?(input: { directory: string }): Promise<AgentCommand[] | Error>
 }
 
 export type AgentCatalog = { catalog: AgentCatalogOperations }

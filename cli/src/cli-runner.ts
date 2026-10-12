@@ -1,6 +1,6 @@
 // Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
-import type { AgentDefinition } from './agent-backend/types.js'
+import type { AgentCommand, AgentDefinition } from './agent-backend/types.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import {
   intro,
@@ -84,6 +84,13 @@ import {
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
 export const cliLogger = createLogger(LogPrefix.CLI)
+
+/** Project commands and skills for slash-command registration, from the backend catalog. */
+async function listCommandsForRegistration(directory: string): Promise<AgentCommand[] | Error> {
+  const backend = getAgentBackendProvider().getBackend(directory)
+  if (!backend?.catalog.commands) return []
+  return backend.catalog.commands({ directory }).catch((cause: unknown) => new Error('Failed to list commands', { cause }))
+}
 
 /** Agents for slash-command registration, from the backend catalog (filters applied). */
 async function listAgentsForRegistration(directory: string): Promise<AgentDefinition[] | Error> {
@@ -1002,16 +1009,14 @@ export async function backgroundInit({
     const getClient = opencodeResult
 
     const [userCommands, agents] = await Promise.all([
-      getClient()
-        .command.list({ directory: currentDir })
-        .then((r) => r.data || [])
-        .catch((error) => {
-          cliLogger.warn(
-            'Failed to load user commands during background init:',
-            error instanceof Error ? error.stack : String(error),
-          )
-          return []
-        }),
+      listCommandsForRegistration(currentDir).then((result) => {
+        if (!(result instanceof Error)) return result
+        cliLogger.warn(
+          'Failed to load user commands during background init:',
+          result.stack ?? result.message,
+        )
+        return []
+      }),
       listAgentsForRegistration(currentDir).then((result) => {
         if (!(result instanceof Error)) return result
         cliLogger.warn(
@@ -1502,16 +1507,14 @@ export async function run({
           void discordClient.destroy()
           process.exit(EXIT_NO_RESTART)
         }),
-      getClient()
-        .command.list({ directory: currentDir })
-        .then((r) => r.data || [])
-        .catch((error) => {
-          cliLogger.warn(
-            'Failed to load user commands during setup:',
-            error instanceof Error ? error.stack : String(error),
-          )
-          return []
-        }),
+      listCommandsForRegistration(currentDir).then((result) => {
+        if (!(result instanceof Error)) return result
+        cliLogger.warn(
+          'Failed to load user commands during setup:',
+          result.stack ?? result.message,
+        )
+        return []
+      }),
       listAgentsForRegistration(currentDir).then((result) => {
         if (!(result instanceof Error)) return result
         cliLogger.warn(

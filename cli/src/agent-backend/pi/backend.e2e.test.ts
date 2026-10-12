@@ -205,6 +205,35 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'disabled' } })
   })
 
+  test('OpenCode-format commands and skills, plus opencode.json commands, list and run in Pi', async () => {
+    const dir = path.join(root, 'cmd-project')
+    fs.mkdirSync(path.join(dir, '.opencode', 'command'), { recursive: true })
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', 'deploy-notes'), { recursive: true })
+    fs.writeFileSync(path.join(dir, '.opencode', 'command', 'shout.md'), '---\ndescription: Shout it\n---\nRUN_TOOL echo SHOUT-$ARGUMENTS\n')
+    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'deploy-notes', 'SKILL.md'), '---\nname: deploy-notes\ndescription: How we deploy\n---\nRUN_TOOL echo skill-loaded\n')
+    fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ command: { whisper: { description: 'Whisper it', template: 'RUN_TOOL echo whisper-$ARGUMENTS' } } }))
+    const listed = await provider.getBackend().catalog.commands!({ directory: dir })
+    if (listed instanceof Error) throw listed
+    expect(listed).toEqual(expect.arrayContaining([
+      { name: 'shout', description: 'Shout it', source: 'command' },
+      { name: 'whisper', description: 'Whisper it', source: 'command' },
+      expect.objectContaining({ name: 'deploy-notes', source: 'skill' }),
+    ]))
+    const session = await provider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    const runCommand = async (command: string, args: string) => {
+      const before = idleCount(session.id)
+      expect(await provider.getBackend().sessions.command({ sessionId: session.id, directory: dir, command, arguments: args })).toBeUndefined()
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+      const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+      return tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : undefined
+    }
+    expect(await runCommand('shout', 'hey')).toContain('SHOUT-hey')
+    expect(await runCommand('whisper', 'psst')).toContain('whisper-psst')
+    expect(await runCommand('deploy-notes', '')).toContain('skill-loaded')
+    expect(await provider.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'nope', arguments: '' })).toBeInstanceOf(Error)
+  }, 60_000)
+
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
     if (catalog instanceof Error) throw catalog

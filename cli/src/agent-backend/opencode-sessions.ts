@@ -270,6 +270,15 @@ export function openCodeCatalogOperations(client: OpencodeClient): AgentCatalogO
         ...(data?.small_model && { smallModel: data.small_model }),
       }
     },
+    async commands({ directory }) {
+      const data = await call('command.list', () => client.command.list({ directory }))
+      if (data instanceof Error) return data
+      return (data ?? []).map((command) => ({
+        name: command.name,
+        ...(command.description && { description: command.description }),
+        ...(command.source && { source: command.source }),
+      }))
+    },
     async agents({ directory }) {
       const data = await call('app.agents', () => client.app.agents({ directory }))
       if (data instanceof Error) return data

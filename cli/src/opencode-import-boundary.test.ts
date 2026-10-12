@@ -31,9 +31,6 @@ const ALLOWED: Record<string, string> = {
   'cli-commands/session.ts': 'exports persisted events in the OpenCode event log format',
   'queue-advanced-e2e-setup.ts': 'e2e harness drives the OpenCode server directly',
 
-  // Not on the seam yet.
-  'discord-command-registration.ts': 'project slash commands come from OpenCode command.list',
-  'commands/restart-opencode-server.ts': 'project slash commands come from OpenCode command.list',
 }
 
 const SRC = import.meta.dirname

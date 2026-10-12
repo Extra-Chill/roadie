@@ -24,6 +24,7 @@ import {
   type AgentBackend,
   type AgentBackendEvent,
   type AgentBackendProvider,
+  type AgentCommand,
   type AgentPermissionRule,
   type AgentPromptPart,
   type AgentProviderCatalog,
@@ -34,6 +35,7 @@ import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
+import { openCodeResourceArgs } from './resources.js'
 
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
@@ -70,6 +72,8 @@ export type PiBackendOptions = {
     endTurn?(sessionId: string): void
   }
 }
+
+type PiCommand = { name: string; description?: string; source: 'extension' | 'prompt' | 'skill' }
 
 type PiModel = { id: string; name?: string; provider: string; reasoning?: boolean; contextWindow?: number }
 
@@ -188,6 +192,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         providers: () => this.providers(),
         config: async () => (options.model ? { model: options.model } : {}),
         agents: async () => [{ name: 'build', description: 'Pi coding agent', mode: 'primary' }],
+        commands: ({ directory }) => this.commands(directory),
       },
       mcp: {
         addRemote: async ({ directory, name, url, headers }) => {
@@ -216,6 +221,25 @@ export class PiBackendProvider implements AgentBackendProvider {
     overrides.set(name, enabled)
     this.mcpEnabled.set(directory, overrides)
     this.refreshMcp(directory)
+  }
+
+  /** Project commands and skills Pi finds for a directory (extension commands are Pi's own UI). */
+  private async commands(directory: string): Promise<AgentCommand[] | Error> {
+    const running = [...this.sessions.values()].find((session) => session.directory === directory && !session.process.exited)
+    const probe = running?.process ?? new PiProcess({
+      bin: this.options.bin,
+      args: [...this.spawnArgs([], directory).filter((arg, i, all) => arg !== '--session-dir' && all[i - 1] !== '--session-dir'), '--no-session'],
+      cwd: directory,
+      env: { ...process.env, ...this.options.env },
+    })
+    const result = await probe.request<{ commands: PiCommand[] }>({ type: 'get_commands' })
+    if (!running) probe.kill()
+    if (result instanceof Error) return result
+    return result.commands.flatMap((command): AgentCommand[] => {
+      if (command.source === 'prompt') return [{ name: command.name, ...(command.description && { description: command.description }), source: 'command' }]
+      if (command.source === 'skill') return [{ name: command.name.replace(/^skill:/, ''), ...(command.description && { description: command.description }), source: 'skill' }]
+      return []
+    })
   }
 
   /** Whether `sessionId` is a Pi session this provider runs or can resume. */
@@ -281,14 +305,14 @@ export class PiBackendProvider implements AgentBackendProvider {
     return name ? path.join(this.options.sessionDir, name) : undefined
   }
 
-  private spawnArgs(extra: string[]): string[] {
+  private spawnArgs(extra: string[], directory: string): string[] {
     return [
       '--session-dir', this.options.sessionDir,
       '--system-prompt', this.options.systemPrompt ?? ROADIE_PI_BASE_PROMPT,
-      // Roadie supplies the tools, prompt and extension; Pi's skill and template
-      // discovery stays off. Extensions stay on: built-in MCP is one, and the
-      // agent dir is Roadie's own.
-      '--no-skills', '--no-prompt-templates',
+      // Projects bound to Roadie channels are operator-approved, as OpenCode
+      // treats them: their skills, prompt templates and `.pi` resources load.
+      '--approve',
+      ...openCodeResourceArgs({ directory, cacheDir: this.options.sessionDir }),
       ...(this.options.contextFiles === false ? ['--no-context-files'] : []),
       '-e', extensionPath(),
       ...(this.options.model ? ['--model', this.options.model] : []),
@@ -307,7 +331,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     const poolKey = this.options.pool?.issueKey(() => ownSessionId)
     const child = new PiProcess({
       bin: this.options.bin,
-      args: this.spawnArgs(extra),
+      args: this.spawnArgs(extra, directory),
       cwd: directory,
       env: {
         ...process.env,
@@ -665,7 +689,21 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.touch(session)
         return undefined
       },
-      command: async ({ command }) => new AgentRequestError({ detail: `Pi sessions do not support /${command} yet` }),
+      command: async ({ sessionId, directory, command, arguments: args, model, variant }) => {
+        const session = await this.ensure(sessionId, directory)
+        if (session instanceof Error) return session
+        const listed = await session.process.request<{ commands: PiCommand[] }>({ type: 'get_commands' })
+        const names = new Set(listed instanceof Error ? [] : listed.commands.map((c) => c.name))
+        const piName = names.has(command) ? command : names.has(`skill:${command}`) ? `skill:${command}` : undefined
+        if (!piName) return new AgentRequestError({ detail: `Unknown command /${command}` })
+        return this.backend.sessions.prompt({
+          sessionId,
+          directory,
+          parts: [{ kind: 'text', text: `/${piName}${args ? ` ${args}` : ''}` }],
+          ...(model && { model }),
+          ...(variant && { variant }),
+        })
+      },
       abort: async ({ sessionId }) => {
         const session = this.sessions.get(sessionId)
         if (!session) return undefined
