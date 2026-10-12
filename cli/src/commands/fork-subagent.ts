@@ -26,6 +26,7 @@ import {
   batchChunksForDiscord,
 } from '../message-formatting.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   getDerivedSubagentSessions,
   type EventBufferEntry,
@@ -196,10 +197,12 @@ export async function handleForkSubagentSelectMenu(
     return
   }
 
-  const forkResponse = await getClient().session.fork({
-    sessionID: selectedSessionId,
-  })
-  if (!forkResponse.data) {
+  const backend = getAgentBackendProvider().getBackend(resolved.projectDirectory)
+  const forkedSession = backend
+    ? await backend.sessions.fork({ sessionId: selectedSessionId })
+    : new Error('Agent backend is unavailable')
+  if (forkedSession instanceof Error) {
+    forkLogger.error('Failed to fork subagent session:', forkedSession)
     await interaction.editReply('Failed to fork session')
     return
   }
@@ -210,7 +213,6 @@ export async function handleForkSubagentSelectMenu(
     return
   }
 
-  const forkedSession = forkResponse.data
   const forkedThread = await textChannel.threads.create({
     name: `Fork: ${selectedSubagent?.description || selectedSubagent?.subagentType || 'subagent session'}`.slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,

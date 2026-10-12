@@ -48,7 +48,6 @@ import {
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
-import { forkOpenCodeSession } from './agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from './fork-title.js'
 import { openCodeCatalogGetter } from './agent-backend/registry.js'
 import { getOpencodeClient } from './opencode.js'
@@ -1188,37 +1187,40 @@ export class NativeSlackBot {
       const abandon = async () => {
         if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
       }
-      const forked = await forkOpenCodeSession({
-        client, sessionId, sourceDirectory: runtime.sdkDirectory,
-        ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
-      })
-      if (!forked.data) {
+      const forkBackend = getAgentBackendProvider().getBackend(runtime.sdkDirectory)
+      const forkedSession = forkBackend
+        ? await forkBackend.sessions.fork({
+            sessionId, directory: runtime.sdkDirectory,
+            ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
+          })
+        : new Error('agent backend is unavailable')
+      if (forkedSession instanceof Error) {
         await abandon()
         if (workspace.binding) {
-          await runtime.chat.sendNotice(forked.error instanceof Error ? forked.error.message : 'The backend could not bind the fork workspace; no fork prompt was run.')
+          await runtime.chat.sendNotice(forkedSession.message)
           return
         }
         return new SlackApiError({
           operation: 'fork',
           detail: 'agent could not fork the session',
-          cause: forked.error,
+          cause: forkedSession,
         })
       }
       const copied = await copySessionSystemPrompt({
         sourceSessionId: sessionId,
-        targetSessionId: forked.data.id,
+        targetSessionId: forkedSession.id,
       })
       if (copied instanceof Error) { await abandon(); return copied }
       await copySessionPreferences({
         sourceSessionId: sessionId,
-        targetSessionId: forked.data.id,
+        targetSessionId: forkedSession.id,
         channelId: event.channel_id,
         directory: forkDirectory,
         getClient: () => ({ ...openCodeCatalogGetter(() => client)(), session: client.session }),
       })
       const root = await this.api.post({
         channel: event.channel_id,
-        text: `Fork: ${forked.data.title}`,
+        text: `Fork: ${forkedSession.title}`,
       })
       if (root instanceof Error) { await abandon(); return root }
       const id = slackThreadId({
@@ -1226,13 +1228,13 @@ export class NativeSlackBot {
         channelId: event.channel_id,
         threadTs: root.id,
       })
-      await setThreadSession(id, forked.data.id)
+      await setThreadSession(id, forkedSession.id)
       await recordSessionForkOrigin({
-        sessionId: forked.data.id,
+        sessionId: forkedSession.id,
         sourceSessionId: sessionId,
         sourceThreadId: runtime.threadId,
       })
-      await markPendingForkTitle(forked.data)
+      await markPendingForkTitle(forkedSession)
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (workspace.binding) {
         await setThreadWorkingDirectory({ threadId: id, ...workspace.binding })
@@ -1251,9 +1253,9 @@ export class NativeSlackBot {
           userId: event.user_id,
           username: identity.actor.name,
         })
-        const info = await backend().sessions.get({ sessionId: forked.data.id, directory: runtime.sdkDirectory })
+        const info = await backend().sessions.get({ sessionId: forkedSession.id, directory: runtime.sdkDirectory })
         if (info instanceof Error) logger.warn('Could not display generated fork title:', info)
-        else if (info && info.title !== forked.data.title) await this.api.edit({ channel: event.channel_id, ts: root.id, text: `Fork: ${info.title}` })
+        else if (info && info.title !== forkedSession.title) await this.api.edit({ channel: event.channel_id, ts: root.id, text: `Fork: ${info.title}` })
       }
       return
     }

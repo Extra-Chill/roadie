@@ -179,6 +179,48 @@ describe('openCodeSessionOperations', () => {
     expect(reply).toHaveBeenCalledWith({ requestID: 'q1', directory: '/p', answers: [['yes']] })
   })
 
+  test('list translates sessions with directory, times and revert', async () => {
+    const list = vi.fn(async () => ({ data: [
+      { id: 's1', title: 'A', directory: '/p', time: { created: 1, updated: 5 }, revert: { messageID: 'm' } },
+      { id: 's2', title: 'B', directory: '/p', time: { created: 2, updated: 3 } },
+    ] }))
+    const ops = openCodeSessionOperations(fakeClient({ list }))
+    expect(await ops.list({})).toEqual([
+      { id: 's1', title: 'A', directory: '/p', createdAt: 1, updatedAt: 5, reverted: true },
+      { id: 's2', title: 'B', directory: '/p', createdAt: 2, updatedAt: 3 },
+    ])
+    expect(list).toHaveBeenCalledWith(undefined)
+    await ops.list({ directory: '/q' })
+    expect(list).toHaveBeenLastCalledWith({ directory: '/q' })
+  })
+
+  test('delete and summarize map ids and the model', async () => {
+    const del = vi.fn(async () => ({ data: true }))
+    const summarize = vi.fn(async () => ({ data: true }))
+    const ops = openCodeSessionOperations(fakeClient({ delete: del, summarize }))
+    expect(await ops.delete({ sessionId: 's1', directory: '/p' })).toBeUndefined()
+    expect(del).toHaveBeenCalledWith({ sessionID: 's1', directory: '/p' })
+    expect(await ops.summarize?.({ sessionId: 's1', directory: '/p', model: { providerId: 'a', modelId: 'b' } })).toBeUndefined()
+    expect(summarize).toHaveBeenCalledWith({ sessionID: 's1', directory: '/p', providerID: 'a', modelID: 'b', auto: false })
+  })
+
+  test('fork without a target forks in place, optionally at a message', async () => {
+    const fork = vi.fn(async () => ({ data: { id: 'f1', title: 'Fork', directory: '/p', time: { created: 1, updated: 1 } } }))
+    const ops = openCodeSessionOperations(fakeClient({ fork }))
+    expect(await ops.fork({ sessionId: 's1' })).toMatchObject({ id: 'f1', title: 'Fork' })
+    expect(fork).toHaveBeenCalledWith({ sessionID: 's1' })
+    await ops.fork({ sessionId: 's1', directory: '/p', messageId: 'm2' })
+    expect(fork).toHaveBeenLastCalledWith({ sessionID: 's1', directory: '/p', messageID: 'm2' })
+  })
+
+  test('fork rejection is an error; binding a workspace needs the source directory', async () => {
+    const fork = vi.fn(async () => ({ error: { data: { message: 'nope' } } }))
+    const ops = openCodeSessionOperations(fakeClient({ fork }))
+    expect(await ops.fork({ sessionId: 's1', directory: '/p' })).toBeInstanceOf(AgentRequestError)
+    expect(await ops.fork({ sessionId: 's1', targetDirectory: '/wt' })).toBeInstanceOf(AgentRequestError)
+    expect(fork).toHaveBeenCalledTimes(1)
+  })
+
   test('a rejected question reply is an AgentRequestError', async () => {
     const reply = vi.fn(async () => ({ error: { data: { message: 'gone' } } }))
     const client = { session: {}, permission: {}, question: { reply } } as unknown as OpencodeClient

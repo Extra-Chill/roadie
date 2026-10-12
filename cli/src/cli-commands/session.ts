@@ -5,7 +5,7 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { Event as OpenCodeEvent, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -15,6 +15,7 @@ import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError, type AgentBackend } from '../agent-backend/types.js'
+import type { AgentSession } from '../agent-backend/events.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorkingDirectory, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
@@ -102,22 +103,6 @@ async function resolveSessionDirectoryFromDatabase({
   )
 }
 
-// Total token footprint of a session (input + output + reasoning + cache).
-function getSessionTokenTotal(tokens: {
-  input: number
-  output: number
-  reasoning: number
-  cache: { read: number; write: number }
-}): number {
-  return (
-    tokens.input +
-    tokens.output +
-    tokens.reasoning +
-    tokens.cache.read +
-    tokens.cache.write
-  )
-}
-
 // Compact token count: 1234 -> "1k", 200000 -> "200k", 1_500_000 -> "1.5M".
 function formatTokenCount(count: number): string {
   if (count >= 1_000_000) {
@@ -199,7 +184,7 @@ cli
       // `showing-question` (excluded by --active) using OpenCode's
       // server-authoritative pending-question list.
       type GatheredSession = {
-        session: OpenCodeSession
+        session: AgentSession
         projectDirectory: string
         status: 'idle' | 'busy' | 'showing-question'
       }
@@ -207,33 +192,37 @@ cli
       const gathered: GatheredSession[] = []
       for (const projectDirectory of projectDirectories) {
         cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
-        const getClient = await initializeOpencodeForDirectory(projectDirectory)
-        if (getClient instanceof Error) {
+        const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+        if (getBackend instanceof Error) {
           if (options.all) {
             cliLogger.warn(
-              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getClient.message}`,
+              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getBackend.message}`,
             )
             continue
           }
-          cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+          cliLogger.error('Failed to connect to OpenCode:', getBackend.message)
           process.exit(EXIT_NO_RESTART)
         }
 
-        const client = getClient()
-        const [sessionsResponse, statusResponse, questionsResponse] = await Promise.all([
-          client.session.list(),
-          client.session.status({ directory: projectDirectory }).catch(() => null),
-          client.question.list({ directory: projectDirectory }).catch(() => null),
+        const backend = getBackend()
+        const [sessionsResult, statusResult, questionsResult] = await Promise.all([
+          backend.sessions.list({}),
+          backend.sessions.status({ directory: projectDirectory }),
+          backend.sessions.questions?.({ directory: projectDirectory }),
         ])
+        // Listing used to throw on a transport failure and ignore a rejection.
+        if (sessionsResult instanceof Error && !(sessionsResult instanceof AgentRequestError)) {
+          throw sessionsResult
+        }
 
-        const statuses = statusResponse?.data || {}
+        const statuses = statusResult instanceof Error ? {} : statusResult
         const sessionsWithPendingQuestion = new Set(
-          (questionsResponse?.data || []).map((request) => request.sessionID),
+          (questionsResult instanceof Error ? [] : questionsResult ?? []).map((request) => request.sessionId),
         )
 
-        for (const session of sessionsResponse.data || []) {
+        for (const session of sessionsResult instanceof Error ? [] : sessionsResult) {
           const status = statuses[session.id]
-          const isBusy = Boolean(status && status.type !== 'idle')
+          const isBusy = Boolean(status && status.state !== 'idle')
           // Only relabel to showing-question when the session is actually busy.
           // An orphaned question left in the list after an abort (session idle)
           // must not hide or relabel an otherwise-idle session.
@@ -255,7 +244,7 @@ cli
           if (options.active && entry.status !== 'busy') return false
           return true
         })
-        .sort((a, b) => b.session.time.updated - a.session.time.updated)
+        .sort((a, b) => (b.session.updatedAt ?? 0) - (a.session.updatedAt ?? 0))
 
       if (selected.length === 0) {
         if (options.json) console.log('[]')
@@ -295,9 +284,9 @@ cli
       // Session.tokens is a per-session aggregate, so it is reported as a token
       // count rather than a context-window percentage.
       const contextInfo = (entry: GatheredSession): number | null => {
-        const tokens = entry.session.tokens
-        if (!tokens) return null
-        const total = getSessionTokenTotal(tokens)
+        const usage = entry.session.usage
+        if (!usage) return null
+        const total = usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
         return total > 0 ? total : null
       }
 
@@ -311,12 +300,12 @@ cli
           return {
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory,
-            updated: new Date(session.time.updated).toISOString(),
+            directory: session.directory ?? entry.projectDirectory,
+            updated: new Date(session.updatedAt ?? 0).toISOString(),
             source: sessionToThread.has(session.id) ? 'roadie' : 'opencode',
             threadId: sessionToThread.get(session.id) || null,
             status: entry.status,
-            model: session.model?.id || null,
+            model: session.model?.modelId || null,
             tokens: contextInfo(entry),
             startedBy,
             scheduledTaskId: startSource?.scheduled_task_id || null,
@@ -334,7 +323,7 @@ cli
         const startedBy = startSource
           ? ` | started-by: ${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}${startSource.scheduled_task_id ? ` (#${startSource.scheduled_task_id})` : ''}`
           : ''
-        const updatedAt = new Date(session.time.updated).toISOString()
+        const updatedAt = new Date(session.updatedAt ?? 0).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
         const statusLabel = entry.status === 'busy'
           ? 'working'
@@ -345,7 +334,7 @@ cli
         const tokens = contextInfo(entry)
         const tokensText = tokens ? ` | tokens: ${formatTokenCount(tokens)}` : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${statusInfo}${tokensText}${threadInfo}${startedBy}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory ?? entry.projectDirectory} | ${updatedAt} | ${source}${statusInfo}${tokensText}${threadInfo}${startedBy}`,
         )
       }
 

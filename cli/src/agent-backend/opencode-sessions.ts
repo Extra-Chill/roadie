@@ -8,6 +8,7 @@ import type { OpencodeClient, Part as OpenCodePart, Provider as OpenCodeProvider
 import { OpenCodeSdkError } from '../errors.js'
 import { extractSdkErrorMessage, getOpencodeServerAuthHeaders, getOpencodeServerPort } from '../opencode.js'
 import { toAgentMessage, toAgentPart, toAgentSession } from './opencode-events.js'
+import { forkOpenCodeSession } from './opencode-fork.js'
 import type { AgentStatus } from './events.js'
 import { TITLE_REQUEST_SYSTEM, TITLE_PROMPT_MAX_CHARS } from '../title-request.js'
 import * as errore from 'errore'
@@ -146,6 +147,48 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
     },
     async abort({ sessionId, directory }) {
       const result = await call('session.abort', () => client.session.abort({ sessionID: sessionId, ...(directory !== undefined && { directory }) }))
+      return result instanceof Error ? result : undefined
+    },
+    async list({ directory }) {
+      const sessions = await call('session.list', () => client.session.list(directory !== undefined ? { directory } : undefined))
+      if (sessions instanceof Error) return sessions
+      return (sessions ?? []).map(toAgentSession)
+    },
+    async delete({ sessionId, directory }) {
+      const result = await call('session.delete', () => client.session.delete({ sessionID: sessionId, directory }))
+      return result instanceof Error ? result : undefined
+    },
+    async fork({ sessionId, directory, messageId, targetDirectory, targetProjectDirectory }) {
+      if (!targetDirectory) {
+        const forked = await call('session.fork', () => client.session.fork({
+          sessionID: sessionId,
+          ...(directory !== undefined && { directory }),
+          ...(messageId && { messageID: messageId }),
+        }))
+        if (forked instanceof Error) return forked
+        return forked ? toAgentSession(forked) : new AgentRequestError({ detail: 'OpenCode returned no forked session' })
+      }
+      if (directory === undefined) {
+        return new AgentRequestError({ detail: 'Binding a fork to a workspace needs the source directory' })
+      }
+      // Workspace binding errors are user-facing explanations; pass them through.
+      const forked = await forkOpenCodeSession({
+        client, sessionId, sourceDirectory: directory, targetDirectory,
+        ...(targetProjectDirectory && { targetProjectDirectory }),
+        ...(messageId && { messageId }),
+      }).catch((cause: unknown): { data?: undefined; error: unknown } => ({ error: new OpenCodeSdkError({ operation: 'session.fork', cause }) }))
+      if (forked.data) return toAgentSession(forked.data)
+      if (forked.error instanceof Error) return forked.error
+      return new AgentRequestError({ detail: extractSdkErrorMessage(forked.error as Parameters<typeof extractSdkErrorMessage>[0]) })
+    },
+    async summarize({ sessionId, directory, model }) {
+      const result = await call('session.summarize', () => client.session.summarize({
+        sessionID: sessionId,
+        directory,
+        providerID: model.providerId,
+        modelID: model.modelId,
+        auto: false,
+      }))
       return result instanceof Error ? result : undefined
     },
     async status({ directory }) {

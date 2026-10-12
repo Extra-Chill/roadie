@@ -56,6 +56,12 @@ export type AgentError = {
 export type AgentSession = {
   id: string
   title: string
+  /** Directory the session runs in, when the backend reports it. */
+  directory?: string
+  createdAt?: number
+  updatedAt?: number
+  /** The session has a pending revert (history rewound but not committed). */
+  reverted?: boolean
   parentId?: string
   agent?: string
   model?: AgentModelRef
