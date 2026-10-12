@@ -124,6 +124,26 @@ function syncMcpServers(pi: ExtensionApi, registered: Map<string, string>) {
   }
 }
 
+/** Roadie's per-turn shell env (agent token, session id, turn attribution); read fresh per call. */
+function readShellEnv(): Record<string, string> {
+  const file = process.env['ROADIE_PI_SHELL_ENV_FILE']
+  if (!file) return {}
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+/** Shell lines exporting Roadie's env (empty values unset), so they reach the command. */
+export function shellEnvPrefix(env: Record<string, string>): string {
+  const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+  return Object.entries(env)
+    .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+    .map(([name, value]) => (value === '' ? `unset ${name}` : `export ${name}=${quote(value)}`))
+    .join('; ')
+}
+
 export default function roadieExtension(pi: ExtensionApi) {
   const mcpServers = new Map<string, string>()
   syncMcpServers(pi, mcpServers)
@@ -182,6 +202,12 @@ export default function roadieExtension(pi: ExtensionApi) {
       ROADIE_PERMISSION_TITLE,
       JSON.stringify({ tool: event.toolName, callId: event.toolCallId, input: event.input, cwd: ctx.cwd }),
     )
-    return allowed ? undefined : { block: true, reason: 'Permission denied by Roadie' }
+    if (!allowed) return { block: true, reason: 'Permission denied by Roadie' }
+    if (event.toolName === 'bash' && typeof event.input.command === 'string') {
+      const prefix = shellEnvPrefix(readShellEnv())
+      // Mutated input reaches execution; the chat shows the call as the model made it.
+      if (prefix) event.input.command = `${prefix}\n${event.input.command}`
+    }
+    return undefined
   })
 }

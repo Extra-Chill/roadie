@@ -39,6 +39,7 @@ function defaultProvider(): AgentBackendProvider {
   const pi = new PiBackendProvider({
     bin: process.env['ROADIE_PI_BIN'] || 'pi',
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
+    fileEditLogDir: getDataDir(),
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
   })

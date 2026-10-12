@@ -36,6 +36,19 @@ import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { openCodeResourceArgs } from './resources.js'
+import { appendFileEditEvents, extractEditedFiles } from '../../file-edit-log.js'
+import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
+import { applyTurnAttributionEnv, resolveTurnAttribution } from '../../turn-attribution-env.js'
+
+const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
+
+/** This process's environment without anything a tool shell must not see. */
+export function scrubbedProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const clean = { ...env }
+  for (const name of SCRUBBED_SHELL_ENV_NAMES) delete clean[name]
+  delete clean[AGENT_TOKEN_SECRET_ENV]
+  return clean
+}
 
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
@@ -57,6 +70,8 @@ export type PiBackendOptions = {
    * not keep one. Default 5 minutes; 0 disables.
    */
   idleTimeoutMs?: number
+  /** Roadie data dir for the file-edit log (`roadie session editors`). */
+  fileEditLogDir?: string
   /** Base system prompt replacing Pi's default. Defaults to ROADIE_PI_BASE_PROMPT. */
   systemPrompt?: string
   /** Load the project's AGENTS.md / CLAUDE.md files, like OpenCode. Default true. */
@@ -85,6 +100,7 @@ type RunningSession = {
   sessionFile: string
   systemFile: string
   mcpFile: string
+  shellEnvFile: string
   process: PiProcess
   translator: PiEventTranslator
   title: string
@@ -182,6 +198,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   private titles = new Map<string, string>()
   private permissionRules = new Map<string, AgentPermissionRule[]>()
   private pendingPermissions = new Map<string, PendingPermission & { session: RunningSession }>()
+  /** Tool arguments by call id, from start to end (end does not repeat them). */
+  private toolArgs = new Map<string, unknown>()
   private pendingQuestions = new Map<string, { sessionId: string; session: RunningSession }>()
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
   private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
@@ -387,13 +405,18 @@ export class PiBackendProvider implements AgentBackendProvider {
     writeMcpFile(mcpFile, this.mcpServersFor(directory))
     let ownSessionId: string | undefined
     const poolKey = this.options.pool?.issueKey(() => ownSessionId)
+    const shellEnvFile = path.join(this.options.sessionDir, `shell-env-${processId}.json`)
+    fs.writeFileSync(shellEnvFile, '{}', { mode: 0o600 })
     const child = new PiProcess({
       bin: this.options.bin,
       args: this.spawnArgs(extra, directory),
       cwd: directory,
       env: {
-        ...process.env,
+        // Pi's tool shells inherit Pi's environment, so the bot's database
+        // credentials and the agent-token secret never enter it.
+        ...scrubbedProcessEnv(),
         ...this.options.env,
+        ROADIE_PI_SHELL_ENV_FILE: shellEnvFile,
         ROADIE_PI_SYSTEM_FILE: systemFile,
         ROADIE_PI_TOOLS_FILE: this.toolsFile,
         ROADIE_PI_MCP_FILE: mcpFile,
@@ -404,10 +427,12 @@ export class PiBackendProvider implements AgentBackendProvider {
     if (state instanceof Error) {
       child.kill()
       fs.rmSync(mcpFile, { force: true })
+      fs.rmSync(shellEnvFile, { force: true })
       if (poolKey) this.options.pool?.revokeKey(poolKey)
       return state
     }
     ownSessionId = state.sessionId
+    await this.writeShellEnv(shellEnvFile, state.sessionId)
     const header = readSessionHeader(state.sessionFile)
     const session: RunningSession = {
       id: state.sessionId,
@@ -415,6 +440,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       sessionFile: state.sessionFile,
       systemFile,
       mcpFile,
+      shellEnvFile,
       process: child,
       translator: new PiEventTranslator(state.sessionId),
       title: title ?? state.sessionName ?? this.titles.get(state.sessionId) ?? '',
@@ -433,6 +459,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       if (this.sessions.get(session.id) === session) this.sessions.delete(session.id)
       fs.rmSync(systemFile, { force: true })
       fs.rmSync(mcpFile, { force: true })
+      fs.rmSync(shellEnvFile, { force: true })
       if (session.busy) {
         session.busy = false
         this.emit([
@@ -468,12 +495,29 @@ export class PiBackendProvider implements AgentBackendProvider {
       return
     }
     if (record.type === 'agent_start') session.busy = true
+    if (record.type === 'tool_execution_start') this.toolArgs.set(String(record.toolCallId), record.args)
+    if (record.type === 'tool_execution_end') {
+      const args = this.toolArgs.get(String(record.toolCallId))
+      this.toolArgs.delete(String(record.toolCallId))
+      if (!record.isError) this.recordFileEdit(session, String(record.toolName ?? ''), args)
+    }
     if (record.type === 'agent_end') {
       session.busy = false
       this.touch(session)
       this.options.pool?.endTurn?.(session.id)
     }
     this.emit(session.translator.translate(record), record)
+  }
+
+  /** `roadie session editors` reads this log; Pi's edit/write take `path`, OpenCode's `filePath`. */
+  private recordFileEdit(session: RunningSession, tool: string, rawArgs: unknown) {
+    const dataDir = this.options.fileEditLogDir
+    if (!dataDir || (tool !== 'edit' && tool !== 'write')) return
+    const args = (rawArgs ?? {}) as { path?: unknown; file_path?: unknown }
+    const filePath = typeof args.path === 'string' ? args.path : typeof args.file_path === 'string' ? args.file_path : undefined
+    if (!filePath) return
+    const files = extractEditedFiles({ tool, args: { filePath }, directory: session.directory })
+    appendFileEditEvents({ dataDir, events: files.map((file) => ({ v: 1 as const, at: Date.now(), sessionId: session.id, file, tool })) })
   }
 
   private onUiRequest(session: RunningSession, record: PiRecord) {
@@ -592,6 +636,22 @@ export class PiBackendProvider implements AgentBackendProvider {
     for (const session of this.sessions.values()) {
       if (session.directory === directory && !session.process.exited) writeMcpFile(session.mcpFile, servers)
     }
+  }
+
+  /**
+   * The per-turn tool-shell environment, as OpenCode's shell.env hook builds it:
+   * the session's scoped agent token, ROADIE_SESSION_ID and the current turn's
+   * attribution. The extension prepends it to every bash command.
+   */
+  private async writeShellEnv(file: string, sessionId: string) {
+    const env: Record<string, string> = {}
+    applyAgentShellEnv({ env, secret: process.env[AGENT_TOKEN_SECRET_ENV], sessionId })
+    env[ROADIE_SESSION_ID_ENV] = sessionId
+    const attribution = await resolveTurnAttribution(sessionId).catch(() => undefined)
+    applyTurnAttributionEnv({ env, attribution })
+    const temp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(temp, JSON.stringify(env), { mode: 0o600 })
+    fs.renameSync(temp, file)
   }
 
   private touch(session: RunningSession) {
@@ -727,6 +787,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
         if (system !== undefined) fs.writeFileSync(session.systemFile, system)
+        await this.writeShellEnv(session.shellEnvFile, sessionId)
         if (model && (model.providerId !== session.model?.provider || model.modelId !== session.model?.id)) {
           const set = await session.process.request<PiModel>({ type: 'set_model', provider: model.providerId, modelId: model.modelId })
           if (set instanceof Error) return new AgentRequestError({ detail: set.message })

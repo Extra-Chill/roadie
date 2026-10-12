@@ -77,7 +77,7 @@ export function fakeModelsJson(baseUrl: string): string {
         api: 'openai-completions',
         apiKey: 'fake',
         compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        models: [{ id: 'fake-1', name: 'Fake 1', reasoning: false, input: ['text'], contextWindow: 100000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+        models: [{ id: 'fake-1', name: 'Fake 1', reasoning: false, input: ['text', 'image'], contextWindow: 100000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
       },
     },
   }, null, 2)

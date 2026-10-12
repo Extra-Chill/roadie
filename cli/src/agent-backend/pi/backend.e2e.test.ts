@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { AgentEvent } from '../events.js'
 import { PiBackendProvider } from './backend.js'
 import { fakeModelsJson, startFakeModelServer } from './fake-model-server.js'
+import { loadFileEditEvents } from '../../file-edit-log.js'
 
 function findPi(): string | undefined {
   const candidates = [process.env['ROADIE_PI_BIN'], 'pi'].filter(Boolean) as string[]
@@ -268,6 +269,65 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output?.trim()).toBe(worktree)
     expect(await provider.getBackend().sessions.fork({ sessionId: session.id, directory: dir, messageId: 'pi-user-1' })).toBeInstanceOf(Error)
   }, 60_000)
+
+  test('tool shells get the scoped agent token and session id, never the bot database credentials', async () => {
+    const saved = { url: process.env['ROADIE_DB_URL'], secret: process.env['ROADIE_AGENT_TOKEN_SECRET'] }
+    process.env['ROADIE_DB_URL'] = 'libsql://secret-db'
+    process.env['ROADIE_AGENT_TOKEN_SECRET'] = 'tok-secret'
+    try {
+      const shellProvider = new PiBackendProvider({ ...makeProvider().options })
+      await listen(shellProvider)
+      const dir = path.join(root, 'env-project')
+      fs.mkdirSync(dir, { recursive: true })
+      const session = await shellProvider.getBackend().sessions.create({ directory: dir })
+      if (session instanceof Error) throw session
+      const before = idleCount(session.id)
+      await shellProvider.getBackend().sessions.prompt({
+        sessionId: session.id,
+        directory: dir,
+        parts: [{ kind: 'text', text: 'RUN_TOOL echo "db=[$ROADIE_DB_URL] secret=[$ROADIE_AGENT_TOKEN_SECRET] sid=[$ROADIE_SESSION_ID] tok=[${ROADIE_AGENT_TOKEN%%.*}]"' }],
+      })
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+      const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+      const output = tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : ''
+      expect(output).toContain('db=[] secret=[]')
+      expect(output).toContain(`sid=[${session.id}]`)
+      expect(output).toContain(`tok=[${session.id}]`)
+      shellProvider.dispose()
+    } finally {
+      if (saved.url === undefined) delete process.env['ROADIE_DB_URL']
+      else process.env['ROADIE_DB_URL'] = saved.url
+      if (saved.secret === undefined) delete process.env['ROADIE_AGENT_TOKEN_SECRET']
+      else process.env['ROADIE_AGENT_TOKEN_SECRET'] = saved.secret
+    }
+  }, 30_000)
+
+  test('edits land in the file-edit log; Pi shrinks oversized images itself (images.autoResize, no Roadie plugin)', async () => {
+    const logDir = path.join(root, 'edit-log')
+    const editProvider = new PiBackendProvider({ ...makeProvider().options, fileEditLogDir: logDir })
+    await listen(editProvider)
+    const dir = path.join(root, 'edit-project')
+    fs.mkdirSync(dir, { recursive: true })
+    const sharp = (await import('sharp')).default
+    await sharp({ create: { width: 3200, height: 2400, channels: 3, background: '#336699' } }).png().toFile(path.join(dir, 'big.png'))
+    const session = await editProvider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    const run = async (text: string) => {
+      const before = idleCount(session.id)
+      await editProvider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text }] })
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+    }
+    await run('CALL_TOOL write {"path":"notes.txt","content":"hi"}')
+    expect(loadFileEditEvents({ dataDir: logDir })).toEqual([expect.objectContaining({ sessionId: session.id, file: path.join(dir, 'notes.txt'), tool: 'write' })])
+    const bodiesBefore = server.bodies.length
+    await run('CALL_TOOL read {"path":"big.png"}')
+    const sent = server.bodies.slice(bodiesBefore).join('\n')
+    const image = /data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)/.exec(sent)?.[1] ?? /"(iVBOR[A-Za-z0-9+/=]{100,}|\/9j\/[A-Za-z0-9+/=]{100,})"/.exec(sent)?.[1]
+    expect(image).toBeTruthy()
+    const meta = await sharp(Buffer.from(image!, 'base64')).metadata()
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(2000)
+    editProvider.dispose()
+  }, 40_000)
 
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
