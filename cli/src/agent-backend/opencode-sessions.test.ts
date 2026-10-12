@@ -4,7 +4,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
-import { openCodeAuthOperations, openCodeCatalogOperations, openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
+import { openCodeAuthOperations, openCodeCatalogOperations, openCodeMcpOperations, openCodeSessionOperations, toOpenCodeBackend } from './opencode-sessions.js'
 import { AgentRequestError } from './types.js'
 
 function fakeClient(session: Record<string, unknown>, permission: Record<string, unknown> = {}) {
@@ -341,5 +341,33 @@ describe('openCodeAuthOperations', () => {
   test('startOAuth without a running server is an error', async () => {
     const { client } = authClient({})
     expect(await openCodeAuthOperations(client).startOAuth({ directory: '/p', providerId: 'a', method: 0 })).toBeInstanceOf(AgentRequestError)
+  })
+})
+
+describe('openCodeMcpOperations', () => {
+  test('status keeps the error only where OpenCode reports one', async () => {
+    const status = vi.fn(async () => ({ data: {
+      a: { status: 'connected' },
+      b: { status: 'failed', error: 'boom' },
+      c: { status: 'needs_client_registration', error: 'register' },
+      d: { status: 'needs_auth' },
+    } }))
+    const ops = openCodeMcpOperations({ mcp: { status } } as unknown as OpencodeClient)
+    expect(await ops.status({ directory: '/p' })).toEqual({
+      a: { status: 'connected' },
+      b: { status: 'failed', error: 'boom' },
+      c: { status: 'needs_client_registration', error: 'register' },
+      d: { status: 'needs_auth' },
+    })
+    expect(status).toHaveBeenCalledWith({ directory: '/p' })
+  })
+
+  test('connect and disconnect map the name; a rejection is an AgentRequestError', async () => {
+    const connect = vi.fn(async () => ({ data: true }))
+    const disconnect = vi.fn(async () => ({ error: { data: { message: 'nope' } } }))
+    const ops = openCodeMcpOperations({ mcp: { connect, disconnect } } as unknown as OpencodeClient)
+    expect(await ops.connect({ directory: '/p', name: 'x' })).toBeUndefined()
+    expect(connect).toHaveBeenCalledWith({ name: 'x', directory: '/p' })
+    expect(await ops.disconnect({ directory: '/p', name: 'x' })).toBeInstanceOf(AgentRequestError)
   })
 })

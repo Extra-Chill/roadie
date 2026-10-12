@@ -6,6 +6,7 @@
 // this restart affects all projects. Other runtimes reconnect through their listener
 // backoff loop once the shared server comes back.
 
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   ChannelType,
   MessageFlags,
@@ -144,13 +145,16 @@ export async function handleRestartOpencodeServerCommand({
             logger.warn('[RESTART] Failed to load user commands:', e instanceof Error ? e.stack : String(e))
             return [] as OpencodeCommand[]
           }),
-        getClient()
-          .app.agents({ directory: projectDirectory })
-          .then((r) => r.data || [])
-          .catch((e) => {
-            logger.warn('[RESTART] Failed to load agents:', e instanceof Error ? e.stack : String(e))
-            return [] as AgentInfo[]
-          }),
+        (async (): Promise<AgentInfo[]> => {
+          const agents = await getAgentBackendProvider().getBackend(projectDirectory)?.catalog
+            .agents({ directory: projectDirectory })
+            .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
+          if (agents instanceof Error || !agents) {
+            logger.warn('[RESTART] Failed to load agents:', agents instanceof Error ? agents.stack : 'agent backend is unavailable')
+            return []
+          }
+          return agents
+        })(),
       ])
       return [cmds, ags]
     })()

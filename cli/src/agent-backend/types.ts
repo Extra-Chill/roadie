@@ -248,7 +248,17 @@ export type AgentAuthOperations = {
  * Tool servers (MCP) the backend can connect to. Optional: a backend without
  * dynamic MCP registration simply gives people no per-person servers.
  */
+/** One MCP server's state. `error` explains `failed` and `needs_client_registration`. */
+export type AgentMcpServerStatus = {
+  status: 'connected' | 'disabled' | 'failed' | 'needs_auth' | 'needs_client_registration'
+  error?: string
+}
+
 export type AgentMcpOperations = {
+  /** Every configured MCP server by name. */
+  status(input: { directory: string }): Promise<Record<string, AgentMcpServerStatus> | Error>
+  connect(input: { directory: string; name: string }): Promise<void | Error>
+  disconnect(input: { directory: string; name: string }): Promise<void | Error>
   /**
    * Add or replace a remote MCP server for a project directory. `headers`
    * carry the credential and must never be logged.

@@ -1,5 +1,5 @@
 // /mcp command - List and toggle MCP servers for the current project.
-// Uses OpenCode SDK mcp.status/connect/disconnect to manage servers.
+// Uses the agent backend's MCP operations (status/connect/disconnect).
 // MCP state is project-scoped (per channel), not per thread or session.
 // No database storage needed — state lives in OpenCode's config.
 
@@ -13,9 +13,9 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { McpStatus } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import type { AgentMcpServerStatus } from '../agent-backend/types.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -44,12 +44,9 @@ function formatStatusLabel(status: string): string {
   return STATUS_LABELS[status] || status
 }
 
-/** Extract error string from McpStatus using discriminated union narrowing. */
-function getStatusError(info: McpStatus): string | undefined {
-  if (info.status === 'failed') {
-    return info.error
-  }
-  if (info.status === 'needs_client_registration') {
+/** The error shown for a server; only failures and registration needs carry one. */
+function getStatusError(info: AgentMcpServerStatus): string | undefined {
+  if (info.status === 'failed' || info.status === 'needs_client_registration') {
     return info.error
   }
   return undefined
@@ -123,7 +120,7 @@ export async function handleMcpCommand({
 
   await command.deferReply({ flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS })
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await command.editReply({
       content: `Failed to connect to OpenCode server: ${getClient.message}`,
@@ -131,12 +128,10 @@ export async function handleMcpCommand({
     return
   }
 
-  const client = getClient()
-  const { data, error } = await client.mcp.status({
-    directory: projectDirectory,
-  })
+  const mcp = getClient().mcp
+  const data = mcp ? await mcp.status({ directory: projectDirectory }) : new Error('MCP is not supported by this agent backend')
 
-  if (error || !data) {
+  if (data instanceof Error) {
     await command.editReply({
       content: 'Failed to fetch MCP server status.',
     })
@@ -218,7 +213,7 @@ export async function handleMcpSelectMenu(
 
   pendingMcpContexts.delete(contextHash)
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await interaction.editReply({
       content: `Failed to connect to OpenCode server: ${getClient.message}`,
@@ -227,13 +222,10 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  const client = getClient()
+  const mcp = getClient().mcp
+  const statusData = mcp ? await mcp.status({ directory: projectDirectory }) : new Error('MCP is not supported by this agent backend')
 
-  const { data: statusData, error: statusError } = await client.mcp.status({
-    directory: projectDirectory,
-  })
-
-  if (statusError || !statusData) {
+  if (!mcp || statusData instanceof Error) {
     await interaction.editReply({
       content: 'Failed to refresh MCP server status.',
       components: [],
@@ -252,11 +244,11 @@ export async function handleMcpSelectMenu(
   const serverInfo = statusData[serverName]
 
   if (serverInfo.status === 'connected') {
-    const { error } = await client.mcp.disconnect({
+    const error = await mcp.disconnect({
       name: serverName,
       directory: projectDirectory,
     })
-    if (error) {
+    if (error instanceof Error) {
       logger.error(`[MCP] Failed to disconnect ${serverName}:`, error)
       await interaction.editReply({
         content: `Failed to disconnect **${serverName}**.`,
@@ -289,11 +281,11 @@ export async function handleMcpSelectMenu(
   }
 
   // Connect (handles disabled and failed)
-  const { error } = await client.mcp.connect({
+  const error = await mcp.connect({
     name: serverName,
     directory: projectDirectory,
   })
-  if (error) {
+  if (error instanceof Error) {
     logger.error(`[MCP] Failed to connect ${serverName}:`, error)
     await interaction.editReply({
       content: `Failed to connect **${serverName}**.`,

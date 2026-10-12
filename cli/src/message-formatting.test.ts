@@ -523,6 +523,11 @@ describe('sessionPartContent', () => {
 })
 
 describe('collectSessionChunks', () => {
+  // Fixtures are OpenCode parts; translate them as the backend seam does.
+  const translated = ({ messages, ...rest }: { messages: Array<{ info: { role: string; id?: string }; parts: Part[] }>; limit?: number }) => ({
+    ...rest,
+    messages: messages.map((message) => ({ ...message, parts: message.parts.map(toAgentPart) })),
+  })
   function textPart({
     id,
     text,
@@ -545,7 +550,7 @@ describe('collectSessionChunks', () => {
   }
 
   test('skips synthetic text parts', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -560,12 +565,12 @@ describe('collectSessionChunks', () => {
           ],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toEqual(['> working'])
   })
 
   test('quotes short text throughout a turn', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -576,7 +581,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
       [
         "> I will read it",
@@ -586,7 +591,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('quotes short text before a tool', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -604,7 +609,7 @@ describe('collectSessionChunks', () => {
           ],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toEqual([
       '> I will read it',
       '-# ┣ read',
@@ -612,7 +617,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('does not quote earlier text longer than two lines', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -629,7 +634,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toEqual([
       'line one\nline two\nline three',
       '> done',
@@ -637,7 +642,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('does not quote text flushed before a question tool', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -656,12 +661,12 @@ describe('collectSessionChunks', () => {
           ],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toEqual(['Pick one', '> thanks'])
   })
 
   test('quotes within each user turn separately', () => {
-    const { chunks } = collectSessionChunks({
+    const { chunks } = collectSessionChunks(translated({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -680,7 +685,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't3', text: 'second turn done', messageID: 'msg_3' })],
         },
       ],
-    })
+    }))
     expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
       [
         "> first turn",

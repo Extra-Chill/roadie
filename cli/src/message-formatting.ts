@@ -2,14 +2,15 @@
 // Converts Roadie agent parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { FilePartInput } from '@opencode-ai/sdk/v2'
-import type { Part as OpenCodePart } from '@opencode-ai/sdk/v2'
 import type { AgentPart } from './agent-backend/events.js'
-import { toAgentPart } from './agent-backend/opencode-events.js'
 import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
 
-// Extended FilePartInput with original Discord URL for reference in prompts
-export type DiscordFileAttachment = FilePartInput & {
+// A file prompt part plus the original Discord URL, for reference in prompts.
+export type DiscordFileAttachment = {
+  type: 'file'
+  mime: string
+  filename?: string
+  url: string
   sourceUrl?: string
 }
 
@@ -25,11 +26,7 @@ import { getDataDir } from './config.js'
 // straight from the backend's history API; they are translated before rendering.
 type GenericSessionMessage = {
   info: { role: string; id?: string }
-  parts: Array<AgentPart | OpenCodePart>
-}
-
-function asAgentPart(part: AgentPart | OpenCodePart): AgentPart {
-  return 'kind' in part ? part : toAgentPart(part)
+  parts: AgentPart[]
 }
 
 type ToolPart = Extract<AgentPart, { kind: 'tool' }>
@@ -384,7 +381,7 @@ export function collectSessionChunks({
     if (message.info.role !== 'assistant') {
       continue
     }
-    const parts = message.parts.map(asAgentPart)
+    const parts = message.parts
     for (const part of parts) {
       const content = formatPart(part)
       if (!content.trim()) {

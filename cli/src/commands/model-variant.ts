@@ -7,7 +7,7 @@
 // select menus in the same message. We track partial selections in the context
 // Map. Whichever menu fires second sees the first selection stored and applies.
 
-import { openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -25,7 +25,6 @@ import {
   setGlobalModel,
   getVariantCascade,
 } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import {
   getCurrentModelInfo,
@@ -167,7 +166,7 @@ export async function showModelVariantPicker({
     return
   }
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await editReply({ content: getClient.message, components: [] })
     return
@@ -178,7 +177,7 @@ export async function showModelVariantPicker({
       sessionId,
       channelId: targetChannelId,
       appId,
-      getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+      getClient,
       directory: projectDirectory,
     })
   }
@@ -189,7 +188,7 @@ export async function showModelVariantPicker({
         sessionId,
         channelId: targetChannelId,
         appId,
-        getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+        getClient,
         directory: projectDirectory,
       }),
       getVariantCascade({
@@ -197,7 +196,7 @@ export async function showModelVariantPicker({
         channelId: targetChannelId,
         appId,
       }),
-      getClient().provider.list({ directory: projectDirectory }),
+      getClient().catalog.providers({ directory: projectDirectory }),
     ])
 
   if (currentModelInfo.type === 'none') {
@@ -208,29 +207,30 @@ export async function showModelVariantPicker({
     return
   }
 
-  if (!providersResponse.data) {
+  if (providersResponse instanceof Error) {
     await editReply({ content: 'Failed to fetch providers', components: [] })
     return
   }
+  const providers = providersResponse.providers
 
   const { providerID, modelID, model: fullModelId } = currentModelInfo
   const sourceLabel = formatSourceLabel(currentModelInfo)
   const variantLabel = cascadeVariant ? ` (${cascadeVariant})` : ''
   const displayedModelId =
     (await resolveDisplayedModelId({
-      providers: providersResponse.data.all,
+      providers,
       providerID,
       modelID,
       sessionID: sessionId,
     })) ?? fullModelId
 
-  const provider = providersResponse.data.all.find((p) => {
+  const provider = providers.find((p) => {
     return p.id === providerID
   })
   const providerName = provider?.name || providerID
 
   const variants = getThinkingValuesForModel({
-    providers: providersResponse.data.all,
+    providers,
     providerId: providerID,
     modelId: modelID,
   })

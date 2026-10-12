@@ -352,6 +352,23 @@ const backends = new WeakMap<OpencodeClient, AgentBackend>()
 /** The Roadie backend for an OpenCode client. Cached per client. */
 export function openCodeMcpOperations(client: OpencodeClient): AgentMcpOperations {
   return {
+    async status({ directory }) {
+      const data = await call('mcp.status', () => client.mcp.status({ directory }))
+      if (data instanceof Error) return data
+      if (!data) return new AgentRequestError({ detail: 'OpenCode returned no MCP status' })
+      return Object.fromEntries(Object.entries(data).map(([name, info]) => [name, {
+        status: info.status,
+        ...('error' in info && info.error ? { error: info.error } : {}),
+      }]))
+    },
+    async connect({ directory, name }) {
+      const result = await call('mcp.connect', () => client.mcp.connect({ name, directory }))
+      return result instanceof Error ? result : undefined
+    },
+    async disconnect({ directory, name }) {
+      const result = await call('mcp.disconnect', () => client.mcp.disconnect({ name, directory }))
+      return result instanceof Error ? result : undefined
+    },
     async addRemote({ directory, name, url, headers }) {
       const result = await call('mcp.add', () =>
         client.mcp.add({

@@ -12,7 +12,6 @@ import { AgentRequestError, type AgentSessionMessage } from '../agent-backend/ty
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
-import { getOpencodeClient } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -138,8 +137,7 @@ export async function handleContextUsageCommand({
   }
 
   const backend = getAgentBackendProvider().getBackend(workingDirectory)
-  const client = getOpencodeClient(workingDirectory)
-  if (!backend || !client) {
+  if (!backend) {
     await command.reply({
       content: 'Failed to get OpenCode client',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
@@ -191,20 +189,20 @@ export async function handleContextUsageCommand({
 
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
-    const providersResult = await client.provider.list({ directory: workingDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+    const providersResult = await backend.catalog.providers({ directory: workingDirectory })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
     if (providersResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',
         providersResult,
       )
     } else {
-      const provider = providersResult.data?.all?.find(
+      const provider = providersResult.providers.find(
         (p) => p.id === providerID,
       )
-      const model = provider?.models?.[modelID]
-      if (model?.limit?.context) {
-        contextLimit = model.limit.context
+      const model = provider?.models[modelID]
+      if (model?.contextLimit) {
+        contextLimit = model.contextLimit
       }
     }
 
