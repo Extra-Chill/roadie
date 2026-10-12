@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.54.4] - 2026-10-12
+
+### Changed
+- message readers on the agent backend seam
+
 ## [0.54.3] - 2026-10-12
 
 ### Changed
