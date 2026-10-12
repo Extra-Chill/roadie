@@ -9,8 +9,32 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { toOpenCodeBackend } from './opencode-sessions.js'
 import { applyFilters, applyFiltersAsync } from '../hooks.js'
 import { openCodeBackendProvider } from './opencode.js'
+import path from 'node:path'
+import { getDataDir } from '../config.js'
+import { PiBackendProvider } from './pi/backend.js'
+import { withPiChannels } from './pi/router.js'
 import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
 
+/**
+ * The built-in default: OpenCode, plus Pi for the channels listed in
+ * ROADIE_PI_CHANNELS (comma-separated ids, #51 spike). Unset means OpenCode only.
+ */
+let resolvedDefault: AgentBackendProvider | undefined
+
+function defaultProvider(): AgentBackendProvider {
+  if (resolvedDefault) return resolvedDefault
+  const channels = (process.env['ROADIE_PI_CHANNELS'] ?? '').split(',').map((id) => id.trim()).filter(Boolean)
+  if (channels.length === 0) return openCodeBackendProvider
+  const pi = new PiBackendProvider({
+    bin: process.env['ROADIE_PI_BIN'] || 'pi',
+    sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
+    ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
+  })
+  resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
+  return resolvedDefault
+}
+
+// Pi is added only in resolveAgentBackendProvider(), after the data dir is set.
 let currentProvider: AgentBackendProvider = withProviderFilters(openCodeBackendProvider)
 
 export function getAgentBackendProvider(): AgentBackendProvider {
@@ -68,7 +92,7 @@ export function openCodeCatalogGetter(getClient: () => OpencodeClient): () => Ag
 
 /** Apply the `agent_backend` filter. Call after plugins load, before the bot starts. */
 export function resolveAgentBackendProvider(): AgentBackendProvider {
-  currentProvider = withProviderFilters(applyFilters('agent_backend', openCodeBackendProvider, {}))
+  currentProvider = withProviderFilters(applyFilters('agent_backend', defaultProvider(), {}))
   return currentProvider
 }
 
