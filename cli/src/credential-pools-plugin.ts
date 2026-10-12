@@ -20,44 +20,11 @@
 // can never silently bill the shared pool for someone's turn.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import {
-  CREDENTIALS_MODE_ENV,
-  THREAD_BILLING_ENV,
-  parseCredentialsMode,
-  parseThreadBilling,
-  resolveBilledPoolList,
-  type ThreadBilling,
-} from './credentials/person-pool.js'
-import { SHARED_POOL_ID } from './credentials/store.js'
+import { resolveSessionPoolHeader } from './credentials/session-pools.js'
 import { POOL_HEADER, SESSION_HEADER, isPoolProviderId, resolvePoolDataDir } from './credentials/provider.js'
 import { clearSessionRoute } from './credentials/routes.js'
-import { getSessionCredentialOwner, getSessionTurnAttribution } from './database.js'
 
 export const CREDENTIAL_POOLS_ENV = 'ROADIE_CREDENTIAL_POOLS'
-
-/**
- * The pool the billed person bills to; null when there is no billed person
- * (no owner row / no actor), which the caller maps to `shared`; an Error when
- * the lookup itself failed, which the caller must not treat as "no person".
- */
-async function resolveBilledPoolId({
-  sessionId,
-  billing,
-}: {
-  sessionId: string
-  billing: ThreadBilling
-}): Promise<string | null | Error> {
-  try {
-    if (billing === 'speaker') {
-      const attribution = await getSessionTurnAttribution(sessionId)
-      return attribution?.credentialPool ?? null
-    }
-    const owner = await getSessionCredentialOwner(sessionId)
-    return owner?.poolId ?? null
-  } catch (cause) {
-    return new Error(`credential pool lookup failed for session ${sessionId}`, { cause })
-  }
-}
 
 export const credentialPoolsPlugin: Plugin = async () => {
   if (process.env[CREDENTIAL_POOLS_ENV] !== '1') {
@@ -70,17 +37,9 @@ export const credentialPoolsPlugin: Plugin = async () => {
       // Tagging any other provider's request would leak the session id and
       // pool name to that provider, so leave those requests untouched.
       if (!isPoolProviderId(input.model.providerID)) return
-      const mode = parseCredentialsMode(process.env[CREDENTIALS_MODE_ENV])
-      const billing = parseThreadBilling(process.env[THREAD_BILLING_ENV])
-      if (mode === 'global') {
-        output.headers[POOL_HEADER] = SHARED_POOL_ID
-      } else {
-        const billedPoolId = await resolveBilledPoolId({ sessionId: input.sessionID, billing })
-        // Fail closed: without a pool header the provider rejects the request.
-        if (!(billedPoolId instanceof Error)) {
-          output.headers[POOL_HEADER] = resolveBilledPoolList({ mode, billedPoolId }).join(',')
-        }
-      }
+      const pools = await resolveSessionPoolHeader({ sessionId: input.sessionID })
+      // Fail closed: without a pool header the provider rejects the request.
+      if (!(pools instanceof Error)) output.headers[POOL_HEADER] = pools
       output.headers[SESSION_HEADER] = input.sessionID
     },
     event: async ({ event }) => {

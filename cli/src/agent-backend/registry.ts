@@ -20,6 +20,17 @@ import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from 
  * ROADIE_PI_CHANNELS (comma-separated ids, #51 spike). Unset means OpenCode only.
  */
 let resolvedDefault: AgentBackendProvider | undefined
+let piPool: (PiPoolHandle & { agentDir: string }) | undefined
+
+/**
+ * Bill Pi channels to the credential pools (call before resolveAgentBackendProvider,
+ * once the pool proxy is running). Without it Pi uses its own credentials.
+ */
+export function setPiPool(pool: PiPoolHandle & { agentDir: string }): void {
+  piPool = pool
+}
+
+type PiPoolHandle = NonNullable<ConstructorParameters<typeof PiBackendProvider>[0]['pool']>
 
 function defaultProvider(): AgentBackendProvider {
   if (resolvedDefault) return resolvedDefault
@@ -29,6 +40,7 @@ function defaultProvider(): AgentBackendProvider {
     bin: process.env['ROADIE_PI_BIN'] || 'pi',
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
+    ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
   })
   resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
   return resolvedDefault

@@ -205,7 +205,7 @@ function fetchWithPreconnect(fetchImpl: PoolFetch): PoolFetchWithPreconnect {
  * this request without a cooldown. A returned Error never escapes as a crash;
  * it only means "skip this candidate".
  */
-async function ensureFreshOAuthAccount({
+export async function ensureFreshOAuthAccount({
   dataDir,
   poolId,
   account,
@@ -273,11 +273,11 @@ async function ensureFreshOAuthAccount({
  * never fails the request on its own: the next pool answers, and only when
  * every listed pool is unusable does the request fail.
  */
-type PoolResolution =
+export type PoolResolution =
   | { poolId: string; candidates: PoolCandidate[] }
   | { poolId: string; candidates: PoolCandidate[]; skipped: string }
 
-function resolvePoolListCandidates({
+export function resolvePoolListCandidates({
   poolIds,
   dataDir,
   rotationName,
@@ -374,7 +374,7 @@ function stripRoadieHeaders(
  * header, the Claude Code system prefix and tool-name rewrite in the request
  * body, and the tool-name reversal in the streamed response.
  */
-function makeAnthropicOAuthFetch({
+export function makeAnthropicOAuthFetch({
   accessToken,
   modelId,
   fetchImpl,
@@ -475,7 +475,7 @@ async function buildCandidateModel({
  * starts a fresh resolution. The candidate set itself is never expanded, so
  * fail-closed 401s and fallback lists behave exactly as without affinity.
  */
-function heldCandidate({
+export function heldCandidate({
   sessionId,
   rotationName,
   candidates,

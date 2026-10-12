@@ -3,7 +3,7 @@
 // Handles interactive setup, Discord OAuth, slash command registration,
 // project channel creation, and launching the bot with opencode integration.
 import { loadPlugins, resolvePluginSpecs } from './plugins.js'
-import { resolveAgentBackendProvider } from './agent-backend/registry.js'
+import { resolveAgentBackendProvider, setPiPool } from './agent-backend/registry.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import path from 'node:path'
@@ -563,6 +563,14 @@ cli
         if (plugins instanceof Error) {
           cliLogger.error(plugins.message)
           process.exit(EXIT_NO_RESTART)
+        }
+        // Pi channels (#51) bill to the credential pools through a loopback
+        // proxy, so their requests carry the same account routing as OpenCode's.
+        if (process.env['ROADIE_PI_CHANNELS'] && store.getState().credentialPoolsEnabled) {
+          const { startPiPool } = await import('./agent-backend/pi/pool-startup.js')
+          const pool = await startPiPool()
+          if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
+          else setPiPool(pool)
         }
         const backend = resolveAgentBackendProvider()
         if (backend.id !== 'opencode') {

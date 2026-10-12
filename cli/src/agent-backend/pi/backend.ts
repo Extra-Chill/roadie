@@ -52,6 +52,16 @@ export type PiBackendOptions = {
    * not keep one. Default 5 minutes; 0 disables.
    */
   idleTimeoutMs?: number
+  /**
+   * Bill model calls to Roadie's credential pools through the loopback proxy.
+   * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
+   */
+  pool?: {
+    issueKey(sessionId: () => string | undefined): string
+    revokeKey(key: string): void
+    /** End the session's turn affinity (called when a run ends). */
+    endTurn?(sessionId: string): void
+  }
 }
 
 type PiModel = { id: string; name?: string; provider: string; reasoning?: boolean; contextWindow?: number }
@@ -252,17 +262,27 @@ export class PiBackendProvider implements AgentBackendProvider {
   private async start({ directory, extra, title }: { directory: string; extra: string[]; title?: string }): Promise<RunningSession | Error> {
     const systemFile = path.join(this.options.sessionDir, `system-${crypto.randomUUID()}.md`)
     fs.writeFileSync(systemFile, '')
+    let ownSessionId: string | undefined
+    const poolKey = this.options.pool?.issueKey(() => ownSessionId)
     const child = new PiProcess({
       bin: this.options.bin,
       args: this.spawnArgs(extra),
       cwd: directory,
-      env: { ...process.env, ...this.options.env, ROADIE_PI_SYSTEM_FILE: systemFile, ROADIE_PI_TOOLS_FILE: this.toolsFile },
+      env: {
+        ...process.env,
+        ...this.options.env,
+        ROADIE_PI_SYSTEM_FILE: systemFile,
+        ROADIE_PI_TOOLS_FILE: this.toolsFile,
+        ...(poolKey && { ROADIE_PI_KEY: poolKey }),
+      },
     })
     const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' })
     if (state instanceof Error) {
       child.kill()
+      if (poolKey) this.options.pool?.revokeKey(poolKey)
       return state
     }
+    ownSessionId = state.sessionId
     const header = readSessionHeader(state.sessionFile)
     const session: RunningSession = {
       id: state.sessionId,
@@ -283,6 +303,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     child.onRecord((record) => this.onRecord(session, record))
     child.onExit(() => {
       clearTimeout(session.idleTimer)
+      if (poolKey) this.options.pool?.revokeKey(poolKey)
       if (this.sessions.get(session.id) === session) this.sessions.delete(session.id)
       fs.rmSync(systemFile, { force: true })
       if (session.busy) {
@@ -323,6 +344,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     if (record.type === 'agent_end') {
       session.busy = false
       this.touch(session)
+      this.options.pool?.endTurn?.(session.id)
     }
     this.emit(session.translator.translate(record), record)
   }
