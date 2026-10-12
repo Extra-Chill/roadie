@@ -245,11 +245,12 @@ export class PiEventTranslator {
       case 'tool_execution_start':
         return this.toolEvent(record.toolCallId as string, record.toolName as string, { status: 'running', input: record.args as Record<string, unknown>, startedAt: Date.now() })
       case 'tool_execution_end': {
-        const result = record.result as { content?: unknown } | undefined
+        const result = record.result as { content?: unknown; details?: { title?: unknown } } | undefined
         const text = textOf(result?.content)
+        const title = typeof result?.details?.title === 'string' ? result.details.title : undefined
         return this.toolEvent(record.toolCallId as string, record.toolName as string, record.isError
           ? { status: 'error', error: text, endedAt: Date.now() }
-          : { status: 'completed', output: text, endedAt: Date.now() })
+          : { status: 'completed', output: text, endedAt: Date.now(), ...(title && { title }) })
       }
       case 'auto_retry_start':
         return [{
@@ -345,7 +346,7 @@ export class PiEventTranslator {
   private toolEvent(
     callId: string,
     toolName: string,
-    update: { status: 'running' | 'completed' | 'error'; input?: Record<string, unknown>; output?: string; error?: string; startedAt?: number; endedAt?: number },
+    update: { status: 'running' | 'completed' | 'error'; input?: Record<string, unknown>; output?: string; error?: string; title?: string; startedAt?: number; endedAt?: number },
   ): AgentEvent[] {
     const known = this.tools.get(callId)
     const state: ToolState = {
@@ -368,6 +369,7 @@ export class PiEventTranslator {
         status: update.status,
         input: state.input,
         ...(update.output !== undefined && { output: update.output }),
+        ...(update.title !== undefined && { title: update.title }),
         ...(update.error !== undefined && { error: update.error }),
         ...(state.startedAt !== undefined && { startedAt: state.startedAt }),
         ...(update.endedAt !== undefined && { endedAt: update.endedAt }),

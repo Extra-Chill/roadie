@@ -31,8 +31,10 @@ import {
 } from '../types.js'
 import { PiEventTranslator, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
+import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 
 const PERMISSION_TITLE = 'roadie:permission'
+const TOOL_TITLE = 'roadie:tool'
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high']
 
 export type PiBackendOptions = {
@@ -152,9 +154,12 @@ export class PiBackendProvider implements AgentBackendProvider {
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
   private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
   private backend: AgentBackend
+  private toolsFile: string
 
   constructor(readonly options: PiBackendOptions) {
     fs.mkdirSync(options.sessionDir, { recursive: true })
+    this.toolsFile = path.join(options.sessionDir, 'roadie-tools.json')
+    fs.writeFileSync(this.toolsFile, JSON.stringify(roadieToolSchemas()))
     this.backend = {
       sessions: this.sessionOperations(),
       catalog: {
@@ -251,7 +256,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       bin: this.options.bin,
       args: this.spawnArgs(extra),
       cwd: directory,
-      env: { ...process.env, ...this.options.env, ROADIE_PI_SYSTEM_FILE: systemFile },
+      env: { ...process.env, ...this.options.env, ROADIE_PI_SYSTEM_FILE: systemFile, ROADIE_PI_TOOLS_FILE: this.toolsFile },
     })
     const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' })
     if (state instanceof Error) {
@@ -329,6 +334,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.emit([{ type: 'notice', message: String(record.message ?? ''), level }], record)
       return
     }
+    if (record.method === 'input' && record.title === TOOL_TITLE) {
+      void this.runTool(session, uiId, String(record.placeholder ?? ''))
+      return
+    }
     if (record.method !== 'confirm' || record.title !== PERMISSION_TITLE) {
       // Only Roadie's own dialogs are supported; dismiss anything else so Pi does not block.
       if (['select', 'confirm', 'input', 'editor'].includes(String(record.method))) {
@@ -366,6 +375,22 @@ export class PiBackendProvider implements AgentBackendProvider {
         metadata: { tool: call.tool, input: call.input },
       },
     }], record)
+  }
+
+  /** Run a Roadie tool the extension forwarded, and answer with its result. */
+  private async runTool(session: RunningSession, uiId: string, request: string) {
+    let call: { tool: string; args: unknown }
+    try {
+      call = JSON.parse(request)
+    } catch {
+      session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify({ error: 'Malformed Roadie tool request' }) })
+      return
+    }
+    const result = await runRoadieTool({ name: call.tool, args: call.args, context: { sessionId: session.id, directory: session.directory } })
+    const answer = result instanceof Error
+      ? { error: result.message }
+      : typeof result === 'string' ? { output: result } : result
+    session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify(answer) })
   }
 
   private touch(session: RunningSession) {

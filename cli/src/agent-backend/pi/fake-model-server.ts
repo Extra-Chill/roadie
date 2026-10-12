@@ -3,8 +3,8 @@
 // (models.json, api "openai-completions").
 //
 // Script: after a tool result, answer with the result text. A user message
-// containing RUN_TOOL calls `bash` with the text after it. Anything else gets
-// a fixed greeting.
+// containing RUN_TOOL calls `bash` with the text after it; CALL_TOOL <name>
+// <json> calls any tool with those arguments. Anything else gets a greeting.
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -24,6 +24,8 @@ export function scriptedReply(messages: ChatMessage[]): { text: string } | { too
   const said = textOf(user?.content)
   const match = /RUN_TOOL (.+)$/m.exec(said)
   if (match) return { tool: 'bash', args: { command: match[1]!.trim() } }
+  const call = /CALL_TOOL (\S+) (\{.*\})\s*$/m.exec(said)
+  if (call) return { tool: call[1]!, args: JSON.parse(call[2]!) as Record<string, unknown> }
   return { text: 'hello from the fake model' }
 }
 
