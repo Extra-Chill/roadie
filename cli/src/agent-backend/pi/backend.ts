@@ -32,6 +32,7 @@ import {
 import { PiEventTranslator, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
+import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
@@ -52,6 +53,10 @@ export type PiBackendOptions = {
    * not keep one. Default 5 minutes; 0 disables.
    */
   idleTimeoutMs?: number
+  /** Base system prompt replacing Pi's default. Defaults to ROADIE_PI_BASE_PROMPT. */
+  systemPrompt?: string
+  /** Load the project's AGENTS.md / CLAUDE.md files, like OpenCode. Default true. */
+  contextFiles?: boolean
   /**
    * Bill model calls to Roadie's credential pools through the loopback proxy.
    * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
@@ -252,6 +257,10 @@ export class PiBackendProvider implements AgentBackendProvider {
   private spawnArgs(extra: string[]): string[] {
     return [
       '--session-dir', this.options.sessionDir,
+      '--system-prompt', this.options.systemPrompt ?? ROADIE_PI_BASE_PROMPT,
+      // Roadie supplies the tools, prompt and extension; Pi's own discovery stays off.
+      '--no-extensions', '--no-skills', '--no-prompt-templates',
+      ...(this.options.contextFiles === false ? ['--no-context-files'] : []),
       '-e', extensionPath(),
       ...(this.options.model ? ['--model', this.options.model] : []),
       ...extra,

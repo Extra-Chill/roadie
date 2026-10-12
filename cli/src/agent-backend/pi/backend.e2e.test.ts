@@ -136,6 +136,9 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const first = JSON.parse(server.bodies[0]!) as { messages: Array<{ role: string; content: unknown }> }
     const system = first.messages.find((m) => m.role === 'system')
     expect(JSON.stringify(system?.content)).toContain('ROADIE_SYSTEM_MARKER')
+    // Roadie owns the prompt: its base replaces Pi's default.
+    expect(JSON.stringify(system?.content)).toContain('You are a coding agent working in the user')
+    expect(JSON.stringify(system?.content)).not.toContain('pi, a coding agent harness')
   })
 
   test('after a restart, a new provider finds the session on disk and resumes it', async () => {
