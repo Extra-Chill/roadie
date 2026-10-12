@@ -224,6 +224,7 @@ type ToolState = { messageId: string; tool: string; input: Record<string, unknow
 export class PiEventTranslator {
   private lastUserId: string | undefined
   private assistantId: string | undefined
+  private assistantStartedAt: number | undefined
   private tools = new Map<string, ToolState>()
 
   constructor(readonly sessionId: string) {}
@@ -239,7 +240,8 @@ export class PiEventTranslator {
       case 'message_start':
         return this.messageStart(record.message as PiMessage)
       case 'message_update':
-        return this.messageUpdate(record.message as PiAssistantMessage, record.assistantMessageEvent as Record<string, unknown>)
+        // Pi 1.x drops `message` from updates; the id comes from message_start.
+        return this.messageUpdate(record.message as PiAssistantMessage | undefined, record.assistantMessageEvent as Record<string, unknown>)
       case 'message_end':
         return this.messageEnd(record.message as PiMessage)
       case 'tool_execution_start':
@@ -291,12 +293,15 @@ export class PiEventTranslator {
     if (message.role !== 'assistant') return []
     const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: false })!
     this.assistantId = agentMessage.id
+    this.assistantStartedAt = message.timestamp
     return [{ type: 'message', message: agentMessage }]
   }
 
-  private messageUpdate(message: PiAssistantMessage, event: Record<string, unknown>): AgentEvent[] {
+  private messageUpdate(message: PiAssistantMessage | undefined, event: Record<string, unknown>): AgentEvent[] {
     const sessionId = this.sessionId
-    const messageId = piMessageId(message)
+    const messageId = message ? piMessageId(message) : this.assistantId
+    if (!messageId) return []
+    const startedAt = message?.timestamp ?? this.assistantStartedAt ?? Date.now()
     const index = Number(event.contentIndex ?? 0)
     const partId = `${messageId}-${index}`
     switch (event.type) {
@@ -308,9 +313,9 @@ export class PiEventTranslator {
       case 'thinking_delta':
         return [{ type: 'part.delta', sessionId, messageId, partId, field: 'text', delta: String(event.delta ?? '') }]
       case 'text_end':
-        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'text', text: String(event.content ?? ''), startedAt: message.timestamp, endedAt: Date.now() } }]
+        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'text', text: String(event.content ?? ''), startedAt, endedAt: Date.now() } }]
       case 'thinking_end':
-        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'reasoning', text: String(event.content ?? ''), startedAt: message.timestamp, endedAt: Date.now() } }]
+        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'reasoning', text: String(event.content ?? ''), startedAt, endedAt: Date.now() } }]
       case 'toolcall_end': {
         const call = event.toolCall as { id: string; name: string; arguments?: Record<string, unknown> }
         this.tools.set(call.id, { messageId, tool: call.name, input: call.arguments ?? {} })

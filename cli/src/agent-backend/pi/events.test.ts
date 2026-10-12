@@ -125,3 +125,18 @@ describe('decidePermission', () => {
     expect(decidePermission({ rules, tool: 'write', input: { path: '/etc/passwd' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
   })
 })
+
+describe('Pi 1.x stream shape', () => {
+  test('message_update without `message` still lands on the assistant message from message_start', () => {
+    const translator = new PiEventTranslator('ses-pi')
+    translator.translate({ type: 'message_start', message: { role: 'system', content: '', timestamp: 1 } })
+    const [started] = translator.translate({ type: 'message_start', message: { role: 'assistant', content: [], timestamp: 7 } })
+    const delta = translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi' } })
+    const end = translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'hi' } })
+    expect(started?.type === 'message' && started.message.id).toBe('pi-assistant-7')
+    expect(delta).toEqual([{ type: 'part.delta', sessionId: 'ses-pi', messageId: 'pi-assistant-7', partId: 'pi-assistant-7-0', field: 'text', delta: 'hi' }])
+    expect(end[0]?.type === 'part' && end[0].part.kind === 'text' && end[0].part.startedAt).toBe(7)
+    expect(translator.translate({ type: 'agent_settled', aborted: false })).toEqual([])
+  })
+})
+
