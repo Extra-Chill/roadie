@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.56.0] - 2026-10-12
+
+### Added
+- pool proxy serves registered external Pi clients
+
 ## [0.55.0] - 2026-10-12
 
 ### Added
