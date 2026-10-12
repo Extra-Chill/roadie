@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { AgentBackend, AgentBackendProvider } from '../types.js'
-import { backendChannelId } from '../registry.js'
+import { backendChannelId, checkPiVersion } from '../registry.js'
 import { PiBackendProvider } from './backend.js'
 import { withPiChannels } from './router.js'
 
@@ -48,3 +48,12 @@ describe('withPiChannels', () => {
     expect(backendChannelId(null)).toBeUndefined()
   })
 })
+
+describe('checkPiVersion', () => {
+  test('accepts 1.x, rejects 0.x and a missing binary', () => {
+    expect(checkPiVersion('pi', () => '1.1.0\n')).toBe('1.1.0')
+    expect(checkPiVersion('pi', () => '0.73.1')).toBeInstanceOf(Error)
+    expect(checkPiVersion('pi', () => { throw new Error('ENOENT') })).toBeInstanceOf(Error)
+  })
+})
+

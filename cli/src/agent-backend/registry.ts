@@ -10,6 +10,7 @@ import { toOpenCodeBackend } from './opencode-sessions.js'
 import { applyFilters, applyFiltersAsync } from '../hooks.js'
 import { openCodeBackendProvider } from './opencode.js'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
 import { PiBackendProvider } from './pi/backend.js'
 import { withPiChannels } from './pi/router.js'
@@ -20,6 +21,21 @@ import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from 
  * ROADIE_PI_CHANNELS (comma-separated ids, #51 spike). Unset means OpenCode only.
  */
 let resolvedDefault: AgentBackendProvider | undefined
+
+/** Pi 1.x is required: built-in MCP, `--approve`, and the 1.x RPC stream. */
+export const MIN_PI_MAJOR = 1
+
+export function checkPiVersion(bin: string, run: (bin: string) => string = (b) => execFileSync(b, ['--version'], { encoding: 'utf8', timeout: 15_000 })): string | Error {
+  let output: string
+  try {
+    output = run(bin).trim()
+  } catch (cause) {
+    return new Error(`cannot run ${bin} --version`, { cause })
+  }
+  const major = Number(/(\d+)\.\d+\.\d+/.exec(output)?.[1])
+  if (!Number.isFinite(major) || major < MIN_PI_MAJOR) return new Error(`${bin} is ${output || 'unknown'}; Roadie needs Pi ${MIN_PI_MAJOR}.x or newer`)
+  return output
+}
 let piPool: (PiPoolHandle & { agentDir: string }) | undefined
 
 /**
@@ -36,8 +52,14 @@ function defaultProvider(): AgentBackendProvider {
   if (resolvedDefault) return resolvedDefault
   const channels = (process.env['ROADIE_PI_CHANNELS'] ?? '').split(',').map((id) => id.trim()).filter(Boolean)
   if (channels.length === 0) return openCodeBackendProvider
+  const bin = process.env['ROADIE_PI_BIN'] || 'pi'
+  const version = checkPiVersion(bin)
+  if (version instanceof Error) {
+    console.warn(`[agent-backend] Pi channels disabled, staying on OpenCode: ${version.message}`)
+    return openCodeBackendProvider
+  }
   const pi = new PiBackendProvider({
-    bin: process.env['ROADIE_PI_BIN'] || 'pi',
+    bin,
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     fileEditLogDir: getDataDir(),
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
