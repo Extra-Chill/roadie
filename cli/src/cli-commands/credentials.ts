@@ -12,6 +12,10 @@
 //   roadie credentials mcp set --person <key> --credential <name>   (OAuth token JSON on stdin)
 //   roadie credentials mcp list --person <key>
 //   roadie credentials mcp remove --person <key> --credential <name>
+//   roadie credentials client add <name> [--pools <id,id>]   (prints the key once)
+//   roadie credentials client list
+//   roadie credentials client remove <name>
+//   roadie credentials client pi-agent-dir <dir> --base-url <url> [--pools <id,id>]
 // API keys are read from stdin (never argv) and never printed; only the last
 // 4 characters are shown. OAuth tokens are never printed; `list` shows the
 // access token's expiry instead.
@@ -59,6 +63,8 @@ import {
   setPersonMcpToken,
 } from '../credentials/person-mcp-store.js'
 import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
+import { addPoolClient, readPoolClients, removePoolClient } from '../credentials/pool-clients.js'
+import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -447,6 +453,74 @@ cli
     if (removed instanceof Error) exitWithError(removed.message)
     if (!removed) exitWithError(`No MCP credential ${credential} for ${personKey}`)
     cliLogger.log(`Removed MCP credential ${credential} for ${personKey}`)
+    process.exit(0)
+  })
+
+/** Parse `--pools a,b` into validated pool ids (default: shared). */
+function resolvePoolIds(value: string | undefined): string[] {
+  const ids = (value ?? '').split(',').map((id) => id.trim()).filter(Boolean)
+  return (ids.length > 0 ? ids : [SHARED_POOL_ID]).map((id) => resolvePoolId(id))
+}
+
+cli
+  .command(
+    'credentials client add <name>',
+    'Register an external pool client (e.g. a Homeboy Pi runner). Prints its key once; Roadie stores only a hash. The client sends it as x-roadie-key to the pool proxy (ROADIE_POOL_PROXY_PORT).',
+  )
+  .option('--pools <ids>', 'Comma-separated pools the client bills to (default: shared)')
+  .action(async (name: string, options) => {
+    refuseAgentMode()
+    const added = addPoolClient({ dataDir: getDataDir(), name, pools: resolvePoolIds(options.pools) })
+    if (added instanceof Error) exitWithError(added.message)
+    cliLogger.log(`Registered pool client ${added.client.name} (pools: ${added.client.pools.join(', ')})`)
+    cliLogger.log('Key (shown once; store it with the client, e.g. as ROADIE_PI_KEY):')
+    process.stdout.write(`${added.key}\n`)
+    cliLogger.log('Restart Roadie so the pool proxy starts for registered clients.')
+    process.exit(0)
+  })
+
+cli
+  .command('credentials client list', 'List registered external pool clients (never their keys)')
+  .action(async () => {
+    refuseAgentMode()
+    const clients = readPoolClients(getDataDir())
+    if (clients instanceof Error) exitWithError(clients.message)
+    if (clients.length === 0) cliLogger.log('No pool clients registered.')
+    for (const client of clients) {
+      cliLogger.log(`${client.name}  pools: ${client.pools.join(', ')}  created ${new Date(client.createdAt).toISOString()}`)
+    }
+    process.exit(0)
+  })
+
+cli
+  .command('credentials client remove <name>', 'Revoke an external pool client; its key stops working on the next request')
+  .action(async (name: string) => {
+    refuseAgentMode()
+    const removed = removePoolClient({ dataDir: getDataDir(), name })
+    if (removed instanceof Error) exitWithError(removed.message)
+    if (!removed) exitWithError(`Pool client ${name} not found`)
+    cliLogger.log(`Removed pool client ${name}`)
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials client pi-agent-dir <dir>',
+    'Write a Pi agent dir (models.json + settings.json) whose roadie / roadie-codex providers point at the pool proxy. Copy it to the client and set PI_CODING_AGENT_DIR and ROADIE_PI_KEY there.',
+  )
+  .option('--base-url <url>', 'Pool proxy URL as the client reaches it (e.g. http://127.0.0.1:47120)')
+  .option('--pools <ids>', 'Pools whose rotations and ChatGPT accounts to offer (default: shared)')
+  .action(async (dir: string, options) => {
+    refuseAgentMode()
+    const baseUrl = String(options.baseUrl ?? '').trim()
+    if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) exitWithError('--base-url must be an http(s) URL')
+    const dataDir = getDataDir()
+    const poolIds = resolvePoolIds(options.pools)
+    const rotations = anthropicRotations({ dataDir, poolIds })
+    const codexModels = hasCodexAccounts({ dataDir, poolIds }) ? DEFAULT_CODEX_MODELS : []
+    if (rotations.length === 0 && codexModels.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no ChatGPT account and no anthropic rotation`)
+    writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, codexModels })
+    cliLogger.log(`Wrote Pi agent dir ${dir} (anthropic rotations: ${rotations.join(', ') || 'none'}; ChatGPT models: ${codexModels.join(', ') || 'none'})`)
     process.exit(0)
   })
 

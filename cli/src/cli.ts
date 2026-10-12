@@ -566,11 +566,17 @@ cli
         }
         // Pi channels (#51) bill to the credential pools through a loopback
         // proxy, so their requests carry the same account routing as OpenCode's.
-        if (process.env['ROADIE_PI_CHANNELS'] && store.getState().credentialPoolsEnabled) {
-          const { startPiPool } = await import('./agent-backend/pi/pool-startup.js')
-          const pool = await startPiPool()
-          if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
-          else setPiPool(pool)
+        // Registered external pool clients (#171) use the same proxy.
+        if (store.getState().credentialPoolsEnabled) {
+          const { shouldStartPiPool, startPiPool } = await import('./agent-backend/pi/pool-startup.js')
+          if (shouldStartPiPool({ dataDir: getDataDir() })) {
+            const pool = await startPiPool()
+            if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
+            else {
+              setPiPool(pool)
+              cliLogger.log(`Credential pool proxy listening on ${pool.baseUrl}`)
+            }
+          }
         }
         const backend = resolveAgentBackendProvider()
         if (backend.id !== 'opencode') {
