@@ -1,7 +1,7 @@
 // Clear model overrides (session first, else channel).
 // Invoked from the /model UI via a "Clear override" button.
 
-import { openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
   ChannelType,
   type TextChannel,
@@ -18,7 +18,6 @@ import {
 import { getDb } from '../db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { formatModelSource, getCurrentModelInfo } from './model.js'
@@ -109,7 +108,7 @@ export async function clearModelOverride({
   }
 
   // Get the new model that will be used
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   let newModelText = 'unknown'
 
   if (!(getClient instanceof Error)) {
@@ -117,7 +116,7 @@ export async function clearModelOverride({
       sessionId,
       channelId: targetChannelId,
       appId,
-      getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+      getClient,
       directory: projectDirectory,
     })
 

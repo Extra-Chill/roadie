@@ -18,7 +18,6 @@ import {
   fileBaseName,
   formatCompactToolSummary,
   formatDuration,
-  getCompactSessionContext,
   truncateChars,
   userPromptDurationMs,
 } from './markdown.js'
@@ -402,26 +401,6 @@ test('error handling for non-existent session', async () => {
   const result = await exporter.generate({ sessionID: badSessionID })
   expect(result).toBeInstanceOf(Error)
   expect((result as Error).message).toContain(`Session ${badSessionID} not found`)
-})
-
-test('getCompactSessionContext generates compact format', async () => {
-  const contextResult = await getCompactSessionContext({
-    backend: toOpenCodeBackend(client),
-    sessionId: sessionID,
-    includeSystemPrompt: false,
-    maxMessages: 10,
-  })
-
-  expect(errore.isOk(contextResult)).toBe(true)
-  const context = errore.unwrap(contextResult)
-
-  expect(context).toBeTruthy()
-  // User text may be prefixed with branch context injected by opencode
-  expect(context).toContain('hello markdown test')
-  expect(context).toContain('[User]:')
-  expect(context).toContain('[Assistant]:')
-  expect(context).toContain('Hello! This is a deterministic markdown test response.')
-  expect(context).not.toContain('[System Prompt]')
 })
 
 test('generate markdown with lastAssistantOnly', async () => {

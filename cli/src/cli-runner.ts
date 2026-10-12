@@ -1,5 +1,7 @@
 // Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
+import type { AgentDefinition } from './agent-backend/types.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 import {
   intro,
   outro,
@@ -82,6 +84,13 @@ import {
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
 export const cliLogger = createLogger(LogPrefix.CLI)
+
+/** Agents for slash-command registration, from the backend catalog (filters applied). */
+async function listAgentsForRegistration(directory: string): Promise<AgentDefinition[] | Error> {
+  const backend = getAgentBackendProvider().getBackend(directory)
+  if (!backend) return new Error('Agent backend is unavailable')
+  return backend.catalog.agents({ directory }).catch((cause: unknown) => new Error('Failed to list agents', { cause }))
+}
 
 
 
@@ -1003,16 +1012,14 @@ export async function backgroundInit({
           )
           return []
         }),
-      getClient()
-        .app.agents({ directory: currentDir })
-        .then((r) => r.data || [])
-        .catch((error) => {
-          cliLogger.warn(
-            'Failed to load agents during background init:',
-            error instanceof Error ? error.stack : String(error),
-          )
-          return []
-        }),
+      listAgentsForRegistration(currentDir).then((result) => {
+        if (!(result instanceof Error)) return result
+        cliLogger.warn(
+          'Failed to load agents during background init:',
+          result.stack ?? result.message,
+        )
+        return []
+      }),
     ])
 
     await registerCommands({ token, appId, guildIds, userCommands, agents })
@@ -1505,16 +1512,14 @@ export async function run({
           )
           return []
         }),
-      getClient()
-        .app.agents({ directory: currentDir })
-        .then((r) => r.data || [])
-        .catch((error) => {
-          cliLogger.warn(
-            'Failed to load agents during setup:',
-            error instanceof Error ? error.stack : String(error),
-          )
-          return []
-        }),
+      listAgentsForRegistration(currentDir).then((result) => {
+        if (!(result instanceof Error)) return result
+        cliLogger.warn(
+          'Failed to load agents during setup:',
+          result.stack ?? result.message,
+        )
+        return []
+      }),
     ])
 
     cliLogger.log(`Found ${projects.length} OpenCode project(s)`)

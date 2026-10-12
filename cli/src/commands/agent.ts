@@ -4,7 +4,8 @@
 // the prompt is sent with that agent and the session keeps that agent afterwards.
 // Optional last `variant` option sets the model thinking level for that agent.
 
-import { openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError } from '../agent-backend/types.js'
 import {
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
@@ -28,7 +29,6 @@ import {
   getSessionAgent,
   getChannelAgent,
 } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveTextChannel,
   resolveWorkingDirectory,
@@ -295,20 +295,20 @@ async function applyQuickAgentVariant({
     return undefined
   }
 
-  const getClient = await initializeOpencodeForDirectory(context.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
   if (getClient instanceof Error) return undefined
 
-  const providersResponse = await getClient()
-    .provider.list({ directory: context.workingDirectory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-  if (providersResponse instanceof Error || !providersResponse.data) {
+  const catalog = await getClient()
+    .catalog.providers({ directory: context.workingDirectory })
+    .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+  if (catalog instanceof Error) {
     agentLogger.warn(`[AGENT] Skipping variant ${variant}: provider list failed`)
     return undefined
   }
 
   const matchedVariant = resolveRequestedThinkingVariant({
     requestedValue: variant,
-    providers: providersResponse.data.all,
+    providers: catalog.providers,
     providerId: modelInfo.providerID,
     modelId: modelInfo.modelID,
   })
@@ -382,14 +382,14 @@ async function resolveAgentModelInfo({
   context: AgentCommandContext
   agentName: string
 }): Promise<CurrentModelInfo> {
-  const getClient = await initializeOpencodeForDirectory(context.dir)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
   if (getClient instanceof Error) return { type: 'none' }
   return getCurrentModelInfo({
     sessionId: context.sessionId,
     channelId: context.channelId,
     appId: context.appId,
     agentPreference: agentName,
-    getClient: getClient instanceof Error ? getClient : openCodeCatalogGetter(getClient),
+    getClient,
     directory: context.workingDirectory,
   })
 }
@@ -409,25 +409,26 @@ export async function handleAgentCommand({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(context.dir)
+    const getClient = await getAgentBackendProvider().initializeForDirectory(context.dir)
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message })
       return
     }
 
-    const agentsResponse = await getClient().app.agents({
+    const agentList = await getClient().catalog.agents({
       directory: context.workingDirectory,
     })
+    // A transport failure threw before; a rejection read as no agents.
+    if (agentList instanceof Error && !(agentList instanceof AgentRequestError)) throw agentList
 
-    if (!agentsResponse.data || agentsResponse.data.length === 0) {
+    if (agentList instanceof Error || agentList.length === 0) {
       await interaction.editReply({ content: 'No agents available' })
       return
     }
 
-    const agents = agentsResponse.data
+    const agents = agentList
       .filter((agent) => {
-        const hidden = (agent as { hidden?: boolean }).hidden
-        return (agent.mode === 'primary' || agent.mode === 'all') && !hidden
+        return (agent.mode === 'primary' || agent.mode === 'all') && !agent.hidden
       })
       .slice(0, 25)
 
@@ -809,26 +810,22 @@ export async function handleQuickAgentAutocomplete({
     return
   }
 
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
     await interaction.respond([])
     return
   }
 
-  const [providersResponse, agentsResponse] = await Promise.all([
+  const [catalog, agentList] = await Promise.all([
     getClient()
-      .provider.list({ directory: projectDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+      .catalog.providers({ directory: projectDirectory })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
     getClient()
-      .app.agents({ directory: projectDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e })),
+      .catalog.agents({ directory: projectDirectory })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'app.agents', cause: e })),
   ])
-  if (providersResponse instanceof Error || agentsResponse instanceof Error) {
+  if (catalog instanceof Error || agentList instanceof Error) {
     agentLogger.warn('[AUTOCOMPLETE] Failed to fetch variant choices')
-    await interaction.respond([])
-    return
-  }
-  if (!providersResponse.data || !agentsResponse.data) {
     await interaction.respond([])
     return
   }
@@ -836,7 +833,7 @@ export async function handleQuickAgentAutocomplete({
   const resolvedAgentName =
     parseQuickAgentNameFromDescription(interaction.command?.description) ||
     interaction.commandName.replace(/-agent$/, '')
-  const agent = agentsResponse.data.find((candidate) => candidate.name === resolvedAgentName)
+  const agent = agentList.find((candidate) => candidate.name === resolvedAgentName)
   const agentModel = agent?.model
   if (!agentModel) {
     await interaction.respond([])
@@ -844,9 +841,9 @@ export async function handleQuickAgentAutocomplete({
   }
 
   const variants = getThinkingValuesForModel({
-    providers: providersResponse.data.all,
-    providerId: agentModel.providerID,
-    modelId: agentModel.modelID,
+    providers: catalog.providers,
+    providerId: agentModel.providerId,
+    modelId: agentModel.modelId,
   }).filter((variant) => {
     if (!focusedValue) return true
     return variant.toLowerCase().includes(focusedValue)
