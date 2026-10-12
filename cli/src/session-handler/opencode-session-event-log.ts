@@ -116,14 +116,29 @@ export function buildOpencodeEventLogLine({
   }
 }
 
+/**
+ * Whether a raw backend payload has OpenCode's event shape. The runtime hands
+ * this log the backend's payload as opaque `unknown`; only OpenCode payloads are
+ * written, since every reader of these files parses OpenCode events.
+ */
+function isOpenCodeEvent(event: unknown): event is OpenCodeEvent {
+  if (!event || typeof event !== 'object') return false
+  const { type, properties } = event as { type?: unknown; properties?: unknown }
+  return typeof type === 'string' && Boolean(properties) && typeof properties === 'object'
+}
+
 export async function appendOpencodeSessionEventLog(
-  entry: Omit<OpencodeEventLogEntry, 'timestamp'>,
+  entry: Omit<OpencodeEventLogEntry, 'timestamp' | 'event'> & { event: unknown },
 ): Promise<Error | null> {
   if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 
-  const sessionId = getOpencodeEventSessionId(entry.event)
+  const { event } = entry
+  if (!isOpenCodeEvent(event)) {
+    return null
+  }
+  const sessionId = getOpencodeEventSessionId(event)
   if (!sessionId) {
     return null
   }
@@ -144,7 +159,7 @@ export async function appendOpencodeSessionEventLog(
       timestamp: now,
       threadId: entry.threadId,
       projectDirectory: entry.projectDirectory,
-      event: entry.event,
+      event,
     }),
   )}\n`
 
