@@ -70,6 +70,7 @@ import {
   generatePKCE,
   parseManualInput,
 } from '../credentials/adapters/anthropic-oauth.js'
+import { buildCodexAuthorizeUrl, codexAccountId, exchangeCodexAuthorizationCode } from '../credentials/adapters/openai-codex-oauth.js'
 import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 
 const credentialsLogger = createLogger(LogPrefix.CREDENTIALS)
@@ -166,7 +167,7 @@ export type CredentialsPendingContext =
   | { kind: 'apikey'; provider: string; shared: boolean }
   | {
       kind: 'oauth'
-      provider: 'anthropic'
+      provider: 'anthropic' | 'openai-codex'
       verifier: string
       state: string
       shared: boolean
@@ -530,9 +531,12 @@ async function handleCredentialsLoginAnthropic(
 export async function startCredentialsAnthropicOAuth({
   command,
   requestShared,
+  provider = 'anthropic',
 }: {
   command: ChatInputCommandInteraction | StringSelectMenuInteraction
   requestShared: boolean
+  /** `openai-codex` adds a ChatGPT subscription through the same paste flow. */
+  provider?: 'anthropic' | 'openai-codex'
 }): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   const target = await resolveTargetPoolForInteraction({
@@ -550,28 +554,34 @@ export async function startCredentialsAnthropicOAuth({
   }
   // The browser redirects to localhost (nothing listens there); the code and
   // state stay visible in the address bar for pasting.
-  const state = pkce.verifier
-  const authorizeUrl = buildAuthorizeUrl({
-    challenge: pkce.challenge,
-    state,
-    redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-  })
+  const state = provider === 'openai-codex' ? crypto.randomBytes(16).toString('hex') : pkce.verifier
+  const authorizeUrl = provider === 'openai-codex'
+    ? buildCodexAuthorizeUrl({ challenge: pkce.challenge, state })
+    : buildAuthorizeUrl({
+        challenge: pkce.challenge,
+        state,
+        redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
+      })
   const hash = createCredentialsContext({
     kind: 'oauth',
-    provider: 'anthropic',
+    provider,
     verifier: pkce.verifier,
     state,
     shared: target.shared,
   })
   const button = new ButtonBuilder()
     .setCustomId(`${CREDENTIALS_OAUTH_BUTTON_PREFIX}${hash}`)
-    .setLabel('Paste code#state')
+    .setLabel(provider === 'openai-codex' ? 'Paste redirect URL' : 'Paste code#state')
     .setStyle(ButtonStyle.Primary)
   await command.editReply({
     content:
-      `Adding a Claude account to pool ${target.poolId}\n` +
-      `Open this URL to authorize:\n${authorizeUrl}\n` +
-      `Then click the button and paste the code#state from the redirect (the full redirect URL also works).`,
+      (provider === 'openai-codex'
+        ? `Adding a ChatGPT account to pool ${target.poolId}\n` +
+          `Open this URL to authorize:\n${authorizeUrl}\n` +
+          `Your browser ends on a localhost:1455 page that does not load. Click the button and paste that page's full URL.`
+        : `Adding a Claude account to pool ${target.poolId}\n` +
+          `Open this URL to authorize:\n${authorizeUrl}\n` +
+          `Then click the button and paste the code#state from the redirect (the full redirect URL also works).`),
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)],
   })
 }
@@ -593,7 +603,7 @@ export async function handleCredentialsOAuthCodeButton(
   }
   const modal = new ModalBuilder()
     .setCustomId(`${CREDENTIALS_OAUTH_MODAL_PREFIX}${hash}`)
-    .setTitle('Anthropic authorization')
+    .setTitle(context.provider === 'openai-codex' ? 'ChatGPT authorization' : 'Anthropic authorization')
   const codeInput = new TextInputBuilder()
     .setCustomId('oauth_code')
     .setLabel('Authorization code or callback URL')
@@ -643,12 +653,19 @@ export async function handleCredentialsOAuthCodeModalSubmit(
     await interaction.editReply({ content: target.message })
     return
   }
-  const tokens = await exchangeAuthorizationCode({
-    code,
-    state: pastedState || context.state,
-    verifier: context.verifier,
-    redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-  })
+  if (context.provider === 'openai-codex' && pastedState && pastedState !== context.state) {
+    deleteCredentialsContext(hash)
+    await interaction.editReply({ content: 'Authorization failed: state mismatch. Start the login again.' })
+    return
+  }
+  const tokens = context.provider === 'openai-codex'
+    ? await exchangeCodexAuthorizationCode({ code, verifier: context.verifier })
+    : await exchangeAuthorizationCode({
+        code,
+        state: pastedState || context.state,
+        verifier: context.verifier,
+        redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
+      })
   if (tokens instanceof Error) {
     deleteCredentialsContext(hash)
     await interaction.editReply({
@@ -663,6 +680,10 @@ export async function handleCredentialsOAuthCodeModalSubmit(
     refresh: tokens.refresh,
     access: tokens.access,
     expires: tokens.expires,
+    ...(context.provider === 'openai-codex' && {
+      isDuplicate: (existing: { provider: string; type: string; access?: string }) =>
+        existing.provider === 'openai-codex' && existing.type === 'oauth' && !!existing.access && codexAccountId(existing.access) === codexAccountId(tokens.access),
+    }),
   })
   if (account instanceof DuplicatePoolAccountError) {
     await interaction.editReply({

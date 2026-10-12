@@ -5,7 +5,7 @@ import { getDataDir } from '../../config.js'
 import { startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
-import { anthropicRotations, writePiPoolAgentDir } from './pool.js'
+import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, writePiPoolAgentDir } from './pool.js'
 
 export async function startPiPool(): Promise<Error | {
   agentDir: string
@@ -15,12 +15,13 @@ export async function startPiPool(): Promise<Error | {
 }> {
   const dataDir = getDataDir()
   const rotations = anthropicRotations({ dataDir })
-  if (rotations.length === 0) return new Error('the shared pool has no rotation with an anthropic model')
+  const codexModels = hasCodexAccounts({ dataDir }) ? (process.env['ROADIE_PI_CODEX_MODELS']?.split(',').map((m) => m.trim()).filter(Boolean) ?? DEFAULT_CODEX_MODELS) : []
+  if (rotations.length === 0 && codexModels.length === 0) return new Error('the shared pool has no ChatGPT account and no anthropic rotation')
   const proxy = await startMessagesProxy({ dataDir, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
   const agentDir = process.env['ROADIE_PI_AGENT_DIR'] || path.join(dataDir, 'pi-agent')
-  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations })
+  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, codexModels })
   return {
     agentDir,
     issueKey: (sessionId) => proxy.issueKey(sessionId),

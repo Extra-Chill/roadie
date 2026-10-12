@@ -29,7 +29,9 @@ const bin = process.env['ROADIE_PI_BIN']
 const poolDir = process.env['ROADIE_PI_REAL_POOL_DIR']
 const directAgentDir = process.env['ROADIE_PI_REAL_AGENT_DIR']
 const rotation = process.env['ROADIE_PI_REAL_ROTATION'] || 'anthropic-claude-haiku-5-5'
-const directModel = process.env['ROADIE_PI_REAL_MODEL'] || 'openai-codex/gpt-5.5'
+const directModel = process.env['ROADIE_PI_REAL_MODEL'] || 'openai-codex/gpt-6-luna'
+/** Pool mode with a ChatGPT account: bill this Codex model through the proxy. */
+const codexModel = process.env['ROADIE_PI_REAL_CODEX_MODEL']
 
 describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real model through the credential pool', () => {
   const ctx = setupQueueAdvancedSuite({
@@ -66,11 +68,11 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
       },
     })
     const agentDir = path.join(ctx.directories.root, 'pi-agent')
-    writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations: [rotation] })
+    writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations: codexModel ? [] : [rotation], codexModels: codexModel ? [codexModel] : [] })
     pi = new PiBackendProvider({
       bin: bin!,
       sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
-      model: `roadie/${rotation}`,
+      model: codexModel ? `roadie-codex/${codexModel}` : `roadie/${rotation}`,
       env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
       pool: { issueKey: (id) => proxy!.issueKey(id), revokeKey: (key) => proxy!.revokeKey(key) },
     })
@@ -95,7 +97,7 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
     restore?.()
     pi?.dispose()
     await proxy?.close()
-    const report = { model: directAgentDir ? directModel : `roadie/${rotation}`, upstreamStatuses: upstream, usage }
+    const report = { model: directAgentDir ? directModel : codexModel ? `roadie-codex/${codexModel}` : `roadie/${rotation}`, upstreamStatuses: upstream, usage }
     fs.writeFileSync(path.join(process.env['TMPDIR'] || '/tmp', 'pi-real-model-report.json'), JSON.stringify(report, null, 2))
   })
 

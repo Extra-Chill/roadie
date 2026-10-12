@@ -92,3 +92,72 @@ describe('messages proxy', () => {
     expect((await post(ctx.proxy.baseUrl, key, { model: 'claude-best', messages: [] })).status).toBe(401)
   })
 })
+
+describe('messages proxy: ChatGPT (Codex) accounts', () => {
+  const jwt = (accountId: string) => {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    return `${part({ alg: 'none' })}.${part({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })}.sig`
+  }
+
+  async function codexSetup(responses: Array<() => Response>, { expiresIn = 3_600_000 } = {}) {
+    const dataDir = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pool-codex-'))
+    const accounts = []
+    for (const id of ['acct-a', 'acct-b']) {
+      const added = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'openai-codex', refresh: `refresh-${id}`, access: jwt(id), expires: Date.now() + expiresIn })
+      if (added instanceof Error) throw added
+      accounts.push(added)
+    }
+    const seen: Array<{ url: string; headers: Headers; body: Uint8Array | string }> = []
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(input), headers: new Headers(init?.headers), body: init?.body as Uint8Array })
+      return responses.shift()!()
+    }
+    const codexProxy = await startMessagesProxy({ dataDir, resolvePools: async () => SHARED_POOL_ID, fetchImpl })
+    return { dataDir, accounts, seen, proxy: codexProxy }
+  }
+
+  const postCodex = (baseUrl: string, key: string, body: Uint8Array) => fetch(`${baseUrl}/codex/responses`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-encoding': 'zstd', authorization: `Bearer ${jwt('roadie-pool')}`, 'chatgpt-account-id': 'roadie-pool', 'x-roadie-key': key, originator: 'pi' },
+    body,
+  })
+
+  test('swaps in the pool account token and account id; the body passes through byte for byte', async () => {
+    const ctx = await codexSetup([sse])
+    proxy = ctx.proxy
+    const body = new Uint8Array([40, 181, 47, 253, 1, 2, 3])
+    const response = await postCodex(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-c1'), body)
+    expect(response.status).toBe(200)
+    const [call] = ctx.seen
+    expect(call?.url).toBe('https://chatgpt.com/backend-api/codex/responses')
+    expect(call?.headers.get('authorization')).toBe(`Bearer ${jwt('acct-a')}`)
+    expect(call?.headers.get('chatgpt-account-id')).toBe('acct-a')
+    expect(call?.headers.get('content-encoding')).toBe('zstd')
+    expect(call?.headers.get('x-roadie-key')).toBeNull()
+    expect(call?.headers.get('originator')).toBe('pi')
+    expect(Buffer.from(call!.body as Uint8Array)).toEqual(Buffer.from(body))
+  })
+
+  test('a 429 rotates to the next ChatGPT account', async () => {
+    const ctx = await codexSetup([() => new Response('{}', { status: 429 }), sse])
+    proxy = ctx.proxy
+    const response = await postCodex(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-c2'), new Uint8Array([1]))
+    expect(response.status).toBe(200)
+    expect(ctx.seen.map((s) => s.headers.get('chatgpt-account-id'))).toEqual(['acct-a', 'acct-b'])
+  })
+
+  test('an expiring account is refreshed through the Codex token endpoint first', async () => {
+    const refreshed = jwt('acct-a')
+    const ctx = await codexSetup([
+      () => Response.json({ access_token: refreshed, refresh_token: 'refresh-next', expires_in: 3600 }),
+      sse,
+    ], { expiresIn: 1_000 })
+    proxy = ctx.proxy
+    const response = await postCodex(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-c3'), new Uint8Array([1]))
+    expect(response.status).toBe(200)
+    expect(ctx.seen[0]?.url).toBe('https://auth.openai.com/oauth/token')
+    expect(String(ctx.seen[0]?.body)).toContain('grant_type=refresh_token')
+    expect(String(ctx.seen[0]?.body)).toContain('client_id=app_EMoamEEZ73f0CkXaXp7hrann')
+    expect(ctx.seen[1]?.url).toBe('https://chatgpt.com/backend-api/codex/responses')
+  })
+})

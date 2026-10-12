@@ -85,6 +85,13 @@ import {
   rewriteRequestPayload,
   wrapResponseStream,
 } from './adapters/anthropic-oauth.js'
+import { refreshCodexToken } from './adapters/openai-codex-oauth.js'
+
+/** OAuth providers the pool can refresh, by pool provider id. */
+const OAUTH_REFRESHERS: Record<string, (input: { refreshToken: string; fetchImpl: PoolFetch }) => Promise<{ refresh: string; access: string; expires: number } | Error>> = {
+  anthropic: refreshAnthropicToken,
+  'openai-codex': refreshCodexToken,
+}
 
 // OpenCode provider id the pool provider is registered under (`provider.roadie`).
 export const ROADIE_PROVIDER_ID = 'roadie'
@@ -221,7 +228,7 @@ export async function ensureFreshOAuthAccount({
   try {
     // Shaping and refresh are Anthropic-specific; other oauth providers have
     // no adapter yet and are dispatched with the stored access token as-is.
-    if (account.type !== 'oauth' || account.provider !== 'anthropic') return account
+    if (account.type !== 'oauth' || !OAUTH_REFRESHERS[account.provider]) return account
     if (account.expires > now + OAUTH_REFRESH_LEAD_MS) return account
     return await withPoolLock(poolId, async () => {
       // Re-read under the lock: a concurrent request may have refreshed already.
@@ -235,7 +242,7 @@ export async function ensureFreshOAuthAccount({
         return new Error(`account ${latest.id} is no longer an oauth account`)
       }
       if (latest.expires > now + OAUTH_REFRESH_LEAD_MS) return latest
-      const refreshed = await refreshAnthropicToken({ refreshToken: latest.refresh, fetchImpl })
+      const refreshed = await OAUTH_REFRESHERS[latest.provider]!({ refreshToken: latest.refresh, fetchImpl })
       if (refreshed instanceof Error) {
         if (isPermanentRefreshFailure(refreshed)) {
           const cooldown = markCooldownLocked({

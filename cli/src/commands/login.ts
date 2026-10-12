@@ -429,6 +429,34 @@ async function handlePoolProviderStep(
     return
   }
   ctx.providerId = providerId
+  if (providerId === 'openai') {
+    // OpenAI offers both a ChatGPT subscription (Codex OAuth) and an API key.
+    ctx.steps = [{ type: 'pool-method', provider: providerId }]
+    ctx.stepIndex = 0
+    await interaction.deferUpdate()
+    await interaction.editReply({
+      content: '**Add an OpenAI account to your credential pool**\nSelect account type:',
+      components: [
+        buildSelectMenu({
+          customId: `login_select:${hash}`,
+          placeholder: 'Select account type',
+          options: [
+            {
+              label: 'ChatGPT subscription (OAuth)',
+              value: 'oauth',
+              description: 'ChatGPT Plus/Pro login for Pi channels — paste the redirect URL',
+            },
+            {
+              label: 'API key',
+              value: 'api',
+              description: 'Add an OpenAI API key to the pool',
+            },
+          ],
+        }),
+      ],
+    })
+    return
+  }
   if (providerId === 'anthropic') {
     // Anthropic offers both a subscription (OAuth) and an API key account.
     ctx.steps = [{ type: 'pool-method', provider: providerId }]
@@ -473,10 +501,11 @@ async function handlePoolMethodStep(
 ): Promise<void> {
   if (value === 'oauth') {
     // Same ephemeral authorize-URL + paste-modal flow as
-    // /credentials login-anthropic.
+    // /credentials login-anthropic; OpenAI's is a ChatGPT subscription.
     await startCredentialsAnthropicOAuth({
       command: interaction,
       requestShared: false,
+      provider: step.provider === 'openai' ? 'openai-codex' : 'anthropic',
     })
     return
   }
