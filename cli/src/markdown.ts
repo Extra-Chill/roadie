@@ -550,28 +550,3 @@ export async function getCompactSessionContext({
 
   return lines.join('\n').slice(0, 8000)
 }
-
-/**
- * Get the last session for a directory (excluding the current one).
- */
-export async function getLastSessionId({
-  client,
-  excludeSessionId,
-}: {
-  client: OpencodeClient
-  excludeSessionId?: string
-}): Promise<UnexpectedError | (string | null)> {
-  const sessionsResponse = await client.session.list().catch((e) => {
-    markdownLogger.error('Failed to get last session:', e)
-    return new UnexpectedError({
-      message: 'Failed to get last session',
-      cause: e,
-    })
-  })
-  if (sessionsResponse instanceof Error) return sessionsResponse
-  const sessions = sessionsResponse.data || []
-
-  // Sessions are sorted by time, get the most recent one that isn't the current
-  const lastSession = sessions.find((s) => s.id !== excludeSessionId)
-  return lastSession?.id || null
-}

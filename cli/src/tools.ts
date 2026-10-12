@@ -18,6 +18,7 @@ const toolsLogger = createLogger(LogPrefix.TOOLS)
 
 import { ShareMarkdown } from './markdown.js'
 import { formatDistanceToNow } from './utils.js'
+import { getAgentBackendProvider } from './agent-backend/registry.js'
 import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
@@ -42,6 +43,10 @@ export async function getTools({
     throw new Error(getClient.message)
   }
   const client = getClient()
+  const backend = getAgentBackendProvider().getBackend(directory)
+  if (!backend) {
+    throw new Error('Agent backend is unavailable')
+  }
 
   const markdownRenderer = new ShareMarkdown(client)
 
@@ -197,30 +202,30 @@ export async function getTools({
       inputSchema: z.object({}),
       execute: async () => {
         toolsLogger.log(`Listing opencode sessions`)
-        const sessions = await getClient().session.list()
+        const sessions = await backend.sessions.list({})
 
-        if (!sessions.data) {
+        if (sessions instanceof Error) {
           return { success: false, error: 'No sessions found' }
         }
 
-        const sortedSessions = [...sessions.data]
+        const sortedSessions = [...sessions]
           .sort((a, b) => {
-            return b.time.updated - a.time.updated
+            return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
           })
           .slice(0, 20)
 
         const sessionList = sortedSessions.map(async (session) => {
-          const finishedAt = session.time.updated
+          const finishedAt = session.updatedAt ?? 0
           const status = await (async () => {
-            if (session.revert) return 'error'
-            const messagesResponse = await getClient().session.messages({
-              sessionID: session.id,
+            if (session.reverted) return 'error'
+            const messages = await backend.sessions.messages({
+              sessionId: session.id,
+              directory,
             })
-            const messages = messagesResponse.data || []
-            const lastMessage = messages[messages.length - 1]
+            const lastMessage = messages instanceof Error ? undefined : messages[messages.length - 1]
             if (
-              lastMessage?.info.role === 'assistant' &&
-              !lastMessage.info.time.completed
+              lastMessage?.message.role === 'assistant' &&
+              !lastMessage.message.completedAt
             ) {
               return 'in_progress'
             }

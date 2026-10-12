@@ -8,11 +8,8 @@ import {
 } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import {
-  initializeOpencodeForDirectory,
-  getOpencodeClient,
-  extractSdkErrorMessage,
-} from '../opencode.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError } from '../agent-backend/types.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -74,17 +71,18 @@ export async function handleCompactCommand({
   }
 
   // Ensure server is running for the base project directory
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
+  const provider = getAgentBackendProvider()
+  const getBackend = await provider.initializeForDirectory(projectDirectory)
+  if (getBackend instanceof Error) {
     await command.reply({
-      content: `Failed to compact: ${getClient.message}`,
+      content: `Failed to compact: ${getBackend.message}`,
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const client = getOpencodeClient(workingDirectory)
-  if (!client) {
+  const client = provider.getBackend(workingDirectory)
+  if (!client?.sessions.summarize) {
     await command.reply({
       content: 'Failed to get OpenCode client',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
@@ -97,13 +95,16 @@ export async function handleCompactCommand({
 
   try {
     // Get session messages to find the model from the last user message
-    const messagesResult = await client.session.messages({
-      sessionID: sessionId,
+    const messagesResult = await client.sessions.messages({
+      sessionId,
       directory: workingDirectory,
     })
-
-    if (messagesResult.error || !messagesResult.data) {
-      logger.error('[COMPACT] Failed to get messages:', messagesResult.error)
+    // A transport failure was thrown into the catch below before; keep that.
+    if (messagesResult instanceof Error && !(messagesResult instanceof AgentRequestError)) {
+      throw messagesResult
+    }
+    if (messagesResult instanceof Error) {
+      logger.error('[COMPACT] Failed to get messages:', messagesResult)
       await command.editReply({
         content: 'Failed to compact: Could not retrieve session messages',
       })
@@ -111,32 +112,30 @@ export async function handleCompactCommand({
     }
 
     // Find the last user message to get the model
-    const lastUserMessage = [...messagesResult.data]
+    const lastUserMessage = [...messagesResult]
       .reverse()
-      .find((msg) => msg.info.role === 'user')
+      .map((entry) => entry.message)
+      .find((message) => message.role === 'user')
 
-    if (!lastUserMessage || lastUserMessage.info.role !== 'user') {
+    if (!lastUserMessage?.model) {
       await command.editReply({
         content: 'Failed to compact: No user message found in session',
       })
       return
     }
 
-    const { providerID, modelID } = lastUserMessage.info.model
-
-    const result = await client.session.summarize({
-      sessionID: sessionId,
+    const result = await client.sessions.summarize({
+      sessionId,
       directory: workingDirectory,
-      providerID,
-      modelID,
-      auto: false,
+      model: { providerId: lastUserMessage.model.providerId, modelId: lastUserMessage.model.modelId },
     })
-
-    if (result.error) {
-      logger.error('[COMPACT] Error:', result.error)
-      const errorMessage = extractSdkErrorMessage(result.error)
+    if (result instanceof Error && !(result instanceof AgentRequestError)) {
+      throw result
+    }
+    if (result instanceof Error) {
+      logger.error('[COMPACT] Error:', result)
       await command.editReply({
-        content: `Failed to compact: ${errorMessage}`,
+        content: `Failed to compact: ${result.message}`,
       })
       return
     }

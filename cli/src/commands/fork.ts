@@ -10,7 +10,7 @@
 // works in a freshly provisioned host worktree; without one it stays in the
 // source directory.
 
-import { openCodeCatalogGetter } from '../agent-backend/registry.js'
+import { getAgentBackendProvider, openCodeCatalogGetter } from '../agent-backend/registry.js'
 import { parsePersistedEvents } from '../session-handler/persisted-events.js'
 import type { EventBufferEntry } from '../session-handler/event-stream-state.js'
 import {
@@ -43,7 +43,6 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { OpenCodeSdkError } from '../errors.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
-import { forkOpenCodeSession } from '../agent-backend/opencode-fork.js'
 import { markPendingForkTitle } from '../fork-title.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
 
@@ -181,9 +180,14 @@ export async function forkSessionToThread({
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
   const initMs = Date.now() - startedAt
+  const backend = getAgentBackendProvider().getBackend(projectDirectory)
+  if (!backend) {
+    if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
+    return new Error('Failed to fork session: agent backend is unavailable')
+  }
   const [forkSettled, threadSettled] = await Promise.allSettled([
-    timed(forkOpenCodeSession({
-      client: getClientResult(), sessionId, sourceDirectory: sdkDirectory,
+    timed(backend.sessions.fork({
+      sessionId, directory: sdkDirectory,
       ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: forkProjectDirectory }),
       ...(fromMessageId && { messageId: fromMessageId }),
     })),
@@ -193,24 +197,25 @@ export async function forkSessionToThread({
       reason: `Forked from session ${sessionId}`,
     })),
   ])
-  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value[0].data : undefined
+  const forkResult = forkSettled.status === 'fulfilled' ? forkSettled.value[0] : undefined
+  const forkedSession = forkResult instanceof Error ? undefined : forkResult
   const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value[0] : undefined
   const cleanup = async () => {
     await Promise.all([
       createdThread?.delete('fork setup failed').catch((error) => {
         forkLogger.warn(`Could not delete orphan fork thread ${createdThread.id}:`, error)
       }),
-      forkedSession && getClientResult()
-        .session.delete({ sessionID: forkedSession.id, directory: forkDirectory })
-        .catch((error) => {
-          forkLogger.warn(`Could not delete orphan fork session ${forkedSession.id}:`, error)
+      forkedSession && backend.sessions
+        .delete({ sessionId: forkedSession.id, directory: forkDirectory })
+        .then((result) => {
+          if (result instanceof Error) forkLogger.warn(`Could not delete orphan fork session ${forkedSession.id}:`, result)
         }),
     ])
     if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
   }
   if (!forkedSession) {
     await cleanup()
-    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value[0].error
+    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkResult
     return cause instanceof Error ? cause : new OpenCodeSdkError({ operation: 'session.fork', cause })
   }
   if (!createdThread) {

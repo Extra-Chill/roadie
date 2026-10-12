@@ -1,7 +1,7 @@
 // Bind a normal fork to an existing native workspace. The host provisions the
 // Git worktree; syncList discovers it and warp moves only the copied session.
 // copyChanges:false avoids copying dirty files or replaying the conversation.
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
 import { OpenCodeSdkError } from '../errors.js'
 import fs from 'node:fs/promises'
 import { createLogger } from '../logger.js'
@@ -16,7 +16,7 @@ export async function forkOpenCodeSession({
   targetDirectory?: string
   targetProjectDirectory?: string
   messageId?: string
-}): Promise<{ data?: { id: string; title: string; directory: string }; error?: unknown }> {
+}): Promise<{ data?: OpenCodeSession; error?: unknown }> {
   if (!targetDirectory) return client.session.fork({ sessionID: sessionId, directory: sourceDirectory, ...(messageId ? { messageID: messageId } : {}) })
   const discoveryDirectory = targetProjectDirectory ?? sourceDirectory
   const synced = await client.experimental.workspace.syncList({ directory: discoveryDirectory }).catch((cause) => new OpenCodeSdkError({ operation: 'workspace.syncList', cause }))

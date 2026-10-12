@@ -79,6 +79,31 @@ export type AgentSessionOperations = {
   ): Promise<void | Error>
   /** Omit `directory` to let the backend resolve the session by id alone. */
   abort(input: { sessionId: string; directory?: string }): Promise<void | Error>
+  /**
+   * Sessions the backend knows about. Omit `directory` for the backend's
+   * default scope. Order is backend-defined; sort by `updatedAt` when it matters.
+   */
+  list(input: { directory?: string }): Promise<AgentSession[] | Error>
+  delete(input: { sessionId: string; directory: string }): Promise<void | Error>
+  /**
+   * Copy a session into a new one, optionally only up to `messageId`.
+   * With `targetDirectory` the fork is bound to that existing workspace (a
+   * host-provisioned Git worktree); a backend that cannot bind returns an
+   * Error and leaves no fork behind.
+   */
+  fork(input: {
+    sessionId: string
+    /** Omit to let the backend resolve the source session by id alone. */
+    directory?: string
+    messageId?: string
+    targetDirectory?: string
+    targetProjectDirectory?: string
+  }): Promise<AgentSession | Error>
+  /**
+   * Compact the session's history into a summary using `model`.
+   * Absent when the backend cannot compact on request.
+   */
+  summarize?(input: { sessionId: string; directory: string; model: AgentModelSelection }): Promise<void | Error>
   /** Status of every session with a known status; absent means idle. */
   status(input: { directory: string }): Promise<Record<string, AgentStatus> | Error>
   replyPermission(input: {
