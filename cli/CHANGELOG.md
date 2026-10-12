@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.54.4] - 2026-10-12
+
+### Changed
+- message readers on the agent backend seam
+
+## [0.54.3] - 2026-10-12
+
+### Changed
+- session list, delete, fork and summarize on the agent backend seam
+
 ## [0.54.2] - 2026-10-11
 
 ### Changed
