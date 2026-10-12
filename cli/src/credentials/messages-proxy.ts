@@ -21,6 +21,7 @@ import { markUsed, readPoolAccounts, readPoolState } from './store.js'
 import { CODEX_RESPONSES_URL, codexAccountId } from './adapters/openai-codex-oauth.js'
 import { setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
+import { poolClientSessionId, resolvePoolClient } from './pool-clients.js'
 import {
   cooldownUntilFromRetryAfter,
   ensureFreshOAuthAccount,
@@ -101,6 +102,9 @@ export type MessagesProxyOptions = {
   upstreamUrl?: string
   codexUrl?: string
   now?: () => number
+  /** Listen address. Defaults to 127.0.0.1 on an ephemeral port. */
+  host?: string
+  port?: number
 }
 
 export type MessagesProxy = {
@@ -118,6 +122,24 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
   const codexUrl = options.codexUrl ?? CODEX_RESPONSES_URL
   const now = options.now ?? Date.now
 
+  /**
+   * Resolve a request's key to its session id and pool list. Session keys
+   * (Pi channels) take their pools from the session; registered client keys
+   * (#171) carry their own pools and a stable `client:<name>` session id.
+   */
+  async function authorize(req: http.IncomingMessage): Promise<{ sessionId: string; poolIds: string[] } | undefined> {
+    const key = req.headers[PROXY_KEY_HEADER]
+    if (typeof key !== 'string' || key === '') return undefined
+    const sessionId = keys.get(key)?.()
+    if (sessionId) {
+      const poolHeader = await options.resolvePools(sessionId)
+      return { sessionId, poolIds: poolHeader instanceof Error ? [] : parsePoolListHeader(poolHeader) }
+    }
+    const client = resolvePoolClient({ dataDir: options.dataDir, key })
+    if (!client) return undefined
+    return { sessionId: poolClientSessionId(client.name), poolIds: client.pools }
+  }
+
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const pathname = req.url?.split('?')[0] ?? ''
     if (req.method === 'POST' && pathname.endsWith('/codex/responses')) {
@@ -128,14 +150,12 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
       errorResponse(res, 404, 'not found')
       return
     }
-    const key = req.headers[PROXY_KEY_HEADER]
-    const sessionId = typeof key === 'string' ? keys.get(key)?.() : undefined
-    if (!sessionId) {
+    const authorized = await authorize(req)
+    if (!authorized) {
       errorResponse(res, 401, 'unknown or missing roadie key')
       return
     }
-    const poolHeader = await options.resolvePools(sessionId)
-    const poolIds = poolHeader instanceof Error ? [] : parsePoolListHeader(poolHeader)
+    const { sessionId, poolIds } = authorized
     if (poolIds.length === 0) {
       errorResponse(res, 401, 'no credential pool for this session')
       return
@@ -218,14 +238,12 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
    * supplies its bearer token and account id. Rotation is by account only.
    */
   async function handleCodex(req: http.IncomingMessage, res: http.ServerResponse) {
-    const key = req.headers[PROXY_KEY_HEADER]
-    const sessionId = typeof key === 'string' ? keys.get(key)?.() : undefined
-    if (!sessionId) {
+    const authorized = await authorize(req)
+    if (!authorized) {
       errorResponse(res, 401, 'unknown or missing roadie key')
       return
     }
-    const poolHeader = await options.resolvePools(sessionId)
-    const poolIds = poolHeader instanceof Error ? [] : parsePoolListHeader(poolHeader)
+    const { sessionId, poolIds } = authorized
     const timestamp = now()
     const candidates = poolIds.flatMap((poolId) => {
       const accounts = readPoolAccounts({ dataDir: options.dataDir, poolId })
@@ -297,10 +315,17 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
       else res.destroy()
     })
   })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const host = options.host ?? '127.0.0.1'
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(options.port ?? 0, host, () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
   const { port } = server.address() as AddressInfo
   return {
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
     issueKey(sessionId) {
       const key = crypto.randomBytes(24).toString('hex')
       keys.set(key, sessionId)
