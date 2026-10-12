@@ -14,11 +14,11 @@ import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
-import { AgentRequestError, type AgentBackend } from '../agent-backend/types.js'
+import { AgentRequestError, type AgentBackend, type AgentBackendGetter } from '../agent-backend/types.js'
 import type { AgentSession } from '../agent-backend/events.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorkingDirectory, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
-import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
+import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch, toSearchableMessage } from '../session-search.js'
 import { formatTimeAgo } from '../time-format.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import type { ThreadStartMarker } from '../system-message.js'
@@ -503,7 +503,12 @@ cli
 
       // Try current project first (fast path)
       const compactTools = !options.verbose
-      const markdown = new ShareMarkdown(getClient())
+      const backend = getAgentBackendProvider().getBackend(projectDirectory)
+      if (!backend) {
+        cliLogger.error('Failed to connect to OpenCode: agent backend is unavailable')
+        process.exit(EXIT_NO_RESTART)
+      }
+      const markdown = new ShareMarkdown(backend)
       const result = await markdown.generate({
         sessionID: sessionId,
         compactTools,
@@ -537,7 +542,7 @@ cli
       for (const project of otherProjects) {
         const dir = project.worktree
         cliLogger.log(`Trying project: ${dir}`)
-        const otherClient = await initializeOpencodeForDirectory(dir)
+        const otherClient = await getAgentBackendProvider().initializeForDirectory(dir)
         if (otherClient instanceof Error) continue
         const otherMarkdown = new ShareMarkdown(otherClient())
         const otherResult = await otherMarkdown.generate({
@@ -753,11 +758,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      type OpencodeGetClient = Exclude<
-        Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
-        Error
-      >
-      const clientsBySessionId = new Map<string, OpencodeGetClient>()
+      const clientsBySessionId = new Map<string, AgentBackendGetter>()
       const searchedDirectories: string[] = []
       const searchableSessions: Array<{
         id: string
@@ -769,15 +770,17 @@ cli
       const listedDirectories = await Promise.all(
         existingDirectories.map(async (projectDirectory) => {
           cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
-          const getClient = await initializeOpencodeForDirectory(projectDirectory)
+          const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
           if (getClient instanceof Error) {
             return { projectDirectory, getClient, sessions: [] }
           }
-          const sessionsResponse = await getClient().session.list()
+          // A transport failure threw before; a rejection listed nothing.
+          const sessions = await getClient().sessions.list({})
+          if (sessions instanceof Error && !(sessions instanceof AgentRequestError)) throw sessions
           return {
             projectDirectory,
             getClient,
-            sessions: sessionsResponse.data || [],
+            sessions: sessions instanceof Error ? [] : sessions,
           }
         }),
       )
@@ -802,7 +805,7 @@ cli
             id: session.id,
             title: session.title || 'Untitled Session',
             directory: session.directory || listed.projectDirectory,
-            updated: session.time.updated,
+            updated: session.updatedAt ?? 0,
           })
         }
       }
@@ -862,10 +865,11 @@ cli
             if (!getClient) {
               return []
             }
-            const messagesResponse = await getClient().session.messages({
-              sessionID: session.id,
+            const messages = await getClient().sessions.messages({
+              sessionId: session.id,
             })
-            return messagesResponse.data || []
+            if (messages instanceof Error && !(messages instanceof AgentRequestError)) throw messages
+            return messages instanceof Error ? [] : messages.map(toSearchableMessage)
           },
         })
 

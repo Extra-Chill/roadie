@@ -49,8 +49,6 @@ import {
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
 import { markPendingForkTitle } from './fork-title.js'
-import { openCodeCatalogGetter } from './agent-backend/registry.js'
-import { getOpencodeClient } from './opencode.js'
 import { recordSessionForkOrigin, setThreadSession } from './database.js'
 import { copySessionPreferences } from './commands/model.js'
 import { copySessionSystemPrompt } from './system-message.js'
@@ -1175,8 +1173,8 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
-      const client = getOpencodeClient(runtime.sdkDirectory)
-      if (!client) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
+      const forkBackend = getAgentBackendProvider().getBackend(runtime.sdkDirectory)
+      if (!forkBackend) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
       const workspace = await resolveForkWorkspace({
         sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
         projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
@@ -1187,13 +1185,10 @@ export class NativeSlackBot {
       const abandon = async () => {
         if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
       }
-      const forkBackend = getAgentBackendProvider().getBackend(runtime.sdkDirectory)
-      const forkedSession = forkBackend
-        ? await forkBackend.sessions.fork({
-            sessionId, directory: runtime.sdkDirectory,
-            ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
-          })
-        : new Error('agent backend is unavailable')
+      const forkedSession = await forkBackend.sessions.fork({
+        sessionId, directory: runtime.sdkDirectory,
+        ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: workspace.binding.projectDirectory }),
+      })
       if (forkedSession instanceof Error) {
         await abandon()
         if (workspace.binding) {
@@ -1216,7 +1211,7 @@ export class NativeSlackBot {
         targetSessionId: forkedSession.id,
         channelId: event.channel_id,
         directory: forkDirectory,
-        getClient: () => ({ ...openCodeCatalogGetter(() => client)(), session: client.session }),
+        getClient: () => forkBackend,
       })
       const root = await this.api.post({
         channel: event.channel_id,

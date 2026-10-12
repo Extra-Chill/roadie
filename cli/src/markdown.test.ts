@@ -23,6 +23,7 @@ import {
   userPromptDurationMs,
 } from './markdown.js'
 import { setDataDir } from './config.js'
+import { toOpenCodeBackend } from './agent-backend/opencode-sessions.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
 import { cleanupTestSessions, initTestGitRepo } from './test-utils.js'
 
@@ -309,7 +310,7 @@ function normalizeMarkdown(md: string): string {
 }
 
 test('generate markdown with system info', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
 
   const markdownResult = await exporter.generate({
     sessionID,
@@ -360,7 +361,7 @@ test('generate markdown with system info', async () => {
 })
 
 test('generate markdown without system info', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
 
   const markdown = await exporter.generate({
     sessionID,
@@ -395,7 +396,7 @@ test('generate markdown without system info', async () => {
 })
 
 test('error handling for non-existent session', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
   const badSessionID = 'ses_nonexistent_' + Date.now()
 
   const result = await exporter.generate({ sessionID: badSessionID })
@@ -405,7 +406,7 @@ test('error handling for non-existent session', async () => {
 
 test('getCompactSessionContext generates compact format', async () => {
   const contextResult = await getCompactSessionContext({
-    client,
+    backend: toOpenCodeBackend(client),
     sessionId: sessionID,
     includeSystemPrompt: false,
     maxMessages: 10,
@@ -424,7 +425,7 @@ test('getCompactSessionContext generates compact format', async () => {
 })
 
 test('generate markdown with lastAssistantOnly', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
 
   const markdownResult = await exporter.generate({
     sessionID,
@@ -442,7 +443,7 @@ test('generate markdown with lastAssistantOnly', async () => {
 })
 
 test('thinking is omitted unless includeThinking is set', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
   const hidden = await exporter.generate({
     sessionID,
     includeThinking: false,
@@ -459,7 +460,7 @@ test('thinking is omitted unless includeThinking is set', async () => {
 })
 
 test('compact tools: tool calls show one-liner with line count', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
 
   const result = await exporter.generate({
     sessionID: toolSessionID,
@@ -479,7 +480,7 @@ test('compact tools: tool calls show one-liner with line count', async () => {
 })
 
 test('verbose tools: tool calls show full input and output', async () => {
-  const exporter = new ShareMarkdown(client)
+  const exporter = new ShareMarkdown(toOpenCodeBackend(client))
 
   const result = await exporter.generate({
     sessionID: toolSessionID,
@@ -496,3 +497,4 @@ test('verbose tools: tool calls show full input and output', async () => {
   expect(md).toContain('**Output:**')
   expect(md).toContain('hello world')
 })
+

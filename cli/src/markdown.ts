@@ -3,7 +3,8 @@
 // user messages, assistant responses, tool calls, and reasoning blocks.
 // Uses errore for type-safe error handling.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { AgentMessage, AgentPart } from './agent-backend/events.js'
+import { AgentRequestError, type AgentBackend, type AgentSessionMessage } from './agent-backend/types.js'
 import * as errore from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
@@ -161,8 +162,19 @@ export function formatCompactToolSummary({
   return truncateChars(parts.join(' '), maxChars)
 }
 
+/** OpenCode-era timing shape `userPromptDurationMs` reads. */
+function timedInfo(message: AgentMessage) {
+  return {
+    role: message.role,
+    time: {
+      created: message.createdAt,
+      ...(message.completedAt !== undefined && { completed: message.completedAt }),
+    },
+  }
+}
+
 export class ShareMarkdown {
-  constructor(private client: OpencodeClient) {}
+  constructor(private backend: Pick<AgentBackend, 'sessions'>) {}
 
   /**
    * Generate a markdown representation of a session
@@ -189,27 +201,21 @@ export class ShareMarkdown {
       toolInputMaxChars = DEFAULT_TOOL_INPUT_MAX_CHARS,
     } = options
 
-    // Get session info
-    const sessionResponse = await this.client.session.get({
-      sessionID,
-    })
-    if (!sessionResponse.data) {
+    // Get session info. Any failure reads as not found, as before.
+    const session = await this.backend.sessions.get({ sessionId: sessionID }).catch(() => undefined)
+    if (!session || session instanceof Error) {
       return new SessionNotFoundError({ sessionId: sessionID })
     }
-    const session = sessionResponse.data
 
     // Get all messages
-    const messagesResponse = await this.client.session.messages({
-      sessionID,
-    })
-    if (!messagesResponse.data) {
+    const messages = await this.backend.sessions.messages({ sessionId: sessionID }).catch(() => undefined)
+    if (!messages || messages instanceof Error) {
       return new MessagesNotFoundError({ sessionId: sessionID })
     }
-    const messages = messagesResponse.data
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
-      ? messages.filter((m) => m.info.role === 'assistant').slice(-1)
+      ? messages.filter((m) => m.message.role === 'assistant').slice(-1)
       : messages
 
     // Build markdown
@@ -226,10 +232,10 @@ export class ShareMarkdown {
         lines.push('## Session Information')
         lines.push('')
         lines.push(
-          `- **Created**: ${formatDateTime(new Date(session.time.created))}`,
+          `- **Created**: ${formatDateTime(new Date(session.createdAt ?? 0))}`,
         )
         lines.push(
-          `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
+          `- **Updated**: ${formatDateTime(new Date(session.updatedAt ?? 0))}`,
         )
         if (session.version) {
           lines.push(`- **OpenCode Version**: v${session.version}`)
@@ -243,7 +249,7 @@ export class ShareMarkdown {
     }
 
     for (const [index, message] of messagesToRender.entries()) {
-      const messageLines = this.renderMessage(message.info, message.parts, {
+      const messageLines = this.renderMessage(message.message, message.parts, {
         compactTools,
         includeThinking,
         toolInputMaxChars,
@@ -251,13 +257,13 @@ export class ShareMarkdown {
       lines.push(...messageLines)
       lines.push('')
 
-      const nextRole = messagesToRender[index + 1]?.info.role
-      if (message.info.role !== 'assistant' || nextRole === 'assistant') continue
+      const nextRole = messagesToRender[index + 1]?.message.role
+      if (message.message.role !== 'assistant' || nextRole === 'assistant') continue
 
       for (let userIndex = index - 1; userIndex >= 0; userIndex--) {
-        if (messagesToRender[userIndex]?.info.role !== 'user') continue
+        if (messagesToRender[userIndex]?.message.role !== 'user') continue
         const durationMs = userPromptDurationMs({
-          messages: messagesToRender,
+          messages: messagesToRender.map((entry) => ({ info: timedInfo(entry.message) })),
           userIndex,
         })
         if (durationMs !== undefined) {
@@ -271,7 +277,7 @@ export class ShareMarkdown {
     return lines.join('\n')
   }
 
-  private renderMessage(message: any, parts: any[], opts: SessionMarkdownOptions): string[] {
+  private renderMessage(message: AgentMessage, parts: AgentPart[], opts: SessionMarkdownOptions): string[] {
     const lines: string[] = []
 
     if (message.role === 'user') {
@@ -279,13 +285,13 @@ export class ShareMarkdown {
       lines.push('')
 
       for (const part of parts) {
-        if (part.type === 'text' && part.text) {
+        if (part.kind === 'text' && part.text) {
           const cleanedText = extractNonXmlContent(part.text)
           if (cleanedText.trim()) {
             lines.push(cleanedText)
             lines.push('')
           }
-        } else if (part.type === 'file') {
+        } else if (part.kind === 'file') {
           lines.push(`file: ${part.filename || 'unnamed file'}`)
           if (part.url) {
             lines.push(`   - URL: ${part.url}`)
@@ -295,18 +301,13 @@ export class ShareMarkdown {
       }
     } else if (message.role === 'assistant') {
       const filteredParts = parts.filter((part) => {
+        if (part.kind === 'step-start' || part.kind === 'step-finish') return false
+        if (part.kind === 'other' && (part.type === 'snapshot' || part.type === 'patch')) return false
+        if (part.kind === 'text' && (part.synthetic === true || !part.text)) return false
+        if (part.kind === 'tool' && part.tool === 'todoread') return false
         if (
-          part.type === 'step-start' ||
-          part.type === 'step-finish' ||
-          part.type === 'snapshot' ||
-          part.type === 'patch'
-        )
-          return false
-        if (part.type === 'text' && (part.synthetic === true || !part.text)) return false
-        if (part.type === 'tool' && part.tool === 'todoread') return false
-        if (
-          part.type === 'tool' &&
-          (part.state.status === 'pending' || part.state.status === 'running')
+          part.kind === 'tool' &&
+          (part.status === 'pending' || part.status === 'running')
         )
           return false
         return true
@@ -323,7 +324,7 @@ export class ShareMarkdown {
       if (body.length === 0) return lines
 
       const modelId =
-        [message.providerID, message.modelID].filter(Boolean).join('/') ||
+        [message.model?.providerId, message.model?.modelId].filter(Boolean).join('/') ||
         'unknown model'
       lines.push(`### assistant (${modelId})`)
       lines.push('')
@@ -333,10 +334,10 @@ export class ShareMarkdown {
     return lines
   }
 
-  private renderPart(part: any, opts: SessionMarkdownOptions): string[] {
+  private renderPart(part: AgentPart, opts: SessionMarkdownOptions): string[] {
     const lines: string[] = []
 
-    switch (part.type) {
+    switch (part.kind) {
       case 'text':
         if (part.text) {
           lines.push(part.text)
@@ -354,8 +355,8 @@ export class ShareMarkdown {
         break
 
       case 'tool':
-        if (part.state.status === 'completed') {
-          const output: string = part.state.output || ''
+        if (part.status === 'completed') {
+          const output: string = part.output || ''
           const isOversized = output.length > TOOL_OUTPUT_MAX_CHARS
 
           if (isOversized) {
@@ -369,10 +370,10 @@ export class ShareMarkdown {
           lines.push('')
 
           // Render input parameters in YAML
-          if (part.state.input && Object.keys(part.state.input).length > 0) {
+          if (part.input && Object.keys(part.input).length > 0) {
             lines.push('**Input:**')
             lines.push('```yaml')
-            lines.push(YAML.stringify(part.state.input, null, { lineWidth: 0 }))
+            lines.push(YAML.stringify(part.input, null, { lineWidth: 0 }))
             lines.push('```')
             lines.push('')
           }
@@ -390,11 +391,11 @@ export class ShareMarkdown {
             lines.push('```')
             lines.push('')
           }
-        } else if (part.state.status === 'error') {
+        } else if (part.status === 'error') {
           lines.push(`#### tool-error: ${part.tool}`)
           lines.push('')
           lines.push('```')
-          lines.push(part.state.error || 'Unknown error')
+          lines.push(part.error || 'Unknown error')
           lines.push('```')
           lines.push('')
         }
@@ -405,28 +406,28 @@ export class ShareMarkdown {
   }
 
   /** Compact rendering: tool calls become a single line with line count instead of full output. */
-  private renderPartCompact(part: any, opts: SessionMarkdownOptions): string[] {
-    if (part.type !== 'tool') {
+  private renderPartCompact(part: AgentPart, opts: SessionMarkdownOptions): string[] {
+    if (part.kind !== 'tool') {
       return this.renderPart(part, opts)
     }
 
     const lines: string[] = []
 
-    if (part.state.status === 'completed') {
-      const output: string = part.state.output || ''
+    if (part.status === 'completed') {
+      const output: string = part.output || ''
       const lineCount = output ? output.split('\n').length : 0
       const inputSummary = formatCompactToolSummary({
         tool: part.tool,
-        input: part.state.input,
+        input: part.input as ToolInput,
         maxChars: opts.toolInputMaxChars,
-        metadata: part.state.metadata,
+        metadata: part.metadata as JsonValue | undefined,
       })
       const outputLabel = lineCount > 0 ? `(${lineCount} lines)` : ''
       const parts = [inputSummary, outputLabel].filter(Boolean).join(' ')
       lines.push(`tool: ${part.tool}${parts ? ` ${parts}` : ''}`)
       lines.push('')
-    } else if (part.state.status === 'error') {
-      const errorText = (part.state.error || 'Unknown error').split('\n')[0].slice(0, 120)
+    } else if (part.status === 'error') {
+      const errorText = (part.error || 'Unknown error').split('\n')[0]!.slice(0, 120)
       lines.push(`tool-error: ${part.tool} ${errorText}`)
       lines.push('')
     }
@@ -441,29 +442,26 @@ export class ShareMarkdown {
  * and tool calls in compact form (name + params only, no output).
  */
 export async function getCompactSessionContext({
-  client,
+  backend,
   sessionId,
   includeSystemPrompt = false,
   maxMessages = 20,
 }: {
-  client: OpencodeClient
+  backend: Pick<AgentBackend, 'sessions'>
   sessionId: string
   includeSystemPrompt?: boolean
   maxMessages?: number
 }): Promise<UnexpectedError | string> {
-  const messagesResponse = await client.session
-    .messages({
-      sessionID: sessionId,
+  const messagesResult = await backend.sessions.messages({ sessionId })
+  // A transport failure was an error before; a rejection read as no messages.
+  if (messagesResult instanceof Error && !(messagesResult instanceof AgentRequestError)) {
+    markdownLogger.error('Failed to get compact session context:', messagesResult)
+    return new UnexpectedError({
+      message: 'Failed to get compact session context',
+      cause: messagesResult,
     })
-    .catch((e) => {
-      markdownLogger.error('Failed to get compact session context:', e)
-      return new UnexpectedError({
-        message: 'Failed to get compact session context',
-        cause: e,
-      })
-    })
-  if (messagesResponse instanceof Error) return messagesResponse
-  const messages = messagesResponse.data || []
+  }
+  const messages: AgentSessionMessage[] = messagesResult instanceof Error ? [] : messagesResult
 
   const lines: string[] = []
 
@@ -472,13 +470,13 @@ export async function getCompactSessionContext({
   // 1. session.system field (if available in future SDK versions)
   // 2. synthetic text part in first assistant message (current approach)
   if (includeSystemPrompt && messages.length > 0) {
-    const firstAssistant = messages.find((m) => m.info.role === 'assistant')
+    const firstAssistant = messages.find((m) => m.message.role === 'assistant')
     if (firstAssistant) {
       // look for text part marked as synthetic (system prompt)
-      const systemPart = (firstAssistant.parts || []).find(
-        (p) => p.type === 'text' && (p as any).synthetic === true,
+      const systemPart = firstAssistant.parts.find(
+        (p) => p.kind === 'text' && p.synthetic === true,
       )
-      if (systemPart && 'text' in systemPart && systemPart.text) {
+      if (systemPart?.kind === 'text' && systemPart.text) {
         lines.push('[System Prompt]')
         const truncated = systemPart.text.slice(0, 3000)
         lines.push(truncated)
@@ -494,22 +492,22 @@ export async function getCompactSessionContext({
   const recentMessages = messages.slice(-maxMessages)
 
   for (const msg of recentMessages) {
-    if (msg.info.role === 'user') {
-      const textParts = (msg.parts || [])
-        .filter((p) => p.type === 'text')
-        .map((p) => (p.type === 'text' ? extractNonXmlContent(p.text || '') : ''))
+    if (msg.message.role === 'user') {
+      const textParts = msg.parts
+        .filter((p) => p.kind === 'text')
+        .map((p) => (p.kind === 'text' ? extractNonXmlContent(p.text || '') : ''))
         .filter(Boolean)
       if (textParts.length > 0) {
         lines.push(`[User]: ${textParts.join(' ').slice(0, 1000)}`)
         lines.push('')
       }
-    } else if (msg.info.role === 'assistant') {
+    } else if (msg.message.role === 'assistant') {
       // Get assistant text parts (non-synthetic, non-empty)
-      const textParts = (msg.parts || [])
+      const textParts = msg.parts
         .filter(
-          (p) => p.type === 'text' && !p.synthetic && p.text,
+          (p) => p.kind === 'text' && !p.synthetic && p.text,
         )
-        .map((p) => (p.type === 'text' ? p.text : ''))
+        .map((p) => (p.kind === 'text' ? p.text : ''))
         .filter(Boolean)
       if (textParts.length > 0) {
         lines.push(`[Assistant]: ${textParts.join(' ').slice(0, 1000)}`)
@@ -517,19 +515,19 @@ export async function getCompactSessionContext({
       }
 
       // Get tool calls in compact form (name + params only)
-      const toolParts = (msg.parts || []).filter(
+      const toolParts = msg.parts.filter(
         (p) =>
-          p.type === 'tool' &&
-          p.state?.status === 'completed',
+          p.kind === 'tool' &&
+          p.status === 'completed',
       )
       for (const part of toolParts) {
-        if (part.type === 'tool') {
+        if (part.kind === 'tool') {
           const toolName = part.tool
           // skip noisy tools
           if (toolName === 'todoread' || toolName === 'todowrite') {
             continue
           }
-          const input = part.state?.input || {}
+          const input = part.input || {}
           const normalize = (value: string) =>
             value.replace(/\s+/g, ' ').trim()
           // compact params: just key=value on one line

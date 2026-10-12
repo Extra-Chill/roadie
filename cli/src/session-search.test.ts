@@ -1,7 +1,14 @@
 // Tests for session search query parsing and snippet matching helpers.
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
+import type { Part as OpenCodePart } from '@opencode-ai/sdk/v2'
+import { toAgentPart } from './agent-backend/opencode-events.js'
 import {
+  getPartSearchTexts,
+  toSearchPart,
+  type SessionSearchPart,
   buildSessionSearchSnippet,
   collectSessionSearchMatches,
   findFirstSessionSearchHit,
@@ -327,5 +334,23 @@ describe('session search helpers', () => {
     expect(result.matches[0]?.directory).toBe('/tmp/roadie')
     expect(result.matches[0]?.source).toBe('roadie')
     expect(result.matches[1]?.directory).toBe('/tmp/cli')
+  })
+})
+
+describe('Roadie parts search the same as the OpenCode parts they came from', () => {
+  test('every recorded part yields identical search texts after translation', () => {
+    const dir = path.join(import.meta.dirname, 'session-handler', 'event-stream-fixtures')
+    const parts = fs.readdirSync(dir)
+      .filter((name) => name.endsWith('.jsonl'))
+      .flatMap((name) => fs.readFileSync(path.join(dir, name), 'utf8').split('\n').filter((l) => l.trim()))
+      .map((line) => (JSON.parse(line) as { event: { type: string; properties: { part?: OpenCodePart } } }).event)
+      .flatMap((event) => (event.type === 'message.part.updated' && event.properties.part ? [event.properties.part] : []))
+    const kinds = new Set(parts.map((part) => part.type))
+    expect(kinds.has('tool') && kinds.has('text')).toBe(true)
+    for (const part of parts) {
+      expect(getPartSearchTexts(toSearchPart(toAgentPart(part)))).toEqual(
+        getPartSearchTexts(part as unknown as SessionSearchPart),
+      )
+    }
   })
 })

@@ -19,6 +19,14 @@ const toolsLogger = createLogger(LogPrefix.TOOLS)
 import { ShareMarkdown } from './markdown.js'
 import { formatDistanceToNow } from './utils.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { AgentRequestError, type AgentModelSelection } from './agent-backend/types.js'
+
+/** The SDK used to throw on transport failure and hand back no data on a rejection. */
+function throwUnlessRejected<T>(result: T | Error): T | undefined {
+  if (result instanceof AgentRequestError) return undefined
+  if (result instanceof Error) throw result
+  return result
+}
 import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
@@ -48,7 +56,7 @@ export async function getTools({
     throw new Error('Agent backend is unavailable')
   }
 
-  const markdownRenderer = new ShareMarkdown(client)
+  const markdownRenderer = new ShareMarkdown(backend)
 
   const providersResponse = await client.config.providers()
   const providers: Provider[] = providersResponse.data?.providers || []
@@ -56,20 +64,43 @@ export async function getTools({
   // Helper: get last assistant model for a session (non-summary)
   const getSessionModel = async (
     sessionId: string,
-  ): Promise<{ providerID: string; modelID: string } | undefined> => {
-    const res = await getClient().session.messages({ sessionID: sessionId })
-    const data = res.data
+  ): Promise<AgentModelSelection | undefined> => {
+    const data = throwUnlessRejected(await backend.sessions.messages({ sessionId, directory }))
     if (!data || data.length === 0) return undefined
     for (let i = data.length - 1; i >= 0; i--) {
-      const info = data?.[i]?.info
+      const info = data[i]?.message
       if (info?.role === 'assistant') {
-        const ai = info
-        if (!ai.summary && ai.providerID && ai.modelID) {
-          return { providerID: ai.providerID, modelID: ai.modelID }
+        if (!info.summary && info.model?.providerId && info.model.modelId) {
+          return { providerId: info.model.providerId, modelId: info.model.modelId }
         }
       }
     }
     return undefined
+  }
+
+  // Fire-and-forget prompt. As before, a rejected prompt still renders the
+  // reply (there is none yet); only a transport failure reports an error.
+  const promptThenReport = (sessionId: string, prompt: Promise<void | Error>) => {
+    prompt
+      .then(async (result) => {
+        if (result instanceof Error && !(result instanceof AgentRequestError)) throw result
+        const markdownResult = await markdownRenderer.generate({
+          sessionID: sessionId,
+          lastAssistantOnly: true,
+        })
+        onMessageCompleted?.({
+          sessionId,
+          messageId: '',
+          markdown: errore.unwrapOr(markdownResult, ''),
+        })
+      })
+      .catch((error) => {
+        onMessageCompleted?.({
+          sessionId,
+          messageId: '',
+          error,
+        })
+      })
   }
 
   const tools = {
@@ -84,31 +115,13 @@ export async function getTools({
         const sessionModel = await getSessionModel(sessionId)
 
         // do not await
-        getClient()
-          .session.promptAsync({
-            sessionID: sessionId,
-            parts: [{ type: 'text', text: message }],
-            model: sessionModel,
-            system: getOpencodeSystemMessage({ sessionId }),
-          })
-          .then(async (response) => {
-            const markdownResult = await markdownRenderer.generate({
-              sessionID: sessionId,
-              lastAssistantOnly: true,
-            })
-            onMessageCompleted?.({
-              sessionId,
-              messageId: '',
-              markdown: errore.unwrapOr(markdownResult, ''),
-            })
-          })
-          .catch((error) => {
-            onMessageCompleted?.({
-              sessionId,
-              messageId: '',
-              error,
-            })
-          })
+        promptThenReport(sessionId, backend.sessions.prompt({
+          sessionId,
+          directory,
+          parts: [{ kind: 'text', text: message }],
+          ...(sessionModel && { model: sessionModel }),
+          system: getOpencodeSystemMessage({ sessionId }),
+        }))
         return {
           success: true,
           sessionId,
@@ -145,44 +158,28 @@ export async function getTools({
         }
 
         try {
-          const session = await getClient().session.create({
+          const session = await backend.sessions.create({
+            directory,
             ...(title ? { title } : {}),
           })
 
-          if (!session.data) {
+          if (session instanceof AgentRequestError) {
             throw new Error('Failed to create session')
           }
+          if (session instanceof Error) throw session
 
           // do not await
-          getClient()
-            .session.promptAsync({
-              sessionID: session.data.id,
-              parts: [{ type: 'text', text: message }],
-              system: getOpencodeSystemMessage({ sessionId: session.data.id }),
-            })
-            .then(async (response) => {
-              const markdownResult = await markdownRenderer.generate({
-                sessionID: session.data.id,
-                lastAssistantOnly: true,
-              })
-              onMessageCompleted?.({
-                sessionId: session.data.id,
-                messageId: '',
-                markdown: errore.unwrapOr(markdownResult, ''),
-              })
-            })
-            .catch((error) => {
-              onMessageCompleted?.({
-                sessionId: session.data.id,
-                messageId: '',
-                error,
-              })
-            })
+          promptThenReport(session.id, backend.sessions.prompt({
+            sessionId: session.id,
+            directory,
+            parts: [{ kind: 'text', text: message }],
+            system: getOpencodeSystemMessage({ sessionId: session.id }),
+          }))
 
           return {
             success: true,
-            sessionId: session.data.id,
-            title: session.data.title,
+            sessionId: session.id,
+            title: session.title,
           }
         } catch (error) {
           return {
@@ -286,16 +283,17 @@ export async function getTools({
       }),
       execute: async ({ sessionId, lastAssistantOnly = false }) => {
         if (lastAssistantOnly) {
-          const messages = await getClient().session.messages({
-            sessionID: sessionId,
-          })
+          const messages = throwUnlessRejected(await backend.sessions.messages({
+            sessionId,
+            directory,
+          }))
 
-          if (!messages.data) {
+          if (!messages) {
             return { success: false, error: 'No messages found' }
           }
 
-          const assistantMessages = messages.data.filter(
-            (m) => m.info.role === 'assistant',
+          const assistantMessages = messages.filter(
+            (m) => m.message.role === 'assistant',
           )
 
           if (assistantMessages.length === 0) {
@@ -306,11 +304,9 @@ export async function getTools({
           }
 
           const lastMessage = assistantMessages[assistantMessages.length - 1]
-          const status =
-            'completed' in lastMessage!.info.time &&
-            lastMessage!.info.time.completed
-              ? 'completed'
-              : 'in_progress'
+          const status = lastMessage!.message.completedAt
+            ? 'completed'
+            : 'in_progress'
 
           const markdownResult = await markdownRenderer.generate({
             sessionID: sessionId,
@@ -333,15 +329,14 @@ export async function getTools({
             throw new Error(markdownResult.message)
           }
 
-          const messages = await getClient().session.messages({
-            sessionID: sessionId,
-          })
-          const lastMessage = messages.data?.[messages.data.length - 1]
+          const messages = throwUnlessRejected(await backend.sessions.messages({
+            sessionId,
+            directory,
+          }))
+          const lastMessage = messages?.[messages.length - 1]
           const status =
-            lastMessage?.info.role === 'assistant' &&
-            lastMessage?.info.time &&
-            'completed' in lastMessage.info.time &&
-            !lastMessage.info.time.completed
+            lastMessage?.message.role === 'assistant' &&
+            !lastMessage.message.completedAt
               ? 'in_progress'
               : 'completed'
 
@@ -364,11 +359,10 @@ export async function getTools({
           toolsLogger.log(
             `[ABORT] reason=voice-tool sessionId=${sessionId} - user requested abort via voice assistant tool`,
           )
-          const result = await getClient().session.abort({
-            sessionID: sessionId,
-          })
+          const result = await backend.sessions.abort({ sessionId })
+          if (result instanceof Error && !(result instanceof AgentRequestError)) throw result
 
-          if (!result.data) {
+          if (result instanceof Error) {
             return {
               success: false,
               error: 'Failed to abort session',

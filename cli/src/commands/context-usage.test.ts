@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
+import { toAgentMessage, toAgentPart } from '../agent-backend/opencode-events.js'
 import { formatContextBreakdown } from './context-usage.js'
+
+// Fixtures are written as OpenCode messages and translated the way the backend
+// seam does, so the breakdown is checked against real translated shapes.
+const translate = (messages: Array<{ info: Message; parts: Part[] }>) =>
+  messages.map(({ info, parts }) => ({ message: toAgentMessage(info), parts: parts.map(toAgentPart) }))
 
 const part = (messageID: string, value: Partial<Part>): Part => ({
   id: `part-${messageID}`,
@@ -34,7 +40,7 @@ describe('formatContextBreakdown', () => {
       { info: assistant('last', 50), parts: [part('last', { type: 'text', text: 'x'.repeat(800) })] },
     ]
 
-    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 50 }))
+    expect(formatContextBreakdown({ messages: translate(messages), lastAssistantId: 'last', inputTokens: 50 }))
       .toMatchInlineSnapshot(`"**Estimated input mix:** tool read 42.0% (21) · system 20.0% (10) · other 38.0% (19) tokens (other includes messages and unexposed prompts)"`)
   })
 
@@ -51,7 +57,7 @@ describe('formatContextBreakdown', () => {
       { info: assistant('last', 40), parts: [] },
     ]
 
-    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 40 }))
+    expect(formatContextBreakdown({ messages: translate(messages), lastAssistantId: 'last', inputTokens: 40 }))
       .toMatchInlineSnapshot(`"**Estimated input mix:** system 12.5% (5) · other 87.5% (35) tokens (other includes messages and unexposed prompts)"`)
   })
 })

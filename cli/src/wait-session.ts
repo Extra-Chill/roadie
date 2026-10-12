@@ -8,7 +8,6 @@ import type { AgentMessage } from './agent-backend/events.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { parsePersistedEvents } from './session-handler/persisted-events.js'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
 import { ShareMarkdown } from './markdown.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -176,17 +175,17 @@ async function outputSessionMarkdown({
   projectDirectory: string
 }): Promise<void> {
   waitLogger.log('Generating session output...')
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) {
+  const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+  if (getBackend instanceof Error) {
     throw new Error(
-      `Failed to connect to OpenCode server: ${getClient.message}`,
+      `Failed to connect to OpenCode server: ${getBackend.message}`,
       {
-        cause: getClient,
+        cause: getBackend,
       },
     )
   }
 
-  const markdown = new ShareMarkdown(getClient())
+  const markdown = new ShareMarkdown(getBackend())
   const result = await markdown.generate({ sessionID: sessionId })
   if (result instanceof Error) {
     throw new Error(`Failed to generate session markdown: ${result.message}`, {

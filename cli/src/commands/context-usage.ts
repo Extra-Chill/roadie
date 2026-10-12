@@ -6,11 +6,13 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
+import type { AgentUsage } from '../agent-backend/events.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { AgentRequestError, type AgentSessionMessage } from '../agent-backend/types.js'
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
-import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeClient } from '../opencode.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -25,31 +27,31 @@ export function formatContextBreakdown({
   lastAssistantId,
   inputTokens,
 }: {
-  messages: Array<{ info: Message; parts: Part[] }>
+  messages: AgentSessionMessage[]
   lastAssistantId: string
   inputTokens: number
 }): string | undefined {
   if (inputTokens <= 0) return undefined
-  const lastIndex = messages.findIndex((message) => message.info.id === lastAssistantId)
+  const lastIndex = messages.findIndex(({ message }) => message.id === lastAssistantId)
   if (lastIndex < 0) return undefined
   const history = messages.slice(0, lastIndex)
-  const compactIndex = history.findLastIndex((message) =>
-    message.parts.some((part) => part.type === 'compaction'),
+  const compactIndex = history.findLastIndex(({ parts }) =>
+    parts.some((part) => part.kind === 'other' && part.type === 'compaction'),
   )
   const active = history.slice(compactIndex < 0 ? 0 : compactIndex + 1)
-  const system = [...active].reverse().find((message) =>
-    message.info.role === 'user' && message.info.system,
+  const system = [...active].reverse().find(({ message }) =>
+    message.role === 'user' && message.system,
   )
-  const systemChars = system?.info.role === 'user' ? system.info.system?.length ?? 0 : 0
+  const systemChars = system?.message.system?.length ?? 0
   const toolChars = new Map<string, number>()
-  for (const message of active) {
-    if (message.info.role !== 'assistant') continue
-    for (const part of message.parts) {
-      if (part.type !== 'tool') continue
-      const output = part.state.status === 'completed' && !part.state.time.compacted
-        ? part.state.output
-        : part.state.status === 'error' ? part.state.error : ''
-      const chars = JSON.stringify(part.state.input).length + output.length
+  for (const { message, parts } of active) {
+    if (message.role !== 'assistant') continue
+    for (const part of parts) {
+      if (part.kind !== 'tool') continue
+      const output = part.status === 'completed' && part.compactedAt === undefined
+        ? part.output ?? ''
+        : part.status === 'error' ? part.error ?? '' : ''
+      const chars = JSON.stringify(part.input).length + output.length
       toolChars.set(part.tool, (toolChars.get(part.tool) ?? 0) + chars)
     }
   }
@@ -70,18 +72,8 @@ export function formatContextBreakdown({
   return `**Estimated input mix:** ${[...visible.filter((entry) => entry.tokens > 0), { name: 'other', tokens: other }].map(format).join(' · ')} tokens (other includes messages and unexposed prompts)`
 }
 
-function getTokenTotal({
-  input,
-  output,
-  reasoning,
-  cache,
-}: {
-  input: number
-  output: number
-  reasoning: number
-  cache: { read: number; write: number }
-}): number {
-  return input + output + reasoning + cache.read + cache.write
+function getTokenTotal(usage: AgentUsage): number {
+  return usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
 }
 
 export async function handleContextUsageCommand({
@@ -136,7 +128,7 @@ export async function handleContextUsageCommand({
     return
   }
 
-  const serverResult = await initializeOpencodeForDirectory(projectDirectory)
+  const serverResult = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
   if (serverResult instanceof Error) {
     await command.reply({
       content: `Failed to get context usage: ${serverResult.message}`,
@@ -145,8 +137,9 @@ export async function handleContextUsageCommand({
     return
   }
 
+  const backend = getAgentBackendProvider().getBackend(workingDirectory)
   const client = getOpencodeClient(workingDirectory)
-  if (!client) {
+  if (!backend || !client) {
     await command.reply({
       content: 'Failed to get OpenCode client',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
@@ -157,14 +150,15 @@ export async function handleContextUsageCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const messagesResponse = await client.session.messages({
-      sessionID: sessionId,
+    const messagesResult = await backend.sessions.messages({
+      sessionId,
       directory: workingDirectory,
     })
-
-    const messages = messagesResponse.data || []
+    // A rejection read as an empty session before; a transport failure threw.
+    if (messagesResult instanceof Error && !(messagesResult instanceof AgentRequestError)) throw messagesResult
+    const messages = messagesResult instanceof Error ? [] : messagesResult
     const assistantMessages = messages.filter(
-      (m) => m.info.role === 'assistant',
+      (m) => m.message.role === 'assistant',
     )
 
     if (assistantMessages.length === 0) {
@@ -175,34 +169,25 @@ export async function handleContextUsageCommand({
     }
 
     const lastAssistant = [...assistantMessages].reverse().find((m) => {
-      if (m.info.role !== 'assistant') {
-        return false
-      }
-      if (!m.info.tokens) {
-        return false
-      }
-      return getTokenTotal(m.info.tokens) > 0
+      return m.message.usage !== undefined && getTokenTotal(m.message.usage) > 0
     })
 
-    if (!lastAssistant || lastAssistant.info.role !== 'assistant') {
+    if (!lastAssistant?.message.usage) {
       await command.editReply({
         content: 'Token usage not available for this session yet',
       })
       return
     }
 
-    const { tokens, modelID, providerID } = lastAssistant.info
+    const tokens = lastAssistant.message.usage
+    const modelID = lastAssistant.message.model?.modelId ?? ''
+    const providerID = lastAssistant.message.model?.providerId
     const totalTokens = getTokenTotal(tokens)
-    const inputTokens = tokens.input + tokens.cache.read + tokens.cache.write
+    const inputTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite
 
     // Sum cost across all assistant messages for accurate session total
     // (AssistantMessage.cost is per-message, not cumulative)
-    const totalCost = assistantMessages.reduce((sum, m) => {
-      if (m.info.role === 'assistant') {
-        return sum + (m.info.cost || 0)
-      }
-      return sum
-    }, 0)
+    const totalCost = assistantMessages.reduce((sum, m) => sum + (m.message.cost || 0), 0)
 
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
@@ -242,7 +227,7 @@ export async function handleContextUsageCommand({
 
     const breakdown = formatContextBreakdown({
       messages,
-      lastAssistantId: lastAssistant.info.id,
+      lastAssistantId: lastAssistant.message.id,
       inputTokens,
     })
     if (breakdown) lines.push(breakdown)
