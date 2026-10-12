@@ -216,4 +216,71 @@ describe.skipIf(!bin)('Pi channel', () => {
       -# *project ⋅ main ⋅ Ns ⋅ fake-1*"
     `)
   }, 60_000)
+
+  test('the question tool shows a dropdown; a pick answers it and the Pi turn continues', async () => {
+    const questions = [{ question: 'Which runtime?', header: 'Runtime', options: [{ label: 'Pi', description: 'Small and fast' }, { label: 'OpenCode', description: 'The old one' }] }]
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: `CALL_TOOL question ${JSON.stringify({ questions })}` })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 10_000,
+      predicate: (t) => Boolean(t.name?.startsWith('CALL_TOOL question')),
+    })
+    const th = ctx.discord.thread(thread.id)
+    const start = Date.now()
+    let dropdown: { messageId: string; customId: string } | undefined
+    while (!dropdown && Date.now() - start < 20_000) {
+      for (const message of await th.getMessages()) {
+        const ids = JSON.stringify(message.components ?? []).match(/ask_question:[^"]+/)
+        if (ids) dropdown = { messageId: message.id, customId: ids[0] }
+      }
+      if (!dropdown) await new Promise((r) => setTimeout(r, 100))
+    }
+    if (!dropdown) throw new Error('no question dropdown')
+    const interaction = await th.user(TEST_USER_ID).selectMenu({ messageId: dropdown.messageId, customId: dropdown.customId, values: ['0'] })
+    await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+    await waitForBotMessageContaining({ discord: ctx.discord, threadId: thread.id, text: 'User has answered your questions', timeout: 20_000 })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000, afterMessageIncludes: 'User has answered your questions', afterAuthorId: ctx.discord.botUserId })
+    const text = await th.text({ showInteractions: true })
+    expect(text).toContain('tool said: User has answered your questions: "Which runtime?"="Pi"')
+    expect(text).toMatchInlineSnapshot(`
+      "--- from: user (pi-tester)
+      CALL_TOOL question {"questions":[{"question":"Which runtime?","header":"Runtime","options":[{"label":"Pi","description":"Small and fast"},{"label":"OpenCode","description":"The old one"}]}]}
+      --- from: assistant (TestBot)
+      -# *using fake/fake-1*
+      **Runtime**
+      Which runtime?
+      ✓ _Pi_
+      [user selects dropdown: 0]
+      » **pi-tester:** Pi
+      tool said: User has answered your questions: "Which runtime?"="Pi". You can now continue with the user's answers in mind.
+      -# *project ⋅ main ⋅ Ns ⋅ fake-1*"
+    `)
+  }, 60_000)
+
+  test('a typed message dismisses a pending question and runs as a new turn, like OpenCode', async () => {
+    const questions = [{ question: 'Name the release?', header: 'Release', options: [{ label: 'Luna', description: 'gpt-6-luna' }] }]
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: `CALL_TOOL question ${JSON.stringify({ questions })}` })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 10_000,
+      predicate: (t) => Boolean(t.name?.includes('Name the release')),
+    })
+    await waitForBotMessageContaining({ discord: ctx.discord, threadId: thread.id, text: 'Name the release?', timeout: 20_000 })
+    await ctx.discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'call it Selene' })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000, afterMessageIncludes: 'call it Selene' })
+    const pending = await pi.getBackend().sessions.questions!({ directory: ctx.directories.projectDirectory })
+    expect(pending instanceof Error ? pending : pending.length).toBe(0)
+    expect(await ctx.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: user (pi-tester)
+      CALL_TOOL question {"questions":[{"question":"Name the release?","header":"Release","options":[{"label":"Luna","description":"gpt-6-luna"}]}]}
+      --- from: assistant (TestBot)
+      -# *using fake/fake-1*
+      **Release**
+      Name the release?
+      --- from: user (pi-tester)
+      call it Selene
+      --- from: assistant (TestBot)
+      hello from the fake model
+      -# *project ⋅ main ⋅ Ns ⋅ fake-1*"
+    `)
+  }, 60_000)
 })
+

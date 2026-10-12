@@ -18,7 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { evaluatePermission } from '../../permission-policy.js'
-import type { AgentEvent, AgentSession, AgentStatus } from '../events.js'
+import type { AgentEvent, AgentQuestion, AgentSession, AgentStatus } from '../events.js'
 import {
   AgentRequestError,
   type AgentBackend,
@@ -36,6 +36,7 @@ import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
+const QUESTION_TITLE = 'roadie:question'
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high']
 
 export type PiBackendOptions = {
@@ -166,6 +167,7 @@ export class PiBackendProvider implements AgentBackendProvider {
   private titles = new Map<string, string>()
   private permissionRules = new Map<string, AgentPermissionRule[]>()
   private pendingPermissions = new Map<string, PendingPermission & { session: RunningSession }>()
+  private pendingQuestions = new Map<string, { sessionId: string; session: RunningSession }>()
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
   private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
   private backend: AgentBackend
@@ -365,6 +367,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.emit([{ type: 'notice', message: String(record.message ?? ''), level }], record)
       return
     }
+    if (record.method === 'input' && record.title === QUESTION_TITLE) {
+      this.onQuestion(session, uiId, String(record.placeholder ?? ''))
+      return
+    }
     if (record.method === 'input' && record.title === TOOL_TITLE) {
       void this.runTool(session, uiId, String(record.placeholder ?? ''))
       return
@@ -408,6 +414,38 @@ export class PiBackendProvider implements AgentBackendProvider {
     }], record)
   }
 
+  /** Surface a `question` tool call as Roadie's question event; replyQuestion answers it. */
+  private onQuestion(session: RunningSession, uiId: string, request: string) {
+    let parsed: { callId?: string; questions?: AgentQuestion[] }
+    try {
+      parsed = JSON.parse(request)
+    } catch {
+      session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
+      return
+    }
+    this.pendingQuestions.set(uiId, { sessionId: session.id, session })
+    const messageId = parsed.callId ? session.translator.messageIdForCall(parsed.callId) : undefined
+    this.emit([{
+      type: 'question.asked',
+      request: {
+        id: uiId,
+        sessionId: session.id,
+        questions: (parsed.questions ?? []).map((q) => ({ ...q, options: q.options ?? [] })),
+        ...(parsed.callId && messageId && { toolCall: { messageId, callId: parsed.callId } }),
+      },
+    }], { type: 'question_asked' })
+  }
+
+  /** Dismiss a session's open questions (abort): the tool errors and the run can stop. */
+  private cancelQuestions(sessionId: string) {
+    for (const [uiId, pending] of this.pendingQuestions) {
+      if (pending.sessionId !== sessionId) continue
+      this.pendingQuestions.delete(uiId)
+      pending.session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
+      this.emit([{ type: 'question.rejected', sessionId, requestId: uiId }], { type: 'question_rejected' })
+    }
+  }
+
   /** Run a Roadie tool the extension forwarded, and answer with its result. */
   private async runTool(session: RunningSession, uiId: string, request: string) {
     let call: { tool: string; args: unknown }
@@ -435,7 +473,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     const timeout = this.options.idleTimeoutMs ?? 5 * 60_000
     if (timeout <= 0) return
     session.idleTimer = setTimeout(() => {
-      const waiting = [...this.pendingPermissions.values()].some((pending) => pending.session === session)
+      const waiting = [...this.pendingPermissions.values(), ...this.pendingQuestions.values()].some((pending) => pending.session === session)
       // Pi writes the session file with the first message; before that the
       // session could not be resumed, so it keeps its process.
       if (session.busy || waiting || !fs.existsSync(session.sessionFile)) {
@@ -581,6 +619,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       abort: async ({ sessionId }) => {
         const session = this.sessions.get(sessionId)
         if (!session) return undefined
+        this.cancelQuestions(sessionId)
         const result = await session.process.request({ type: 'abort' })
         return result instanceof Error ? new AgentRequestError({ detail: result.message }) : undefined
       },
@@ -605,6 +644,17 @@ export class PiBackendProvider implements AgentBackendProvider {
         }
         pending.session.process.send({ type: 'extension_ui_response', id: requestId, confirmed: reply !== 'reject' })
         this.emit([{ type: 'permission.replied', sessionId: pending.sessionId, requestId, reply }], { type: 'permission_replied' })
+        return undefined
+      },
+      questions: async ({ directory }) => [...this.pendingQuestions.entries()]
+        .filter(([, pending]) => pending.session.directory === directory)
+        .map(([id, pending]) => ({ id, sessionId: pending.sessionId })),
+      replyQuestion: async ({ requestId, answers }) => {
+        const pending = this.pendingQuestions.get(requestId)
+        if (!pending) return new AgentRequestError({ detail: `No pending Pi question ${requestId}` })
+        this.pendingQuestions.delete(requestId)
+        pending.session.process.send({ type: 'extension_ui_response', id: requestId, value: JSON.stringify({ answers }) })
+        this.emit([{ type: 'question.replied', sessionId: pending.sessionId, requestId, answers }], { type: 'question_replied' })
         return undefined
       },
       setTitle: async ({ sessionId, title }) => {

@@ -229,6 +229,11 @@ export class PiEventTranslator {
 
   constructor(readonly sessionId: string) {}
 
+  /** The assistant message that issued a tool call, when the stream showed it. */
+  messageIdForCall(callId: string): string | undefined {
+    return this.tools.get(callId)?.messageId ?? this.assistantId
+  }
+
   translate(record: PiRecord): AgentEvent[] {
     const sessionId = this.sessionId
     switch (record.type) {

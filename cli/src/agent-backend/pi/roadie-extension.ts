@@ -15,6 +15,51 @@ import fs from 'node:fs'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
+export const ROADIE_QUESTION_TITLE = 'roadie:question'
+
+// Same contract as OpenCode's `question` tool, so prompts and the chat UI match.
+const QUESTION_DESCRIPTION = `Use this tool when you need to ask the user questions during execution. This allows you to:
+1. Gather user preferences or requirements
+2. Clarify ambiguous instructions
+3. Get decisions on implementation choices as you work
+4. Offer choices to the user about what direction to take.
+Usage notes:
+- When \`custom\` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
+- Answers are returned as arrays of labels; set \`multiple: true\` to allow selecting more than one
+- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
+`
+
+const QUESTION_PARAMETERS = {
+  type: 'object',
+  required: ['questions'],
+  properties: {
+    questions: {
+      type: 'array',
+      description: 'Questions to ask',
+      items: {
+        type: 'object',
+        required: ['question', 'header', 'options'],
+        properties: {
+          question: { type: 'string', description: 'Complete question' },
+          header: { type: 'string', description: 'Very short label (max 30 chars)' },
+          options: {
+            type: 'array',
+            description: 'Available choices',
+            items: {
+              type: 'object',
+              required: ['label', 'description'],
+              properties: {
+                label: { type: 'string', description: 'Display text (1-5 words, concise)' },
+                description: { type: 'string', description: 'Explanation of choice' },
+              },
+            },
+          },
+          multiple: { type: 'boolean', description: 'Allow selecting multiple choices' },
+        },
+      },
+    },
+  },
+}
 
 type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> }
 type Context = {
@@ -49,6 +94,26 @@ function readToolSchemas(): ToolSchema[] {
 }
 
 export default function roadieExtension(pi: ExtensionApi) {
+  pi.registerTool({
+    name: 'question',
+    label: 'question',
+    description: QUESTION_DESCRIPTION,
+    parameters: QUESTION_PARAMETERS,
+    async execute(callId, params, _signal, _onUpdate, ctx) {
+      const questions = (params.questions ?? []) as Array<{ question: string }>
+      const answer = await ctx.ui.input(ROADIE_QUESTION_TITLE, JSON.stringify({ callId, questions }))
+      if (answer === undefined) throw new Error('The user dismissed this question')
+      const { answers } = JSON.parse(answer) as { answers: string[][] }
+      const summary = questions
+        .map((q, i) => `"${q.question}"="${answers[i]?.length ? answers[i]!.join(', ') : 'Unanswered'}"`)
+        .join(', ')
+      return {
+        content: [{ type: 'text', text: `User has answered your questions: ${summary}. You can now continue with the user's answers in mind.` }],
+        details: { title: `Asked ${questions.length} question${questions.length > 1 ? 's' : ''}` },
+      }
+    },
+  })
+
   for (const schema of readToolSchemas()) {
     pi.registerTool({
       name: schema.name,

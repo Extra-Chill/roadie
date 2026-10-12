@@ -79,10 +79,16 @@ function routedSessions({
       const all = await ops.messages(input)
       return all instanceof Error ? all : { messages: all as AgentSessionMessage[] }
     },
-    questions: async (input) => (fallback?.sessions.questions ? fallback.sessions.questions(input) : []),
-    replyQuestion: async (input) => (fallback?.sessions.replyQuestion
-      ? fallback.sessions.replyQuestion(input)
-      : new AgentRequestError({ detail: 'Questions are not supported' })),
+    questions: async (input) => {
+      const [own, other] = await Promise.all([piOps.questions?.(input), fallback?.sessions.questions?.(input)])
+      return [...(own instanceof Error ? [] : own ?? []), ...(other instanceof Error ? [] : other ?? [])]
+    },
+    replyQuestion: async (input) => {
+      // Like permissions: request ids are not session-scoped; Pi knows its own.
+      const piResult = await piOps.replyQuestion!(input)
+      if (!(piResult instanceof Error)) return piResult
+      return fallback?.sessions.replyQuestion ? fallback.sessions.replyQuestion(input) : piResult
+    },
   }
 }
 
