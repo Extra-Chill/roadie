@@ -1,8 +1,10 @@
-// Real-model trial of a Pi channel (#51), billed through the credential pool
-// proxy. Opt-in: needs a `pi` binary (ROADIE_PI_BIN) and a pool data dir
-// (ROADIE_PI_REAL_POOL_DIR) whose shared pool has the rotation in
-// ROADIE_PI_REAL_ROTATION (default anthropic-claude-haiku-5-5). Spends real
-// model calls, so it never runs by default.
+// Real-model trial of a Pi channel (#51). Opt-in (spends real model calls);
+// needs a `pi` binary (ROADIE_PI_BIN) and one of:
+// - ROADIE_PI_REAL_AGENT_DIR: a Pi agent dir with its own login (e.g. a
+//   ChatGPT/Codex subscription), model ROADIE_PI_REAL_MODEL (default
+//   openai-codex/gpt-5.5);
+// - ROADIE_PI_REAL_POOL_DIR: a credential pool data dir, billed through the
+//   pool proxy, rotation ROADIE_PI_REAL_ROTATION.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -25,22 +27,32 @@ import type { AgentEvent } from './agent-backend/events.js'
 const TEXT_CHANNEL_ID = '200000000000001520'
 const bin = process.env['ROADIE_PI_BIN']
 const poolDir = process.env['ROADIE_PI_REAL_POOL_DIR']
+const directAgentDir = process.env['ROADIE_PI_REAL_AGENT_DIR']
 const rotation = process.env['ROADIE_PI_REAL_ROTATION'] || 'anthropic-claude-haiku-5-5'
+const directModel = process.env['ROADIE_PI_REAL_MODEL'] || 'openai-codex/gpt-5.5'
 
-describe.skipIf(!bin || !poolDir)('Pi channel on a real model through the credential pool', () => {
+describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real model through the credential pool', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
     channelName: 'pi-real-e2e',
     dirName: 'pi-real-e2e',
     username: 'pi-real-tester',
   })
-  let proxy: MessagesProxy
+  let proxy: MessagesProxy | undefined
   let pi: PiBackendProvider
   let restore: (() => void) | undefined
   const usage: Array<{ input: number; cacheRead: number; cacheWrite: number; output: number }> = []
   const upstream: number[] = []
 
   beforeAll(async () => {
+    if (directAgentDir) {
+      pi = new PiBackendProvider({
+        bin: bin!,
+        sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
+        model: directModel,
+        env: { PI_CODING_AGENT_DIR: directAgentDir },
+      })
+    } else {
     proxy = await startMessagesProxy({
       dataDir: poolDir!,
       resolvePools: async () => SHARED_POOL_ID,
@@ -60,8 +72,9 @@ describe.skipIf(!bin || !poolDir)('Pi channel on a real model through the creden
       sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
       model: `roadie/${rotation}`,
       env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
-      pool: { issueKey: (id) => proxy.issueKey(id), revokeKey: (key) => proxy.revokeKey(key) },
+      pool: { issueKey: (id) => proxy!.issueKey(id), revokeKey: (key) => proxy!.revokeKey(key) },
     })
+    }
     const events = await pi.subscribeEvents({ signal: new AbortController().signal })
     void (async () => {
       for await (const item of events) {
@@ -82,7 +95,7 @@ describe.skipIf(!bin || !poolDir)('Pi channel on a real model through the creden
     restore?.()
     pi?.dispose()
     await proxy?.close()
-    const report = { rotation, upstreamStatuses: upstream, usage }
+    const report = { model: directAgentDir ? directModel : `roadie/${rotation}`, upstreamStatuses: upstream, usage }
     fs.writeFileSync(path.join(process.env['TMPDIR'] || '/tmp', 'pi-real-model-report.json'), JSON.stringify(report, null, 2))
   })
 
