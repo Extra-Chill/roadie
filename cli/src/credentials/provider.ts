@@ -65,7 +65,7 @@ import {
   readPoolRotations,
   readPoolState,
   updatePoolAccountLocked,
-  withPoolLock,
+  withPoolLockAt,
   type PoolAccount,
 } from './store.js'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
@@ -230,7 +230,7 @@ export async function ensureFreshOAuthAccount({
     // no adapter yet and are dispatched with the stored access token as-is.
     if (account.type !== 'oauth' || !OAUTH_REFRESHERS[account.provider]) return account
     if (account.expires > now + OAUTH_REFRESH_LEAD_MS) return account
-    return await withPoolLock(poolId, async () => {
+    return await withPoolLockAt(dataDir, poolId, async () => {
       // Re-read under the lock: a concurrent request may have refreshed already.
       const accounts = readPoolAccounts({ dataDir, poolId })
       if (accounts instanceof Error) return accounts
@@ -681,7 +681,7 @@ async function routeLanguageModelCall<TResult>({
         lastRateLimitError = error
         // Cooldowns are per pool: a rate-limited account in the billed pool
         // never cools down the same provider's account in another pool.
-        const cooldown = markCooldown({
+        const cooldown = await markCooldown({
           dataDir: deps.dataDir,
           poolId: candidate.poolId,
           accountId: candidate.account.id,
