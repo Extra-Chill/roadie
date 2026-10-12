@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.55.0] - 2026-10-12
+
+### Added
+- Pi agent backend behind per-channel opt-in (#51 spike)
+
 ## [0.54.5] - 2026-10-12
 
 ### Changed
