@@ -110,11 +110,45 @@ export function buildServerPluginList({
   ]
 }
 
+export type RoadiePoolModelConfig = {
+  name: string
+  tool_call: boolean
+  attachment?: boolean
+  modalities?: { input: Array<'text' | 'image' | 'pdf'>; output: Array<'text'> }
+}
+
 export type RoadiePoolProviderConfig = {
   name: string
   npm: string
   options: Record<string, string>
-  models: Record<string, { name: string; tool_call: boolean }>
+  models: Record<string, RoadiePoolModelConfig>
+}
+
+/**
+ * Upstream models known to accept image and PDF input. OpenCode treats a
+ * custom-provider model as text-only unless it declares `attachment` and
+ * `modalities`, and then refuses attachments before the request ever reaches
+ * the model, so pool models must declare what their upstreams accept.
+ */
+function isVisionCapableUpstream({ provider, modelId }: { provider: string; modelId: string }): boolean {
+  if (provider === 'anthropic') return modelId.startsWith('claude-')
+  if (provider === 'openai' || provider === 'github-copilot') {
+    return ['gpt-4o', 'gpt-4.1', 'gpt-5'].some((prefix) => modelId.startsWith(prefix))
+  }
+  return false
+}
+
+/**
+ * A rotation can fall over to any of its entries mid-session, so it accepts
+ * images only when every entry does. Unknown or unparseable entries count as
+ * text-only, which keeps the conservative default.
+ */
+export function rotationSupportsImageInput(entries: string[]): boolean {
+  if (entries.length === 0) return false
+  return entries.every((entry) => {
+    const parsed = parseRotationEntry(entry)
+    return parsed !== null && isVisionCapableUpstream(parsed)
+  })
 }
 
 /**
@@ -142,7 +176,14 @@ export async function buildRoadiePoolProviderConfig({
   if (rotationNames.length === 0) return null
   const models: RoadiePoolProviderConfig['models'] = {}
   for (const name of rotationNames) {
-    models[name] = { name: `Roadie pool ${name}`, tool_call: true }
+    models[name] = {
+      name: `Roadie pool ${name}`,
+      tool_call: true,
+      ...(rotationSupportsImageInput(rotations[name] ?? []) && {
+        attachment: true,
+        modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      }),
+    }
   }
   return {
     name: 'Roadie credential pool',
@@ -189,6 +230,7 @@ import {
 import { execAsync } from './exec-async.js'
 import { computeSkillPermission } from './skill-filter.js'
 import { readPoolRotations, SHARED_POOL_ID } from './credentials/store.js'
+import { parseRotationEntry } from './credentials/router.js'
 import {
   CREDENTIAL_POOLS_ENV,
 } from './credential-pools-plugin.js'
