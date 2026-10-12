@@ -150,6 +150,15 @@ function promptText(parts: AgentPromptPart[]): { message: string; images: Array<
   return { message: text.join('\n\n'), images }
 }
 
+/** Point a session file's header at another working directory (atomic rewrite). */
+function setSessionHeaderCwd(file: string, cwd: string) {
+  const [first, ...rest] = fs.readFileSync(file, 'utf8').split('\n')
+  const header = JSON.parse(first ?? '{}') as Record<string, unknown>
+  const temp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temp, [JSON.stringify({ ...header, cwd }), ...rest].join('\n'))
+  fs.renameSync(temp, file)
+}
+
 /** Session id and cwd from a Pi session file's header line. */
 function readSessionHeader(file: string): { id: string; cwd: string; createdAt: number } | undefined {
   try {
@@ -240,6 +249,55 @@ export class PiBackendProvider implements AgentBackendProvider {
       if (command.source === 'skill') return [{ name: command.name.replace(/^skill:/, ''), ...(command.description && { description: command.description }), source: 'skill' }]
       return []
     })
+  }
+
+  /**
+   * Copy a session file into a new session, whole or up to (not including) a
+   * user message, using Pi's own fork. A short-lived process does it; the
+   * fork's process starts lazily on first use. The source file is unchanged.
+   */
+  private async forkFile({ file, messageId }: { file: string; messageId?: string }): Promise<{ sessionId: string; sessionFile: string } | Error> {
+    const header = readSessionHeader(file)
+    if (!header) return new AgentRequestError({ detail: `Unreadable Pi session file ${file}` })
+    let entryId: string | undefined
+    if (messageId) {
+      const timestamp = Number(/^pi-user-(\d+)$/.exec(messageId)?.[1])
+      entryId = fs.readFileSync(file, 'utf8').split('\n').flatMap((line) => {
+        try {
+          const entry = JSON.parse(line) as { type?: string; id?: string; message?: { role?: string; timestamp?: number } }
+          return entry.type === 'message' && entry.message?.role === 'user' && entry.message.timestamp === timestamp && entry.id ? [entry.id] : []
+        } catch {
+          return []
+        }
+      })[0]
+      if (!entryId) return new AgentRequestError({ detail: `No user message ${messageId} in Pi session ${header.id}` })
+    }
+    const child = new PiProcess({
+      bin: this.options.bin,
+      args: [
+        '--session-dir', this.options.sessionDir,
+        '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
+        ...(this.options.model ? ['--model', this.options.model] : []),
+        ...(entryId ? ['--session', file] : ['--fork', file]),
+      ],
+      cwd: header.cwd,
+      env: { ...process.env, ...this.options.env },
+    })
+    try {
+      if (entryId) {
+        const forked = await child.request<{ cancelled?: boolean }>({ type: 'fork', entryId })
+        if (forked instanceof Error) return new AgentRequestError({ detail: forked.message })
+        if (forked?.cancelled) return new AgentRequestError({ detail: 'Pi cancelled the fork' })
+      }
+      const state = await child.request<{ sessionId: string; sessionFile: string }>({ type: 'get_state' })
+      if (state instanceof Error) return state
+      if (state.sessionFile === file) return new AgentRequestError({ detail: 'Pi did not create a fork' })
+      // Pi writes a session file with its first entry; a fork has entries already.
+      if (!fs.existsSync(state.sessionFile)) return new AgentRequestError({ detail: 'Pi fork file was not written' })
+      return state
+    } finally {
+      child.kill()
+    }
   }
 
   /** Whether `sessionId` is a Pi session this provider runs or can resume. */
@@ -769,20 +827,21 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (file) fs.rmSync(file, { force: true })
         return undefined
       },
-      fork: async ({ sessionId, directory, messageId, targetDirectory }) => {
-        if (messageId || targetDirectory) {
-          return new AgentRequestError({ detail: 'Pi sessions can only be forked whole, in place, for now' })
-        }
+      fork: async ({ sessionId, messageId, targetDirectory }) => {
         const file = this.findSessionFile(sessionId)
         if (!file) return new AgentRequestError({ detail: `Pi session ${sessionId} not found` })
-        const cwd = directory ?? readSessionHeader(file)?.cwd
-        if (!cwd) return new AgentRequestError({ detail: `Pi session ${sessionId} has no working directory` })
-        const source = this.sessions.get(sessionId)
-        const forked = await this.start({ directory: cwd, extra: ['--fork', file], title: source?.title ?? '' })
+        const forked = await this.forkFile({ file, messageId })
         if (forked instanceof Error) return forked
+        // A fork bound to a workspace runs there: Roadie resumes a session in
+        // the directory its header names.
+        if (targetDirectory) setSessionHeaderCwd(forked.sessionFile, targetDirectory)
         const rules = this.permissionRules.get(sessionId)
-        if (rules) this.permissionRules.set(forked.id, rules)
-        return this.toAgentSession(forked)
+        if (rules) this.permissionRules.set(forked.sessionId, rules)
+        const title = this.sessions.get(sessionId)?.title ?? this.titles.get(sessionId)
+        if (title) this.titles.set(forked.sessionId, title)
+        const session = await this.backend.sessions.get({ sessionId: forked.sessionId })
+        if (!session || session instanceof Error) return session ?? new AgentRequestError({ detail: 'Pi fork produced no session' })
+        return session
       },
       summarize: async ({ sessionId, directory }) => {
         const session = await this.ensure(sessionId, directory)

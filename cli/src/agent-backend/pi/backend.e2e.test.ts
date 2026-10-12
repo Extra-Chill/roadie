@@ -234,6 +234,41 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(await provider.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'nope', arguments: '' })).toBeInstanceOf(Error)
   }, 60_000)
 
+  test('fork at a user message keeps only the history before it; a workspace fork runs in the worktree', async () => {
+    const dir = path.join(root, 'fork-src')
+    const worktree = path.join(root, 'fork-wt')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(worktree, { recursive: true })
+    const session = await provider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    for (const text of ['one', 'two', 'three']) {
+      const before = idleCount(session.id)
+      await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text }] })
+      await until(() => (idleCount(session.id) > before ? true : undefined))
+    }
+    const history = await provider.getBackend().sessions.messages({ sessionId: session.id, directory: dir })
+    if (history instanceof Error) throw history
+    const userText = (h: typeof history) => h.flatMap((m) => (m.message.role === 'user' ? m.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])) : []))
+    const second = history.find((m) => m.message.role === 'user' && userText([m])[0] === 'two')!.message.id
+
+    const atMessage = await provider.getBackend().sessions.fork({ sessionId: session.id, directory: dir, messageId: second })
+    if (atMessage instanceof Error) throw atMessage
+    const forkedHistory = await provider.getBackend().sessions.messages({ sessionId: atMessage.id, directory: dir })
+    if (forkedHistory instanceof Error) throw forkedHistory
+    expect(userText(forkedHistory)).toEqual(['one'])
+    expect(userText((await provider.getBackend().sessions.messages({ sessionId: session.id, directory: dir })) as typeof history)).toEqual(['one', 'two', 'three'])
+
+    const bound = await provider.getBackend().sessions.fork({ sessionId: session.id, directory: dir, targetDirectory: worktree, targetProjectDirectory: dir })
+    if (bound instanceof Error) throw bound
+    expect(bound.directory).toBe(worktree)
+    const before = idleCount(bound.id)
+    await provider.getBackend().sessions.prompt({ sessionId: bound.id, directory: worktree, parts: [{ kind: 'text', text: 'RUN_TOOL pwd' }] })
+    await until(() => (idleCount(bound.id) > before ? true : undefined))
+    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === bound.id)
+    expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output?.trim()).toBe(worktree)
+    expect(await provider.getBackend().sessions.fork({ sessionId: session.id, directory: dir, messageId: 'pi-user-1' })).toBeInstanceOf(Error)
+  }, 60_000)
+
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
     if (catalog instanceof Error) throw catalog
