@@ -21,6 +21,7 @@ import type {
   AgentUsage,
 } from './events.js'
 import { childSessionEventsForPart } from './events.js'
+import type { AgentBackendEvent } from './types.js'
 
 type OpenCodeTokens = {
   total?: number
@@ -345,6 +346,14 @@ export function toAgentEvents(event: OpenCodeEvent): AgentEvent[] {
     return [primary]
   }
   return [primary, ...childSessionEventsForPart(primary.part)]
+}
+
+/**
+ * One OpenCode stream event as the backend seam yields it: the Roadie events it
+ * implies, plus the payload itself for the opt-in raw event log.
+ */
+export function toAgentBackendEvent(event: OpenCodeEvent): AgentBackendEvent {
+  return { events: toAgentEvents(event), raw: event }
 }
 
 // Persisted rows written before child-session events existed hold agent part

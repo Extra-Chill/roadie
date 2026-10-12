@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.54.2] - 2026-10-11
+
+### Changed
+- route status, abort, title, permission and question calls through the agent backend seam
+- agent backend emits Roadie agent events, not raw OpenCode events
+
 ## [0.54.1] - 2026-10-11
 
 ### Fixed
