@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.56.2] - 2026-10-13
+
+### Fixed
+- deny per-person MCP tools by default on Pi sessions
+
 ## [0.56.1] - 2026-10-12
 
 ### Fixed
