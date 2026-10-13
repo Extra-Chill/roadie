@@ -149,6 +149,9 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(provider.owns(sessionId)).toBe(true)
     const listed = await provider.getBackend().sessions.list({ directory: project })
     expect(listed instanceof Error ? [] : listed.map((s) => s.id)).toContain(sessionId)
+    // The title set at create survived the restart: it is kept with the
+    // session file, not only in the process that chose it.
+    expect(listed instanceof Error ? undefined : listed.find((s) => s.id === sessionId)?.title).toBe('pi e2e')
     const history = await provider.getBackend().sessions.messages({ sessionId, directory: project })
     expect(history instanceof Error ? 0 : history.length).toBeGreaterThan(4)
     const before = idleCount(sessionId)
@@ -181,7 +184,8 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
       mcp: { echo: { type: 'local', command: [process.execPath, path.join(import.meta.dirname, 'fake-mcp-server.mjs')] } },
     }))
     const status = await provider.getBackend().mcp!.status({ directory: mcpProject })
-    expect(status).toEqual({ echo: { status: 'connected' } })
+    // Pi exposes no MCP connection state; an enabled server reports unknown, not connected.
+    expect(status).toEqual({ echo: { status: 'unknown' } })
     const session = await provider.getBackend().sessions.create({ directory: mcpProject })
     if (session instanceof Error) throw session
     const run = async (text: string) => {
@@ -201,7 +205,7 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const dir = path.join(root, 'mcp-added')
     fs.mkdirSync(dir, { recursive: true })
     await provider.getBackend().mcp!.addRemote({ directory: dir, name: 'roadie_pm_x_docs', url: 'https://example.invalid/mcp', headers: { Authorization: 'Bearer t' } })
-    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'connected' } })
+    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'unknown' } })
     await provider.getBackend().mcp!.disconnect({ directory: dir, name: 'roadie_pm_x_docs' })
     expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'disabled' } })
   })

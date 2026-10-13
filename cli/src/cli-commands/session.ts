@@ -5,7 +5,6 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -22,7 +21,7 @@ import { parseSessionSearchPattern, collectSessionSearchMatches, validateSession
 import { formatTimeAgo } from '../time-format.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
+import { buildOpencodeEventLogLine, persistedEventProjectDirectory, isOpenCodeEvent } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, getDataDir } from '../config.js'
@@ -953,10 +952,14 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
+    // Persisted rows hold Roadie agent events (any backend) or, from before
+    // the agent event seam, raw OpenCode events. Nothing here may assume the
+    // OpenCode shape: an agent event row has no `properties`, and reading
+    // `properties.info.directory` on one used to throw.
     const parsedRows = rows.flatMap((row) => {
       const parsed = errore.try(
         { try: () => {
-          return JSON.parse(row.event_json) as OpenCodeEvent
+          return JSON.parse(row.event_json) as unknown
         }, catch: (error) => {
           return new Error('Failed to parse persisted event JSON', {
             cause: error,
@@ -981,13 +984,7 @@ cli
     }
 
     const projectDirectory = parsedRows.reduce((directory, { event }) => {
-      if (directory) {
-        return directory
-      }
-      if (event.type !== 'session.updated') {
-        return directory
-      }
-      return event.properties.info.directory
+      return directory || persistedEventProjectDirectory(event) || ''
     }, '')
 
     const lines = parsedRows.map(({ row, event }) => {
@@ -996,6 +993,7 @@ cli
           timestamp: Number(row.timestamp),
           threadId: row.thread_id,
           projectDirectory,
+          backend: isOpenCodeEvent(event) ? 'opencode' : undefined,
           event,
         }),
       )

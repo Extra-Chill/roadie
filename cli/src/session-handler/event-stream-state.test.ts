@@ -127,7 +127,7 @@ function loadFixture(filename: string): EventBufferEntry[] {
     .filter(Boolean)
     .map((line) => {
       const parsed = JSON.parse(line) as OpencodeEventLogEntry
-      return { event: parsed.event, timestamp: parsed.timestamp }
+      return { event: parsed.event as EventBufferEntry['event'], timestamp: parsed.timestamp }
     })
 }
 

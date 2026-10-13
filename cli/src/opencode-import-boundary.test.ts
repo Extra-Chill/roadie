@@ -28,7 +28,6 @@ const ALLOWED: Record<string, string> = {
   'hooks.ts': 'opencode_server_config filter carries the OpenCode server config',
   'session-handler/opencode-session-event-log.ts': 'writes the raw OpenCode event log',
   'session-handler/persisted-events.ts': 'translates legacy rows that stored raw OpenCode events',
-  'cli-commands/session.ts': 'exports persisted events in the OpenCode event log format',
   'queue-advanced-e2e-setup.ts': 'e2e harness drives the OpenCode server directly',
 
 }

@@ -257,9 +257,13 @@ export type AgentAuthOperations = {
  * Tool servers (MCP) the backend can connect to. Optional: a backend without
  * dynamic MCP registration simply gives people no per-person servers.
  */
-/** One MCP server's state. `error` explains `failed` and `needs_client_registration`. */
+/**
+ * One MCP server's state. `error` explains `failed` and `needs_client_registration`.
+ * `unknown`: the backend cannot observe the real connection (a backend that
+ * only relays config, so a configured server may or may not be up).
+ */
 export type AgentMcpServerStatus = {
-  status: 'connected' | 'disabled' | 'failed' | 'needs_auth' | 'needs_client_registration'
+  status: 'connected' | 'disabled' | 'failed' | 'needs_auth' | 'needs_client_registration' | 'unknown'
   error?: string
 }
 
@@ -292,11 +296,14 @@ export type AgentBackend = AgentCatalog & {
  * also carries child-session lifecycle), or none (an event Roadie ignores).
  *
  * `raw` is the backend's native payload, opaque to everything but the opt-in
- * backend event log. Consumers must not branch on it.
+ * backend event log. Consumers must not branch on it. `backend` is the emitting
+ * provider's id (`this.id`, e.g. "opencode" or "pi"), so the opt-in log can tag
+ * the raw payload with its source.
  */
 export type AgentBackendEvent = {
   events: AgentEvent[]
   raw: unknown
+  backend?: string
 }
 
 /** Lazily returns the catalog for a directory once it has been initialized. */

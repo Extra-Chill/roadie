@@ -38,6 +38,7 @@ const STATUS_LABELS: Record<string, string> = {
   failed: 'failed',
   needs_auth: 'needs auth',
   needs_client_registration: 'needs registration',
+  unknown: 'state unknown',
 }
 
 function formatStatusLabel(status: string): string {

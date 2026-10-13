@@ -113,6 +113,36 @@ const QUESTION_TITLE = 'roadie:question'
 const TASK_TITLE = 'roadie:task'
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high']
 
+/**
+ * Roadie-owned per-session state (title, permission rules), persisted beside
+ * the Pi session file so both survive a restart: Pi's own session file does
+ * not store titles, and Roadie's rules must survive the process that decided
+ * them. Written atomically like the MCP file; read whenever the in-memory
+ * cache misses (a fresh process resuming an old session).
+ */
+type PersistedSessionState = { title?: string; permissionRules?: AgentPermissionRule[] }
+
+function sessionStatePath(sessionDir: string, sessionId: string): string {
+  // Ids arrive from the runtime and remote callers; no path separators.
+  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
+  return path.join(sessionDir, `roadie-${safe}.json`)
+}
+
+function readSessionState(file: string): PersistedSessionState {
+  try {
+    const state = JSON.parse(fs.readFileSync(file, 'utf8')) as PersistedSessionState
+    return state && typeof state === 'object' ? state : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeSessionState(file: string, state: PersistedSessionState): void {
+  const temp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 })
+  fs.renameSync(temp, file)
+}
+
 export type PiBackendOptions = {
   /** The `pi` executable. */
   bin: string
@@ -140,6 +170,12 @@ export type PiBackendOptions = {
   enabledSkills?: string[]
   /** Skill blacklist from --disable-skill (skill-filter.ts): these neither load nor run. */
   disabledSkills?: string[]
+  /**
+   * How long the model catalog (credential pools and models Pi reports) is
+   * trusted before it is probed again; the pools can change what a session
+   * sees. Default 5 minutes; 0 disables caching (a probe per call).
+   */
+  catalogTtlMs?: number
   /**
    * Extra tool-shell variables from --shell-env / ROADIE_SHELL_ENV
    * (turn-attribution-env.ts): variable name → template over session fields.
@@ -204,6 +240,8 @@ type RunningSession = {
   idleTimer?: ReturnType<typeof setTimeout>
   model?: { provider: string; id: string }
   thinking?: string
+  /** The thinking level Pi itself started with; clearing a variant returns here. */
+  defaultThinking?: string
   /** Set when this session was spawned by a parent's task tool. */
   childOf?: string
   /** Resolved when the session's current turn ends (task children wait on it). */
@@ -361,7 +399,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   private pendingQuestions = new Map<string, { sessionId: string; session: RunningSession }>()
   private pendingTasks = new Map<string, { sessionId: string; session: RunningSession; cancelled: boolean }>()
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
-  private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
+  /** The model catalog probe, and when it started; re-probed after catalogTtlMs. */
+  private catalogCache?: { promise: Promise<AgentProviderCatalog | Error>; at: number }
   /** Servers added through the backend (per-person MCP), and enabled-state overrides, by directory. */
   private addedMcp = new Map<string, Record<string, PiMcpServer>>()
   private mcpEnabled = new Map<string, Map<string, boolean>>()
@@ -391,7 +430,12 @@ export class PiBackendProvider implements AgentBackendProvider {
         },
         status: async ({ directory }) => Object.fromEntries(Object.entries(this.mcpServersFor(directory)).map(([name, server]) => [
           name,
-          { status: server.enabled ? 'connected' as const : 'disabled' as const },
+          // Disabled is accurate: the extension never registers the server, so
+          // its tools cannot run. Enabled says nothing about the connection —
+          // Pi exposes no MCP state to extensions (getMcpServers returns name,
+          // config and source only) and no RPC to read it, so report unknown
+          // instead of pretending every server is connected.
+          { status: server.enabled ? 'unknown' as const : 'disabled' as const },
         ])),
         connect: async ({ directory, name }) => this.setMcpEnabled(directory, name, true),
         disconnect: async ({ directory, name }) => this.setMcpEnabled(directory, name, false),
@@ -568,7 +612,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   private emit(events: AgentEvent[], raw: unknown) {
     if (events.length === 0) return
-    for (const subscriber of this.subscribers) subscriber({ events, raw })
+    for (const subscriber of this.subscribers) subscriber({ events, raw, backend: this.id })
   }
 
   private findSessionFile(sessionId: string): string | undefined {
@@ -686,13 +730,13 @@ export class PiBackendProvider implements AgentBackendProvider {
       shellEnvFile,
       process: child,
       translator: new PiEventTranslator(state.sessionId),
-      title: title ?? state.sessionName ?? this.titles.get(state.sessionId) ?? '',
+      title: title ?? state.sessionName ?? this.titleFor(state.sessionId),
       createdAt: header?.createdAt || Date.now(),
       updatedAt: Date.now(),
       busy: false,
       idleWaiters: [],
       ...(state.model && { model: { provider: state.model.provider, id: state.model.id } }),
-      ...(state.thinkingLevel && { thinking: state.thinkingLevel }),
+      ...(state.thinkingLevel && { thinking: state.thinkingLevel, defaultThinking: state.thinkingLevel }),
     }
     this.sessions.set(session.id, session)
     this.scheduleIdleStop(session)
@@ -802,7 +846,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     const decision = decidePermission({
       // The selected agent's rules first, so the session's Roadie rules still
       // win — OpenCode evaluates session rules after agent ones, last match wins.
-      rules: [...(this.turnAgentRules.get(session.id) ?? []), ...(this.permissionRules.get(session.id) ?? [])],
+      rules: [...(this.turnAgentRules.get(session.id) ?? []), ...this.rulesFor(session.id)],
       tool: call.tool,
       input: call.input,
       cwd: call.cwd || session.directory,
@@ -848,8 +892,12 @@ export class PiBackendProvider implements AgentBackendProvider {
     }], { type: 'question_asked' })
   }
 
-  /** Dismiss a session's open questions and task calls (abort): the tools error and the run can stop. */
-  private cancelQuestions(sessionId: string) {
+  /**
+   * Dismiss a session's open questions and task calls (abort): the tools error
+   * and the run can stop. With `permissions`, open permission asks are rejected
+   * too — used when the process is gone and can never answer them itself.
+   */
+  private cancelQuestions(sessionId: string, { permissions = false }: { permissions?: boolean } = {}) {
     for (const [uiId, pending] of this.pendingQuestions) {
       if (pending.sessionId !== sessionId) continue
       this.pendingQuestions.delete(uiId)
@@ -861,6 +909,13 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.pendingTasks.delete(uiId)
       pending.cancelled = true
       pending.session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
+    }
+    if (!permissions) return
+    for (const [uiId, pending] of this.pendingPermissions) {
+      if (pending.sessionId !== sessionId) continue
+      this.pendingPermissions.delete(uiId)
+      pending.session.process.send({ type: 'extension_ui_response', id: uiId, confirmed: false })
+      this.emit([{ type: 'permission.replied', sessionId, requestId: uiId, reply: 'reject' }], { type: 'permission_replied' })
     }
   }
 
@@ -923,13 +978,13 @@ export class PiBackendProvider implements AgentBackendProvider {
     child.childOf = session.id
     // Children run one level deep: the parent's rules plus a task deny, like
     // OpenCode's task children.
-    this.permissionRules.set(child.id, [
-      ...(this.permissionRules.get(session.id) ?? []),
-      { permission: 'task', pattern: '*', action: 'deny' as const },
-    ])
+    const childRules = [...this.rulesFor(session.id), { permission: 'task', pattern: '*', action: 'deny' as const }]
+    this.permissionRules.set(child.id, childRules)
+    this.persistSessionState(child.id, { permissionRules: childRules })
     if (description) {
       const title = `${description} (@${agent} subagent)`
       this.titles.set(child.id, title)
+      this.persistSessionState(child.id, { title })
       void child.process.request({ type: 'set_session_name', name: title })
     }
     const idle = new Promise<void>((resolve) => child.idleWaiters.push(resolve))
@@ -1059,7 +1114,15 @@ export class PiBackendProvider implements AgentBackendProvider {
   }
 
   private async providers(): Promise<AgentProviderCatalog | Error> {
-    this.catalogCache ??= (async () => {
+    const ttl = this.options.catalogTtlMs ?? 5 * 60_000
+    const cached = this.catalogCache
+    // A TTL of 0 disables caching: every call re-probes.
+    if (cached && ttl > 0 && Date.now() - cached.at < ttl) {
+      const result = await cached.promise
+      if (result instanceof Error) this.catalogCache = undefined
+      return result
+    }
+    const probe = (async () => {
       // Any running process can list models; otherwise start a throwaway one.
       const running = [...this.sessions.values()].find((session) => !session.process.exited)
       const probe = running?.process ?? new PiProcess({
@@ -1092,9 +1155,31 @@ export class PiBackendProvider implements AgentBackendProvider {
         defaults: defaultProvider && defaultModel ? { [defaultProvider]: defaultModel } : {},
       }
     })()
-    const result = await this.catalogCache
+    this.catalogCache = { promise: probe, at: Date.now() }
+    const result = await probe
     if (result instanceof Error) this.catalogCache = undefined
     return result
+  }
+
+  /** A session's title: the in-memory cache first, else the persisted state (a restart emptied the cache). */
+  private titleFor(sessionId: string): string {
+    return this.titles.get(sessionId) ?? readSessionState(sessionStatePath(this.options.sessionDir, sessionId)).title ?? ''
+  }
+
+  /** A session's permission rules: the in-memory cache first, else the persisted state. */
+  private rulesFor(sessionId: string): AgentPermissionRule[] {
+    return this.permissionRules.get(sessionId) ?? readSessionState(sessionStatePath(this.options.sessionDir, sessionId)).permissionRules ?? []
+  }
+
+  /** Keep a session's title and/or rules with its session file, so they outlive this process. */
+  private persistSessionState(sessionId: string, patch: { title?: string; permissionRules?: AgentPermissionRule[] }) {
+    try {
+      const file = sessionStatePath(this.options.sessionDir, sessionId)
+      const state = { ...readSessionState(file), ...patch }
+      writeSessionState(file, state)
+    } catch {
+      // Best effort: an unwritable state file must not fail the operation.
+    }
   }
 
   private listOnDisk(): Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }> {
@@ -1106,7 +1191,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (!header) return []
         return [{
           id: header.id,
-          title: this.titles.get(header.id) ?? '',
+          title: this.titleFor(header.id),
           directory: header.cwd,
           createdAt: header.createdAt,
           updatedAt: fs.statSync(full).mtimeMs,
@@ -1120,8 +1205,15 @@ export class PiBackendProvider implements AgentBackendProvider {
       create: async ({ directory, permission, title }) => {
         const session = await this.start({ directory, extra: [], ...(title && { title }) })
         if (session instanceof Error) return session
-        if (permission) this.permissionRules.set(session.id, permission)
-        if (title) await session.process.request({ type: 'set_session_name', name: title })
+        if (permission) {
+          this.permissionRules.set(session.id, permission)
+          this.persistSessionState(session.id, { permissionRules: permission })
+        }
+        if (title) {
+          this.titles.set(session.id, title)
+          this.persistSessionState(session.id, { title })
+          await session.process.request({ type: 'set_session_name', name: title })
+        }
         const agentSession = this.toAgentSession(session)
         this.emit([{ type: 'session.created', session: agentSession }], { type: 'session_created' })
         return agentSession
@@ -1135,7 +1227,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (!header) return undefined
         return this.toAgentSession({
           id: sessionId,
-          title: this.titles.get(sessionId) ?? '',
+          title: this.titleFor(sessionId),
           directory: header.cwd,
           createdAt: header.createdAt,
           updatedAt: fs.statSync(file).mtimeMs,
@@ -1143,6 +1235,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       setPermissions: async ({ sessionId, permission }) => {
         this.permissionRules.set(sessionId, permission)
+        this.persistSessionState(sessionId, { permissionRules: permission })
       },
       messages: async ({ sessionId, directory, limit }) => {
         const session = await this.ensure(sessionId, directory)
@@ -1180,9 +1273,18 @@ export class PiBackendProvider implements AgentBackendProvider {
           if (set instanceof Error) return new AgentRequestError({ detail: set.message })
           session.model = { provider: set.provider, id: set.id }
         }
-        if (variant && THINKING_LEVELS.includes(variant) && variant !== session.thinking) {
-          const set = await session.process.request({ type: 'set_thinking_level', level: variant })
-          if (!(set instanceof Error)) session.thinking = variant
+        // The turn's variant: a thinking level applies to this and later turns;
+        // clearing it (no variant) returns to the level Pi itself started with,
+        // instead of silently keeping the previous override. Unknown variant
+        // names are ignored, as before.
+        if (variant && THINKING_LEVELS.includes(variant)) {
+          if (variant !== session.thinking) {
+            const set = await session.process.request({ type: 'set_thinking_level', level: variant })
+            if (!(set instanceof Error)) session.thinking = variant
+          }
+        } else if (!variant && session.defaultThinking !== undefined && session.thinking !== session.defaultThinking) {
+          const reset = await session.process.request({ type: 'set_thinking_level', level: session.defaultThinking })
+          if (!(reset instanceof Error)) session.thinking = session.defaultThinking
         }
         const { message: typed, images } = promptText(parts)
         // Context-only message: record it without a model turn, so the agent
@@ -1235,13 +1337,18 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       abort: async ({ sessionId }) => {
         const session = this.sessions.get(sessionId)
-        if (!session) return undefined
-        this.cancelQuestions(sessionId)
+        const dead = !session || session.process.exited
+        // A session that is not running cannot be aborted, but prompts it left
+        // pending (an open question, task call or permission ask whose process
+        // exited) must not outlive the abort — dismiss them so nothing answers
+        // a dead process or resumes after it.
+        this.cancelQuestions(sessionId, { permissions: dead })
         // Aborting a parent stops its running task children too.
         for (const child of this.sessions.values()) {
           if (child.childOf === sessionId && !child.process.exited) void child.process.request({ type: 'abort' })
         }
-        const result = await session.process.request({ type: 'abort' })
+        if (dead) return undefined
+        const result = await session!.process.request({ type: 'abort' })
         return result instanceof Error ? new AgentRequestError({ detail: result.message }) : undefined
       },
       status: async ({ directory }) => {
@@ -1256,12 +1363,14 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (!pending) return new AgentRequestError({ detail: `No pending Pi permission request ${requestId}` })
         this.pendingPermissions.delete(requestId)
         if (reply === 'always') {
-          const rules = this.permissionRules.get(pending.sessionId) ?? []
+          const rules = this.rulesFor(pending.sessionId)
           const patterns = pending.patterns.length > 0 ? pending.patterns : ['*']
-          this.permissionRules.set(pending.sessionId, [
+          const updated = [
             ...rules,
             ...patterns.map((pattern) => ({ permission: pending.permission, pattern, action: 'allow' as const })),
-          ])
+          ]
+          this.permissionRules.set(pending.sessionId, updated)
+          this.persistSessionState(pending.sessionId, { permissionRules: updated })
         }
         pending.session.process.send({ type: 'extension_ui_response', id: requestId, confirmed: reply !== 'reject' })
         this.emit([{ type: 'permission.replied', sessionId: pending.sessionId, requestId, reply }], { type: 'permission_replied' })
@@ -1280,6 +1389,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       setTitle: async ({ sessionId, title }) => {
         this.titles.set(sessionId, title)
+        // A session that is not running has no Pi-side name to update, but its
+        // persisted title must still move, or the old one comes back after a
+        // restart (listOnDisk reads this state).
+        this.persistSessionState(sessionId, { title })
         const session = this.sessions.get(sessionId)
         if (!session) return undefined
         session.title = title
@@ -1301,6 +1414,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.sessions.delete(sessionId)
         this.turnAgentRules.delete(sessionId)
         if (file) fs.rmSync(file, { force: true })
+        fs.rmSync(sessionStatePath(this.options.sessionDir, sessionId), { force: true })
         return undefined
       },
       fork: async ({ sessionId, messageId, targetDirectory }) => {
@@ -1311,19 +1425,45 @@ export class PiBackendProvider implements AgentBackendProvider {
         // A fork bound to a workspace runs there: Roadie resumes a session in
         // the directory its header names.
         if (targetDirectory) setSessionHeaderCwd(forked.sessionFile, targetDirectory)
-        const rules = this.permissionRules.get(sessionId)
-        if (rules) this.permissionRules.set(forked.sessionId, rules)
-        const title = this.sessions.get(sessionId)?.title ?? this.titles.get(sessionId)
-        if (title) this.titles.set(forked.sessionId, title)
+        const rules = this.rulesFor(sessionId)
+        if (rules.length > 0) {
+          this.permissionRules.set(forked.sessionId, rules)
+          this.persistSessionState(forked.sessionId, { permissionRules: rules })
+        }
+        const title = this.sessions.get(sessionId)?.title || this.titleFor(sessionId) || undefined
+        if (title) {
+          this.titles.set(forked.sessionId, title)
+          this.persistSessionState(forked.sessionId, { title })
+        }
         const session = await this.backend.sessions.get({ sessionId: forked.sessionId })
         if (!session || session instanceof Error) return session ?? new AgentRequestError({ detail: 'Pi fork produced no session' })
         return session
       },
-      summarize: async ({ sessionId, directory }) => {
+      summarize: async ({ sessionId, directory, model }) => {
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
+        // Pi's compact runs on the session's current model, but the caller
+        // asked for one (the model the conversation was driven with): switch
+        // to it for the summary, then give the session its own model back.
+        const previous = session.model
+        const switching = Boolean(model && (model.providerId !== previous?.provider || model.modelId !== previous?.id))
+        if (switching) {
+          const set = await session.process.request<PiModel>({ type: 'set_model', provider: model!.providerId, modelId: model!.modelId })
+          if (set instanceof Error) return new AgentRequestError({ detail: set.message })
+          session.model = { provider: set.provider, id: set.id }
+        }
+        const restore = async () => {
+          if (!switching || !previous) return
+          const set = await session.process.request<PiModel>({ type: 'set_model', provider: previous.provider, modelId: previous.id })
+          if (!(set instanceof Error)) session.model = { provider: set.provider, id: set.id }
+        }
         const result = await session.process.request({ type: 'compact' })
-        return result instanceof Error ? new AgentRequestError({ detail: result.message }) : undefined
+        if (result instanceof Error) {
+          await restore()
+          return new AgentRequestError({ detail: result.message })
+        }
+        await restore()
+        return undefined
       },
     }
   }

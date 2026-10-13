@@ -1756,7 +1756,7 @@ export class ThreadSessionRuntime {
     for (let i = 0; i < agentEvents.length; i++) {
       await this.handleAgentEvent({
         agentEvent: agentEvents[i]!,
-        ...(i === 0 && { rawBackendEvent: event.raw }),
+        ...(i === 0 && { rawBackendEvent: event.raw, backend: event.backend }),
       })
     }
   }
@@ -1764,10 +1764,13 @@ export class ThreadSessionRuntime {
   private async handleAgentEvent({
     agentEvent,
     rawBackendEvent,
+    backend,
   }: {
     agentEvent: AgentEvent
     /** Present on the first agent event derived from one backend event; the opt-in jsonl log writes it. */
     rawBackendEvent?: unknown
+    /** Which backend produced `rawBackendEvent`; the log tags the record with it. */
+    backend?: string
   }): Promise<void> {
     const sessionId = this.state?.sessionId
     if (!shouldBufferSessionEvent({
@@ -1849,6 +1852,10 @@ export class ThreadSessionRuntime {
       const eventLogResult = await appendOpencodeSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
+        backend,
+        // Raw records of backends that do not name a session (e.g. Pi) file
+        // under the agent event's own session id.
+        sessionId: eventSessionId,
         event: rawBackendEvent,
       })
       if (eventLogResult instanceof Error) {

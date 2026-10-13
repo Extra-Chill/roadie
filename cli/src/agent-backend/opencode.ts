@@ -22,7 +22,7 @@ import type { AgentBackendEvent, AgentBackendProvider } from './types.js'
 // global stream; the runtime only needs the payload.
 async function* translateGlobalEvents(stream: AsyncIterable<GlobalEvent>): AsyncIterable<AgentBackendEvent> {
   for await (const event of stream) {
-    yield toAgentBackendEvent(event.payload as OpenCodeEvent)
+    yield { ...toAgentBackendEvent(event.payload as OpenCodeEvent), backend: 'opencode' }
   }
 }
 

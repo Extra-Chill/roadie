@@ -105,11 +105,11 @@ function readJsonlEvents(filePath: string): OpencodeEventLogEntry[] {
 
 function hasToolEvent({ events, tool }: { events: OpencodeEventLogEntry[]; tool: string }): boolean {
   return events.some((line) => {
-    if (line.event.type !== 'message.part.updated') {
+    if (line.event.type !== 'message.part.updated' || !('properties' in line.event)) {
       return false
     }
-    const part = line.event.properties.part
-    if (part.type !== 'tool') {
+    const part = (line.event.properties as { part?: { type?: string; tool?: string } }).part
+    if (part?.type !== 'tool') {
       return false
     }
     return part.tool === tool
