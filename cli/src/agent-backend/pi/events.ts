@@ -287,7 +287,7 @@ export class PiEventTranslator {
 
   /** One Pi record as Roadie events, plus the child-session lifecycle its delegation part implies. */
   translate(record: PiRecord): AgentEvent[] {
-    return this.translateRecord(record).flatMap((event) => (event.type === 'part' ? [event, ...childSessionEventsForPart(event.part)] : [event]))
+    return this.translateRecord(record).flatMap((event): AgentEvent[] => (event.type === 'part' ? [event, ...childSessionEventsForPart(event.part)] : [event]))
   }
 
   private translateRecord(record: PiRecord): AgentEvent[] {
