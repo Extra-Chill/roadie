@@ -62,6 +62,18 @@ function writeSubrouterHandoff({ dataDir, home }: { dataDir: string; home: strin
   fs.writeFileSync(file, JSON.stringify({ home, handedOffAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 })
 }
 
+/**
+ * Hand off only when every importable subrouter account is in the pool: a
+ * partial import keeps subrouter loaded for the accounts that did not move.
+ * In a dry run, `imported` counts accounts the pool is still missing.
+ */
+function poolHoldsEverySubrouterAccount(result: SubrouterImportResult): boolean {
+  const { imported, alreadyPresent, failed } = result.accounts
+  if (failed > 0) return false
+  if (result.dryRun && imported > 0) return false
+  return imported + alreadyPresent > 0
+}
+
 export type SubrouterModelRewrites = {
   globalModels: number
   channelModels: number
@@ -247,7 +259,7 @@ export async function migrateSubrouterCredentialsAtStartup({
 
   // Import only into an empty pool: never re-import over accounts the operator
   // (or an earlier startup) already manages. Import itself dedupes, but the
-  // empty check keeps later startups from even reading the subrouter files.
+  // empty check keeps later startups from writing to a managed pool.
   let importResult: SubrouterImportResult | null = null
   let importError: string | null = null
   if (accounts.length === 0 && homeExists && homePath) {
@@ -260,11 +272,21 @@ export async function migrateSubrouterCredentialsAtStartup({
       importError = imported.message
     } else {
       importResult = imported
-      // Hand off only when every importable account is in the pool: a partial
-      // import keeps subrouter loaded for the accounts that did not move.
-      if (imported.accounts.failed === 0 && imported.accounts.imported + imported.accounts.alreadyPresent > 0) {
-        writeSubrouterHandoff({ dataDir, home: homePath })
-      }
+      if (poolHoldsEverySubrouterAccount(imported)) writeSubrouterHandoff({ dataDir, home: homePath })
+    }
+  } else if (homeExists && homePath && !hasSubrouterHandoff({ dataDir })) {
+    // A pool filled before this migration existed (a manual import) still
+    // needs the handoff, or subrouter keeps refreshing the same rotating
+    // OAuth tokens and both stores hit invalid_grant (#207). A dry run checks
+    // that the pool already holds every importable account, writing nothing.
+    const preview = await importSubrouterCredentials({
+      dataDir,
+      poolId,
+      subrouterHome: homePath,
+      dryRun: true,
+    })
+    if (!(preview instanceof Error) && poolHoldsEverySubrouterAccount(preview)) {
+      writeSubrouterHandoff({ dataDir, home: homePath })
     }
   }
 

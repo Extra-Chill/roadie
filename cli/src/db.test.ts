@@ -57,6 +57,7 @@ import {
   hasSubrouterHandoff,
   migrateSubrouterCredentialsAtStartup,
 } from './credentials/migrate-subrouter.js'
+import { importSubrouterCredentials } from './credentials/import-subrouter.js'
 import {
   addPoolAccount,
   readPoolAccounts,
@@ -1299,6 +1300,61 @@ describe('subrouter startup migration', () => {
       const accountsAfter = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
       if (accountsAfter instanceof Error) throw accountsAfter
       expect(accountsAfter).toHaveLength(1)
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('hands off a pool that already holds every subrouter account from an earlier manual import (#207)', async () => {
+    const { dbPath, restore } = await openLegacyDb('manual-import')
+    writeSubrouterHomeFixture()
+    try {
+      // `roadie credentials import-subrouter` ran before the startup migration.
+      const manual = await importSubrouterCredentials({ dataDir: migrationDataDir, subrouterHome })
+      if (manual instanceof Error) throw manual
+      expect(hasSubrouterHandoff({ dataDir: migrationDataDir })).toBe(false)
+
+      const migration = await migrateSubrouterCredentialsAtStartup({ dataDir: migrationDataDir, subrouterHome })
+      if (migration instanceof Error) throw migration
+      expect(migration.import).toBeNull()
+      expect(migration.handedOff).toBe(true)
+      expect(hasSubrouterHandoff({ dataDir: migrationDataDir })).toBe(true)
+      const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accounts instanceof Error) throw accounts
+      expect(accounts).toHaveLength(1)
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('keeps subrouter loaded when a non-empty pool is missing a subrouter account', async () => {
+    const { dbPath, restore } = await openLegacyDb('missing-account')
+    writeSubrouterHomeFixture()
+    try {
+      await addPoolAccount({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', key: 'sk-other' })
+
+      const migration = await migrateSubrouterCredentialsAtStartup({ dataDir: migrationDataDir, subrouterHome })
+      if (migration instanceof Error) throw migration
+      expect(migration.handedOff).toBe(false)
+      expect(hasSubrouterHandoff({ dataDir: migrationDataDir })).toBe(false)
+      // The dry run never writes: the pool still has only its own account.
+      const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
+      if (accounts instanceof Error) throw accounts
+      expect(accounts).toHaveLength(1)
     } finally {
       await restore()
       for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
