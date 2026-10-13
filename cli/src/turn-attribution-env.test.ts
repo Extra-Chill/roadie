@@ -10,8 +10,12 @@ import {
   setThreadSession,
 } from './database.js'
 import {
+  applyShellEnvTemplates,
   applyTurnAttributionEnv,
+  parseShellEnvTemplates,
   resolveTurnAttribution,
+  SHELL_ENV_TEMPLATE_FIELDS,
+  SHELL_ENV_TEMPLATES_ENV,
 } from './turn-attribution-env.js'
 
 afterAll(async () => {
@@ -60,6 +64,135 @@ describe('applyTurnAttributionEnv', () => {
 
     applyTurnAttributionEnv({ env, attribution: undefined })
     expect(env).toEqual({ PATH: '/usr/bin', ROADIE_SESSION_ID: 'ses_keep' })
+  })
+})
+
+describe('parseShellEnvTemplates', () => {
+  test('parses repeatable NAME=template flag entries', () => {
+    expect(parseShellEnvTemplates({
+      flag: ['ROADIE_HOOK=https://ops.example/{session_id}', 'ROADIE_LABEL={platform}:{thread_id}'],
+    })).toEqual({
+      ROADIE_HOOK: 'https://ops.example/{session_id}',
+      ROADIE_LABEL: '{platform}:{thread_id}',
+    })
+  })
+
+  test('a template may contain = signs; the first one separates the name', () => {
+    expect(parseShellEnvTemplates({ flag: ['FOO=a=b'] })).toEqual({ FOO: 'a=b' })
+  })
+
+  test('parses ROADIE_SHELL_ENV as a JSON object', () => {
+    expect(parseShellEnvTemplates({ json: '{"FOO":"{session_id}"}' })).toEqual({ FOO: '{session_id}' })
+    expect(parseShellEnvTemplates({ json: '   ' })).toEqual({})
+    expect(parseShellEnvTemplates({})).toEqual({})
+  })
+
+  test('flag entries win over the same name from ROADIE_SHELL_ENV', () => {
+    expect(
+      parseShellEnvTemplates({ flag: ['FOO=from-flag'], json: '{"FOO":"from-env","BAR":"{session_id}"}' }),
+    ).toEqual({ FOO: 'from-flag', BAR: '{session_id}' })
+  })
+
+  test('rejects entries without NAME=template, with empty names or templates', () => {
+    expect(parseShellEnvTemplates({ flag: ['NO-SEPARATOR'] })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ flag: ['=value'] })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ flag: ['FOO='] })).toBeInstanceOf(Error)
+  })
+
+  test('rejects invalid variable names as a startup error', () => {
+    for (const name of ['1BAD', 'HAS-DASH', 'HAS SPACE', 'WITH.DOT']) {
+      expect(parseShellEnvTemplates({ flag: [`${name}={session_id}`] })).toBeInstanceOf(Error)
+      expect(parseShellEnvTemplates({ json: `{"${name}":"{session_id}"}` })).toBeInstanceOf(Error)
+    }
+    expect(parseShellEnvTemplates({ flag: ['GOOD_NAME_1={session_id}'] })).toEqual({
+      GOOD_NAME_1: '{session_id}',
+    })
+  })
+
+  test('rejects unknown template fields, including {thread_url}', () => {
+    for (const field of ['thread_url', 'bogus', 'SESSION_ID']) {
+      const parsed = parseShellEnvTemplates({ flag: [`FOO={${field}}`] })
+      expect(parsed).toBeInstanceOf(Error)
+      expect((parsed as Error).message).toContain(`{${field}}`)
+    }
+    expect(SHELL_ENV_TEMPLATE_FIELDS).not.toContain('thread_url')
+    expect(parseShellEnvTemplates({ json: '{"FOO":"{thread_url}"}' })).toBeInstanceOf(Error)
+  })
+
+  test('rejects malformed ROADIE_SHELL_ENV JSON and non-string values', () => {
+    expect(parseShellEnvTemplates({ json: '{nope' })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ json: '["FOO"]' })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ json: '"str"' })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ json: 'null' })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ json: '{"FOO":1}' })).toBeInstanceOf(Error)
+    expect(parseShellEnvTemplates({ json: '{"FOO":null}' })).toBeInstanceOf(Error)
+  })
+})
+
+describe('applyShellEnvTemplates', () => {
+  const attribution = {
+    sessionId: 'ses_1',
+    threadId: 'thread-1',
+    channelId: 'channel-1',
+    actor: { platform: 'discord', id: '38', name: 'Team Member', via: 'chat' as const },
+    personId: 'host:38',
+  }
+
+  test('renders every supported field into the configured variables', () => {
+    const env: Record<string, string> = {}
+    applyShellEnvTemplates({
+      env,
+      sessionId: 'ses_1',
+      attribution,
+      templates: {
+        SESSION: '{session_id}',
+        THREAD: 'thread:{thread_id}',
+        CHANNEL: '{channel_id}',
+        PLATFORM: '{platform}',
+        ACTOR: '{actor_id}',
+        PERSON: '{person_id}',
+        MIXED: '{platform}:{actor_id}@{session_id}',
+      },
+    })
+    expect(env).toEqual({
+      SESSION: 'ses_1',
+      THREAD: 'thread:thread-1',
+      CHANNEL: 'channel-1',
+      PLATFORM: 'discord',
+      ACTOR: '38',
+      PERSON: 'host:38',
+      MIXED: 'discord:38@ses_1',
+    })
+  })
+
+  test('leaves a variable unset when a referenced field has no value for the turn', () => {
+    const env: Record<string, string> = { CHANNEL: 'stale' }
+    applyShellEnvTemplates({
+      env,
+      sessionId: 'ses_2',
+      attribution: { sessionId: 'ses_2', threadId: 'thread-2' },
+      templates: { THREAD: '{thread_id}', CHANNEL: '{channel_id}', SPEAKER: '{actor_id}', SESSION: '{session_id}' },
+    })
+    // No channel and no actor on this turn: those variables are unset, and a
+    // stale value from an earlier turn cannot survive.
+    expect(env).toEqual({ THREAD: 'thread-2', SESSION: 'ses_2' })
+  })
+
+  test('with no attribution at all only {session_id} templates resolve', () => {
+    const env: Record<string, string> = {}
+    applyShellEnvTemplates({
+      env,
+      sessionId: 'ses_3',
+      attribution: undefined,
+      templates: { SESSION: '{session_id}', THREAD: '{thread_id}' },
+    })
+    expect(env).toEqual({ SESSION: 'ses_3' })
+  })
+
+  test('applies nothing without templates', () => {
+    const env: Record<string, string> = { KEEP: '1' }
+    applyShellEnvTemplates({ env, sessionId: 'ses_4', attribution, templates: undefined })
+    expect(env).toEqual({ KEEP: '1' })
   })
 })
 

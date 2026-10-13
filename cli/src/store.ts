@@ -177,6 +177,15 @@ export type RoadieState = {
   // Read by: discord-urls.ts (getDiscordRestApiUrl), REST client construction.
   discordBaseUrl: string
 
+  // Extra agent tool-shell variables from --shell-env / ROADIE_SHELL_ENV
+  // (turn-attribution-env.ts): variable name → template over session fields.
+  // Validated at startup (invalid names or unknown template fields stop the
+  // bot). Empty when nothing is configured.
+  // Changes: set once at startup from --shell-env and ROADIE_SHELL_ENV.
+  // Read by: opencode.ts (forwarded to the server process as ROADIE_SHELL_ENV
+  // for the shell.env hook) and the Pi backend options (registry.ts).
+  shellEnvTemplates: Record<string, string>
+
   // Service auth token (client_id:client_secret) used to authenticate
   // control-plane requests like /roadie/wake. Always set at startup in all
   // modes so localhost and internet paths share one auth model.
@@ -222,6 +231,7 @@ export const store = createStore<RoadieState>(() => ({
   threadBilling: parseThreadBilling(process.env.ROADIE_THREAD_BILLING),
   isolateShellsUser: process.env.ROADIE_ISOLATE_SHELLS?.trim() || null,
   discordBaseUrl: 'https://discord.com',
+  shellEnvTemplates: {},
   gatewayToken: null,
   registeredUserCommands: [],
   threads: new Map(),
