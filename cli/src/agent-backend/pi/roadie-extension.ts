@@ -14,6 +14,10 @@
 //   context-only message (`noReply`) through `pi.sendMessage` with
 //   `triggerTurn: false`: it lands in the session history without starting a
 //   model turn, and the model sees it as a user message on the next turn.
+// - Registers the `task` tool (same name and argument contract as OpenCode's).
+//   Its call goes to Roadie as an `input` UI request titled ROADIE_TASK_TITLE;
+//   Roadie spawns a child Pi session, prompts it, and answers with the child's
+//   final assistant text.
 
 import fs from 'node:fs'
 
@@ -24,6 +28,7 @@ export const ROADIE_QUESTION_TITLE = 'roadie:question'
 export const ROADIE_APPEND_COMMAND = 'roadie:append'
 /** customType marking the messages that command records (./events.ts maps them to user messages). */
 export const ROADIE_CONTEXT_TYPE = 'roadie:context'
+export const ROADIE_TASK_TITLE = 'roadie:task'
 
 // Same contract as OpenCode's `question` tool, so prompts and the chat UI match.
 const QUESTION_DESCRIPTION = `Use this tool when you need to ask the user questions during execution. This allows you to:
@@ -66,6 +71,37 @@ const QUESTION_PARAMETERS = {
         },
       },
     },
+  },
+}
+
+// Same contract as OpenCode's `task` tool, so delegation prompts match.
+const TASK_DESCRIPTION = `Launch a new agent to handle complex, multistep tasks autonomously.
+
+When using the task tool, you must specify a subagent_type parameter to select which agent type to use.
+
+When NOT to use the task tool:
+- If you want to read a specific file path, use the read or glob tool instead of the task tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the grep tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the read tool instead of the task tool, to find the match more quickly
+- If no available agent is a good fit for the task, use other tools directly
+
+Usage notes:
+1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+2. Once you have delegated work to an agent, do not duplicate that work yourself. Continue with non-overlapping tasks, or wait for the result.
+3. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+4. Each agent invocation starts with a fresh context. Your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+5. The agent's outputs should generally be trusted
+6. Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent. Tell it how to verify its work if possible (e.g., relevant test commands).
+7. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+`
+
+const TASK_PARAMETERS = {
+  type: 'object',
+  required: ['description', 'prompt', 'subagent_type'],
+  properties: {
+    description: { type: 'string', description: 'A short (3-5 words) description of the task' },
+    prompt: { type: 'string', description: 'The task for the agent to perform' },
+    subagent_type: { type: 'string', description: 'The type of specialized agent to use for this task' },
   },
 }
 
@@ -200,6 +236,27 @@ export default function roadieExtension(pi: ExtensionApi) {
       return {
         content: [{ type: 'text', text: `User has answered your questions: ${summary}. You can now continue with the user's answers in mind.` }],
         details: { title: `Asked ${questions.length} question${questions.length > 1 ? 's' : ''}` },
+      }
+    },
+  })
+
+  // Delegation runs in Roadie, not here: the backend spawns the child Pi
+  // session, prompts it, and answers with its final assistant text. Children
+  // are one level deep; Roadie denies further task calls on their rules.
+  pi.registerTool({
+    name: 'task',
+    label: 'task',
+    description: TASK_DESCRIPTION,
+    parameters: TASK_PARAMETERS,
+    async execute(callId, params, _signal, _onUpdate, ctx) {
+      const answer = await ctx.ui.input(ROADIE_TASK_TITLE, JSON.stringify({ tool: 'task', callId, args: params }))
+      if (answer === undefined) throw new Error('The task was cancelled')
+      const result = JSON.parse(answer) as { output?: string; error?: string }
+      if (result.error) throw new Error(result.error)
+      const { description, subagent_type: agent = 'general' } = (params ?? {}) as { description?: string; subagent_type?: string }
+      return {
+        content: [{ type: 'text', text: result.output ?? '' }],
+        details: { title: description ? `${description} (@${agent} subagent)` : `${agent} task` },
       }
     },
   })

@@ -471,4 +471,74 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
 
     expect(await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text: 'hi' }], agent: 'does-not-exist' })).toBeInstanceOf(Error)
   }, 40_000)
+  test('the task tool spawns a child session in the same directory; its result returns to the parent', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project, title: 'pi task' })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({
+      sessionId: session.id,
+      directory: project,
+      parts: [{ kind: 'text', text: 'CALL_TOOL task {"description":"inspect repository","subagent_type":"general","prompt":"Read this repository and return exactly: task-subagent-done"}' }],
+    })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const task = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.tool === 'task' && e.part.sessionId === session.id)
+    if (task?.type !== 'part' || task.part.kind !== 'tool') throw new Error('no task tool part')
+    expect(task.part.status).toBe('completed')
+    expect(task.part.subagent?.agent).toBe('general')
+    expect(task.part.subagent?.description).toBe('inspect repository')
+    const childId = task.part.subagent?.childSessionId
+    expect(childId).toBeTruthy()
+    // The child's final assistant text is the tool result.
+    expect(task.part.output).toBe('hello from the fake model')
+    expect(events.find((e) => e.type === 'child_session_started' && e.childSessionId === childId))
+      .toEqual(expect.objectContaining({ type: 'child_session_started', parentSessionId: session.id, agent: 'general', description: 'inspect repository', status: 'running' }))
+    expect(events.some((e) => e.type === 'child_session_finished' && e.childSessionId === childId && e.status === 'completed')).toBe(true)
+    // The child is a real session in the same directory, kept for lineage.
+    expect(provider.owns(childId!)).toBe(true)
+    const child = await provider.getBackend().sessions.get({ sessionId: childId! })
+    expect(child && !(child instanceof Error) ? child.directory : undefined).toBe(project)
+    const childHistory = await provider.getBackend().sessions.messages({ sessionId: childId!, directory: project })
+    if (childHistory instanceof Error) throw childHistory
+    expect(childHistory.some((h) => h.parts.some((p) => p.kind === 'text' && p.text === 'hello from the fake model'))).toBe(true)
+  }, 60_000)
+
+  test('subagents cannot spawn nested tasks (depth 1)', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project, title: 'pi nested task' })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    const nested = 'CALL_TOOL task {"description":"deeper","subagent_type":"general","prompt":"never"}'
+    await provider.getBackend().sessions.prompt({
+      sessionId: session.id,
+      directory: project,
+      parts: [{ kind: 'text', text: `CALL_TOOL task {"description":"nest","subagent_type":"general","prompt":${JSON.stringify(nested)}}` }],
+    })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const parentTask = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.tool === 'task' && e.part.sessionId === session.id)
+    if (parentTask?.type !== 'part' || parentTask.part.kind !== 'tool') throw new Error('no parent task part')
+    const childId = parentTask.part.subagent?.childSessionId
+    expect(childId).toBeTruthy()
+    const childTask = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.tool === 'task' && e.part.sessionId === childId)
+    expect(childTask?.type === 'part' && childTask.part.kind === 'tool' && childTask.part.status).toBe('error')
+    expect(parentTask.part.status).toBe('completed')
+  }, 60_000)
+
+  test('aborting the parent aborts its running child', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project, title: 'pi task abort' })
+    if (session instanceof Error) throw session
+    await provider.getBackend().sessions.prompt({
+      sessionId: session.id,
+      directory: project,
+      parts: [{ kind: 'text', text: 'CALL_TOOL task {"description":"slow","subagent_type":"general","prompt":"SLOW_REPLY then summarize"}' }],
+    })
+    const started = await until(() => events.find((e) => e.type === 'child_session_started' && e.parentSessionId === session.id))
+    if (started.type !== 'child_session_started') throw new Error('unreachable')
+    await provider.getBackend().sessions.abort({ sessionId: session.id })
+    await until(() => (idleCount(started.childSessionId) >= 1 ? true : undefined))
+    // The child's turn ended aborted, and the parent's task call failed, not completed.
+    const history = await provider.getBackend().sessions.messages({ sessionId: started.childSessionId, directory: project })
+    if (history instanceof Error) throw history
+    expect(history.some((h) => h.message.role === 'assistant' && h.message.error?.name === 'MessageAbortedError')).toBe(true)
+    const task = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.tool === 'task' && e.part.sessionId === session.id)
+    expect(task?.type === 'part' && task.part.kind === 'tool' && task.part.status).toBe('error')
+  }, 60_000)
 })

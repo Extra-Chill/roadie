@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { AgentEvent, AgentPart } from '../events.js'
-import { PiEventTranslator, piMessageId, toAgentHistory, type PiMessage } from './events.js'
+import { PiEventTranslator, finalAssistantText, piMessageId, toAgentHistory, type PiMessage } from './events.js'
 import { splitRecords, type PiRecord } from './rpc.js'
 import { bashCommandPaths, decidePermission, permissionForToolCall } from './backend.js'
 import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
@@ -130,6 +130,84 @@ describe('history', () => {
   })
 })
 
+describe('task delegation parts', () => {
+  const args = { description: 'inspect repo', prompt: 'look around', subagent_type: 'explore' }
+
+  const toolParts = (events: AgentEvent[]): Array<Extract<AgentPart, { kind: 'tool' }>> =>
+    events.flatMap((e) => (e.type === 'part' && e.part.kind === 'tool' ? [e.part] : []))
+  const childEvents = (events: AgentEvent[]) => events.filter((e) => e.type === 'child_session_started' || e.type === 'child_session_finished')
+
+  function taskTranslator() {
+    const translator = new PiEventTranslator('ses-pi')
+    translator.translate({ type: 'agent_start' })
+    translator.translate({ type: 'message_start', message: { role: 'assistant', content: [], timestamp: 5 } })
+    translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: { id: 'call_task', name: 'task', arguments: args } } })
+    return translator
+  }
+
+  test('a task part before the child exists carries no subagent and emits no child-session events', () => {
+    const events = taskTranslator().translate({ type: 'tool_execution_start', toolCallId: 'call_task', toolName: 'task', args })
+    expect(toolParts(events)[0]?.status).toBe('running')
+    expect(toolParts(events)[0]?.subagent).toBeUndefined()
+    expect(childEvents(events)).toEqual([])
+  })
+
+  test('registerSubagent marks the running part; child_session_started derives from it', () => {
+    const translator = taskTranslator()
+    translator.translate({ type: 'tool_execution_start', toolCallId: 'call_task', toolName: 'task', args })
+    const events = translator.registerSubagent('call_task', { childSessionId: 'ses-child', agent: 'explore', description: 'inspect repo' })
+    const [part] = toolParts(events)
+    expect(part?.status).toBe('running')
+    expect(part?.subagent).toEqual({ childSessionId: 'ses-child', agent: 'explore', description: 'inspect repo' })
+    expect(childEvents(events)).toEqual([{
+      type: 'child_session_started',
+      parentSessionId: 'ses-pi',
+      childSessionId: 'ses-child',
+      agent: 'explore',
+      description: 'inspect repo',
+      messageId: 'pi-assistant-5',
+      status: 'running',
+    }])
+  })
+
+  test('completion keeps the delegation on the part and finishes the child session', () => {
+    const translator = taskTranslator()
+    translator.translate({ type: 'tool_execution_start', toolCallId: 'call_task', toolName: 'task', args })
+    translator.registerSubagent('call_task', { childSessionId: 'ses-child', agent: 'explore' })
+    const events = translator.translate({ type: 'tool_execution_end', toolCallId: 'call_task', toolName: 'task', result: { content: [{ type: 'text', text: 'done' }] } })
+    const [part] = toolParts(events)
+    expect(part?.status).toBe('completed')
+    expect(part?.output).toBe('done')
+    expect(part?.subagent).toEqual({ childSessionId: 'ses-child', agent: 'explore' })
+    expect(childEvents(events)).toEqual([expect.objectContaining({ type: 'child_session_finished', parentSessionId: 'ses-pi', childSessionId: 'ses-child', status: 'completed' })])
+  })
+
+  test('an errored task finishes the child with status error', () => {
+    const translator = taskTranslator()
+    translator.translate({ type: 'tool_execution_start', toolCallId: 'call_task', toolName: 'task', args })
+    translator.registerSubagent('call_task', { childSessionId: 'ses-child', agent: 'explore' })
+    const events = translator.translate({ type: 'tool_execution_end', toolCallId: 'call_task', toolName: 'task', isError: true, result: { content: [{ type: 'text', text: 'boom' }] } })
+    expect(toolParts(events)[0]?.status).toBe('error')
+    expect(childEvents(events)).toEqual([expect.objectContaining({ type: 'child_session_finished', childSessionId: 'ses-child', status: 'error' })])
+  })
+
+  test('other tool calls never carry a subagent', () => {
+    const events = taskTranslator().translate({ type: 'tool_execution_start', toolCallId: 'call_bash', toolName: 'bash', args: { command: 'ls' } })
+    expect(toolParts(events)[0]?.subagent).toBeUndefined()
+    expect(childEvents(events)).toEqual([])
+  })
+
+  test('finalAssistantText takes the last assistant text, as a task result', () => {
+    expect(finalAssistantText([
+      { role: 'user', content: 'go', timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'text', text: 'partial' }], timestamp: 2 },
+      { role: 'toolResult', toolCallId: 'c', toolName: 'bash', content: [], timestamp: 3 },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'text', text: 'final words' }], timestamp: 4 },
+    ])).toBe('final words')
+    expect(finalAssistantText([{ role: 'user', content: 'go', timestamp: 1 }])).toBe('')
+  })
+})
+
 describe('decidePermission', () => {
   const cwd = '/repo'
   test('Pi defaults to allow, like Roadie on OpenCode', () => {
@@ -184,6 +262,11 @@ describe('decidePermission', () => {
   test('a session with no rules is denied per-person MCP tools, though other tools default to allow', () => {
     expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'ls' }, cwd }).action).toBe('allow')
     expect(decidePermission({ rules: [], tool: `mcp__${PERSON_MCP_TOOL_GLOB.replace('*', 'abc')}_jira__search`, input: {}, cwd: '/r' }).action).toBe('deny')
+  })
+  test('task calls check the task permission by subagent type', () => {
+    const rules = [{ permission: 'task', pattern: 'explore', action: 'deny' as const }]
+    expect(decidePermission({ rules, tool: 'task', input: { subagent_type: 'explore', prompt: 'x' }, cwd }).action).toBe('deny')
+    expect(decidePermission({ rules, tool: 'task', input: { subagent_type: 'general', prompt: 'x' }, cwd }).action).toBe('allow')
   })
   test('the owning person\'s per-turn allow pair still allows their own roadie_pm_* tools', () => {
     const scope = personMcpScope('person-a')

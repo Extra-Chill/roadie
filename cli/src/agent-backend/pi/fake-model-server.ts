@@ -36,10 +36,15 @@ export async function startFakeModelServer(): Promise<{ baseUrl: string; request
     req.on('data', (chunk) => {
       body += chunk
     })
-    req.on('end', () => {
+    req.on('end', async () => {
       state.requests++
       state.bodies.push(body)
       const parsed = JSON.parse(body || '{}') as { messages?: ChatMessage[] }
+      // SLOW_REPLY in the pending user turn holds the response open, so tests
+      // can act on a session mid-turn (e.g. abort a running task child).
+      if ((parsed.messages ?? []).some((m) => m.role === 'user' && textOf(m.content).includes('SLOW_REPLY'))) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500))
+      }
       const reply = scriptedReply(parsed.messages ?? [])
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       const chunk = (delta: Record<string, unknown>, finish: string | null = null, extra: Record<string, unknown> = {}) =>

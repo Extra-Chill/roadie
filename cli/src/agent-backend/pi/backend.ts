@@ -28,6 +28,13 @@
 // `triggerTurn: false`): they land in the session history without a model
 // turn, and the model reads them as user messages on the next turn.
 //
+// Delegation: the extension's `task` tool (OpenCode's argument contract) asks
+// Roadie through a `roadie:task` UI request. The backend spawns a child Pi
+// session in the same directory, prompts it, and answers with its final
+// assistant text. Children inherit the parent's permission rules plus a task
+// deny, so delegation is one level deep, and aborting a parent aborts its
+// running children.
+//
 // Gaps (spike): no OAuth through Roadie (sign in with `pi` itself).
 
 import fs from 'node:fs'
@@ -47,7 +54,7 @@ import {
   type AgentProviderCatalog,
   type AgentSessionOperations,
 } from '../types.js'
-import { PiEventTranslator, toAgentHistory, type PiMessage } from './events.js'
+import { PiEventTranslator, finalAssistantText, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
@@ -99,6 +106,7 @@ export function writePiShellPath({ agentDir, shellPath }: { agentDir: string; sh
 const PERMISSION_TITLE = 'roadie:permission'
 const TOOL_TITLE = 'roadie:tool'
 const QUESTION_TITLE = 'roadie:question'
+const TASK_TITLE = 'roadie:task'
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high']
 
 export type PiBackendOptions = {
@@ -178,6 +186,10 @@ type RunningSession = {
   idleTimer?: ReturnType<typeof setTimeout>
   model?: { provider: string; id: string }
   thinking?: string
+  /** Set when this session was spawned by a parent's task tool. */
+  childOf?: string
+  /** Resolved when the session's current turn ends (task children wait on it). */
+  idleWaiters: Array<() => void>
 }
 
 function extensionPath(): string {
@@ -213,7 +225,8 @@ export function bashExternalDirectories({ command, cwd }: { command: string; cwd
 export function permissionForToolCall({ tool, input, cwd }: { tool: string; input: Record<string, unknown>; cwd: string }): Array<{ permission: string; targets: string[] }> {
   const filePath = typeof input.path === 'string' ? input.path : typeof input.file_path === 'string' ? input.file_path : undefined
   const checks: Array<{ permission: string; targets: string[] }> = []
-  if (tool === 'bash') {
+  if (tool === 'task') checks.push({ permission: 'task', targets: [String(input.subagent_type ?? '')] })
+  else if (tool === 'bash') {
     const command = String(input.command ?? '')
     checks.push({ permission: 'bash', targets: [command] })
     // Bash has no path argument, so unlike the file tools its external paths
@@ -328,6 +341,7 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** Tool arguments by call id, from start to end (end does not repeat them). */
   private toolArgs = new Map<string, unknown>()
   private pendingQuestions = new Map<string, { sessionId: string; session: RunningSession }>()
+  private pendingTasks = new Map<string, { sessionId: string; session: RunningSession; cancelled: boolean }>()
   private subscribers = new Set<(event: AgentBackendEvent) => void>()
   private catalogCache: Promise<AgentProviderCatalog | Error> | undefined
   /** Servers added through the backend (per-person MCP), and enabled-state overrides, by directory. */
@@ -655,6 +669,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       createdAt: header?.createdAt || Date.now(),
       updatedAt: Date.now(),
       busy: false,
+      idleWaiters: [],
       ...(state.model && { model: { provider: state.model.provider, id: state.model.id } }),
       ...(state.thinkingLevel && { thinking: state.thinkingLevel }),
     }
@@ -663,6 +678,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     child.onRecord((record) => this.onRecord(session, record))
     child.onExit(() => {
       clearTimeout(session.idleTimer)
+      for (const resolve of session.idleWaiters.splice(0)) resolve()
       if (poolKey) this.options.pool?.revokeKey(poolKey)
       if (this.sessions.get(session.id) === session) this.sessions.delete(session.id)
       fs.rmSync(systemFile, { force: true })
@@ -711,6 +727,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     }
     if (record.type === 'agent_end') {
       session.busy = false
+      for (const resolve of session.idleWaiters.splice(0)) resolve()
       this.touch(session)
       this.options.pool?.endTurn?.(session.id)
     }
@@ -741,6 +758,10 @@ export class PiBackendProvider implements AgentBackendProvider {
     }
     if (record.method === 'input' && record.title === TOOL_TITLE) {
       void this.runTool(session, uiId, String(record.placeholder ?? ''))
+      return
+    }
+    if (record.method === 'input' && record.title === TASK_TITLE) {
+      void this.runTask(session, uiId, String(record.placeholder ?? ''))
       return
     }
     if (record.method !== 'confirm' || record.title !== PERMISSION_TITLE) {
@@ -806,13 +827,19 @@ export class PiBackendProvider implements AgentBackendProvider {
     }], { type: 'question_asked' })
   }
 
-  /** Dismiss a session's open questions (abort): the tool errors and the run can stop. */
+  /** Dismiss a session's open questions and task calls (abort): the tools error and the run can stop. */
   private cancelQuestions(sessionId: string) {
     for (const [uiId, pending] of this.pendingQuestions) {
       if (pending.sessionId !== sessionId) continue
       this.pendingQuestions.delete(uiId)
       pending.session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
       this.emit([{ type: 'question.rejected', sessionId, requestId: uiId }], { type: 'question_rejected' })
+    }
+    for (const [uiId, pending] of this.pendingTasks) {
+      if (pending.sessionId !== sessionId) continue
+      this.pendingTasks.delete(uiId)
+      pending.cancelled = true
+      pending.session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
     }
   }
 
@@ -830,6 +857,87 @@ export class PiBackendProvider implements AgentBackendProvider {
       ? { error: result.message }
       : typeof result === 'string' ? { output: result } : result
     session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify(answer) })
+  }
+
+  /**
+   * Run the task tool: spawn a child Pi session in the same directory, prompt
+   * it, and answer with its final assistant text (OpenCode's task contract).
+   * The parent's tool part carries `subagent`, from which child_session_*
+   * events and lineage derive. Children inherit the parent's permission rules
+   * plus a task deny; aborting the parent aborts its running children.
+   */
+  private async runTask(session: RunningSession, uiId: string, request: string) {
+    const pending = { sessionId: session.id, session, cancelled: false }
+    this.pendingTasks.set(uiId, pending)
+    // A cancelled task (parent abort) already answered Pi; drop the late result.
+    const respond = (answer: { output?: string; error?: string }) => {
+      this.pendingTasks.delete(uiId)
+      if (pending.cancelled) return
+      session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify(answer) })
+    }
+    let call: { callId?: string; args?: Record<string, unknown> }
+    try {
+      call = JSON.parse(request)
+    } catch {
+      respond({ error: 'Malformed Roadie task request' })
+      return
+    }
+    const args = call.args ?? {}
+    const prompt = typeof args.prompt === 'string' ? args.prompt : ''
+    const agent = typeof args.subagent_type === 'string' && args.subagent_type.trim() ? args.subagent_type.trim() : 'general'
+    const description = typeof args.description === 'string' ? args.description.trim() : ''
+    if (!prompt.trim()) {
+      respond({ error: 'The task tool needs a prompt' })
+      return
+    }
+    if (session.childOf) {
+      respond({ error: 'Subagent depth limit reached (1); subagents cannot delegate further' })
+      return
+    }
+    const child = await this.start({ directory: session.directory, extra: [] })
+    if (child instanceof Error) {
+      respond({ error: `Could not start the subagent session: ${child.message}` })
+      return
+    }
+    child.childOf = session.id
+    // Children run one level deep: the parent's rules plus a task deny, like
+    // OpenCode's task children.
+    this.permissionRules.set(child.id, [
+      ...(this.permissionRules.get(session.id) ?? []),
+      { permission: 'task', pattern: '*', action: 'deny' as const },
+    ])
+    if (description) {
+      const title = `${description} (@${agent} subagent)`
+      this.titles.set(child.id, title)
+      void child.process.request({ type: 'set_session_name', name: title })
+    }
+    const idle = new Promise<void>((resolve) => child.idleWaiters.push(resolve))
+    const accepted = await child.process.request({ type: 'prompt', message: prompt })
+    if (accepted instanceof Error) {
+      respond({ error: `Could not prompt the subagent: ${accepted.message}` })
+      child.process.kill()
+      return
+    }
+    // The child is committed to its turn: announce the delegation, so the part
+    // carries the child session and child_session_started lands while it runs.
+    this.emit(
+      session.translator.registerSubagent(String(call.callId ?? ''), { childSessionId: child.id, agent, ...(description && { description }) }),
+      { type: 'task_child_started' },
+    )
+    const result = await this.finishChildTurn(child, idle)
+    respond(result instanceof Error ? { error: result.message } : { output: result })
+    // One-shot subagent: the session file stays for lineage and /fork-subagent;
+    // the process does not outlive the task.
+    child.process.kill()
+  }
+
+  /** Collect a finished child turn; its final assistant text is the tool result. */
+  private async finishChildTurn(child: RunningSession, idle: Promise<void>): Promise<string | Error> {
+    await idle
+    const messages = await child.process.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
+    if (messages instanceof Error) return new AgentRequestError({ detail: messages.message })
+    const text = finalAssistantText(messages.messages)
+    return text || new AgentRequestError({ detail: 'The subagent returned no text' })
   }
 
   private mcpServersFor(directory: string): Record<string, PiMcpServer> {
@@ -1101,6 +1209,10 @@ export class PiBackendProvider implements AgentBackendProvider {
         const session = this.sessions.get(sessionId)
         if (!session) return undefined
         this.cancelQuestions(sessionId)
+        // Aborting a parent stops its running task children too.
+        for (const child of this.sessions.values()) {
+          if (child.childOf === sessionId && !child.process.exited) void child.process.request({ type: 'abort' })
+        }
         const result = await session.process.request({ type: 'abort' })
         return result instanceof Error ? new AgentRequestError({ detail: result.message }) : undefined
       },

@@ -9,12 +9,14 @@
 // The translator is per session because Pi's stream is per process and the
 // runtime needs to know which user message an assistant reply answers.
 
+import { childSessionEventsForPart } from '../events.js'
 import type {
   AgentError,
   AgentEvent,
   AgentMessage,
   AgentModelRef,
   AgentPart,
+  AgentSubagentInfo,
   AgentUsage,
 } from '../events.js'
 import type { PiRecord } from './rpc.js'
@@ -198,6 +200,17 @@ export function toAgentParts({
   return parts
 }
 
+/** The last non-empty assistant text in a message list, as a task result. */
+export function finalAssistantText(messages: PiMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!
+    if (message.role !== 'assistant') continue
+    const text = textOf((message as PiAssistantMessage).content).trim()
+    if (text) return text
+  }
+  return ''
+}
+
 /** `get_messages` output as Roadie session messages, tool results folded into their calls. */
 export function toAgentHistory({
   messages,
@@ -224,7 +237,7 @@ export function toAgentHistory({
   })
 }
 
-type ToolState = { messageId: string; tool: string; input: Record<string, unknown>; startedAt?: number }
+type ToolState = { messageId: string; tool: string; input: Record<string, unknown>; subagent?: AgentSubagentInfo; startedAt?: number }
 
 /** Stateful translation of one session's live stream. */
 export class PiEventTranslator {
@@ -240,7 +253,44 @@ export class PiEventTranslator {
     return this.tools.get(callId)?.messageId ?? this.assistantId
   }
 
+  /**
+   * Record that a tool call spawned a child session (the task tool; Roadie's
+   * backend answers the extension's roadie:task request). The stored info rides
+   * on every later part update for the call, like OpenCode's task parts. The
+   * returned running update makes child_session_started fire even though the
+   * earlier running part predated the child session.
+   */
+  registerSubagent(callId: string, info: AgentSubagentInfo): AgentEvent[] {
+    const known = this.tools.get(callId)
+    const state: ToolState = {
+      messageId: known?.messageId ?? this.assistantId ?? 'pi-assistant-unknown',
+      tool: known?.tool ?? 'task',
+      input: known?.input ?? {},
+      subagent: info,
+      startedAt: known?.startedAt,
+    }
+    this.tools.set(callId, state)
+    const part: AgentPart = {
+      id: callId,
+      sessionId: this.sessionId,
+      messageId: state.messageId,
+      kind: 'tool',
+      callId,
+      tool: state.tool,
+      status: 'running',
+      input: state.input,
+      subagent: info,
+      ...(state.startedAt !== undefined && { startedAt: state.startedAt }),
+    }
+    return [{ type: 'part', part }, ...childSessionEventsForPart(part)]
+  }
+
+  /** One Pi record as Roadie events, plus the child-session lifecycle its delegation part implies. */
   translate(record: PiRecord): AgentEvent[] {
+    return this.translateRecord(record).flatMap((event) => (event.type === 'part' ? [event, ...childSessionEventsForPart(event.part)] : [event]))
+  }
+
+  private translateRecord(record: PiRecord): AgentEvent[] {
     const sessionId = this.sessionId
     switch (record.type) {
       case 'agent_start':
@@ -369,6 +419,7 @@ export class PiEventTranslator {
       messageId: known?.messageId ?? this.assistantId ?? `pi-assistant-unknown`,
       tool: known?.tool ?? toolName,
       input: update.input ?? known?.input ?? {},
+      subagent: known?.subagent,
       startedAt: update.startedAt ?? known?.startedAt,
     }
     this.tools.set(callId, state)
@@ -384,6 +435,7 @@ export class PiEventTranslator {
         tool: state.tool,
         status: update.status,
         input: state.input,
+        ...(state.subagent && { subagent: state.subagent }),
         ...(update.output !== undefined && { output: update.output }),
         ...(update.title !== undefined && { title: update.title }),
         ...(update.error !== undefined && { error: update.error }),
