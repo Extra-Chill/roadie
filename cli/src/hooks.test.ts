@@ -121,6 +121,8 @@ describe('built-in seams honor their filters', () => {
     const fake = { ...openCodeBackendProvider, id: 'fake' } as AgentBackendProvider
     addFilter('agent_backend', () => fake)
     expect(getAgentBackendProvider().id).toBe('opencode')
+    // The filter is what is under test, not the Pi default (which needs a pi binary).
+    process.env.ROADIE_BACKEND = 'opencode'
     resolveAgentBackendProvider()
     expect(getAgentBackendProvider().id).toBe('fake')
   })
