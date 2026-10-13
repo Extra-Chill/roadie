@@ -14,6 +14,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { isSkillAllowed } from '../../skill-filter.js'
 
 function existingDirs(dirs: string[]): string[] {
   return dirs.filter((dir) => {
@@ -55,8 +56,58 @@ function writeConfigCommands({ directory, cacheDir }: { directory: string; cache
   return dir
 }
 
+/** A skill's name as pi and the model see it: the SKILL.md frontmatter name, else the directory's. */
+function skillName(dir: string): string {
+  try {
+    const frontmatter = /^---\r?\n(.*?)\r?\n---/s.exec(fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8'))?.[1]
+    const name = /^name:\s*(.+)$/m.exec(frontmatter ?? '')?.[1]?.trim()
+    return name || path.basename(dir)
+  } catch {
+    return path.basename(dir)
+  }
+}
+
+/**
+ * The skill directories to pass to pi. Without --enable-skill / --disable-skill
+ * they pass through unchanged. With the flags (skill-filter.ts), each directory
+ * is expanded into its individual skills so a disabled skill is never passed:
+ * pi loads only the survivors, and pi's own discovery of these OpenCode-format
+ * locations is bypassed because the whole directory is replaced.
+ */
+function allowedSkillDirs(dirs: string[], enabledSkills: string[], disabledSkills: string[]): string[] {
+  if (enabledSkills.length === 0 && disabledSkills.length === 0) return dirs
+  return dirs.flatMap((dir) => {
+    let children: fs.Dirent[]
+    try {
+      children = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return children
+      .filter((child) => child.isDirectory())
+      .flatMap((child) => {
+        const skillDir = path.join(dir, child.name)
+        return isSkillAllowed({ name: skillName(skillDir), enabledSkills, disabledSkills }) ? [skillDir] : []
+      })
+  })
+}
+
 /** Extra `pi` arguments adding OpenCode-format commands and skills for a session directory. */
-export function openCodeResourceArgs({ directory, cacheDir, home = os.homedir() }: { directory: string; cacheDir: string; home?: string }): string[] {
+export function openCodeResourceArgs({
+  directory,
+  cacheDir,
+  home = os.homedir(),
+  enabledSkills = [],
+  disabledSkills = [],
+}: {
+  directory: string
+  cacheDir: string
+  home?: string
+  /** --enable-skill whitelist (skill-filter.ts); empty means unfiltered. */
+  enabledSkills?: string[]
+  /** --disable-skill blacklist (skill-filter.ts); empty means unfiltered. */
+  disabledSkills?: string[]
+}): string[] {
   const templates = existingDirs([
     path.join(directory, '.opencode', 'command'),
     path.join(directory, '.opencode', 'commands'),
@@ -73,5 +124,5 @@ export function openCodeResourceArgs({ directory, cacheDir, home = os.homedir() 
     path.join(home, '.config', 'opencode', 'skills'),
     path.join(home, '.claude', 'skills'),
   ])
-  return [...templates.flatMap((dir) => ['--prompt-template', dir]), ...skills.flatMap((dir) => ['--skill', dir])]
+  return [...templates.flatMap((dir) => ['--prompt-template', dir]), ...allowedSkillDirs(skills, enabledSkills, disabledSkills).flatMap((dir) => ['--skill', dir])]
 }
