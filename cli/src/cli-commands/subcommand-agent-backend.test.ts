@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { execAsync } from '../exec-async.js'
 import { resolveSubcommandAgentBackendProvider } from '../cli-runner.js'
 import {
+  clearResolvedDefaultProvider,
   getAgentBackendProvider,
   resolveAgentBackendProvider,
   setAgentBackendProvider,
@@ -84,6 +85,8 @@ describe('subcommand agent backend bootstrap', () => {
   test('a subcommand resolves the same provider as the bot, and a Pi-owned session id routes to Pi', async () => {
     keepProvider()
     const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'subcommand-backend-'))
+    // The legacy per-channel opt-in: ROADIE_BACKEND=opencode keeps ROADIE_PI_CHANNELS working.
+    withEnv('ROADIE_BACKEND', 'opencode')
     withEnv('ROADIE_PI_CHANNELS', 'ch-pi')
     withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
     withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
@@ -109,6 +112,7 @@ describe('subcommand agent backend bootstrap', () => {
 
   test('a plugin-provided backend reaches the subcommand through the agent_backend filter', async () => {
     keepProvider()
+    withEnv('ROADIE_BACKEND', 'opencode')
     withEnv('ROADIE_PI_CHANNELS', undefined)
     withEnv('ROADIE_PLUGINS', undefined)
     // Whatever the registry default currently is (the Pi resolution above is
@@ -126,6 +130,25 @@ describe('subcommand agent backend bootstrap', () => {
       expect(getAgentBackendProvider().id).toBe(`${defaultId}+plugin`)
     } finally {
       removeFilter('agent_backend', filter)
+    }
+  })
+
+  test('a missing pi binary does not fail a subcommand that may never reach an agent', async () => {
+    keepProvider()
+    withEnv('ROADIE_PLUGINS', undefined)
+    withEnv('ROADIE_PI_CHANNELS', undefined)
+    withEnv('ROADIE_BACKEND', undefined)
+    withEnv('ROADIE_PI_BIN', '/nonexistent/pi')
+    clearResolvedDefaultProvider()
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`)
+    }) as never)
+    try {
+      process.argv = ['node', 'roadie', 'task', 'list']
+      await expect(resolveSubcommandAgentBackendProvider()).resolves.toBeUndefined()
+    } finally {
+      exit.mockRestore()
+      clearResolvedDefaultProvider()
     }
   })
 
@@ -169,6 +192,8 @@ describe('subcommand agent backend bootstrap', () => {
     delete env.ROADIE_OPENCODE_PROCESS
     delete env.AGENT_TOKEN
     env.ROADIE_PLUGINS = plugin
+    // The legacy OpenCode default, so the marker is deterministic without a pi shim.
+    env.ROADIE_BACKEND = 'opencode'
     env.ROADIE_PI_CHANNELS = ''
     env.MARKER_FILE = marker
     env.ROADIE_TEST_LOGS = '1'

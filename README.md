@@ -31,7 +31,7 @@ Roadie is a fork of [Kimaki](https://github.com/remorses/kimaki).
 
 - **Channels are projects.** A channel is bound to a project directory. Several channels can share one project and still keep their own audience, response rules and sessions.
 - **Threads are sessions.** A message in a project channel starts a thread and an agent session; replies continue it. Search, resume and fork any session later.
-- **Two seams keep it generic.** The session runtime talks to an *agent backend* (OpenCode today) and a *chat platform* (Discord, Slack) through interfaces, so neither is hard-wired into the core.
+- **Two seams keep it generic.** The session runtime talks to an *agent backend* (Pi by default; OpenCode for the sessions it already owns) and a *chat platform* (Discord, Slack) through interfaces, so neither is hard-wired into the core. See [Agent backend](docs/agent-backend.md).
 
 ## Quick start
 
@@ -109,6 +109,20 @@ channels:
 
 Channels can also set `directory`, `agent`, `model`, `verbosity`, `capabilities` and `permissions` directly. Resolution walks thread → channel → category → `"*"`, the most specific value winning. With a config file, a channel that resolves to no policy is not answered, and an invalid file keeps the last valid one in effect (or answers nothing). The file is reloaded when it changes.
 
+## Agent backend
+
+New sessions run on **Pi**. Roadie needs the `pi` binary (1.x or newer) on `PATH` or in `ROADIE_PI_BIN`; if it is missing or too old, startup fails with an error instead of falling back silently. Sessions that OpenCode already owns keep running on OpenCode: they are routed by session id wherever Roadie reaches them (permission buttons, `/abort`, `roadie send`), and the OpenCode server starts on their first use — it is **not** started at bot startup anymore.
+
+| Selection | How |
+|---|---|
+| Pi (default) | nothing to do |
+| OpenCode (the previous default) | `--backend opencode` or `ROADIE_BACKEND=opencode` |
+| Per-channel Pi opt-in (deprecated) | `ROADIE_BACKEND=opencode` plus `ROADIE_PI_CHANNELS=<ids>` |
+
+`--backend` wins over `ROADIE_BACKEND`, which accepts `pi` (default) or `opencode`. `ROADIE_PI_CHANNELS` — the comma-separated channel ids that used to opt channels into Pi — still works under `ROADIE_BACKEND=opencode` (with a deprecation warning) and has no effect otherwise. Pi-related variables: `ROADIE_PI_BIN` (executable, default `pi`), `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
+
+Listings that merge across backends — `roadie session list`, `/last-sessions`, session status, questions, MCP, slash-command registration — work while the OpenCode server is down and never start it just to list. See [Agent backend](docs/agent-backend.md) for the details.
+
 ## Running as a service
 
 ### Configuration
@@ -118,6 +132,7 @@ Service installs configure Roadie through the environment; nothing needs to touc
 | Variable | Purpose |
 |---|---|
 | `ROADIE_PLATFORM` | `discord` (default) or `slack`. Same as `--platform`. |
+| `ROADIE_BACKEND` | Agent backend for new sessions: `pi` (default) or `opencode`. Existing OpenCode sessions keep running on OpenCode. Same as `--backend`. See [Agent backend](docs/agent-backend.md). |
 | `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
@@ -171,7 +186,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 
 | Filter | Value | Context |
 |---|---|---|
-| `agent_backend` | the agent backend provider (default: OpenCode) | — |
+| `agent_backend` | the agent backend provider (default: Pi over OpenCode) | — |
 | `person` | the person behind a chat user, or `null` | `{ actor, context }` |
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
 | `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |

@@ -1,4 +1,4 @@
-// Start the credential-pool proxy for Pi channels and prepare Pi's agent dir.
+// Start the credential-pool proxy for Pi sessions and prepare Pi's agent dir.
 
 import path from 'node:path'
 import { getDataDir } from '../../config.js'
@@ -18,8 +18,14 @@ export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { hos
   return { host, port }
 }
 
-/** Start the proxy for Pi channels, or whenever external pool clients are registered. */
+/**
+ * Start the proxy whenever Pi runs sessions — it is the default backend
+ * (#177), and ROADIE_PI_CHANNELS opts channels in under ROADIE_BACKEND=opencode
+ * — or whenever external pool clients are registered.
+ */
 export function shouldStartPiPool({ dataDir, env = process.env }: { dataDir: string; env?: NodeJS.ProcessEnv }): boolean {
+  const backend = env['ROADIE_BACKEND']?.trim().toLowerCase()
+  if (backend !== 'opencode') return true
   if (env['ROADIE_PI_CHANNELS']) return true
   const clients = readPoolClients(dataDir)
   return !(clients instanceof Error) && clients.length > 0

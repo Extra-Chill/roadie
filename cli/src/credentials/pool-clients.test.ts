@@ -118,11 +118,13 @@ describe('pool proxy address', () => {
     expect(piPoolListenOptions({ ROADIE_POOL_PROXY_PORT: 'abc' })).toBeInstanceOf(Error)
   })
 
-  test('starts for Pi channels or registered clients, otherwise not', () => {
+  test('starts whenever Pi runs sessions (the default), for Pi channels under opencode, or for registered clients', () => {
     const dataDir = tempDir()
-    expect(shouldStartPiPool({ dataDir, env: {} })).toBe(false)
-    expect(shouldStartPiPool({ dataDir, env: { ROADIE_PI_CHANNELS: '123' } })).toBe(true)
-    addPoolClient({ dataDir, name: 'lab' })
+    // Pi is the default backend (#177): the proxy always starts for it.
     expect(shouldStartPiPool({ dataDir, env: {} })).toBe(true)
+    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode' } })).toBe(false)
+    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode', ROADIE_PI_CHANNELS: '123' } })).toBe(true)
+    addPoolClient({ dataDir, name: 'lab' })
+    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode' } })).toBe(true)
   })
 })
