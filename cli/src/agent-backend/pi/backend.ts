@@ -9,15 +9,17 @@
 // call into a `confirm` UI request. The backend answers it from the session's
 // Roadie permission rules, or emits `permission.asked` and answers when the
 // person replies. Pi's own defaults allow everything, like Roadie's OpenCode
-// setup, so `allow` is the fallback and session rules override it.
+// setup, so `allow` is the fallback and session rules override it — except
+// per-person MCP tools (PERSON_MCP_TOOL_GLOB), denied unless the session's
+// rules allow them, as the OpenCode server config does server-wide.
 //
-// Gaps (spike): no MCP, no question tool, no slash commands, no workspace-bound
-// forks or fork-at-message, no OAuth through Roadie (sign in with `pi` itself).
+// Gaps (spike): no OAuth through Roadie (sign in with `pi` itself).
 
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { evaluatePermission } from '../../permission-policy.js'
+import { evaluatePermission, matchesPermissionPattern } from '../../permission-policy.js'
+import { PERSON_MCP_TOOL_GLOB } from '../../person-mcp.js'
 import type { AgentEvent, AgentQuestion, AgentSession, AgentStatus } from '../events.js'
 import {
   AgentRequestError,
@@ -149,7 +151,11 @@ export function decidePermission({ rules, tool, input, cwd }: {
   const checks = permissionForToolCall({ tool, input, cwd })
   let asked: { permission: string; patterns: string[] } | undefined
   for (const check of checks) {
-    const action = evaluatePermission({ rules, permission: check.permission, targets: check.targets, fallback: 'allow' })
+    // Per-person MCP tools are denied unless the session's own rules allow
+    // them (the per-turn pair from person-mcp.ts), matching OpenCode's
+    // server-wide deny of PERSON_MCP_TOOL_GLOB.
+    const fallback = matchesPermissionPattern({ value: check.permission, pattern: PERSON_MCP_TOOL_GLOB }) ? 'deny' : 'allow'
+    const action = evaluatePermission({ rules, permission: check.permission, targets: check.targets, fallback })
     if (action === 'deny') return { action, permission: check.permission, patterns: check.targets }
     if (action === 'ask' && !asked) asked = { permission: check.permission, patterns: check.targets }
   }

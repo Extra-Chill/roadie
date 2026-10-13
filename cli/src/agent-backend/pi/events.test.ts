@@ -8,6 +8,8 @@ import { PiEventTranslator, piMessageId, toAgentHistory, type PiMessage } from '
 import { splitRecords, type PiRecord } from './rpc.js'
 import { decidePermission } from './backend.js'
 import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
+import { PERSON_MCP_TOOL_GLOB, personMcpPermissions, personMcpScope } from '../../person-mcp.js'
+import { parsePermissionRules } from '../../permission-policy.js'
 
 const fixtures = path.join(import.meta.dirname, 'fixtures')
 
@@ -124,6 +126,16 @@ describe('decidePermission', () => {
     const rules = [{ permission: 'external_directory', pattern: '*', action: 'deny' as const }]
     expect(decidePermission({ rules, tool: 'write', input: { path: 'src/a.ts' }, cwd }).action).toBe('allow')
     expect(decidePermission({ rules, tool: 'write', input: { path: '/etc/passwd' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
+  })
+  test('a session with no rules is denied per-person MCP tools, though other tools default to allow', () => {
+    expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'ls' }, cwd }).action).toBe('allow')
+    expect(decidePermission({ rules: [], tool: `mcp__${PERSON_MCP_TOOL_GLOB.replace('*', 'abc')}_jira__search`, input: {}, cwd: '/r' }).action).toBe('deny')
+  })
+  test('the owning person\'s per-turn allow pair still allows their own roadie_pm_* tools', () => {
+    const scope = personMcpScope('person-a')
+    const rules = parsePermissionRules(personMcpPermissions({ personKey: 'person-a', hasServers: true }))
+    expect(decidePermission({ rules, tool: `mcp__${scope}_jira__search`, input: {}, cwd: '/r' }).action).toBe('allow')
+    expect(decidePermission({ rules, tool: `mcp__${personMcpScope('person-b')}_jira__search`, input: {}, cwd: '/r' }).action).toBe('deny')
   })
 })
 
