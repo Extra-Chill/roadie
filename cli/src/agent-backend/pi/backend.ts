@@ -13,6 +13,11 @@
 // per-person MCP tools (PERSON_MCP_TOOL_GLOB), denied unless the session's
 // rules allow them, as the OpenCode server config does server-wide.
 //
+// Shell isolation (--isolate-shells): Pi ignores $SHELL and picks its tool
+// shell from `shellPath` in its agent dir's settings.json, so Roadie writes
+// the OpenCode wrapper there when the pools give it a Roadie-owned agent dir,
+// and refuses Pi sessions when it cannot (see prepareShellIsolation).
+//
 // Gaps (spike): no OAuth through Roadie (sign in with `pi` itself).
 
 import fs from 'node:fs'
@@ -44,6 +49,7 @@ import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-co
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
 import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
 import { applyTurnAttributionEnv, resolveTurnAttribution } from '../../turn-attribution-env.js'
+import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
 
 const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
 
@@ -53,6 +59,29 @@ export function scrubbedProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS
   for (const name of SCRUBBED_SHELL_ENV_NAMES) delete clean[name]
   delete clean[AGENT_TOKEN_SECRET_ENV]
   return clean
+}
+
+/**
+ * Point Pi's bash tool at the isolation wrapper: merge `shellPath` into a
+ * Roadie-owned agent dir's settings.json, keeping every other key (the pools'
+ * `transport` setting, user-set keys). Idempotent. Pi reads the file when a
+ * process boots, so it must be written before the first spawn.
+ */
+export function writePiShellPath({ agentDir, shellPath }: { agentDir: string; shellPath: string }): string | Error {
+  const file = path.join(agentDir, 'settings.json')
+  try {
+    fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 })
+    let settings: Record<string, unknown> = {}
+    try {
+      settings = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+    } catch {}
+    if (settings['shellPath'] !== shellPath) {
+      fs.writeFileSync(file, JSON.stringify({ ...settings, shellPath }, null, 2), { mode: 0o600 })
+    }
+    return file
+  } catch (error) {
+    return new Error(`Could not write shellPath into ${file}`, { cause: error })
+  }
 }
 
 const PERMISSION_TITLE = 'roadie:permission'
@@ -97,6 +126,20 @@ export type PiBackendOptions = {
     /** End the session's turn affinity (called when a run ends). */
     endTurn?(sessionId: string): void
   }
+  /**
+   * Shell isolation contract (--isolate-shells): require every session's bash
+   * tool to run through the same setpriv + `env -i` wrapper the OpenCode
+   * server's $SHELL uses (isolated-shell.ts). Pi ignores $SHELL: it picks its
+   * tool shell from `shellPath` in its agent dir's settings.json
+   * (PI_CODING_AGENT_DIR), which Roadie owns only for the credential pools.
+   * `agentDir` is that dir and gets `shellPath` written before the first
+   * process spawns; null means Roadie cannot reach Pi's shell config (Pi
+   * would read the user's own ~/.pi/agent, which is not Roadie's to edit), so
+   * sessions are refused instead of running unisolated.
+   */
+  isolateShells?: { username: string; dataDir: string; agentDir: string | null }
+  /** Injectable for tests: how the isolation wrapper is ensured. Defaults to the real setup. */
+  ensureIsolatedShell?: typeof ensureIsolatedShellWrapper
 }
 
 type PiCommand = { name: string; description?: string; source: 'extension' | 'prompt' | 'skill' }
@@ -131,11 +174,43 @@ function extensionPath(): string {
   return fs.existsSync(ts) ? ts : path.join(here, 'roadie-extension.js')
 }
 
+/**
+ * Absolute path-like tokens in a bash command, as a best-effort token scan:
+ * shell metacharacters and env-assignment separators split tokens, and any
+ * piece starting with a single `/` counts — redirects (`> /etc/hosts`), quoted
+ * paths and `VAR=/path` assignments included, while `https://…` URL remainders
+ * (a leading `//`) are not filesystem paths. Not a shell parser: computed
+ * paths (`> "$OUT"`) stay invisible, so like OpenCode's own bash gate this is
+ * a safety net, not a sandbox.
+ */
+export function bashCommandPaths({ command }: { command: string }): string[] {
+  const tokens = command.split(/[\s"'`;&|<>()=,:!{}]+/)
+  return [...new Set(tokens.filter((token) => token.startsWith('/') && !token.startsWith('//')))]
+}
+
+/** Directories outside `cwd` that a bash command's path-like tokens touch, with the same parent-dir target a file tool reports. */
+export function bashExternalDirectories({ command, cwd }: { command: string; cwd: string }): string[] {
+  const inside = `${cwd}${path.sep}`
+  return [...new Set(bashCommandPaths({ command }).flatMap((candidate) => {
+    const resolved = path.resolve(cwd, candidate)
+    return resolved === cwd || resolved.startsWith(inside) ? [] : [path.dirname(resolved)]
+  }))]
+}
+
 /** Which permission and targets a Pi tool call asks for, in OpenCode's vocabulary. */
 export function permissionForToolCall({ tool, input, cwd }: { tool: string; input: Record<string, unknown>; cwd: string }): Array<{ permission: string; targets: string[] }> {
   const filePath = typeof input.path === 'string' ? input.path : typeof input.file_path === 'string' ? input.file_path : undefined
   const checks: Array<{ permission: string; targets: string[] }> = []
-  if (tool === 'bash') checks.push({ permission: 'bash', targets: [String(input.command ?? '')] })
+  if (tool === 'bash') {
+    const command = String(input.command ?? '')
+    checks.push({ permission: 'bash', targets: [command] })
+    // Bash has no path argument, so unlike the file tools its external paths
+    // need a scan of the command itself (best effort, see bashCommandPaths):
+    // absolute paths outside the session directory get the same
+    // external_directory check OpenCode applies to its bash tool.
+    const external = bashExternalDirectories({ command, cwd })
+    if (external.length > 0) checks.push({ permission: 'external_directory', targets: external })
+  }
   else if (tool === 'edit' || tool === 'write') checks.push({ permission: 'edit', targets: filePath ? [filePath] : [] })
   else if (tool === 'read' || tool === 'grep' || tool === 'find' || tool === 'ls') checks.push({ permission: tool === 'read' ? 'read' : tool, targets: filePath ? [filePath] : [] })
   else checks.push({ permission: openCodeToolName(tool), targets: [] })
@@ -248,6 +323,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   private mcpEnabled = new Map<string, Map<string, boolean>>()
   private backend: AgentBackend
   private toolsFile: string
+  /** The --isolate-shells gate, resolved once per provider. */
+  private shellIsolation?: Promise<true | Error>
 
   constructor(readonly options: PiBackendOptions) {
     fs.mkdirSync(options.sessionDir, { recursive: true })
@@ -476,8 +553,45 @@ export class PiBackendProvider implements AgentBackendProvider {
     ]
   }
 
+  /**
+   * The --isolate-shells gate, resolved once per provider: without a
+   * Roadie-owned agent dir Pi sessions are refused (the user's ~/.pi/agent is
+   * not Roadie's to edit); otherwise the wrapper is ensured with the same
+   * setup the OpenCode server start runs, and shellPath is written into the
+   * agent dir's settings.json so Pi's bash tool execs it.
+   */
+  private prepareShellIsolation(): Promise<true | Error> {
+    this.shellIsolation ??= (async () => {
+      const isolation = this.options.isolateShells
+      if (!isolation) return true
+      if (isolation.agentDir === null) {
+        return new Error(
+          'Pi sessions are refused while shell isolation is on (--isolate-shells): Roadie can only point ' +
+            "Pi's bash tool at the isolation wrapper through the Roadie-owned Pi agent dir that the " +
+            'credential pools provide (PI_CODING_AGENT_DIR). Enable credential pools for Pi channels, or ' +
+            'unset --isolate-shells; running Pi with its own shell would skip the isolation.',
+        )
+      }
+      const wrapper = await (this.options.ensureIsolatedShell ?? ensureIsolatedShellWrapper)({
+        dataDir: isolation.dataDir,
+        username: isolation.username,
+      })
+      if (wrapper instanceof Error) return wrapper
+      const written = writePiShellPath({ agentDir: isolation.agentDir, shellPath: wrapper.shellPath })
+      if (written instanceof Error) return written
+      return true
+    })()
+    return this.shellIsolation
+  }
+
   /** Start a Pi process and wire it to the event stream. */
   private async start({ directory, extra, title }: { directory: string; extra: string[]; title?: string }): Promise<RunningSession | Error> {
+    // Fail closed: under --isolate-shells a session whose bash tool would run
+    // unisolated must not start at all.
+    if (this.options.isolateShells) {
+      const prepared = await this.prepareShellIsolation()
+      if (prepared instanceof Error) return new AgentRequestError({ detail: prepared.message })
+    }
     const processId = crypto.randomUUID()
     const systemFile = path.join(this.options.sessionDir, `system-${processId}.md`)
     fs.writeFileSync(systemFile, '')

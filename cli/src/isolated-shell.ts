@@ -9,6 +9,10 @@
 // a fixed allowlist, and the OpenCode server is started with SHELL pointing
 // at the wrapper. OpenCode picks its tool shell from $SHELL (accepting bash,
 // zsh or fish by basename), so every bash tool call runs as the agent user.
+// Pi ignores $SHELL: it takes its tool shell from `shellPath` in its agent
+// dir's settings.json, so the Pi backend (agent-backend/pi/backend.ts) writes
+// the same wrapper path there when Roadie owns that dir, and refuses Pi
+// sessions when it does not.
 //
 // The wrapper passes an allowlist only: PATH (fixed value, not inherited),
 // HOME (the agent user's home), TERM, LANG, the ROADIE_* attribution vars,

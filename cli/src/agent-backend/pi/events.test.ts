@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest'
 import type { AgentEvent, AgentPart } from '../events.js'
 import { PiEventTranslator, piMessageId, toAgentHistory, type PiMessage } from './events.js'
 import { splitRecords, type PiRecord } from './rpc.js'
-import { decidePermission } from './backend.js'
+import { bashCommandPaths, decidePermission, permissionForToolCall } from './backend.js'
 import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
 import { PERSON_MCP_TOOL_GLOB, personMcpPermissions, personMcpScope } from '../../person-mcp.js'
 import { parsePermissionRules } from '../../permission-policy.js'
@@ -126,6 +126,39 @@ describe('decidePermission', () => {
     const rules = [{ permission: 'external_directory', pattern: '*', action: 'deny' as const }]
     expect(decidePermission({ rules, tool: 'write', input: { path: 'src/a.ts' }, cwd }).action).toBe('allow')
     expect(decidePermission({ rules, tool: 'write', input: { path: '/etc/passwd' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
+  })
+  test('bash commands referencing absolute paths outside the directory also check external_directory', () => {
+    const rules = [{ permission: 'external_directory', pattern: '*', action: 'deny' as const }]
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat /etc/passwd' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'echo hi > /etc/hosts' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat src/a.ts' }, cwd }).action).toBe('allow')
+    expect(decidePermission({ rules, tool: 'bash', input: { command: `cat ${cwd}/a.ts` }, cwd }).action).toBe('allow')
+    // Without rules the permissive OpenCode default holds: no ask for external paths.
+    expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'cat /etc/passwd' }, cwd })).toEqual({ action: 'allow', permission: 'bash', patterns: ['cat /etc/passwd'] })
+  })
+  test('checkout isolation denies bash reads of the origin checkout with the same parent-dir patterns', () => {
+    const rules = [
+      { permission: 'external_directory', pattern: '/origin', action: 'deny' as const },
+      { permission: 'external_directory', pattern: '/origin/*', action: 'deny' as const },
+    ]
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat /origin/secret.txt' }, cwd: '/work' })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/origin'] })
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat /origin/sub/secret.txt' }, cwd: '/work' })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/origin/sub'] })
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat /work/file' }, cwd: '/work' }).action).toBe('allow')
+  })
+  test('an external_directory ask for bash lists the touched directories', () => {
+    const rules = [
+      { permission: 'external_directory', pattern: '/etc', action: 'ask' as const },
+      { permission: 'external_directory', pattern: '/etc/*', action: 'ask' as const },
+    ]
+    expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat /etc/hosts /var/log/syslog' }, cwd })).toEqual({ action: 'ask', permission: 'external_directory', patterns: ['/etc', '/var/log'] })
+  })
+  test('bash path extraction is a token scan: redirects, assignments and quoted paths count; URLs and relative paths do not', () => {
+    expect(bashCommandPaths({ command: 'echo hi > /etc/hosts' })).toEqual(['/etc/hosts'])
+    expect(bashCommandPaths({ command: 'FOO=/opt/bar /usr/bin/env' })).toEqual(['/opt/bar', '/usr/bin/env'])
+    expect(bashCommandPaths({ command: 'ls "/etc/nginx" /tmp' })).toEqual(['/etc/nginx', '/tmp'])
+    expect(bashCommandPaths({ command: 'curl -o /tmp/a.json https://example.com/x' })).toEqual(['/tmp/a.json'])
+    expect(bashCommandPaths({ command: 'cp a.txt ../b.txt' })).toEqual([])
+    expect(permissionForToolCall({ tool: 'bash', input: { command: 'ls' }, cwd })).toEqual([{ permission: 'bash', targets: ['ls'] }])
   })
   test('a session with no rules is denied per-person MCP tools, though other tools default to allow', () => {
     expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'ls' }, cwd }).action).toBe('allow')
