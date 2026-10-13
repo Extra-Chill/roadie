@@ -10,7 +10,7 @@
 // works in a freshly provisioned host worktree; without one it stays in the
 // source directory.
 
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { parsePersistedEvents } from '../session-handler/persisted-events.js'
 import type { EventBufferEntry } from '../session-handler/event-stream-state.js'
 import {
@@ -29,7 +29,6 @@ import {
   setThreadSession,
   setThreadWorkingDirectory,
 } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveTextChannel,
   resolveWorkingDirectory,
@@ -150,18 +149,20 @@ export async function forkSessionToThread({
   images?: DiscordFileAttachment[]
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
   const startedAt = Date.now()
-  const [sessionId, getClientResult, textChannel] = await Promise.all([
+  const [sessionId, getBackend, textChannel] = await Promise.all([
     getThreadSession(sourceThread.id),
-    initializeOpencodeForDirectory(projectDirectory),
+    getAgentBackendProvider().initializeForDirectory(projectDirectory, {
+      channelId: backendChannelId(sourceThread),
+    }),
     resolveTextChannel(sourceThread),
   ])
 
   if (!sessionId) {
     return new Error('No active session in this thread')
   }
-  if (getClientResult instanceof Error) {
-    return new Error(`Failed to fork session: ${getClientResult.message}`, {
-      cause: getClientResult,
+  if (getBackend instanceof Error) {
+    return new Error(`Failed to fork session: ${getBackend.message}`, {
+      cause: getBackend,
     })
   }
   if (!textChannel) {
@@ -180,11 +181,7 @@ export async function forkSessionToThread({
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
   const initMs = Date.now() - startedAt
-  const backend = getAgentBackendProvider().getBackend(projectDirectory)
-  if (!backend) {
-    if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
-    return new Error('Failed to fork session: agent backend is unavailable')
-  }
+  const backend = getBackend()
   const [forkSettled, threadSettled] = await Promise.allSettled([
     timed(backend.sessions.fork({
       sessionId, directory: sdkDirectory,
@@ -425,7 +422,10 @@ export async function handleForkAutocomplete({
     await respondEmpty()
     return
   }
-  const getBackend = await getAgentBackendProvider().initializeForDirectory(resolved.projectDirectory)
+  const getBackend = await getAgentBackendProvider().initializeForDirectory(
+    resolved.projectDirectory,
+    { channelId: backendChannelId(channel) },
+  )
   if (getBackend instanceof Error) {
     await respondEmpty()
     return

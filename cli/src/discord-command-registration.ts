@@ -285,7 +285,7 @@ export function buildStaticSlashCommands() {
         option
           .setName('project')
           .setDescription(
-            truncateCommandDescription('Recent OpenCode projects. Use `npx roadie project add` if not listed'),
+            truncateCommandDescription('Recent projects. Use `npx roadie project add` if not listed'),
           )
           .setRequired(true)
           .setAutocomplete(true)
