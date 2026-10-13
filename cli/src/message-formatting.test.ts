@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getStarterMessageText, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -1412,5 +1412,52 @@ describe('getTextAttachments', () => {
       This file is large (64 KB, application/json). Contents were not inlined to save context. Read the local path.
       </attachment>"
     `)
+  })
+})
+
+describe('getStarterMessageText', () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function starter(content: string, attachments: Array<{ name: string; contentType: string | null }>) {
+    return {
+      content,
+      attachments: new Map(attachments.map((attachment, index) => {
+        return [String(index), { ...attachment, url: `https://cdn.example/${attachment.name}`, size: 7532 }]
+      })),
+    } as unknown as Message
+  }
+
+  test('uses message content when present', async () => {
+    globalThis.fetch = (() => { throw new Error('should not fetch') }) as unknown as typeof fetch
+    expect(await getStarterMessageText(starter('fix the auth bug', [{ name: 'message.txt', contentType: 'text/plain' }]))).toBe('fix the auth bug')
+  })
+
+  test('names a long message from the first line of its message.txt', async () => {
+    const requests: Array<{ url: string; range: string | null }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), range: new Headers(init?.headers).get('Range') })
+      return new Response('\n  Import source: https://www.grupo-sg.com/\n\nProduction import record:', { status: 206 })
+    }) as unknown as typeof fetch
+
+    const text = await getStarterMessageText(starter('', [
+      { name: 'photo.png', contentType: 'image/png' },
+      { name: 'message.txt', contentType: 'text/plain; charset=utf-8' },
+    ]))
+
+    expect(text).toBe('Import source: https://www.grupo-sg.com/')
+    expect(requests).toEqual([{ url: 'https://cdn.example/message.txt', range: 'bytes=0-2047' }])
+  })
+
+  test('returns empty text when the attachment cannot be read', async () => {
+    globalThis.fetch = (async () => new Response('gone', { status: 404 })) as unknown as typeof fetch
+    expect(await getStarterMessageText(starter('', [{ name: 'message.txt', contentType: 'text/plain' }]))).toBe('')
+  })
+
+  test('returns empty text without text attachments', async () => {
+    expect(await getStarterMessageText(starter('', [{ name: 'photo.png', contentType: 'image/png' }]))).toBe('')
   })
 })
