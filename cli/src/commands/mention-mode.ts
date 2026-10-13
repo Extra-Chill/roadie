@@ -42,7 +42,7 @@ export async function handleToggleMentionModeCommand({
   if (!metadata.projectDirectory) {
     await command.reply({
       content:
-        'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
+        'This channel is not configured with a project directory.\nAsk the host to bind this channel to a directory in the channels config (ROADIE_CHANNELS_CONFIG).',
       flags: MessageFlags.Ephemeral,
     })
     return

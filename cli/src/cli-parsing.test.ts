@@ -12,7 +12,7 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('session title <title>', 'Update title').option('--session <sessionId>', 'Session ID').option('--thread <threadId>', 'Thread ID')",
     "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path').option('--all', 'Search all registered projects').option('--days <n>', 'Only search recent sessions')",
     "cli.command('session export-events-jsonl', 'Export in-memory events to JSONL').option('--session <sessionId>', 'Session ID').option('--out <file>', 'Output path')",
-    "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
+    "cli.command('project list', 'List projects').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
     "cli.command('task edit <id>', 'Edit task').option('-u, --user <user>', 'Discord user')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
@@ -95,7 +95,7 @@ describe('goke CLI ID parsing', () => {
     const guildId = '001230045600789'
 
     const result = await parseWithGoke(
-      ['node', 'roadie', 'add-project', '--guild', guildId],
+      ['node', 'roadie', 'project', 'list', '--guild', guildId],
     )
 
     expect(result.options.guild).toBe(guildId)

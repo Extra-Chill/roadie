@@ -76,10 +76,10 @@ test('self-hosted startup does not configure any guild without a live local mapp
 test('setup commands require a local channel mapping even for the server owner', async () => {
   registerInteractionHandler({ discordClient: client, appId: discord.botUserId })
   const channel = discord.channel(projectChannelId)
-  // An invalid project name keeps the regression safe even when the guard fails.
-  const options = [{ name: 'name', type: 3, value: '---' }]
+  // A directory with no channels keeps the regression safe even when the guard fails.
+  const options = [{ name: 'project', type: 3, value: '/not/a/project' }]
   const ignored = await channel.user('100000000000000555').runSlashCommand({
-    name: 'create-new-project', options,
+    name: 'remove-project', options,
   })
   for (let attempt = 0; attempt < 10; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -89,13 +89,13 @@ test('setup commands require a local channel mapping even for the server owner',
 
   await setChannelDirectory({ channelId: projectChannelId, directory, channelType: 'text' })
   const allowed = await channel.user('100000000000000555').runSlashCommand({
-    name: 'create-new-project', options,
+    name: 'remove-project', options,
   })
   await channel.waitForInteractionAck({ interactionId: allowed.id })
   await channel.waitForBotReply()
   expect(await channel.text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Invalid project name"
+    No channels found for directory: \`/not/a/project\`"
   `)
 })
 
@@ -119,7 +119,7 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
       expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         <@100000000000000555> **Roadie** connects this server to a coding agent. Send a message in a project channel to start a session in its own thread.
-        - \`/add-project\` links a channel to a project directory
+        - Channels are bound to project directories by the host's channels config (ROADIE_CHANNELS_CONFIG)
         - Upload images and files; the agent can send files back"
       `)
     }

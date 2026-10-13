@@ -201,7 +201,7 @@ export function appIdFromToken(token: string): string | undefined {
 }
 
 // Resolve bot token and app ID from env var or database.
-// Used by CLI subcommands (send, project add) that need credentials
+// Used by CLI subcommands (send, project list) that need credentials
 // but don't run the interactive wizard.
 //
 // Priority: ROADIE_BOT_TOKEN env var takes precedence over saved DB

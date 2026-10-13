@@ -19,7 +19,7 @@ import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearc
 import type { ThreadStartMarker } from '../system-message.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
-import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
+import { setDataDir, getDataDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'

@@ -9,7 +9,7 @@ const logger = createLogger(LogPrefix.CHANNEL)
 function buildWelcomeText({ mentionUserId }: { mentionUserId?: string }): string {
   const mention = mentionUserId ? `<@${mentionUserId}> ` : ''
   return `${mention}**Roadie** connects this server to a coding agent. Send a message in a project channel to start a session in its own thread.
-- \`/add-project\` links a channel to a project directory
+- Channels are bound to project directories by the host's channels config (ROADIE_CHANNELS_CONFIG)
 - Upload images and files; the agent can send files back`
 }
 

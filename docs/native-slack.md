@@ -39,10 +39,10 @@ external context command receives the same fields as `project_id`,
 identifiers as opaque; the host decides what they mean.
 
 Channel fields override project defaults. Existing directory-based channel
-configuration continues to work. `roadie project add` and `/add-project` can
-create multiple Discord channels for the same directory. When a project has
-multiple bindings, `roadie send --project` asks for an explicit `--channel` or
-`--thread` rather than selecting an arbitrary channel.
+configuration continues to work. The channels config is the only source of
+channel-to-directory bindings, so a project with multiple bindings has no
+implicit default: target an explicit channel with `roadie send --channel` or
+an existing thread with `--thread`.
 
 ## Run Slack
 
