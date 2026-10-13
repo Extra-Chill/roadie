@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
 import { PiBackendProvider } from './pi/backend.js'
 import { withPiChannels } from './pi/router.js'
+import { store } from '../store.js'
 import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
 
 /**
@@ -62,6 +63,9 @@ function defaultProvider(): AgentBackendProvider {
     bin,
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     fileEditLogDir: getDataDir(),
+    // Same --enable-skill / --disable-skill filter the OpenCode backend applies.
+    enabledSkills: store.getState().enabledSkills,
+    disabledSkills: store.getState().disabledSkills,
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),

@@ -38,6 +38,7 @@ import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { openCodeResourceArgs } from './resources.js'
+import { isSkillAllowed } from '../../skill-filter.js'
 import { appendFileEditEvents, extractEditedFiles } from '../../file-edit-log.js'
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
@@ -82,6 +83,10 @@ export type PiBackendOptions = {
   systemPrompt?: string
   /** Load the project's AGENTS.md / CLAUDE.md files, like OpenCode. Default true. */
   contextFiles?: boolean
+  /** Skill whitelist from --enable-skill (skill-filter.ts): only these skills load. */
+  enabledSkills?: string[]
+  /** Skill blacklist from --disable-skill (skill-filter.ts): these neither load nor run. */
+  disabledSkills?: string[]
   /**
    * Bill model calls to Roadie's credential pools through the loopback proxy.
    * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
@@ -161,6 +166,29 @@ export function decidePermission({ rules, tool, input, cwd }: {
   }
   if (asked) return { action: 'ask', ...asked }
   return { action: 'allow', permission: checks[0]!.permission, patterns: checks[0]!.targets }
+}
+
+/**
+ * The refusal for a sessions.command invocation of a disabled skill: either the
+ * command is `skill:name` itself or it resolves to pi's `skill:name`. A bare
+ * command name alone is not refused (it may be a prompt command); the caller
+ * re-checks with the resolved piName after the command list comes back.
+ */
+export function disabledSkillCommandRefusal({
+  command,
+  piName,
+  enabledSkills = [],
+  disabledSkills = [],
+}: {
+  command: string
+  piName?: string
+  enabledSkills?: string[]
+  disabledSkills?: string[]
+}): AgentRequestError | undefined {
+  const name = /^skill:(.+)$/.exec(command)?.[1]
+    ?? (piName?.startsWith('skill:') ? piName.slice('skill:'.length) : undefined)
+  if (name === undefined || isSkillAllowed({ name, enabledSkills, disabledSkills })) return undefined
+  return new AgentRequestError({ detail: `Skill ${name} is disabled` })
 }
 
 function promptText(parts: AgentPromptPart[]): { message: string; images: Array<{ type: 'image'; data: string; mimeType: string }> } {
@@ -435,7 +463,12 @@ export class PiBackendProvider implements AgentBackendProvider {
       // Projects bound to Roadie channels are operator-approved, as OpenCode
       // treats them: their skills, prompt templates and `.pi` resources load.
       '--approve',
-      ...openCodeResourceArgs({ directory, cacheDir: this.options.sessionDir }),
+      ...openCodeResourceArgs({
+        directory,
+        cacheDir: this.options.sessionDir,
+        enabledSkills: this.options.enabledSkills ?? [],
+        disabledSkills: this.options.disabledSkills ?? [],
+      }),
       ...(this.options.contextFiles === false ? ['--no-context-files'] : []),
       '-e', extensionPath(),
       ...(this.options.model ? ['--model', this.options.model] : []),
@@ -863,12 +896,20 @@ export class PiBackendProvider implements AgentBackendProvider {
         return undefined
       },
       command: async ({ sessionId, directory, command, arguments: args, model, variant }) => {
+        // Disabled skills are refused like OpenCode's permission.skill deny —
+        // before the session starts, and again once pi's command list resolves
+        // (pi discovers its own skill locations Roadie does not control).
+        const { enabledSkills = [], disabledSkills = [] } = this.options
+        const requested = disabledSkillCommandRefusal({ command, enabledSkills, disabledSkills })
+        if (requested) return requested
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
         const listed = await session.process.request<{ commands: PiCommand[] }>({ type: 'get_commands' })
         const names = new Set(listed instanceof Error ? [] : listed.commands.map((c) => c.name))
         const piName = names.has(command) ? command : names.has(`skill:${command}`) ? `skill:${command}` : undefined
         if (!piName) return new AgentRequestError({ detail: `Unknown command /${command}` })
+        const refusal = disabledSkillCommandRefusal({ command, piName, enabledSkills, disabledSkills })
+        if (refusal) return refusal
         return this.backend.sessions.prompt({
           sessionId,
           directory,
