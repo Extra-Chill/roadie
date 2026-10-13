@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.61.1] - 2026-10-13
+
+### Fixed
+- hand off subrouter when the pool already holds its accounts
+- route fork titles through the default model rotation
+
 ## [0.61.0] - 2026-10-13
 
 ### Added
