@@ -15,7 +15,6 @@ import { getDataDir } from '../config.js'
 import { store } from '../store.js'
 import { PiBackendProvider } from './pi/backend.js'
 import { withPiChannels } from './pi/router.js'
-import { store } from '../store.js'
 import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
 
 /**
