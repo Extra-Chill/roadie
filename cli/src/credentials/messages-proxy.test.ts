@@ -1,11 +1,12 @@
-// The pool proxy for HTTP backends (Pi): routing, Claude Code shaping, 429 failover.
+// The pool proxy for HTTP backends (Pi): routing, Claude Code shaping, 429 failover,
+// and OpenAI-compatible chat completions for API-key accounts (#176).
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { startMessagesProxy, type MessagesProxy } from './messages-proxy.js'
-import { addPoolOAuthAccount, readPoolState, setPoolRotation, SHARED_POOL_ID } from './store.js'
+import { addPoolAccount, addPoolOAuthAccount, readPoolState, setPoolRotation, SHARED_POOL_ID } from './store.js'
 import { readSessionRoute } from './routes.js'
 import { CLAUDE_CODE_IDENTITY } from './adapters/anthropic-oauth.js'
 
@@ -159,5 +160,75 @@ describe('messages proxy: ChatGPT (Codex) accounts', () => {
     expect(String(ctx.seen[0]?.body)).toContain('grant_type=refresh_token')
     expect(String(ctx.seen[0]?.body)).toContain('client_id=app_EMoamEEZ73f0CkXaXp7hrann')
     expect(ctx.seen[1]?.url).toBe('https://chatgpt.com/backend-api/codex/responses')
+  })
+})
+
+describe('messages proxy: API-key (OpenAI-compatible) accounts', () => {
+  const ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
+
+  async function apiKeySetup(responses: Array<() => Response>, { rotationEntries = ['zai-coding-plan/glm-5.3-flash'] }: { rotationEntries?: string[] } = {}) {
+    const dataDir = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pool-apikey-'))
+    const accounts = []
+    for (const label of ['a', 'b']) {
+      const added = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'zai-coding-plan', key: `zai-key-${label}`, label })
+      if (added instanceof Error) throw added
+      accounts.push(added)
+    }
+    const anthropicAccount = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', label: 'anthropic', refresh: 'refresh-anthropic', access: 'access-anthropic', expires: Date.now() + 3_600_000 })
+    if (anthropicAccount instanceof Error) throw anthropicAccount
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'glm-best', entries: rotationEntries })
+    const seen: Seen[] = []
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) })
+      return responses.shift()!()
+    }
+    const apiKeyProxy = await startMessagesProxy({
+      dataDir,
+      resolvePools: async () => SHARED_POOL_ID,
+      fetchImpl,
+      catalog: { 'zai-coding-plan': { id: 'zai-coding-plan', api: ZAI_BASE_URL } },
+    })
+    return { dataDir, accounts, anthropicAccount, seen, proxy: apiKeyProxy }
+  }
+
+  const postChat = (baseUrl: string, key: string, body: Record<string, unknown>) => fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer roadie-pool-managed', 'x-roadie-key': key },
+    body: JSON.stringify(body),
+  })
+
+  test('an API-key rotation answers through the proxy with the pool account key', async () => {
+    const ctx = await apiKeySetup([() => Response.json({ id: 'chatcmpl-1', choices: [{ message: { role: 'assistant', content: 'ok' } }] })])
+    proxy = ctx.proxy
+    const response = await postChat(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-k1'), { model: 'glm-best', messages: [{ role: 'user', content: 'hi' }] })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: 'chatcmpl-1' })
+    const [call] = ctx.seen
+    expect(call?.url).toBe(`${ZAI_BASE_URL}/chat/completions`)
+    expect(call?.body.model).toBe('glm-5.3-flash')
+    expect(call?.headers.get('authorization')).toBe('Bearer zai-key-a')
+    expect(call?.headers.get('x-api-key')).toBeNull()
+    expect(call?.headers.get('x-roadie-key')).toBeNull()
+    expect(readSessionRoute({ dataDir: ctx.dataDir, sessionId: 'ses-k1', now: Date.now() })?.accountId).toBe(ctx.accounts[0]!.id)
+  })
+
+  test('a 429 cools the account down and the next API-key account answers', async () => {
+    const ctx = await apiKeySetup([() => new Response('{}', { status: 429, headers: { 'retry-after': '120' } }), () => Response.json({ choices: [] })])
+    proxy = ctx.proxy
+    const response = await postChat(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-k2'), { model: 'glm-best', messages: [] })
+    expect(response.status).toBe(200)
+    expect(ctx.seen.map((s) => s.headers.get('authorization'))).toEqual(['Bearer zai-key-a', 'Bearer zai-key-b'])
+    const state = readPoolState({ dataDir: ctx.dataDir, poolId: SHARED_POOL_ID })
+    if (state instanceof Error) throw state
+    expect(state.cooldowns[ctx.accounts[0]!.id]).toBeGreaterThan(Date.now() + 60_000)
+  })
+
+  test('a mixed rotation falls through only within the OpenAI-compatible format', async () => {
+    const ctx = await apiKeySetup([() => Response.json({ choices: [] })], { rotationEntries: ['anthropic/claude-opus-4-8', 'zai-coding-plan/glm-5.3-flash'] })
+    proxy = ctx.proxy
+    const response = await postChat(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-k3'), { model: 'glm-best', messages: [] })
+    expect(response.status).toBe(200)
+    expect(ctx.seen).toHaveLength(1)
+    expect(ctx.seen[0]?.headers.get('authorization')).toBe('Bearer zai-key-a')
   })
 })

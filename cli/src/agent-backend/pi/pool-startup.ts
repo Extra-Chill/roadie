@@ -6,7 +6,7 @@ import { startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
 import { readPoolClients } from '../../credentials/pool-clients.js'
-import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, writePiPoolAgentDir } from './pool.js'
+import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from './pool.js'
 
 /** Fixed listen address for external pool clients (#171); ephemeral when unset. */
 export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { host?: string; port?: number } | Error {
@@ -34,15 +34,16 @@ export async function startPiPool(): Promise<Error | {
 }> {
   const dataDir = getDataDir()
   const rotations = anthropicRotations({ dataDir })
+  const openaiRotations = openaiCompatRotations({ dataDir })
   const codexModels = hasCodexAccounts({ dataDir }) ? (process.env['ROADIE_PI_CODEX_MODELS']?.split(',').map((m) => m.trim()).filter(Boolean) ?? DEFAULT_CODEX_MODELS) : []
-  if (rotations.length === 0 && codexModels.length === 0) return new Error('the shared pool has no ChatGPT account and no anthropic rotation')
+  if (rotations.length === 0 && openaiRotations.length === 0 && codexModels.length === 0) return new Error('the shared pool has no ChatGPT account and no pool rotation')
   const listen = piPoolListenOptions()
   if (listen instanceof Error) return listen
   const proxy = await startMessagesProxy({ dataDir, ...listen, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
   const agentDir = process.env['ROADIE_PI_AGENT_DIR'] || path.join(dataDir, 'pi-agent')
-  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, codexModels })
+  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, openaiRotations, codexModels })
   return {
     baseUrl: proxy.baseUrl,
     agentDir,
