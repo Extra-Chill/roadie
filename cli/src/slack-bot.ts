@@ -605,7 +605,7 @@ export class NativeSlackBot {
           }),
       )
       if (waited instanceof Error) return waited
-      const backend = await getAgentBackendProvider().initializeForDirectory(runtime.sdkDirectory)
+      const backend = await getAgentBackendProvider().initializeForDirectory(runtime.sdkDirectory, { channelId })
       if (backend instanceof Error) return backend
       const messages = await backend().sessions.messages({
         sessionId,
@@ -1124,7 +1124,7 @@ export class NativeSlackBot {
     }
     const sessionId = runtime.state?.sessionId
     if (!sessionId) return
-    const backend = await getAgentBackendProvider().initializeForDirectory(runtime.sdkDirectory)
+    const backend = await getAgentBackendProvider().initializeForDirectory(runtime.sdkDirectory, { channelId: event.channel_id })
     if (backend instanceof Error) return backend
     if (name === 'model') {
       const catalog = await backend().catalog.providers({ directory: runtime.sdkDirectory })
@@ -1173,8 +1173,9 @@ export class NativeSlackBot {
       return
     }
     if (name === 'fork') {
-      const forkBackend = getAgentBackendProvider().getBackend(runtime.sdkDirectory)
-      if (!forkBackend) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable' })
+      const forkBackendResult = await getAgentBackendProvider().initializeForDirectory(runtime.sdkDirectory, { channelId: event.channel_id })
+      if (forkBackendResult instanceof Error) return new SlackApiError({ operation: 'fork', detail: 'agent backend is unavailable', cause: forkBackendResult })
+      const forkBackend = forkBackendResult()
       const workspace = await resolveForkWorkspace({
         sourceSessionId: sessionId, sourceThreadId: runtime.threadId,
         projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
