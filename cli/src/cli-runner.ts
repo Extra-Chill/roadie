@@ -1,7 +1,7 @@
 // Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
 import type { AgentCommand, AgentDefinition } from './agent-backend/types.js'
-import { getAgentBackendProvider, resolveAgentBackendProvider } from './agent-backend/registry.js'
+import { configuredBackend, getAgentBackendProvider, resolveAgentBackendProvider } from './agent-backend/registry.js'
 import { loadPlugins, resolvePluginSpecs } from './plugins.js'
 import {
   intro,
@@ -109,7 +109,16 @@ export async function resolveSubcommandAgentBackendProvider(): Promise<void> {
     cliLogger.error(plugins.message)
     process.exit(EXIT_NO_RESTART)
   }
-  resolveAgentBackendProvider()
+  try {
+    resolveAgentBackendProvider()
+  } catch (error) {
+    // e.g. Pi is the default backend but the pi binary is missing or too old.
+    // Only the bot fails fast on that (its own resolution). A subcommand may
+    // never reach an agent (argument validation, `task list`, `credentials`),
+    // so it keeps the placeholder provider and reports the problem; commands
+    // that do need the backend fail on their own initializeForDirectory.
+    cliLogger.warn(error instanceof Error ? error.message : String(error))
+  }
 }
 
 /** Project commands and skills for slash-command registration, from the backend catalog. */
@@ -1005,7 +1014,11 @@ export async function ensureDefaultChannelsWithWelcome({
 
 /**
  * Background initialization for quick start mode.
- * Starts OpenCode server and registers slash commands without blocking bot startup.
+ * Registers slash commands without blocking bot startup. Under
+ * ROADIE_BACKEND=opencode it also starts the OpenCode server first; with Pi as
+ * the default backend it must not start OpenCode — commands and agents come
+ * from the resolved backend's catalog, and OpenCode starts lazily on first use
+ * by a legacy OpenCode-owned session.
  */
 export async function backgroundInit({
   currentDir,
@@ -1019,36 +1032,36 @@ export async function backgroundInit({
   guildIds: string[]
 }): Promise<void> {
   try {
-    const opencodeResult = await initializeOpencodeForDirectory(currentDir)
-    if (opencodeResult instanceof Error) {
-      cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
-      // Still register what the provider can list without an OpenCode server:
-      // with Pi channels configured the composite serves Pi's own prompts and
-      // skills (and agents), so they become slash commands even while OpenCode
-      // is down. Without Pi this lists nothing and the behavior is unchanged.
-      const [userCommands, agents] = await Promise.all([
-        listCommandsForRegistration(currentDir).then((result) => {
-          if (!(result instanceof Error)) return result
-          cliLogger.warn(
-            'Failed to load user commands during background init:',
-            result.stack ?? result.message,
-          )
-          return []
-        }),
-        listAgentsForRegistration(currentDir).then((result) => {
-          if (!(result instanceof Error)) return result
-          cliLogger.warn(
-            'Failed to load agents during background init:',
-            result.stack ?? result.message,
-          )
-          return []
-        }),
-      ])
-      await registerCommands({ token, appId, guildIds, userCommands, agents })
-      return
+    if (configuredBackend() === 'opencode') {
+      const opencodeResult = await initializeOpencodeForDirectory(currentDir)
+      if (opencodeResult instanceof Error) {
+        cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
+        // Still register what the provider can list without an OpenCode server:
+        // with Pi channels configured the composite serves Pi's own prompts and
+        // skills (and agents), so they become slash commands even while OpenCode
+        // is down. Without Pi this lists nothing and the behavior is unchanged.
+        const [userCommands, agents] = await Promise.all([
+          listCommandsForRegistration(currentDir).then((result) => {
+            if (!(result instanceof Error)) return result
+            cliLogger.warn(
+              'Failed to load user commands during background init:',
+              result.stack ?? result.message,
+            )
+            return []
+          }),
+          listAgentsForRegistration(currentDir).then((result) => {
+            if (!(result instanceof Error)) return result
+            cliLogger.warn(
+              'Failed to load agents during background init:',
+              result.stack ?? result.message,
+            )
+            return []
+          }),
+        ])
+        await registerCommands({ token, appId, guildIds, userCommands, agents })
+        return
+      }
     }
-
-    const getClient = opencodeResult
 
     const [userCommands, agents] = await Promise.all([
       listCommandsForRegistration(currentDir).then((result) => {
@@ -1227,39 +1240,49 @@ export async function run({
 
   const forceRestartOnboarding = Boolean(restartOnboarding)
 
-  // Step 0: Ensure opencode and bun are installed
+  // Step 0: Ensure opencode and bun are installed — only when OpenCode is the
+  // configured backend. With Pi as the default (#177) the OpenCode server is
+  // not started at bot startup (it starts lazily on first use by a legacy
+  // OpenCode-owned session), so a missing binary must not block or prompt.
+  const eagerOpencode = configuredBackend() === 'opencode'
   await Promise.all([
-    ensureCommandAvailable({
-      name: 'opencode',
-      envPathKey: 'OPENCODE_PATH',
-      installUnix: 'curl -fsSL https://opencode.ai/install | bash',
-      installWindows: 'irm https://opencode.ai/install.ps1 | iex',
-      possiblePathsUnix: [
-        '~/.local/bin/opencode',
-        '~/.opencode/bin/opencode',
-        '/usr/local/bin/opencode',
-        '/opt/opencode/bin/opencode',
-      ],
-      possiblePathsWindows: [
-        '~\\.local\\bin\\opencode.exe',
-        '~\\AppData\\Local\\opencode\\opencode.exe',
-        '~\\.opencode\\bin\\opencode.exe',
-      ],
-    }),
-    ensureCommandAvailable({
-      name: 'bun',
-      envPathKey: 'BUN_PATH',
-      installUnix: 'curl -fsSL https://bun.sh/install | bash',
-      installWindows: 'irm bun.sh/install.ps1 | iex',
-      possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
-      possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
-    }),
+    ...(eagerOpencode
+      ? [
+          ensureCommandAvailable({
+            name: 'opencode',
+            envPathKey: 'OPENCODE_PATH',
+            installUnix: 'curl -fsSL https://opencode.ai/install | bash',
+            installWindows: 'irm https://opencode.ai/install.ps1 | iex',
+            possiblePathsUnix: [
+              '~/.local/bin/opencode',
+              '~/.opencode/bin/opencode',
+              '/usr/local/bin/opencode',
+              '/opt/opencode/bin/opencode',
+            ],
+            possiblePathsWindows: [
+              '~\\.local\\bin\\opencode.exe',
+              '~\\AppData\\Local\\opencode\\opencode.exe',
+              '~\\.opencode\\bin\\opencode.exe',
+            ],
+          }),
+          ensureCommandAvailable({
+            name: 'bun',
+            envPathKey: 'BUN_PATH',
+            installUnix: 'curl -fsSL https://bun.sh/install | bash',
+            installWindows: 'irm bun.sh/install.ps1 | iex',
+            possiblePathsUnix: ['~/.bun/bin/bun', '/usr/local/bin/bun'],
+            possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
+          }),
+        ]
+      : []),
   ])
 
-  const opencodeVersionCheck = await assertCompatibleOpencodeVersion()
-  if (opencodeVersionCheck instanceof Error) {
-    cliLogger.error(opencodeVersionCheck.message)
-    process.exit(EXIT_NO_RESTART)
+  if (eagerOpencode) {
+    const opencodeVersionCheck = await assertCompatibleOpencodeVersion()
+    if (opencodeVersionCheck instanceof Error) {
+      cliLogger.error(opencodeVersionCheck.message)
+      process.exit(EXIT_NO_RESTART)
+    }
   }
 
 
@@ -1325,25 +1348,39 @@ export async function run({
   // share one auth model (Hrana and future service endpoints).
   store.setState({ gatewayToken })
 
-  // Start OpenCode server as early as possible — non-blocking.
-  // All dependencies are met (dataDir, lockPort, gatewayToken, hranaUrl set).
-  // Runs in parallel with last_used_at update, skipChannelSetup check, and
-  // Discord Gateway login so cold start is not blocked by OpenCode spawn.
+  // Start OpenCode server as early as possible — non-blocking — but only when
+  // OpenCode is the configured backend. With Pi as the default (#177) the
+  // server is not started here: it starts on first use by a legacy
+  // OpenCode-owned session (the backend router resolves it), or when
+  // ROADIE_BACKEND=opencode. All dependencies are met (dataDir, lockPort,
+  // gatewayToken, hranaUrl set). Runs in parallel with last_used_at update,
+  // skipChannelSetup check, and Discord Gateway login so cold start is not
+  // blocked by OpenCode spawn.
   const currentDir = process.cwd()
-  cliLogger.log('Starting OpenCode server...')
-  const opencodePromise = initializeOpencodeForDirectory(currentDir).then(
-    (result) => {
-      if (result instanceof Error) {
-        throw new Error(result.message)
-      }
-      cliLogger.log('OpenCode server ready!')
-      return result
-    },
-  )
-  // Prevent unhandled rejection if OpenCode fails before backgroundInit
-  // or the channel setup path awaits it. Errors are handled by the
-  // respective consumers (backgroundInit catches, channel setup re-throws).
-  opencodePromise.catch(() => {})
+  const opencodePromise = eagerOpencode
+    ? (async () => {
+        cliLogger.log('Starting OpenCode server...')
+        const promise = initializeOpencodeForDirectory(currentDir).then(
+          (result) => {
+            if (result instanceof Error) {
+              throw new Error(result.message)
+            }
+            cliLogger.log('OpenCode server ready!')
+            return result
+          },
+        )
+        // Prevent unhandled rejection if OpenCode fails before backgroundInit
+        // or the channel setup path awaits it. Errors are handled by the
+        // respective consumers (backgroundInit catches, channel setup re-throws).
+        promise.catch(() => {})
+        return promise
+      })()
+    : undefined
+  if (!opencodePromise) {
+    cliLogger.log(
+      'Pi is the default agent backend: not starting the OpenCode server (it starts on first use by an existing OpenCode session)',
+    )
+  }
 
   // Mark this bot as the most recently used so subcommands in separate
   // processes (send, upload-to-discord, project list) pick the correct bot.
@@ -1529,45 +1566,80 @@ export async function run({
       note(channelList, 'Existing Roadie Channels')
     }
 
-    // Wait for OpenCode, fetch projects, show prompts, create channels if needed
-    cliLogger.log('Waiting for OpenCode server...')
-    const getClient = await opencodePromise
+    // With ROADIE_BACKEND=opencode: wait for OpenCode, fetch projects, show
+    // prompts, create channels if needed. With Pi as the default backend the
+    // OpenCode server is not started for setup — projects cannot be listed,
+    // so only the backend catalog's commands and agents are registered and
+    // project channels come from --channels-config.
+    let projects: Array<{ id: string; worktree: string }> = []
+    let allUserCommands: AgentCommand[] = []
+    let allAgents: AgentDefinition[] = []
+    if (opencodePromise) {
+      cliLogger.log('Waiting for OpenCode server...')
+      const getClient = await opencodePromise
 
-    cliLogger.log('Fetching OpenCode data...')
+      cliLogger.log('Fetching OpenCode data...')
 
-    // Fetch projects, commands, and agents in parallel
-    const [projects, allUserCommands, allAgents] = await Promise.all([
-      getClient()
-        .project.list()
-        .then((r) => r.data || [])
-        .catch((error) => {
-          cliLogger.log('Failed to fetch projects')
-          cliLogger.error(
-            'Error:',
-            error instanceof Error ? error.stack : String(error),
+      // Fetch projects, commands, and agents in parallel
+      const [fetchedProjects, commands, agents] = await Promise.all([
+        getClient()
+          .project.list()
+          .then((r) => r.data || [])
+          .catch((error) => {
+            cliLogger.log('Failed to fetch projects')
+            cliLogger.error(
+              'Error:',
+              error instanceof Error ? error.stack : String(error),
+            )
+            void discordClient.destroy()
+            process.exit(EXIT_NO_RESTART)
+          }),
+        listCommandsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load user commands during setup:',
+            result.stack ?? result.message,
           )
-          void discordClient.destroy()
-          process.exit(EXIT_NO_RESTART)
+          return []
         }),
-      listCommandsForRegistration(currentDir).then((result) => {
-        if (!(result instanceof Error)) return result
-        cliLogger.warn(
-          'Failed to load user commands during setup:',
-          result.stack ?? result.message,
-        )
-        return []
-      }),
-      listAgentsForRegistration(currentDir).then((result) => {
-        if (!(result instanceof Error)) return result
-        cliLogger.warn(
-          'Failed to load agents during setup:',
-          result.stack ?? result.message,
-        )
-        return []
-      }),
-    ])
-
-    cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
+        listAgentsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load agents during setup:',
+            result.stack ?? result.message,
+          )
+          return []
+        }),
+      ])
+      projects = fetchedProjects
+      allUserCommands = commands
+      allAgents = agents
+      cliLogger.log(`Found ${projects.length} OpenCode project(s)`)
+    } else {
+      cliLogger.log(
+        'Pi is the default agent backend: skipping OpenCode project selection (bind channels to directories with --channels-config)',
+      )
+      const [commands, agents] = await Promise.all([
+        listCommandsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load user commands during setup:',
+            result.stack ?? result.message,
+          )
+          return []
+        }),
+        listAgentsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load agents during setup:',
+            result.stack ?? result.message,
+          )
+          return []
+        }),
+      ])
+      allUserCommands = commands
+      allAgents = agents
+    }
 
     const existingDirs = roadieChannels.flatMap(({ channels }) =>
       channels
@@ -1589,7 +1661,7 @@ export async function run({
       (x) => x.worktree,
     )
 
-    if (availableProjects.length === 0) {
+    if (opencodePromise && availableProjects.length === 0) {
       note(
         'All OpenCode projects already have Discord channels',
         'No New Projects',

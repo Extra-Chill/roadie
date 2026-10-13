@@ -1,13 +1,15 @@
-// Per-channel backend choice: Pi channels see Pi's catalog and logins; others keep the default.
+// Per-channel backend choice (#51) and the Pi default (#177): Pi channels see
+// Pi's catalog and logins, the Pi default creates every new session in Pi, and
+// a session the fallback backend owns keeps working through it.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type { AgentBackend, AgentBackendProvider, AgentCommand } from '../types.js'
+import { AgentRequestError, type AgentBackend, type AgentBackendProvider, type AgentCommand } from '../types.js'
 import { backendChannelId, checkPiVersion } from '../registry.js'
 import { PiBackendProvider } from './backend.js'
-import { withPiChannels } from './router.js'
+import { withPiChannels, withPiDefault } from './router.js'
 
 const fallbackBackend = {
   sessions: {},
@@ -135,6 +137,122 @@ describe('withPiChannels command listings', () => {
       { name: 'deploy', source: 'command' },
       { name: 'triage', source: 'command' },
     ])
+  })
+})
+
+describe('withPiDefault', () => {
+  const LEGACY_SESSION = { id: 'ses_legacy', title: 'Legacy', directory: '/p', createdAt: 1, updatedAt: 2 }
+  const PI_SESSION = { id: 'pi_new', title: 'Pi', directory: '/p', createdAt: 3, updatedAt: 4 }
+
+  /** A PiBackendProvider stand-in: `owns` decides routing, nothing spawns. */
+  function fakePi(calls: string[]): PiBackendProvider {
+    return {
+      owns: (sessionId: string) => sessionId.startsWith('pi_'),
+      getBackend: () => ({
+        sessions: {
+          create: async () => {
+            calls.push('pi.create')
+            return PI_SESSION
+          },
+          get: async () => new AgentRequestError({ detail: 'no such Pi session' }),
+          list: async () => {
+            calls.push('pi.list')
+            return [PI_SESSION]
+          },
+          status: async () => ({ pi_new: { state: 'idle' } }),
+          questions: async () => [],
+        },
+        catalog: { providers: async () => ({ providers: [], connected: [], defaults: {} }), config: async () => ({}), agents: async () => [{ name: 'pi-agent', mode: 'primary' }] },
+        auth: { methods: async () => ({}) },
+        mcp: {
+          addRemote: async () => undefined,
+          status: async () => ({ pi_server: { status: 'connected' } }),
+          connect: async () => undefined,
+          disconnect: async () => undefined,
+        },
+      } as unknown as AgentBackend),
+    } as unknown as PiBackendProvider
+  }
+
+  /** A fallback provider whose server is down (getBackend null) until initialized. */
+  function lazyFallback(calls: string[]): AgentBackendProvider {
+    return {
+      id: 'fake-oc',
+      getBackend: () => null,
+      initializeForDirectory: async (directory) => {
+        calls.push(`fallback.initialize:${directory}`)
+        return () => ({
+          sessions: {
+            get: async ({ sessionId }: { sessionId: string }) => ({ ...LEGACY_SESSION, id: sessionId }),
+            list: async () => [LEGACY_SESSION],
+            status: async () => ({}),
+            replyPermission: async () => new AgentRequestError({ detail: 'no such request' }),
+          },
+          catalog: { providers: async () => ({ providers: [], connected: [], defaults: {} }), config: async () => ({}), agents: async () => [] },
+          auth: { methods: async () => ({ oc: [{ type: 'oauth' as const, label: 'OC' }] }) },
+        } as unknown as AgentBackend)
+      },
+      subscribeEvents: () => null,
+      onStarted: () => {},
+    }
+  }
+
+  test('new sessions are created in Pi and initializing a directory does not start the fallback', async () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })
+    expect(provider.id).toBe('pi+fake-oc')
+    const getBackend = await provider.initializeForDirectory('/p', {})
+    if (getBackend instanceof Error) throw getBackend
+    expect(calls).toEqual([])
+    const backend = getBackend()
+    // The catalog is Pi's while OpenCode is down.
+    expect(await backend.catalog.agents({})).toEqual([{ name: 'pi-agent', mode: 'primary' }])
+    expect(await backend.sessions.create({ directory: '/p' })).toEqual(PI_SESSION)
+    expect(calls).toEqual(['pi.create'])
+  })
+
+  test('a session id Pi does not own routes to the fallback, starting it on first use', async () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })
+    const getBackend = await provider.initializeForDirectory('/p', {})
+    if (getBackend instanceof Error) throw getBackend
+    const backend = getBackend()
+    expect(await backend.sessions.get({ sessionId: 'ses_legacy' })).toEqual(LEGACY_SESSION)
+    expect(calls).toEqual(['fallback.initialize:/p'])
+    // A second use goes through the same started fallback, not a new start.
+    expect(await backend.sessions.get({ sessionId: 'ses_legacy2' })).toEqual({ ...LEGACY_SESSION, id: 'ses_legacy2' })
+    expect(calls).toEqual(['fallback.initialize:/p'])
+  })
+
+  test('listings, status and MCP merge across backends without starting the fallback', async () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })
+    const getBackend = await provider.initializeForDirectory('/p', {})
+    if (getBackend instanceof Error) throw getBackend
+    const backend = getBackend()
+    expect(await backend.sessions.list({ directory: '/p' })).toEqual([PI_SESSION])
+    expect(await backend.sessions.status({ directory: '/p' })).toEqual({ pi_new: { state: 'idle' } })
+    expect(await backend.mcp!.status({ directory: '/p' })).toEqual({ pi_server: { status: 'connected' } })
+    expect(calls).toEqual(['pi.list'])
+  })
+
+  test('an initialized fallback joins listings, and the composite serves both backends', async () => {
+    const calls: string[] = []
+    const fallback = lazyFallback(calls)
+    const provider = withPiDefault({ fallback, pi: fakePi(calls) })
+    // The OpenCode server is up: getBackend returns it without initializing.
+    fallback.getBackend = () => ({
+      sessions: {
+        list: async () => [LEGACY_SESSION],
+        get: async ({ sessionId }: { sessionId: string }) => ({ ...LEGACY_SESSION, id: sessionId }),
+      },
+    } as unknown as AgentBackend)
+    const backend = provider.getBackend('/p')
+    expect(backend).not.toBeNull()
+    expect(await backend!.sessions.list({ directory: '/p' })).toEqual([LEGACY_SESSION, PI_SESSION])
+    expect(await backend!.sessions.get({ sessionId: 'ses_legacy' })).toEqual(LEGACY_SESSION)
+    // Only Pi listed; the fallback was already up, nothing needed initializing.
+    expect(calls).toEqual(['pi.list'])
   })
 })
 

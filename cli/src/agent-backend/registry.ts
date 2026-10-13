@@ -1,7 +1,11 @@
 // Process-wide agent backend provider used by the session runtime.
 //
-// The built-in OpenCode provider is the default. Plugins replace it through
-// the `agent_backend` filter, resolved once at startup by
+// Pi is the default backend (#177): every new session starts in Pi, sessions
+// OpenCode already owns keep routing to OpenCode by session id, and the
+// OpenCode server starts lazily on their first use. ROADIE_BACKEND=opencode
+// (or --backend opencode) restores the old OpenCode default, including the
+// deprecated per-channel Pi opt-in via ROADIE_PI_CHANNELS. Plugins replace the
+// provider through the `agent_backend` filter, resolved once at startup by
 // `resolveAgentBackendProvider()`. Tests swap it with `setAgentBackendProvider`,
 // which returns a function restoring the previous provider.
 
@@ -14,12 +18,28 @@ import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
 import { PiBackendProvider } from './pi/backend.js'
-import { withPiChannels } from './pi/router.js'
+import { withPiChannels, withPiDefault } from './pi/router.js'
 import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
 
 /**
- * The built-in default: OpenCode, plus Pi for the channels listed in
- * ROADIE_PI_CHANNELS (comma-separated ids, #51 spike). Unset means OpenCode only.
+ * The ROADIE_BACKEND choice: `pi` (the default) or `opencode` (the previous
+ * default, including the ROADIE_PI_CHANNELS per-channel opt-in). The same
+ * values are accepted by the bot command's --backend flag, which wins over the
+ * environment variable. Anything else is a startup error, never a fallback.
+ */
+export function configuredBackend(): 'pi' | 'opencode' {
+  const raw = process.env['ROADIE_BACKEND']
+  const value = raw?.trim().toLowerCase()
+  if (!value || value === 'pi') return 'pi'
+  if (value === 'opencode') return 'opencode'
+  throw new Error(`ROADIE_BACKEND must be "pi" or "opencode", got "${raw}"`)
+}
+
+/**
+ * The built-in default: Pi for every new session, with OpenCode serving the
+ * sessions it already owns. ROADIE_BACKEND=opencode restores the previous
+ * default (OpenCode, plus Pi for the channels listed in ROADIE_PI_CHANNELS,
+ * comma-separated ids, #51 spike).
  */
 let resolvedDefault: AgentBackendProvider | undefined
 
@@ -49,23 +69,14 @@ export function setPiPool(pool: PiPoolHandle & { agentDir: string }): void {
 
 type PiPoolHandle = NonNullable<ConstructorParameters<typeof PiBackendProvider>[0]['pool']>
 
-function defaultProvider(): AgentBackendProvider {
-  if (resolvedDefault) return resolvedDefault
-  const channels = (process.env['ROADIE_PI_CHANNELS'] ?? '').split(',').map((id) => id.trim()).filter(Boolean)
-  if (channels.length === 0) return openCodeBackendProvider
-  const bin = process.env['ROADIE_PI_BIN'] || 'pi'
-  const version = checkPiVersion(bin)
-  if (version instanceof Error) {
-    console.warn(`[agent-backend] Pi channels disabled, staying on OpenCode: ${version.message}`)
-    return openCodeBackendProvider
-  }
+function buildPiProvider(): PiBackendProvider {
   // Opt-in shell isolation (--isolate-shells): Pi's bash tool must go through
   // the same wrapper as OpenCode's, and Pi only takes a shell through
   // `shellPath` in a Roadie-owned agent dir (the pools'). Without that dir the
   // backend refuses Pi sessions instead of running them unisolated.
   const isolateShellsUser = store.getState().isolateShellsUser
-  const pi = new PiBackendProvider({
-    bin,
+  return new PiBackendProvider({
+    bin: process.env['ROADIE_PI_BIN'] || 'pi',
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     fileEditLogDir: getDataDir(),
     // Same --enable-skill / --disable-skill filter the OpenCode backend applies.
@@ -83,11 +94,49 @@ function defaultProvider(): AgentBackendProvider {
       isolateShells: { username: isolateShellsUser, dataDir: getDataDir(), agentDir: piPool?.agentDir ?? null },
     }),
   })
-  resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
+}
+
+function defaultProvider(): AgentBackendProvider {
+  if (resolvedDefault) return resolvedDefault
+  const backend = configuredBackend()
+  const channels = (process.env['ROADIE_PI_CHANNELS'] ?? '').split(',').map((id) => id.trim()).filter(Boolean)
+  if (backend === 'opencode') {
+    // The previous default. ROADIE_PI_CHANNELS still works here but is
+    // deprecated: use the Pi default instead of per-channel opt-in.
+    if (channels.length === 0) return openCodeBackendProvider
+    console.warn('[agent-backend] ROADIE_PI_CHANNELS is deprecated and will be removed: set ROADIE_BACKEND=pi (the default) to run every new session on Pi')
+    const pi = buildPiProvider()
+    const version = checkPiVersion(pi.options.bin)
+    if (version instanceof Error) {
+      console.warn(`[agent-backend] Pi channels disabled, staying on OpenCode: ${version.message}`)
+      return openCodeBackendProvider
+    }
+    resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
+    return resolvedDefault
+  }
+  // Pi is the default (#177). Per-channel opt-in has no effect here.
+  if (channels.length > 0) {
+    console.warn('[agent-backend] ROADIE_PI_CHANNELS is ignored: Pi is already the default backend (set ROADIE_BACKEND=opencode to restore the old per-channel behaviour)')
+  }
+  const pi = buildPiProvider()
+  const version = checkPiVersion(pi.options.bin)
+  if (version instanceof Error) {
+    // No silent fallback: a Pi default with a missing or outdated binary must
+    // fail startup with a clear error (opt back into OpenCode explicitly).
+    throw new Error(`${version.message}. Pi is the default agent backend; install Pi ${MIN_PI_MAJOR}.x or newer, or set ROADIE_BACKEND=opencode to keep OpenCode as the default`)
+  }
+  resolvedDefault = withPiDefault({ fallback: openCodeBackendProvider, pi })
   return resolvedDefault
 }
 
-// Pi is added only in resolveAgentBackendProvider(), after the data dir is set.
+/** Tests: forget the cached default so the next resolution re-reads the environment. */
+export function clearResolvedDefaultProvider(): void {
+  resolvedDefault = undefined
+}
+
+// The default (Pi over OpenCode) is built only in resolveAgentBackendProvider(),
+// after the data dir is set. Until then the runtime holds the OpenCode
+// placeholder, same as before.
 let currentProvider: AgentBackendProvider = withProviderFilters(openCodeBackendProvider)
 
 /**

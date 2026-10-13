@@ -62,6 +62,10 @@ process.title = 'roadie'
 cli
   .command('', 'Set up and run the Roadie Discord bot')
   .option('--platform <name>', 'Chat platform: discord (default) or slack. Also ROADIE_PLATFORM')
+  .option(
+    '--backend <name>',
+    'Agent backend for new sessions: pi (default) or opencode. Existing OpenCode sessions keep running on OpenCode either way. Also ROADIE_BACKEND',
+  )
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
@@ -220,6 +224,7 @@ cli
   )
   .action(
     async (options: {
+      backend?: string
       restartOnboarding?: boolean
       addChannels?: boolean
       dataDir?: string
@@ -285,6 +290,18 @@ cli
 
         // Initialize file logging to <dataDir>/roadie.log
         initLogFile(getDataDir())
+
+        // Agent backend selection (--backend / ROADIE_BACKEND, #177). The
+        // flag wins over the env, matching the other ROADIE_* flags. The
+        // registry re-reads this when it resolves the provider below.
+        if (options.backend) {
+          const value = options.backend.trim().toLowerCase()
+          if (value !== 'pi' && value !== 'opencode') {
+            cliLogger.error(`Invalid --backend: ${options.backend}. Use "pi" or "opencode".`)
+            process.exit(EXIT_NO_RESTART)
+          }
+          process.env['ROADIE_BACKEND'] = value
+        }
 
         // Batch all CLI flag store updates into a single setState call.
         const defaultVerbosity = (() => {
@@ -603,10 +620,15 @@ cli
             }
           }
         }
-        const backend = resolveAgentBackendProvider()
-        if (backend.id !== 'opencode') {
-          cliLogger.log(`Agent backend: ${backend.id}`)
+        let backend
+        try {
+          backend = resolveAgentBackendProvider()
+        } catch (error) {
+          // e.g. Pi is the default backend but the pi binary is missing or too old.
+          cliLogger.error(error instanceof Error ? error.message : String(error))
+          process.exit(EXIT_NO_RESTART)
         }
+        cliLogger.log(`Agent backend: ${backend.id}`)
         const platform = options.platform ?? process.env.ROADIE_PLATFORM ?? 'discord'
         if (platform === 'slack') {
           const { runNativeSlack } = await import('./slack-bot.js')

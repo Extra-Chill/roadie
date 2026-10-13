@@ -22,9 +22,15 @@ import { clearIdentityCache, getCachedPerson, isIdentityHookConfigured, resolveP
 import { getOpencodeSystemMessage } from './system-message.js'
 
 const savedPlugins = process.env.ROADIE_PLUGINS
+const savedBackend = process.env.ROADIE_BACKEND
 afterEach(() => {
   resetHooks()
+  // Re-resolve on the legacy OpenCode default: these tests do not exercise the
+  // Pi default, and this must not require a pi binary (see registry.test.ts).
+  process.env.ROADIE_BACKEND = 'opencode'
   resolveAgentBackendProvider()
+  if (savedBackend === undefined) delete process.env.ROADIE_BACKEND
+  else process.env.ROADIE_BACKEND = savedBackend
   clearIdentityCache()
   if (savedPlugins === undefined) delete process.env.ROADIE_PLUGINS
   else process.env.ROADIE_PLUGINS = savedPlugins

@@ -319,7 +319,7 @@ export type AgentBackendInitializeOptions = {
 
 /**
  * Supplies agent backends to the session runtime, one per project directory.
- * The default provider is OpenCode (see `./opencode.ts`).
+ * The default provider is Pi over OpenCode (see `./registry.ts`).
  */
 export type AgentBackendProvider = {
   /** Name used in logs. */
