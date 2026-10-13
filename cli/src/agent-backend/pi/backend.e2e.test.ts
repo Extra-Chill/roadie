@@ -413,4 +413,62 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const history = await provider.getBackend().sessions.messages({ sessionId: forked.id, directory: project })
     expect(history instanceof Error ? 0 : history.length).toBeGreaterThan(4)
   })
+
+  test('noReply records a context-only message without a model turn; the next turn sees it', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'one' }] })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+
+    const bodies = server.bodies.length
+    const record = await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, noReply: true, parts: [{ kind: 'text', text: 'NO_REPLY_CONTEXT_MARKER' }] })
+    expect(record).toBeUndefined()
+    expect(server.bodies.length).toBe(bodies)
+    const history = await provider.getBackend().sessions.messages({ sessionId: session.id, directory: project })
+    if (history instanceof Error) throw history
+    const lastUser = history.findLast((entry) => entry.message.role === 'user')
+    expect(lastUser?.parts.some((part) => part.kind === 'text' && part.text === 'NO_REPLY_CONTEXT_MARKER')).toBe(true)
+
+    const next = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'two' }] })
+    await until(() => (idleCount(session.id) > next ? true : undefined))
+    const body = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }> }
+    expect(JSON.stringify(body.messages)).toContain('NO_REPLY_CONTEXT_MARKER')
+  }, 30_000)
+
+  test('project agents list in the catalog and their system prompt and permission rules apply to a turn', async () => {
+    const dir = path.join(root, 'agent-project')
+    fs.mkdirSync(path.join(dir, '.opencode', 'agents'), { recursive: true })
+    fs.writeFileSync(path.join(dir, '.opencode', 'agents', 'restricted.md'), [
+      '---',
+      'description: Restricted reviewer',
+      'mode: primary',
+      'permission:',
+      '  bash: ask',
+      '---',
+      'RESTRICTED_AGENT_SYSTEM_MARKER',
+      '',
+    ].join('\n'))
+    const agents = await provider.getBackend().catalog.agents({ directory: dir })
+    if (agents instanceof Error) throw agents
+    expect(agents.map((agent) => agent.name)).toContain('restricted')
+
+    const session = await provider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    const bodies = server.bodies.length
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text: 'RUN_TOOL echo agent-ran' }], agent: 'restricted' })
+    // The agent's bash-ask rule guards the tool; without it Pi's allow fallback would run it.
+    const asked = await until(() => events.find((e) => e.type === 'permission.asked' && e.request.sessionId === session.id))
+    if (asked.type !== 'permission.asked') throw new Error('unreachable')
+    expect(asked.request.permission).toBe('bash')
+    expect(await provider.getBackend().sessions.replyPermission({ requestId: asked.request.id, directory: dir, reply: 'once' })).toBeUndefined()
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const body = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }> }
+    const system = body.messages.find((m) => m.role === 'system')
+    expect(JSON.stringify(system?.content)).toContain('RESTRICTED_AGENT_SYSTEM_MARKER')
+
+    expect(await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: dir, parts: [{ kind: 'text', text: 'hi' }], agent: 'does-not-exist' })).toBeInstanceOf(Error)
+  }, 40_000)
 })

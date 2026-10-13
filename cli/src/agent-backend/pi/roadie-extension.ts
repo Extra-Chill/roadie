@@ -10,12 +10,20 @@
 //   roadie_sleep) from the schemas in ROADIE_PI_TOOLS_FILE. Each call is sent to
 //   Roadie as an `input` UI request titled ROADIE_TOOL_TITLE; Roadie runs the
 //   tool in the bot process and answers with the JSON result.
+// - Registers the ROADIE_APPEND_COMMAND command so the backend can record a
+//   context-only message (`noReply`) through `pi.sendMessage` with
+//   `triggerTurn: false`: it lands in the session history without starting a
+//   model turn, and the model sees it as a user message on the next turn.
 
 import fs from 'node:fs'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
 export const ROADIE_QUESTION_TITLE = 'roadie:question'
+/** Command the backend prompts with to record a message without a turn. */
+export const ROADIE_APPEND_COMMAND = 'roadie:append'
+/** customType marking the messages that command records (./events.ts maps them to user messages). */
+export const ROADIE_CONTEXT_TYPE = 'roadie:context'
 
 // Same contract as OpenCode's `question` tool, so prompts and the chat UI match.
 const QUESTION_DESCRIPTION = `Use this tool when you need to ask the user questions during execution. This allows you to:
@@ -83,6 +91,11 @@ type ExtensionApi = {
   }): void
   on(event: 'before_agent_start', handler: (event: { systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>): void
   on(event: 'tool_call', handler: (event: ToolCallEvent, ctx: Context) => Promise<{ block: true; reason: string } | undefined>): void
+  registerCommand?(name: string, options: {
+    description?: string
+    handler(args: string): Promise<void>
+  }): void
+  sendMessage?(message: { customType: string; content: string | Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>; display: boolean }, options?: { triggerTurn?: boolean }): void
 }
 
 function readToolSchemas(): ToolSchema[] {
@@ -147,6 +160,29 @@ export function shellEnvPrefix(env: Record<string, string>): string {
 export default function roadieExtension(pi: ExtensionApi) {
   const mcpServers = new Map<string, string>()
   syncMcpServers(pi, mcpServers)
+
+  // The backend's `noReply` prompts arrive here (an extension command runs
+  // immediately, even mid-turn): the payload is the JSON-encoded message, and
+  // `triggerTurn: false` keeps it out of the model loop. Pi persists it as a
+  // custom message, which the model sees as a user message on the next turn.
+  pi.registerCommand?.(ROADIE_APPEND_COMMAND, {
+    description: 'Record a context-only message from Roadie without starting a model turn',
+    async handler(args) {
+      let payload: { text?: string; images?: Array<{ data?: string; mimeType?: string }> } = {}
+      try {
+        payload = args ? JSON.parse(args) as typeof payload : {}
+      } catch {
+        payload = { text: args }
+      }
+      const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = []
+      if (payload.text) content.push({ type: 'text', text: payload.text })
+      for (const image of payload.images ?? []) {
+        if (image.data && image.mimeType) content.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+      }
+      if (content.length === 0 || !pi.sendMessage) return
+      pi.sendMessage({ customType: ROADIE_CONTEXT_TYPE, content, display: true }, { triggerTurn: false })
+    },
+  })
 
   pi.registerTool({
     name: 'question',

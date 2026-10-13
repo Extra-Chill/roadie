@@ -18,6 +18,16 @@
 // the OpenCode wrapper there when the pools give it a Roadie-owned agent dir,
 // and refuses Pi sessions when it cannot (see prepareShellIsolation).
 //
+// Agents (./agents.ts): Pi has no agent concept, so the OpenCode-format
+// definitions a project already has are mapped onto turns — catalog lists
+// them, and a selected agent contributes its system prompt, model and
+// permission rules to that turn.
+//
+// noReply: Pi's RPC has no "record without a turn", so context-only messages
+// go through the extension's /roadie:append command (`sendMessage` with
+// `triggerTurn: false`): they land in the session history without a model
+// turn, and the model reads them as user messages on the next turn.
+//
 // Gaps (spike): no OAuth through Roadie (sign in with `pi` itself).
 
 import fs from 'node:fs'
@@ -41,6 +51,8 @@ import { PiEventTranslator, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
+import { agentFor, piAgents } from './agents.js'
+import { ROADIE_APPEND_COMMAND } from './roadie-extension.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { openCodeResourceArgs } from './resources.js'
 import { isSkillAllowed } from '../../skill-filter.js'
@@ -321,6 +333,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** Servers added through the backend (per-person MCP), and enabled-state overrides, by directory. */
   private addedMcp = new Map<string, Record<string, PiMcpServer>>()
   private mcpEnabled = new Map<string, Map<string, boolean>>()
+  /** Permission rules from the selected agent for the current turn, by session id. */
+  private turnAgentRules = new Map<string, AgentPermissionRule[]>()
   private backend: AgentBackend
   private toolsFile: string
   /** The --isolate-shells gate, resolved once per provider. */
@@ -335,7 +349,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       catalog: {
         providers: () => this.providers(),
         config: async () => (options.model ? { model: options.model } : {}),
-        agents: async () => [{ name: 'build', description: 'Pi coding agent', mode: 'primary' }],
+        agents: async ({ directory }) => piAgents(directory),
         commands: ({ directory }) => this.commands(directory),
       },
       mcp: {
@@ -744,7 +758,9 @@ export class PiBackendProvider implements AgentBackendProvider {
       return
     }
     const decision = decidePermission({
-      rules: this.permissionRules.get(session.id) ?? [],
+      // The selected agent's rules first, so the session's Roadie rules still
+      // win — OpenCode evaluates session rules after agent ones, last match wins.
+      rules: [...(this.turnAgentRules.get(session.id) ?? []), ...(this.permissionRules.get(session.id) ?? [])],
       tool: call.tool,
       input: call.input,
       cwd: call.cwd || session.directory,
@@ -851,6 +867,30 @@ export class PiBackendProvider implements AgentBackendProvider {
   private touch(session: RunningSession) {
     session.updatedAt = Date.now()
     this.scheduleIdleStop(session)
+  }
+
+  /**
+   * Record a context-only (`noReply`) message without starting a model turn.
+   * Pi's RPC has no append primitive, so the backend prompts the Roadie
+   * extension's `/roadie:append` command (extension commands run immediately,
+   * even mid-turn) and the extension records the message with
+   * `pi.sendMessage(..., { triggerTurn: false })`: it lands in the session
+   * history, persisted, and the model reads it as a user message on the next
+   * turn. An empty message records nothing.
+   */
+  private async appendContextMessage(session: RunningSession, text: string, images: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<AgentRequestError | undefined> {
+    if (!text && images.length === 0) return undefined
+    const accepted = await session.process.request<{ disposition?: string }>({
+      type: 'prompt',
+      message: `/${ROADIE_APPEND_COMMAND} ${JSON.stringify({ text, images })}`,
+    })
+    if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
+    if (accepted.disposition !== 'handled') {
+      // The command never ran: Pi started a real turn with the literal message.
+      await session.process.request({ type: 'abort' })
+      return new AgentRequestError({ detail: 'Pi did not record the context-only message (Roadie append command missing)' })
+    }
+    return undefined
   }
 
   /** (Re)arm the idle stop. Never stops a busy session or one awaiting a permission reply. */
@@ -976,12 +1016,28 @@ export class PiBackendProvider implements AgentBackendProvider {
         const history = toAgentHistory({ messages: result.messages, sessionId })
         return limit !== undefined ? history.slice(-limit) : history
       },
-      prompt: async ({ sessionId, directory, parts, system, model, variant, noReply }) => {
-        // Pi has no "record without a turn"; Roadie uses noReply for context-only messages.
-        if (noReply) return undefined
+      prompt: async ({ sessionId, directory, parts, system, agent, model, variant, noReply }) => {
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
-        if (system !== undefined) fs.writeFileSync(session.systemFile, system)
+        // The turn's agent: its system prompt, model and permission rules apply
+        // like OpenCode applies an agent definition to a prompt. Unknown names
+        // are rejected instead of silently running as the default agent.
+        let turnSystem = system
+        if (agent !== undefined) {
+          const definition = agentFor({ directory: session.directory, agent })
+          if (!definition) return new AgentRequestError({ detail: `Pi has no agent ${agent}` })
+          if (definition.prompt) turnSystem = turnSystem !== undefined ? `${turnSystem}\n\n${definition.prompt}` : definition.prompt
+          if (!noReply && !model && definition.model && (definition.model.providerId !== session.model?.provider || definition.model.modelId !== session.model?.id)) {
+            const set = await session.process.request<PiModel>({ type: 'set_model', provider: definition.model.providerId, modelId: definition.model.modelId })
+            if (set instanceof Error) return new AgentRequestError({ detail: set.message })
+            session.model = { provider: set.provider, id: set.id }
+          }
+          if (definition.permission.length > 0 && !noReply) this.turnAgentRules.set(sessionId, definition.permission)
+          else this.turnAgentRules.delete(sessionId)
+        } else {
+          this.turnAgentRules.delete(sessionId)
+        }
+        if (turnSystem !== undefined) fs.writeFileSync(session.systemFile, turnSystem)
         await this.writeShellEnv(session.shellEnvFile, sessionId)
         if (model && (model.providerId !== session.model?.provider || model.modelId !== session.model?.id)) {
           const set = await session.process.request<PiModel>({ type: 'set_model', provider: model.providerId, modelId: model.modelId })
@@ -992,12 +1048,20 @@ export class PiBackendProvider implements AgentBackendProvider {
           const set = await session.process.request({ type: 'set_thinking_level', level: variant })
           if (!(set instanceof Error)) session.thinking = variant
         }
+        const { message: typed, images } = promptText(parts)
+        // Context-only message: record it without a model turn, so the agent
+        // sees it on the next turn (see appendContextMessage).
+        if (noReply) {
+          const recorded = await this.appendContextMessage(session, typed, images)
+          if (recorded) return recorded
+          this.touch(session)
+          return undefined
+        }
         // Branch awareness, as OpenCode's context-awareness plugin: a note when the
         // checkout's branch (or detached HEAD) differs from the last one announced.
         const gitState = await resolveGitState({ directory: session.directory }).catch(() => null)
         const branch = shouldInjectBranch({ previousGitState: session.gitState, currentGitState: gitState })
         if (branch.inject) session.gitState = gitState!
-        const { message: typed, images } = promptText(parts)
         const message = branch.inject ? `${typed}\n${branch.text}` : typed
         const accepted = await session.process.request({
           type: 'prompt',
@@ -1009,7 +1073,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.touch(session)
         return undefined
       },
-      command: async ({ sessionId, directory, command, arguments: args, model, variant }) => {
+      command: async ({ sessionId, directory, command, arguments: args, agent, model, variant }) => {
         // Disabled skills are refused like OpenCode's permission.skill deny —
         // before the session starts, and again once pi's command list resolves
         // (pi discovers its own skill locations Roadie does not control).
@@ -1028,6 +1092,7 @@ export class PiBackendProvider implements AgentBackendProvider {
           sessionId,
           directory,
           parts: [{ kind: 'text', text: `/${piName}${args ? ` ${args}` : ''}` }],
+          ...(agent && { agent }),
           ...(model && { model }),
           ...(variant && { variant }),
         })
@@ -1094,6 +1159,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         const file = this.findSessionFile(sessionId)
         this.sessions.get(sessionId)?.process.kill()
         this.sessions.delete(sessionId)
+        this.turnAgentRules.delete(sessionId)
         if (file) fs.rmSync(file, { force: true })
         return undefined
       },

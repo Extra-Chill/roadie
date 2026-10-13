@@ -18,6 +18,7 @@ import type {
   AgentUsage,
 } from '../events.js'
 import type { PiRecord } from './rpc.js'
+import { ROADIE_CONTEXT_TYPE } from './roadie-extension.js'
 
 type PiContent =
   | { type: 'text'; text: string }
@@ -54,9 +55,14 @@ export type PiMessage =
       isError?: boolean
       timestamp: number
     }
-  | { role: string; timestamp: number; content?: unknown }
+  | { role: string; timestamp: number; content?: unknown; customType?: string }
 
 type PiAssistantMessage = Extract<PiMessage, { role: 'assistant' }>
+
+/** A context-only message the backend recorded through the append command: Pi stores it as a custom message, the model reads it as a user turn. */
+export function isContextMessage(message: PiMessage): boolean {
+  return message.role === 'custom' && message.customType === ROADIE_CONTEXT_TYPE
+}
 
 export function piMessageId(message: { role: string; timestamp: number }): string {
   return `pi-${message.role}-${message.timestamp}`
@@ -118,7 +124,7 @@ export function toAgentMessage({
   completed: boolean
 }): AgentMessage | undefined {
   const id = piMessageId(message)
-  if (message.role === 'user') {
+  if (message.role === 'user' || isContextMessage(message)) {
     return { id, sessionId, role: 'user', createdAt: message.timestamp }
   }
   if (message.role !== 'assistant') return undefined
@@ -151,7 +157,7 @@ export function toAgentParts({
   toolResults?: Map<string, Extract<PiMessage, { role: 'toolResult' }>>
 }): AgentPart[] {
   const messageId = piMessageId(message)
-  if (message.role !== 'user' && message.role !== 'assistant') return []
+  if (message.role !== 'user' && message.role !== 'assistant' && !isContextMessage(message)) return []
   const parts: AgentPart[] = contentList(message.content).flatMap((item, index): AgentPart[] => {
     const base = { id: `${messageId}-${index}`, sessionId, messageId }
     if (item.type === 'text') {
@@ -211,7 +217,7 @@ export function toAgentHistory({
   return messages.flatMap((message) => {
     const agentMessage = toAgentMessage({ message, sessionId, parentId: lastUserId, completed: true })
     if (!agentMessage) return []
-    if (message.role === 'user') lastUserId = agentMessage.id
+    if (message.role === 'user' || isContextMessage(message)) lastUserId = agentMessage.id
     // History has no completion time; the creation time is the closest stable value.
     if (agentMessage.role === 'assistant') agentMessage.completedAt = message.timestamp
     return [{ message: agentMessage, parts: toAgentParts({ message, sessionId, toolResults }) }]
@@ -287,7 +293,7 @@ export class PiEventTranslator {
 
   private messageStart(message: PiMessage): AgentEvent[] {
     const sessionId = this.sessionId
-    if (message.role === 'user') {
+    if (message.role === 'user' || isContextMessage(message)) {
       const agentMessage = toAgentMessage({ message, sessionId, completed: true })!
       this.lastUserId = agentMessage.id
       return [

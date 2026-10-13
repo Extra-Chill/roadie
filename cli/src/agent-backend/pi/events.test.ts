@@ -107,6 +107,27 @@ describe('history', () => {
     expect(entry?.message.error?.name).toBe('MessageAbortedError')
     expect(entry?.message.finish).toBeUndefined()
   })
+
+  test('a noReply append (roadie:context custom message) is a user message in history and the stream; other custom messages stay invisible', () => {
+    const appended: PiMessage = { role: 'custom', customType: 'roadie:context', content: [{ type: 'text', text: 'recorded context' }], timestamp: 50 }
+    const history = toAgentHistory({ sessionId: 'ses-pi', messages: [appended] })
+    expect(history).toHaveLength(1)
+    expect(history[0]!.message.role).toBe('user')
+    expect(history[0]!.message.id).toBe('pi-custom-50')
+    expect(history[0]!.parts[0]).toMatchObject({ kind: 'text', text: 'recorded context' })
+
+    const translator = new PiEventTranslator('ses-pi')
+    const events = [
+      ...translator.translate({ type: 'message_start', message: appended }),
+      ...translator.translate({ type: 'message_end', message: appended }),
+    ]
+    const streamed = events.find((e) => e.type === 'message')
+    expect(streamed?.type === 'message' && streamed.message.role).toBe('user')
+    expect(events.some((e) => e.type === 'part' && e.part.kind === 'text' && e.part.messageId === 'pi-custom-50')).toBe(true)
+    expect(events.filter((e) => e.type === 'message')).toHaveLength(1)
+
+    expect(toAgentHistory({ sessionId: 'ses-pi', messages: [{ role: 'custom', customType: 'other-extension', content: 'x', timestamp: 2 }] })).toEqual([])
+  })
 })
 
 describe('decidePermission', () => {
