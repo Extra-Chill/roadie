@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.56.3] - 2026-10-13
+
+### Fixed
+- enforce --enable-skill / --disable-skill on Pi sessions
+- route /fork, /new-session and /add-project through the agent backend seam
+
 ## [0.56.2] - 2026-10-13
 
 ### Fixed
