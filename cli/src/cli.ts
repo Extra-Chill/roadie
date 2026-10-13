@@ -39,6 +39,10 @@ import {
 import { setPromptConfigPath } from './prompt-config.js'
 import { setContextProviderCommand } from './context-provider.js'
 import {
+  parseShellEnvTemplates,
+  SHELL_ENV_TEMPLATES_ENV,
+} from './turn-attribution-env.js'
+import {
   checkIsolatedShellSetup,
   ensureIsolatedShellWrapper,
   ISOLATE_SHELLS_ENV,
@@ -205,6 +209,15 @@ cli
         'Hide the named skills from the model and from slash commands. Skills come from your OpenCode setup (skills directories and plugins). Repeatable. Mutually exclusive with --enable-skill.',
       ),
   )
+  .option(
+    '--shell-env <NAME=template>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Extra environment variable for agent tool shells, as NAME=template. Repeatable. Templates may use {session_id}, {thread_id}, {channel_id}, {platform}, {actor_id} and {person_id}; a field with no value for a turn leaves the variable unset. Also ROADIE_SHELL_ENV (JSON object). Invalid names or unknown fields stop startup.',
+      ),
+  )
   .action(
     async (options: {
       restartOnboarding?: boolean
@@ -238,6 +251,7 @@ cli
       enableSkill?: string[]
       plugin?: string[]
       disableSkill?: string[]
+      shellEnv?: string[]
       opencodeHostname?: string
       opencodePort?: string
       platform?: string
@@ -374,6 +388,21 @@ cli
           return requested
         })()
 
+        // Extra agent tool-shell variables (--shell-env / ROADIE_SHELL_ENV).
+        // Strict on both sources: a typo'd name or an unknown template field
+        // must stop the bot, never export an empty or wrong variable.
+        const shellEnvTemplates = (() => {
+          const parsed = parseShellEnvTemplates({
+            flag: options.shellEnv,
+            json: process.env[SHELL_ENV_TEMPLATES_ENV],
+          })
+          if (parsed instanceof Error) {
+            cliLogger.error(parsed.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed
+        })()
+
         if (
           publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
           !process.env.OPENCODE_SERVER_PASSWORD
@@ -407,6 +436,7 @@ cli
           ...(options.allowMention && { allowedMentions: options.allowMention }),
           ...(opencodeHostname && { opencodeHostname }),
           ...(opencodePort !== undefined && { opencodePort }),
+          ...(Object.keys(shellEnvTemplates).length > 0 && { shellEnvTemplates }),
         })
 
         // Fail fast on shell isolation before any Discord connection: wrong
@@ -480,6 +510,11 @@ cli
         if (options.restrictDirectories) {
           cliLogger.log(
             'Restricted directories: the agent asks before reading outside the working directory',
+          )
+        }
+        if (Object.keys(shellEnvTemplates).length > 0) {
+          cliLogger.log(
+            `Shell env templates configured for agent tool shells: ${Object.keys(shellEnvTemplates).join(', ')}`,
           )
         }
         if (permissionTimeoutMs !== undefined) {

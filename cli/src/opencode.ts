@@ -74,6 +74,7 @@ import {
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
 import { ensureAgentTokenSecret } from './agent-token.js'
+import { SHELL_ENV_TEMPLATES_ENV } from './turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from './isolated-shell.js'
 
 export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
@@ -1207,6 +1208,15 @@ async function startSingleServer({
         // blanks it again in the same env, so shells hold a token bound to
         // their own session instead of the database credentials.
         ROADIE_AGENT_TOKEN_SECRET: ensureAgentTokenSecret(),
+        // Configured --shell-env / ROADIE_SHELL_ENV templates, validated at
+        // bot startup. The shell.env hook in this server process applies them
+        // to every tool shell. Forwarded only when the bot has validated
+        // templates, so a server started outside the bot (e.g. a local
+        // `roadie send`) keeps the raw inherited ROADIE_SHELL_ENV and the
+        // hook applies the user's own configuration.
+        ...(Object.keys(store.getState().shellEnvTemplates).length > 0 && {
+          [SHELL_ENV_TEMPLATES_ENV]: JSON.stringify(store.getState().shellEnvTemplates),
+        }),
         // Opt-in shell isolation: every bash tool call runs as the agent
         // user through the generated wrapper (see isolated-shell.ts).
         ...(shellIsolation && { SHELL: shellIsolation.shellPath }),

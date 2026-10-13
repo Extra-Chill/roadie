@@ -126,6 +126,7 @@ Service installs configure Roadie through the environment; nothing needs to touc
 | `ROADIE_LOCK_PORT` | Port of the local endpoint (bound to `127.0.0.1`). |
 | `ROADIE_MANAGED` | `1`: the host owns installation and upgrades. |
 | `ROADIE_PLUGINS` | Plugins to load (comma-separated). Same as `--plugin`. |
+| `ROADIE_SHELL_ENV` | Extra agent tool-shell variables as a JSON object of `NAME=template` pairs (see [Shell env](#shell-env)). Same as `--shell-env`. |
 
 ### Sending from other users and processes
 
@@ -191,6 +192,32 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 Hosts that prefer external commands to code can use the flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 
 Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROADIE_CHANNEL_ID` and `ROADIE_PERSON_ID`, so scripts the agent runs know who they are acting for.
+
+### Shell env
+
+Hosts can export extra environment variables into every agent tool shell, on both the OpenCode and Pi backends, with `--shell-env <NAME=template>` (repeatable) or `ROADIE_SHELL_ENV` as a JSON object. A template can mix literal text with `{field}` placeholders:
+
+```bash
+roadie --shell-env 'ROADIE_DEPLOY_HOOK=https://ops.example/hook/{session_id}' \
+       --shell-env 'ROADIE_SESSION_LABEL={platform}:{thread_id}'
+```
+
+```bash
+ROADIE_SHELL_ENV='{"ROADIE_DEPLOY_HOOK": "https://ops.example/hook/{session_id}"}' roadie
+```
+
+Names come only from your configuration; Roadie never adds variables on its own behalf and does not know who reads them. Templates are built from the session fields Roadie already knows when it builds the shell environment:
+
+| Field | Value |
+|---|---|
+| `{session_id}` | The agent session id (unset only in a shell outside any session) |
+| `{thread_id}` | The chat thread bound to the session |
+| `{channel_id}` | The parent channel of that thread |
+| `{platform}` | Chat platform of the current turn's speaker |
+| `{actor_id}` | Platform user id of the current turn's speaker |
+| `{person_id}` | Host person id from the identity hook, recorded with the actor |
+
+There is no `{thread_url}`: building one needs platform-specific context (a Discord guild id, a Slack workspace) that Roadie does not track per turn. An invalid variable name or an unknown field stops startup with an error rather than exporting a wrong value, and a field with no value for a turn (no channel yet, a turn without a human speaker) leaves that variable unset.
 
 ### Subagents
 

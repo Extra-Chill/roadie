@@ -11,6 +11,10 @@
 // And the current turn's attribution (thread, channel, speaker); see
 // turn-attribution-env.ts for the env contract.
 //
+// And the configured --shell-env / ROADIE_SHELL_ENV templates over session
+// fields, applied here for the OpenCode backend and by the Pi backend's
+// shell env file.
+//
 // And the per-session agent token plus credential scrubbing: tool shells get
 // ROADIE_AGENT_TOKEN (HMAC-bound to this session) instead of the database
 // credentials, so `roadie` subcommands run through the bot's scoped agent
@@ -20,8 +24,11 @@ import type { Plugin } from '@opencode-ai/plugin'
 import { z } from 'zod'
 import { createLogger, LogPrefix } from './logger.js'
 import {
+  applyShellEnvTemplates,
   applyTurnAttributionEnv,
+  parseShellEnvTemplates,
   resolveTurnAttribution,
+  SHELL_ENV_TEMPLATES_ENV,
 } from './turn-attribution-env.js'
 import { AGENT_TOKEN_SECRET_ENV, applyAgentShellEnv } from './agent-token.js'
 
@@ -95,18 +102,34 @@ export const bashToolSchemaPlugin: Plugin = async () => {
         sessionId: input.sessionID,
       })
       injectRoadieSessionEnv({ sessionID: input.sessionID, env: output.env })
-      if (!input.sessionID) {
-        applyTurnAttributionEnv({ env: output.env, attribution: undefined })
-        return
-      }
-      const attribution = await resolveTurnAttribution(input.sessionID)
-        .catch((e) => new Error('Failed to resolve turn attribution', { cause: e }))
+      // The bot validated these templates at startup and forwarded the
+      // accepted JSON; an unparsable value here (a hand-started server)
+      // is logged and skipped rather than exporting wrong variables.
+      const shellEnvTemplates = (() => {
+        const raw = process.env[SHELL_ENV_TEMPLATES_ENV]
+        if (!raw) return undefined
+        const parsed = parseShellEnvTemplates({ json: raw })
+        if (parsed instanceof Error) {
+          logger.warn(`Ignoring ${SHELL_ENV_TEMPLATES_ENV}: ${parsed.message}`)
+          return undefined
+        }
+        return Object.keys(parsed).length > 0 ? parsed : undefined
+      })()
+      const attribution = input.sessionID
+        ? await resolveTurnAttribution(input.sessionID)
+            .catch((e) => new Error('Failed to resolve turn attribution', { cause: e }))
+        : undefined
+      const resolvedAttribution = attribution instanceof Error ? undefined : attribution
       if (attribution instanceof Error) {
         logger.warn(`[ACTOR] ${attribution.message} for session ${input.sessionID}: ${String(attribution.cause)}`)
-        applyTurnAttributionEnv({ env: output.env, attribution: undefined })
-        return
       }
-      applyTurnAttributionEnv({ env: output.env, attribution })
+      applyTurnAttributionEnv({ env: output.env, attribution: resolvedAttribution })
+      applyShellEnvTemplates({
+        env: output.env,
+        sessionId: input.sessionID,
+        attribution: resolvedAttribution,
+        templates: shellEnvTemplates,
+      })
     },
   }
 }

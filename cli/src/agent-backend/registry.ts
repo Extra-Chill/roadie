@@ -71,6 +71,9 @@ function defaultProvider(): AgentBackendProvider {
     // Same --enable-skill / --disable-skill filter the OpenCode backend applies.
     enabledSkills: store.getState().enabledSkills,
     disabledSkills: store.getState().disabledSkills,
+    // Same configured --shell-env / ROADIE_SHELL_ENV templates the OpenCode
+    // backend's shell.env hook applies to tool shells.
+    shellEnvTemplates: store.getState().shellEnvTemplates,
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),

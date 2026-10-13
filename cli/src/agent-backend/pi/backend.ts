@@ -67,7 +67,11 @@ import { appendFileEditEvents, extractEditedFiles } from '../../file-edit-log.js
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
 import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
-import { applyTurnAttributionEnv, resolveTurnAttribution } from '../../turn-attribution-env.js'
+import {
+  applyShellEnvTemplates,
+  applyTurnAttributionEnv,
+  resolveTurnAttribution,
+} from '../../turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
 
 const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
@@ -136,6 +140,12 @@ export type PiBackendOptions = {
   enabledSkills?: string[]
   /** Skill blacklist from --disable-skill (skill-filter.ts): these neither load nor run. */
   disabledSkills?: string[]
+  /**
+   * Extra tool-shell variables from --shell-env / ROADIE_SHELL_ENV
+   * (turn-attribution-env.ts): variable name → template over session fields.
+   * Applied to every session's shell env file like OpenCode's shell.env hook.
+   */
+  shellEnvTemplates?: Record<string, string>
   /**
    * Bill model calls to Roadie's credential pools through the loopback proxy.
    * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
@@ -958,8 +968,9 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /**
    * The per-turn tool-shell environment, as OpenCode's shell.env hook builds it:
-   * the session's scoped agent token, ROADIE_SESSION_ID and the current turn's
-   * attribution. The extension prepends it to every bash command.
+   * the session's scoped agent token, ROADIE_SESSION_ID, the current turn's
+   * attribution and the configured --shell-env templates. The extension
+   * prepends it to every bash command.
    */
   private async writeShellEnv(file: string, sessionId: string) {
     const env: Record<string, string> = {}
@@ -967,6 +978,12 @@ export class PiBackendProvider implements AgentBackendProvider {
     env[ROADIE_SESSION_ID_ENV] = sessionId
     const attribution = await resolveTurnAttribution(sessionId).catch(() => undefined)
     applyTurnAttributionEnv({ env, attribution })
+    applyShellEnvTemplates({
+      env,
+      sessionId,
+      attribution,
+      templates: this.options.shellEnvTemplates,
+    })
     const temp = `${file}.${process.pid}.tmp`
     fs.writeFileSync(temp, JSON.stringify(env), { mode: 0o600 })
     fs.renameSync(temp, file)
