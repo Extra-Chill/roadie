@@ -83,7 +83,12 @@ function stubBackend(id: string, created: string[]): AgentBackend {
       config: async () => ({ model: `${id}/${id}-model` }),
       agents: async () => [{ name: 'build', mode: 'primary' }],
     },
-    auth: { methods: async () => ({}) },
+    auth: {
+      methods: async () => ({}),
+      startOAuth: async () => new Error('not used in this test'),
+      finishOAuth: async () => new Error('not used in this test'),
+      setApiKey: async () => new Error('not used in this test'),
+    },
   }
 }
 

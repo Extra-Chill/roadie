@@ -23,7 +23,7 @@ afterAll(async () => {
   await closeDb()
 })
 
-const hooks = await bashToolSchemaPlugin()
+const hooks = await bashToolSchemaPlugin({} as Parameters<typeof bashToolSchemaPlugin>[0])
 
 async function runShellEnv(sessionId: string | undefined): Promise<Record<string, string>> {
   const output = { env: {} as Record<string, string> }
