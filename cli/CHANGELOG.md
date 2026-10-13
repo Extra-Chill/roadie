@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.59.0] - 2026-10-13
+
+### Changed
+- Pi is the default agent backend; OpenCode starts lazily
+
 ## [0.58.2] - 2026-10-13
 
 ### Fixed
