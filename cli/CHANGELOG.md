@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.58.2] - 2026-10-13
+
+### Fixed
+- serve ChatGPT (openai-codex) accounts in OpenCode pools and import them
+
 ## [0.58.1] - 2026-10-13
 
 ### Fixed
