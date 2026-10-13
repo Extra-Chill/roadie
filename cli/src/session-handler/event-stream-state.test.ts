@@ -1915,6 +1915,46 @@ describe('getPromptCacheClear', () => {
     })
   })
 
+  test('measures request gap across a long tool call', () => {
+    const sessionId = 'ses_cache_long_tool'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1_000 }),
+      assistantEvent({
+        sessionId, messageId: 'msg_asst_1', parentID: 'msg_user_1', created: 2_000,
+        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 577000, write: 0 } },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          sessionID: sessionId,
+          part: {
+            id: 'part_tool',
+            sessionID: sessionId,
+            messageID: 'msg_asst_1',
+            type: 'tool',
+            callID: 'call_1',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: {},
+              output: '',
+              time: { start: 2_000, end: 422_000 },
+            },
+          },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 422_000 }),
+      assistantEvent({
+        sessionId, messageId: 'msg_asst_2', parentID: 'msg_user_2', created: 422_000,
+        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 577000 } },
+      }),
+    ]
+    const clear = getPromptCacheClear({ events, sessionId, currentMessageId: 'msg_asst_2' })
+    expect(clear?.minutesSincePreviousMessage).toBe(7)
+    expect(clear?.toolRuntimeMinutes).toBe(7)
+    expect(formatPromptCacheClearMessage(clear!)).toBe('prompt cache missed (577k → 0) (7 mins since last request, tool ran 7 mins)')
+  })
+
   test('detects a fork cache miss against its copied assistant history', () => {
     const sessionId = 'ses_btw_fork'
     const events = [

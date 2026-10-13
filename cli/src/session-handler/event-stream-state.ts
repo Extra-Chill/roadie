@@ -879,6 +879,7 @@ export type PromptCacheClear = {
   previousMessageId: string
   currentMessageId: string
   minutesSincePreviousMessage: number
+  toolRuntimeMinutes?: number
 }
 
 function hasPruneBetween({
@@ -1022,14 +1023,26 @@ export function getPromptCacheClear({
     if (currentUsage.cacheRead > expectedCacheRead * PROMPT_CACHE_DROP_RATIO) {
       return undefined
     }
+    let toolRuntimeMs = 0
+    for (let index = 0; index <= end; index++) {
+      const event = events[index]?.event
+      if (event?.type !== 'part') continue
+      const part = event.part
+      if (part.sessionId === sessionId && part.messageId === info.id && part.kind === 'tool'
+        && typeof part.startedAt === 'number' && typeof part.endedAt === 'number') {
+        toolRuntimeMs += Math.max(0, part.endedAt - part.startedAt)
+      }
+    }
+    const minutesSincePreviousMessage = Math.max(0, Math.round((current.createdAt - info.createdAt) / 60_000))
     return {
       expectedCacheRead,
       currentCacheRead: currentUsage.cacheRead,
       previousMessageId: info.id,
       currentMessageId: current.id,
-      minutesSincePreviousMessage: Math.max(0, Math.round(
-        (current.createdAt - info.completedAt) / 60_000,
-      )),
+      minutesSincePreviousMessage,
+      ...(minutesSincePreviousMessage > 5 && toolRuntimeMs > 0
+        ? { toolRuntimeMinutes: Math.max(1, Math.round(toolRuntimeMs / 60_000)) }
+        : {}),
     }
   }
   return undefined
@@ -1048,7 +1061,10 @@ export function formatPromptCacheClearMessage(
   clear: PromptCacheClear,
   systemDiff?: { additions: number; deletions: number },
 ): string {
-  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)}) (${clear.minutesSincePreviousMessage} mins passed)`
+  const gap = clear.minutesSincePreviousMessage > 5
+    ? `${clear.minutesSincePreviousMessage} mins since last request${clear.toolRuntimeMinutes ? `, tool ran ${clear.toolRuntimeMinutes} mins` : ''}`
+    : `${clear.minutesSincePreviousMessage} mins passed`
+  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)}) (${gap})`
   if (!systemDiff || (systemDiff.additions === 0 && systemDiff.deletions === 0)) {
     return tokens
   }
