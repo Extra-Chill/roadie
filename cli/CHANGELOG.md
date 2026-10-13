@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.57.0] - 2026-10-13
+
+### Added
+- configurable agent-shell environment from session fields
+- delegate subagent tasks to child Pi sessions like OpenCode
+- API-key providers in pool rotations on Pi channels
+
+### Changed
+- remove project-channel creation; channels come from --channels-config
+
+### Fixed
+- type errors that fail the release package build
+- drop duplicate store import that breaks the CLI bundle
+- honor noReply and agent prompt options
+- pass the channel id so Slack sessions can run on Pi
+- isolate Pi bash under --isolate-shells and check its external paths
+- resolve the agent backend for every subcommand so Pi sessions are visible
+
 ## [0.56.3] - 2026-10-13
 
 ### Fixed
