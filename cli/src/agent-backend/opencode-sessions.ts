@@ -71,12 +71,6 @@ function toStatus(status: { type: string; attempt?: number; message?: string; ne
 export function openCodeSessionOperations(client: OpencodeClient): AgentSessionOperations {
   return {
     async generateTitle({ directory, prompt }) {
-      const config = await call('config.get', () => client.config.get({ directory }))
-      if (config instanceof Error) return config
-      const selected = config?.agent?.title?.model ?? config?.small_model
-      if (!selected) return new AgentRequestError({ detail: 'Configure agent.title.model or small_model explicitly in OpenCode for fork titles. Roadie does not choose a model for you.' })
-      const separator = selected.indexOf('/')
-      if (separator <= 0) return new AgentRequestError({ detail: 'small_model must use provider/model format' })
       const signal = AbortSignal.timeout(15_000)
       // Explicit non-default title prevents the temporary session's own
       // automatic title request. Its history starts empty: never fork it.
@@ -88,14 +82,15 @@ export function openCodeSessionOperations(client: OpencodeClient): AgentSessionO
         await client.session.abort({ sessionID: temporary.id, directory }).catch(() => undefined)
         await client.session.delete({ sessionID: temporary.id, directory }).catch(() => undefined)
       })
+      // No model override: OpenCode routes the title agent like any other
+      // agent (its own configured model, else the default model rotation).
       const response = await call('session.prompt', () => client.session.prompt({ sessionID: temporary.id, directory, agent: 'title',
-          model: { providerID: selected.slice(0, separator), modelID: selected.slice(separator + 1) },
           system: TITLE_REQUEST_SYSTEM, parts: [{ type: 'text', text: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) }],
         }, { signal }))
       if (response instanceof Error) return response
-      if (response?.info.role === 'assistant' && response.info.error) return new AgentRequestError({ detail: `Configured title model ${selected} failed: ${extractSdkErrorMessage(response.info.error)}` })
+      if (response?.info.role === 'assistant' && response.info.error) return new AgentRequestError({ detail: `Title model ${response.info.providerID}/${response.info.modelID} failed: ${extractSdkErrorMessage(response.info.error)}` })
       const title = response?.parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('').trim()
-      return title || new AgentRequestError({ detail: 'Small model returned an empty fork title' })
+      return title || new AgentRequestError({ detail: 'Title model returned an empty fork title' })
     },
     async setTitle({ sessionId, directory, title }) {
       const result = await call('session.update', () => client.session.update({ sessionID: sessionId, ...(directory !== undefined && { directory }), title }))
