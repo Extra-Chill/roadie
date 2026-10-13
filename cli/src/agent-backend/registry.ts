@@ -12,6 +12,7 @@ import { openCodeBackendProvider } from './opencode.js'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
+import { store } from '../store.js'
 import { PiBackendProvider } from './pi/backend.js'
 import { withPiChannels } from './pi/router.js'
 import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
@@ -58,6 +59,11 @@ function defaultProvider(): AgentBackendProvider {
     console.warn(`[agent-backend] Pi channels disabled, staying on OpenCode: ${version.message}`)
     return openCodeBackendProvider
   }
+  // Opt-in shell isolation (--isolate-shells): Pi's bash tool must go through
+  // the same wrapper as OpenCode's, and Pi only takes a shell through
+  // `shellPath` in a Roadie-owned agent dir (the pools'). Without that dir the
+  // backend refuses Pi sessions instead of running them unisolated.
+  const isolateShellsUser = store.getState().isolateShellsUser
   const pi = new PiBackendProvider({
     bin,
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
@@ -65,6 +71,9 @@ function defaultProvider(): AgentBackendProvider {
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
+    ...(isolateShellsUser && {
+      isolateShells: { username: isolateShellsUser, dataDir: getDataDir(), agentDir: piPool?.agentDir ?? null },
+    }),
   })
   resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
   return resolvedDefault
