@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.60.0] - 2026-10-13
+
+### Added
+- threads: none answers inline with one session per channel
+
+### Fixed
+- page archived threads by archive timestamp, name failing route
+- name long-message threads from their message.txt
+
 ## [0.59.0] - 2026-10-13
 
 ### Changed
