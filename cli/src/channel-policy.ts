@@ -8,7 +8,7 @@
 //     "123456789012345678":          # channel id, category id, or "*"
 //       respond: always               # always | mention | never
 //       who: [owner, "role:team", "user:42", "person:<host id>"]   # or "everyone"
-//       threads: per-message          # per-message | existing-only
+//       threads: per-message          # per-message | existing-only | none
 //       directory: /var/www/site
 //       agent: build
 //       model: anthropic/claude-opus-4-7
@@ -60,7 +60,7 @@ const policySchema = z
       .strict()
       .optional(),
     who: z.union([z.literal('everyone'), z.array(whoEntrySchema).min(1)]).optional(),
-    threads: z.enum(['per-message', 'existing-only']).optional(),
+    threads: z.enum(['per-message', 'existing-only', 'none']).optional(),
     directory: z.string().min(1).optional(),
     agent: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
@@ -442,6 +442,11 @@ export function channelStartsThreads(channelId: string): boolean {
   const policy = resolveChannelPolicy(channelId)
   if (!policy) return true
   return (policy.threads ?? 'per-message') === 'per-message'
+}
+
+/** True when channel messages belong to one long-running channel conversation. */
+export function channelUsesChannelConversation(channelId: string): boolean {
+  return resolveChannelPolicy(channelId)?.threads === 'none'
 }
 
 /** Per-channel overrides for settings Roadie otherwise stores in SQLite. */

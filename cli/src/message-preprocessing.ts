@@ -201,6 +201,32 @@ export async function preprocessNewSessionMessage({
 }
 
 /**
+ * Pre-process a message in a channel answered inline (`threads: none`). The
+ * channel has no starter message; every turn is just the message itself.
+ */
+export async function preprocessChannelMessage({
+  message,
+  isCliInjected,
+}: {
+  message: Message
+  isCliInjected: boolean
+}): Promise<PreprocessResult> {
+  const messageContent = isCliInjected
+    ? (message.content || '')
+    : resolveContentMentions(message)
+  const repliedMessage = await getRepliedMessageContext({ message })
+  const resolved = await resolveMessagePrompt({
+    message,
+    text: messageContent,
+    includeExtras: !isCliInjected,
+  })
+  if (shouldSkipEmptyPrompt({ message, ...resolved })) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+  return { ...resolved, repliedMessage }
+}
+
+/**
  * Pre-process a message from a text channel (creates a new thread).
  */
 export async function preprocessNewThreadMessage({

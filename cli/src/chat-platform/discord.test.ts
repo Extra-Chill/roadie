@@ -2,8 +2,8 @@
 // directly before the seam. A recording stand-in for ThreadChannel checks that.
 
 import { describe, expect, test } from 'vitest'
-import { ChannelType, type ThreadChannel } from 'discord.js'
-import { createDiscordChatThread } from './discord.js'
+import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { createDiscordChatChannel, createDiscordChatThread } from './discord.js'
 import { NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 
 function fakeThread(overrides: Record<string, unknown> = {}) {
@@ -93,5 +93,93 @@ describe('Discord chat thread', () => {
     expect(await createDiscordChatThread(fakeThread().thread).channelTopic()).toBe('project topic')
     const uncached = fakeThread({ parent: null, guild: { channels: { fetch: async () => null } } })
     expect(await createDiscordChatThread(uncached.thread).channelTopic('c-2')).toBeUndefined()
+  })
+})
+
+function fakeTextChannel() {
+  const calls: Array<[string, unknown]> = []
+  const channel = {
+    id: 'channel-9',
+    name: 'roadie',
+    type: ChannelType.GuildText,
+    guildId: 'guild-1',
+    createdTimestamp: 99,
+    topic: '  team channel  ',
+    client: { user: { id: 'bot-1' } },
+    send: async (payload: unknown) => {
+      calls.push(['send', payload])
+      return { id: `msg-${calls.length}` }
+    },
+    setName: async (name: string) => {
+      calls.push(['setName', name])
+    },
+  }
+  return { channel: channel as unknown as TextChannel, calls }
+}
+
+const anchored = (messageId: string) => ({
+  allowedMentions: { parse: [], repliedUser: false },
+  reply: { messageReference: messageId, failIfNotExists: false },
+})
+
+describe('Discord inline channel conversation (threads: none)', () => {
+  test('the channel is the conversation container', async () => {
+    const { channel } = fakeTextChannel()
+    const chat = createDiscordChatChannel(channel)
+    expect([chat.id, chat.name, chat.parentId, chat.spaceId, chat.createdAt, chat.botUserId]).toEqual([
+      'channel-9', 'roadie', 'channel-9', 'guild-1', 99, 'bot-1',
+    ])
+    expect(chat.capabilities.rename).toBe(false)
+    expect(await chat.channelTopic()).toBe('team channel')
+  })
+
+  test('a turn anchors only its first reply to the message that started it', async () => {
+    const { channel, calls } = fakeTextChannel()
+    const chat = createDiscordChatChannel(channel)
+    chat.setReplyAnchor?.('user-msg-1')
+    await chat.sendPart('first answer')
+    await chat.sendPart('more')
+    await chat.sendMessage('footer')
+    const sends = calls.map(([, payload]) => payload as Record<string, unknown>)
+    expect(sends[0]).toMatchObject(anchored('user-msg-1'))
+    expect(sends[1]).not.toHaveProperty('reply')
+    expect(sends[2]).not.toHaveProperty('reply')
+  })
+
+  test('the next turn re-anchors to its own message', async () => {
+    const { channel, calls } = fakeTextChannel()
+    const chat = createDiscordChatChannel(channel)
+    chat.setReplyAnchor?.('user-msg-1')
+    await chat.sendPart('answer one')
+    chat.setReplyAnchor?.('user-msg-2')
+    await chat.sendMessage('answer two')
+    const sends = calls.map(([, payload]) => payload as Record<string, unknown>)
+    expect(sends[0]).toMatchObject(anchored('user-msg-1'))
+    expect(sends[1]).toMatchObject(anchored('user-msg-2'))
+  })
+
+  test('session titles never rename the channel', async () => {
+    const { channel, calls } = fakeTextChannel()
+    const chat = createDiscordChatChannel(channel)
+    await chat.rename('A session title')
+    await chat.syncTitle?.('A session title')
+    expect(calls).toEqual([])
+  })
+
+  test('footer mentions the speaker, never the bot', async () => {
+    const chat = createDiscordChatChannel(fakeTextChannel().channel)
+    expect(await chat.footerMentionUserId('user-7')).toBe('user-7')
+    expect(await chat.footerMentionUserId('bot-1')).toBeUndefined()
+    expect(await chat.footerMentionUserId(undefined)).toBeUndefined()
+  })
+})
+
+describe('Discord chat thread without an anchor', () => {
+  test('thread parts are never sent as replies', async () => {
+    const { thread, calls } = fakeThread()
+    const chat = createDiscordChatThread(thread)
+    expect(chat.setReplyAnchor).toBeUndefined()
+    await chat.sendPart('answer')
+    expect(calls[0]?.[1]).not.toHaveProperty('reply')
   })
 })

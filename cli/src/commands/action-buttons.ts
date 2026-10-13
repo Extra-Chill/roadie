@@ -6,10 +6,14 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelType,
   MessageFlags,
   type ButtonInteraction,
+  type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
+import { channelUsesChannelConversation } from '../channel-policy.js'
+import { createDiscordChatChannel } from '../chat-platform/discord.js'
 import crypto from 'node:crypto'
 import { getThreadSession } from '../database.js'
 import {
@@ -156,7 +160,7 @@ async function sendClickedActionToModel({
   prompt,
 }: {
   interaction: ButtonInteraction
-  thread: ThreadChannel
+  thread: ThreadChannel | TextChannel
   prompt: string
 }): Promise<void> {
   const resolved = await resolveWorkingDirectory({ channel: thread })
@@ -167,13 +171,21 @@ async function sendClickedActionToModel({
   const username = interaction.user.globalName || interaction.user.username
 
   // Action button clicks use opencode queue mode.
-  const runtime = getOrCreateRuntime({
-    threadId: thread.id,
-    thread,
-    projectDirectory: resolved.projectDirectory,
-    sdkDirectory: resolved.workingDirectory,
-    channelId: thread.parentId || thread.id,
-  })
+  const runtime = thread.type === ChannelType.GuildText
+    ? getOrCreateRuntime({
+        threadId: thread.id,
+        chat: createDiscordChatChannel(thread),
+        projectDirectory: resolved.projectDirectory,
+        sdkDirectory: resolved.workingDirectory,
+        channelId: thread.id,
+      })
+    : getOrCreateRuntime({
+        threadId: thread.id,
+        thread,
+        projectDirectory: resolved.projectDirectory,
+        sdkDirectory: resolved.workingDirectory,
+        channelId: thread.parentId || thread.id,
+      })
   await runtime.enqueueIncoming({
     prompt,
     userId: interaction.user.id,
@@ -303,8 +315,14 @@ export async function handleActionButton(
     return
   }
 
-  const thread = interaction.channel
-  if (!thread?.isThread()) {
+  const channel = interaction.channel
+  // Inline channel conversations (`threads: none`) host buttons directly.
+  const thread =
+    channel?.isThread() ||
+    (channel?.type === ChannelType.GuildText && channelUsesChannelConversation(channel.id))
+      ? channel
+      : undefined
+  if (!thread) {
     logger.warn('[ACTION] Button clicked outside thread channel')
     await interaction.editReply({
       content: '**Action Required**\n_This action is no longer available._',

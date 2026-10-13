@@ -825,7 +825,7 @@ export function splitMarkdownForDiscord({
 export async function sendThreadMessage(
   thread: ThreadChannel | TextChannel,
   content: string,
-  options?: { flags?: number },
+  options?: { flags?: number; replyTo?: string },
 ): Promise<Message> {
   const MAX_LENGTH = 2000
 
@@ -834,12 +834,22 @@ export async function sendThreadMessage(
   const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
 
   let firstMessage: Message | undefined
+  // Only the first message of a split send is anchored as a reply; the
+  // continuation chunks follow it directly.
+  const replyFields = () =>
+    !firstMessage && options?.replyTo
+      ? {
+          allowedMentions: { parse: [], repliedUser: false },
+          reply: { messageReference: options.replyTo, failIfNotExists: false },
+        }
+      : {}
 
   for (const segment of segments) {
     if (segment.type === 'components') {
       const message = await thread.send({
         components: segment.components,
         flags: MessageFlags.IsComponentsV2 | baseFlags,
+        ...replyFields(),
       })
       if (!firstMessage) {
         firstMessage = message
@@ -877,7 +887,7 @@ export async function sendThreadMessage(
       if (chunk.length > MAX_LENGTH) {
         chunk = chunk.slice(0, MAX_LENGTH - 4) + '...'
       }
-      const message = await thread.send({ content: chunk, flags: sendFlags })
+      const message = await thread.send({ content: chunk, flags: sendFlags, ...replyFields() })
       if (!firstMessage) {
         firstMessage = message
       }
@@ -888,11 +898,12 @@ export async function sendThreadMessage(
 }
 
 export async function sendSessionPartMessage(
-  thread: ThreadChannel,
+  thread: ThreadChannel | TextChannel,
   content: string,
   options?: {
     leadWithBlankLine?: boolean
     flags?: number
+    replyTo?: string
   },
 ): Promise<Message> {
   return sendThreadMessage(
@@ -901,7 +912,7 @@ export async function sendSessionPartMessage(
       content,
       leadWithBlankLine: options?.leadWithBlankLine === true,
     }),
-    { flags: options?.flags },
+    { flags: options?.flags, replyTo: options?.replyTo },
   )
 }
 

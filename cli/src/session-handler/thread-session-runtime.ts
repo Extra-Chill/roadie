@@ -19,9 +19,9 @@ import {
 } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { type Client, type ThreadChannel } from 'discord.js'
+import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
-import { createDiscordChatThread } from '../chat-platform/discord.js'
+import { createDiscordChatChannel, createDiscordChatThread } from '../chat-platform/discord.js'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -44,7 +44,7 @@ import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../age
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
-import { applicationDirectory, channelPolicyOverrides, channelContextBinding } from '../channel-policy.js'
+import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
   renderContextSections,
@@ -404,6 +404,23 @@ async function ensureRuntimeForThread({
     )
     return null
   })
+  // An inline channel conversation (`threads: none`) is keyed by its channel.
+  if (fetched?.type === ChannelType.GuildText && channelUsesChannelConversation(fetched.id)) {
+    const resolvedChannel = await resolveWorkingDirectory({ channel: fetched })
+    if (!resolvedChannel) {
+      logger.warn(`[RUNTIME] Skipping ${purpose} for channel ${threadId}: no project directory`)
+      return undefined
+    }
+    return getOrCreateRuntime({
+      threadId,
+      chat: createDiscordChatChannel(fetched),
+      projectDirectory: resolvedChannel.projectDirectory,
+      sdkDirectory: resolvedChannel.workingDirectory,
+      channelId: fetched.id,
+      appId,
+      sessionId: await getThreadSession(threadId),
+    })
+  }
   if (!fetched?.isThread()) {
     logger.warn(`[RUNTIME] Skipping ${purpose} for missing thread ${threadId}`)
     return undefined
@@ -2432,6 +2449,8 @@ export class ThreadSessionRuntime {
   private resolveOldestPendingDelivery(): void {
     const messageId = this.pendingDeliveryMessageIds.shift()
     if (messageId) {
+      // What the agent says next answers this message.
+      this.chat.setReplyAnchor?.(messageId)
       void this.setPendingReaction(messageId, false)
     }
   }
@@ -3959,6 +3978,10 @@ export class ThreadSessionRuntime {
       const pendingMessageId = this.isBusy() && !input.noReply ? input.sourceMessageId : undefined
       if (pendingMessageId) {
         this.markPendingDelivery(pendingMessageId)
+      } else if (!input.noReply && input.sourceMessageId && input.sourceChannelId === this.threadId) {
+        // A new turn: its first reply answers the message that started it.
+        // Only inline channel conversations implement anchoring.
+        this.chat.setReplyAnchor?.(input.sourceMessageId)
       }
       const promptResult = await getClient().sessions.prompt({
         sessionId: session.id,

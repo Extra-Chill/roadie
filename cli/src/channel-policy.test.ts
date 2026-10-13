@@ -11,6 +11,7 @@ import {
   channelAllowsSpeaker,
   channelPolicyOverrides,
   channelStartsThreads,
+  channelUsesChannelConversation,
   decideRespond,
   matchesWho,
   parseChannelsConfig,
@@ -125,10 +126,16 @@ describe('parseChannelsConfig', () => {
     ['unknown field', 'channels:\n  "1":\n    repsond: always\n'],
     ['bad respond', 'channels:\n  "1":\n    respond: sometimes\n'],
     ['bad who entry', 'channels:\n  "1":\n    who: ["admins"]\n'],
-    ['inline threads not implemented', 'channels:\n  "1":\n    threads: none\n'],
     ['broken yaml', 'channels: [\n'],
   ])('rejects %s', (_label, text) => {
     expect(parseChannelsConfig(text)).toBeInstanceOf(Error)
+  })
+
+  test('accepts threads none as a channel conversation policy', () => {
+    write('channels:\n  "channel-inline":\n    threads: none\n    respond: mention\n')
+    expect(resolveChannelPolicy('channel-inline')?.threads).toBe('none')
+    expect(channelStartsThreads('channel-inline')).toBe(false)
+    expect(channelUsesChannelConversation('channel-inline')).toBe(true)
   })
 })
 

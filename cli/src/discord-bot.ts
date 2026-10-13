@@ -59,6 +59,7 @@ import { getFileAttachments, getStarterMessageText, getTextAttachments, resolveC
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
+  preprocessChannelMessage,
   resolveMessagePrompt,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
@@ -147,11 +148,13 @@ import {
   channelAllowsCapability,
   channelAllowsSpeaker,
   channelStartsThreads,
+  channelUsesChannelConversation,
   decideRespond,
   resolveChannelPolicy,
   setChannelParentResolver,
   applicationDirectory,
 } from './channel-policy.js'
+import { createDiscordChatChannel } from './chat-platform/discord.js'
 import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -1051,6 +1054,74 @@ export async function startDiscordBot({
             await loadingReply.edit({ content: result })
             return
           }
+        }
+
+        // Channel policy `threads: none`: the channel itself is the
+        // conversation. One long-running session keyed by the channel id;
+        // replies stay inline, anchored to the message that started a turn.
+        if (channelUsesChannelConversation(channel.id)) {
+          const scope = { platform: 'discord', spaceId: channel.guildId, threadId: channel.id }
+          const hasExistingSession = await getThreadSession(channel.id)
+          const admission = await readConversationAdmission(scope)
+          const botMentioned = Boolean(
+            discordClient.user && message.mentions.has(discordClient.user.id),
+          )
+          const isNewConversation = !hasExistingSession && !admission
+          const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
+            actor: { platform: 'discord', id: message.author.id }, spaceId: channel.guildId,
+            personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+            channelId: channel.id, threadId: channel.id, eligible: true,
+            isNewConversation, createsThread: false,
+            hasSession: Boolean(hasExistingSession), mentionsBot: botMentioned,
+            isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
+            legacyOutcome: 'respond',
+          })
+          if (intake.outcome === 'ignore') return
+
+          const runtime = getOrCreateRuntime({
+            threadId: channel.id,
+            chat: createDiscordChatChannel(channel),
+            projectDirectory,
+            sdkDirectory: projectDirectory,
+            channelId: channel.id,
+            appId: currentAppId,
+          })
+          await recordConversationAdmission({ scope, actor: { platform: 'discord', id: message.author.id }, starter: isNewConversation, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
+
+          if (!message.author.bot && !isCliInjectedPrompt && intake.outcome !== 'context') {
+            cancelPendingActionButtons(channel.id)
+            cancelHtmlActionsForThread(channel.id)
+            if (await cancelPendingPermission(channel.id)) {
+              await runtime.abortActiveRunAndWait({ reason: 'user sent a new message while permission was pending' })
+            }
+            if (hasPendingQuestionForThread(channel.id)) {
+              await cancelPendingQuestion(channel.id)
+              await runtime.abortActiveRunAndWait({ reason: 'user sent a new message while question was pending' })
+            }
+            void cancelPendingFileUpload(channel.id)
+          }
+
+          await runtime.enqueueIncoming({
+            prompt: '',
+            userId: cliInjectedUserId || message.author.id,
+            actorVia: cliInjectedUserId ? 'cli' : 'chat',
+            username: cliInjectedUsername || message.member?.displayName || message.author.displayName,
+            sourceMessageId: message.id,
+            sourceThreadId: channel.id,
+            sourceChannelId: message.channelId,
+            appId: currentAppId,
+            agent: cliInjectedAgent,
+            model: cliInjectedModel,
+            permissions: cliInjectedPermissions,
+            injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
+            parentSessionId: cliInjectedParentSessionId,
+            noReply: intake.outcome === 'context' || undefined,
+            contextOnly: intake.outcome === 'context' || undefined,
+            preprocess: async () => {
+              return preprocessChannelMessage({ message, isCliInjected: isCliInjectedPrompt })
+            },
+          })
+          return
         }
 
         // Channel policy `threads: existing-only`: channel messages never start
