@@ -56,6 +56,9 @@ export const AGENT_PROJECT_REMOVE_PATH = '/roadie/agent/projects/remove'
 export const AGENT_PROJECT_OPEN_IN_DISCORD_PATH = '/roadie/agent/projects/open-in-discord'
 export const AGENT_THREADS_PATH = '/roadie/agent/threads'
 export const AGENT_USERS_PATH = '/roadie/agent/users'
+export const AGENT_CHANNELS_PATH = '/roadie/agent/channels'
+export const AGENT_CHANNEL_MESSAGES_PATH = '/roadie/agent/channels/messages'
+export const AGENT_CHANNEL_WEBHOOKS_PATH = '/roadie/agent/channels/webhooks'
 
 export class AgentRequestError extends Error {}
 
@@ -286,6 +289,34 @@ export function threadListQuery(options: {
   const query: Record<string, string> = { channel: options.channel }
   if (options.json) query.json = '1'
   if (options.limit !== undefined) query.limit = String(options.limit)
+  return query
+}
+
+/** Query parameters for `channel list`. */
+export function channelListQuery(options: { guild: string; json?: boolean }): Record<string, string> {
+  const query: Record<string, string> = { guild: options.guild }
+  if (options.json) query.json = '1'
+  return query
+}
+
+/** Query parameters for `channel read`. */
+export function channelReadQuery(options: {
+  channel: string
+  limit?: string | number
+  before?: string
+  json?: boolean
+}): Record<string, string> {
+  const query: Record<string, string> = { channel: options.channel }
+  if (options.limit !== undefined) query.limit = String(options.limit)
+  if (options.before) query.before = options.before
+  if (options.json) query.json = '1'
+  return query
+}
+
+/** Query parameters for `channel webhooks`. */
+export function channelWebhooksQuery(options: { channel: string; json?: boolean }): Record<string, string> {
+  const query: Record<string, string> = { channel: options.channel }
+  if (options.json) query.json = '1'
   return query
 }
 
@@ -562,6 +593,40 @@ export function buildAgentThreadListArgs(query: URLSearchParams): string[] {
   return args
 }
 
+const SNOWFLAKE = /^\d{1,25}$/
+
+function requireSnowflake(query: URLSearchParams, name: string): string {
+  const value = requireQueryValue(query, name)
+  if (!SNOWFLAKE.test(value)) throw new AgentRequestError(`${name} must be a Discord ID`)
+  return value
+}
+
+export function buildAgentChannelListArgs(query: URLSearchParams): string[] {
+  const args = ['channel', 'list', `--guild=${requireSnowflake(query, 'guild')}`]
+  if (queryFlag(query, 'json')) args.push('--json')
+  return args
+}
+
+export function buildAgentChannelReadArgs(query: URLSearchParams): string[] {
+  const args = ['channel', 'read', `--channel=${requireSnowflake(query, 'channel')}`]
+  const limit = queryInteger(query, 'limit', 1)
+  if (limit !== undefined) {
+    if (Number.parseInt(limit, 10) > 100) throw new AgentRequestError('limit must be <= 100')
+    args.push(`--limit=${limit}`)
+  }
+  if (queryValue(query, 'before') !== undefined) {
+    args.push(`--before=${requireSnowflake(query, 'before')}`)
+  }
+  if (queryFlag(query, 'json')) args.push('--json')
+  return args
+}
+
+export function buildAgentChannelWebhooksArgs(query: URLSearchParams): string[] {
+  const args = ['channel', 'webhooks', `--channel=${requireSnowflake(query, 'channel')}`]
+  if (queryFlag(query, 'json')) args.push('--json')
+  return args
+}
+
 export function buildAgentUserListArgs(query: URLSearchParams): string[] {
   const args = ['user', 'list', `--guild=${requireQueryValue(query, 'guild')}`]
   const search = queryValue(query, 'query')
@@ -715,6 +780,18 @@ export async function handleAgentRequest(
     }
     if (req.method === 'GET' && url.pathname === AGENT_THREADS_PATH) {
       await runAgentChild(buildAgentThreadListArgs(url.searchParams), res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === AGENT_CHANNELS_PATH) {
+      await runAgentChild(buildAgentChannelListArgs(url.searchParams), res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === AGENT_CHANNEL_MESSAGES_PATH) {
+      await runAgentChild(buildAgentChannelReadArgs(url.searchParams), res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === AGENT_CHANNEL_WEBHOOKS_PATH) {
+      await runAgentChild(buildAgentChannelWebhooksArgs(url.searchParams), res)
       return
     }
     if (req.method === 'GET' && url.pathname === AGENT_USERS_PATH) {

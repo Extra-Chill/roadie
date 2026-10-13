@@ -32,6 +32,9 @@ import {
   AGENT_SESSION_TITLE_PATH,
   AGENT_TASKS_PATH,
   AGENT_THREADS_PATH,
+  AGENT_CHANNELS_PATH,
+  AGENT_CHANNEL_MESSAGES_PATH,
+  AGENT_CHANNEL_WEBHOOKS_PATH,
   AGENT_USERS_PATH,
   runAgentCommand,
   type AgentCommandRequest,
@@ -281,6 +284,27 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
       query: { channel: '42', json: '1', limit: '10' },
     })
     expect(runs.at(-1)).toEqual(['thread', 'list', '--channel=42', '--json', '--limit=10'])
+  })
+
+  test('channel reads require Discord IDs and map the flags', async () => {
+    const before = runs.length
+    expect((await get(AGENT_CHANNELS_PATH, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=--help`, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=42&limit=500`, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=42&before=x`, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(AGENT_CHANNEL_WEBHOOKS_PATH, `Bearer ${token()}`)).status).toBe(400)
+    expect(runs.length).toBe(before)
+
+    await runClient({ method: 'GET', path: AGENT_CHANNELS_PATH, query: { guild: '555', json: '1' } })
+    expect(runs.at(-1)).toEqual(['channel', 'list', '--guild=555', '--json'])
+    await runClient({
+      method: 'GET',
+      path: AGENT_CHANNEL_MESSAGES_PATH,
+      query: { channel: '42', limit: '10', before: '99' },
+    })
+    expect(runs.at(-1)).toEqual(['channel', 'read', '--channel=42', '--limit=10', '--before=99'])
+    await runClient({ method: 'GET', path: AGENT_CHANNEL_WEBHOOKS_PATH, query: { channel: '42' } })
+    expect(runs.at(-1)).toEqual(['channel', 'webhooks', '--channel=42'])
   })
 
   test('user list requires the guild and maps the query', async () => {
