@@ -1,27 +1,38 @@
 // Credential-pool proxy for backends that speak HTTP instead of AI SDK (Pi, #51).
 //
-// A loopback Anthropic Messages endpoint in the bot process. A client sends a
-// normal `POST /v1/messages` whose `model` is a pool rotation name and whose
-// `x-roadie-key` header is a key Roadie handed that client's process. The
-// proxy maps the key to a session, resolves the session's pool list, and runs
-// the same routing as the OpenCode pool provider (./provider.ts): ordered
-// candidates per pool, the session's held route first, OAuth refresh,
-// Anthropic OAuth shaping (Claude Code identity, betas, tool names), cooldown
-// on 429 and the next candidate, route pin and last-used on success.
+// A loopback endpoint pair in the bot process, one per wire format a pool
+// rotation can speak:
+//   - `POST /v1/messages` (Anthropic Messages): the client's `model` is a pool
+//     rotation name and its `x-roadie-key` header is a key Roadie handed that
+//     client's process. The proxy maps the key to a session, resolves the
+//     session's pool list, and runs the same routing as the OpenCode pool
+//     provider (./provider.ts): ordered candidates per pool, the session's
+//     held route first, OAuth refresh, Anthropic OAuth shaping (Claude Code
+//     identity, betas, tool names), cooldown on 429 and the next candidate,
+//     route pin and last-used on success. Only `anthropic` candidates are
+//     served here.
+//   - `POST /chat/completions` (OpenAI-compatible, #176): same routing, for a
+//     rotation's API-key candidates (models.dev catalog providers like z.ai,
+//     or an account's own `baseURL`). The proxy swaps in the pool account's
+//     key as `Authorization: Bearer` and its base URL; Pi never sees a real
+//     credential.
 //
-// Credentials never leave Roadie. Only `anthropic` candidates are served; any
-// other provider in a rotation is skipped (it needs its own wire format).
+// A single Pi model speaks exactly one wire format, so a rotation spanning
+// formats (e.g. an `anthropic/` entry then an api-key entry) falls through
+// only among the candidates of the format it was called on: /v1/messages
+// tries the anthropic accounts, /chat/completions the api-key accounts.
 
 import http from 'node:http'
 import crypto from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { Readable } from 'node:stream'
-import { markCooldown, resolveCandidates } from './router.js'
-import { markUsed, readPoolAccounts, readPoolState } from './store.js'
+import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
+import { markUsed, readPoolAccounts, readPoolState, type ApiPoolAccount } from './store.js'
 import { CODEX_RESPONSES_URL, codexAccountId } from './adapters/openai-codex-oauth.js'
 import { setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { poolClientSessionId, resolvePoolClient } from './pool-clients.js'
+import { resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 import {
   cooldownUntilFromRetryAfter,
   ensureFreshOAuthAccount,
@@ -37,6 +48,16 @@ export const PROXY_KEY_HEADER = 'x-roadie-key'
 export const CODEX_PROVIDER = 'openai-codex'
 /** Route-pin rotation name for Codex: accounts rotate, the model is the client's. */
 const CODEX_ROTATION = 'codex'
+
+/**
+ * Candidates the OpenAI-compatible chat completions endpoint can serve: API-key
+ * accounts of any catalog provider. Anthropic keys speak Anthropic Messages
+ * (the /v1/messages wire), and ChatGPT (Codex) accounts are OAuth served on
+ * /codex/responses, so both stay out of this wire.
+ */
+function isApiKeyCandidate(candidate: PoolCandidate): candidate is PoolCandidate & { account: ApiPoolAccount } {
+  return candidate.account.type === 'api' && candidate.provider !== 'anthropic' && candidate.provider !== CODEX_PROVIDER
+}
 
 /** Anthropic-shaped error body, so the client reports it like an upstream error. */
 function errorResponse(res: http.ServerResponse, status: number, message: string) {
@@ -101,6 +122,8 @@ export type MessagesProxyOptions = {
   fetchImpl?: PoolFetch
   upstreamUrl?: string
   codexUrl?: string
+  /** Pre-resolved models.dev catalog for API-key base URLs (tests). Default: resolveCatalog. */
+  catalog?: ModelsDevCatalog
   now?: () => number
   /** Listen address. Defaults to 127.0.0.1 on an ephemeral port. */
   host?: string
@@ -121,6 +144,8 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
   const upstreamUrl = options.upstreamUrl ?? ANTHROPIC_MESSAGES_URL
   const codexUrl = options.codexUrl ?? CODEX_RESPONSES_URL
   const now = options.now ?? Date.now
+  const getCatalog = async (): Promise<ModelsDevCatalog | Error> =>
+    options.catalog ?? (await resolveCatalog({ dataDir: options.dataDir }))
 
   /**
    * Resolve a request's key to its session id and pool list. Session keys
@@ -144,6 +169,10 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
     const pathname = req.url?.split('?')[0] ?? ''
     if (req.method === 'POST' && pathname.endsWith('/codex/responses')) {
       await handleCodex(req, res)
+      return
+    }
+    if (req.method === 'POST' && pathname.endsWith('/chat/completions')) {
+      await handleChatCompletions(req, res)
       return
     }
     if (req.method !== 'POST' || !pathname.endsWith('/v1/messages')) {
@@ -221,6 +250,96 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
           now: timestamp,
         }).catch(() => {})
         await markUsed({ dataDir: options.dataDir, poolId: candidate.poolId, accountId: account.id, now: timestamp }).catch(() => {})
+      }
+      await pipeResponse(upstream, res)
+      return
+    }
+    if (lastRateLimited) {
+      errorResponse(res, 429, 'every account in the pool is rate limited')
+      return
+    }
+    errorResponse(res, 502, firstError ?? 'no candidate answered')
+  }
+
+  /**
+   * OpenAI-compatible chat completions (#176): the body's `model` is a pool
+   * rotation name; the proxy routes it over the rotation's API-key candidates
+   * exactly like the OpenCode pool provider does (same order, held route
+   * first, 429 cooldown, route pin on success) and swaps in the pool account's
+   * key and base URL. The request/response bodies pass through untouched.
+   */
+  async function handleChatCompletions(req: http.IncomingMessage, res: http.ServerResponse) {
+    const authorized = await authorize(req)
+    if (!authorized) {
+      errorResponse(res, 401, 'unknown or missing roadie key')
+      return
+    }
+    const { sessionId, poolIds } = authorized
+    if (poolIds.length === 0) {
+      errorResponse(res, 401, 'no credential pool for this session')
+      return
+    }
+    const raw = await readBody(req)
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      errorResponse(res, 400, 'invalid JSON body')
+      return
+    }
+    const rotationName = String(payload.model ?? '')
+    const timestamp = now()
+    const candidates = resolvePoolListCandidates({ poolIds, dataDir: options.dataDir, rotationName, now: timestamp })
+      .flatMap((resolution) => resolution.candidates)
+      .filter(isApiKeyCandidate)
+    if (candidates.length === 0) {
+      errorResponse(res, 401, `no usable api-key account in pools ${poolIds.join(',')} for ${rotationName}`)
+      return
+    }
+    const catalog = await getCatalog()
+    const baseURLFor = (candidate: PoolCandidate & { account: ApiPoolAccount }): string | undefined =>
+      candidate.account.baseURL ?? (catalog instanceof Error ? undefined : catalog[candidate.provider]?.api)
+    // heldCandidate returns a member of `candidates`, so it carries the same
+    // api-key narrowing.
+    const held = heldCandidate({ sessionId, rotationName, candidates, dataDir: options.dataDir, now: timestamp }) as (PoolCandidate & { account: ApiPoolAccount }) | null
+    const ordered = held ? [held, ...candidates.filter((candidate) => candidate !== held)] : candidates
+    let lastRateLimited: Response | undefined
+    let firstError: string | undefined
+    for (const candidate of ordered) {
+      const baseURL = baseURLFor(candidate)
+      if (!baseURL) {
+        firstError ??= `provider ${candidate.provider} has no base URL in the models.dev catalog; add the account with a --base-url to route it as OpenAI-compatible`
+        continue
+      }
+      const body = JSON.stringify({ ...payload, model: candidate.modelId })
+      const headers = forwardHeaders(req)
+      headers.set('authorization', `Bearer ${candidate.account.key}`)
+      let upstream: Response
+      try {
+        upstream = await fetchImpl(`${baseURL.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers, body })
+      } catch (cause) {
+        firstError ??= cause instanceof Error ? cause.message : String(cause)
+        continue
+      }
+      if (upstream.status === 429) {
+        lastRateLimited = upstream
+        await markCooldown({
+          dataDir: options.dataDir,
+          poolId: candidate.poolId,
+          accountId: candidate.account.id,
+          untilMs: cooldownUntilFromRetryAfter({ retryAfter: upstream.headers.get('retry-after'), now: timestamp }),
+        }).catch(() => {})
+        await upstream.body?.cancel().catch(() => {})
+        continue
+      }
+      if (upstream.ok) {
+        await setSessionRoute({
+          dataDir: options.dataDir,
+          sessionId,
+          route: { poolId: candidate.poolId, accountId: candidate.account.id, provider: candidate.provider, modelId: candidate.modelId, rotation: rotationName, pinnedAt: timestamp },
+          now: timestamp,
+        }).catch(() => {})
+        await markUsed({ dataDir: options.dataDir, poolId: candidate.poolId, accountId: candidate.account.id, now: timestamp }).catch(() => {})
       }
       await pipeResponse(upstream, res)
       return
