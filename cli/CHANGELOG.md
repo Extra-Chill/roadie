@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.58.1] - 2026-10-13
+
+### Fixed
+- persist session titles and rules; refresh catalog; honest mcp status
+
 ## [0.58.0] - 2026-10-13
 
 ### Added
