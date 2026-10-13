@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.61.0] - 2026-10-13
+
+### Added
+- agent-safe channel reads: channel list, read, webhooks
+
 ## [0.60.0] - 2026-10-13
 
 ### Added
