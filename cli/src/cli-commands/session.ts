@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { createDiscordClient, initDatabase, getChannelDirectory, createProjectChannels } from '../discord-bot.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError, type AgentBackend, type AgentBackendGetter } from '../agent-backend/types.js'
 import type { AgentSession } from '../agent-backend/events.js'
@@ -117,7 +117,7 @@ function formatTokenCount(count: number): string {
 cli
   .command(
     'session list',
-    'List all OpenCode sessions, marking which were started via Roadie',
+    'List all agent sessions, marking which were started via Roadie',
   )
   .option(
     '--project <path>',
@@ -175,13 +175,13 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      // Connect to each project's OpenCode server and gather sessions plus
+      // Connect to each project's backend and gather sessions plus
       // their live idle/busy status. Only session.list + session.status are
       // called per project so the command stays fast; per-session token totals
       // come straight from the session objects with no message fetching.
       // A session parked on a `question` tool reports session.status busy but
       // is really waiting for the user, so it is not "active". Treat it as
-      // `showing-question` (excluded by --active) using OpenCode's
+      // `showing-question` (excluded by --active) using the backend's
       // server-authoritative pending-question list.
       type GatheredSession = {
         session: AgentSession
@@ -191,16 +191,16 @@ cli
 
       const gathered: GatheredSession[] = []
       for (const projectDirectory of projectDirectories) {
-        cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
+        cliLogger.log(`Connecting to agent backend for ${projectDirectory}...`)
         const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
         if (getBackend instanceof Error) {
           if (options.all) {
             cliLogger.warn(
-              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getBackend.message}`,
+              `Skipping ${projectDirectory}: failed to connect to the agent backend: ${getBackend.message}`,
             )
             continue
           }
-          cliLogger.error('Failed to connect to OpenCode:', getBackend.message)
+          cliLogger.error('Failed to connect to the agent backend:', getBackend.message)
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -302,7 +302,9 @@ cli
             title: session.title || 'Untitled Session',
             directory: session.directory ?? entry.projectDirectory,
             updated: new Date(session.updatedAt ?? 0).toISOString(),
-            source: sessionToThread.has(session.id) ? 'roadie' : 'opencode',
+            // Backend-neutral source label: 'roadie' threads were started via
+            // Roadie, everything else came from the agent backend directly.
+            source: sessionToThread.has(session.id) ? 'roadie' : 'agent',
             threadId: sessionToThread.get(session.id) || null,
             status: entry.status,
             model: session.model?.modelId || null,
@@ -319,7 +321,7 @@ cli
         const session = entry.session
         const threadId = sessionToThread.get(session.id)
         const startSource = sessionStartSources.get(session.id)
-        const source = threadId ? '(roadie)' : '(opencode)'
+        const source = threadId ? '(roadie)' : '(agent)'
         const startedBy = startSource
           ? ` | started-by: ${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}${startSource.scheduled_task_id ? ` (#${startSource.scheduled_task_id})` : ''}`
           : ''
@@ -494,21 +496,16 @@ cli
 
       await initDatabase()
 
-      cliLogger.log('Connecting to OpenCode server...')
-      const getClient = await initializeOpencodeForDirectory(projectDirectory)
-      if (getClient instanceof Error) {
-        cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+      cliLogger.log('Connecting to agent backend...')
+      const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
+      if (getBackend instanceof Error) {
+        cliLogger.error('Failed to connect to the agent backend:', getBackend.message)
         process.exit(EXIT_NO_RESTART)
       }
 
       // Try current project first (fast path)
       const compactTools = !options.verbose
-      const backend = getAgentBackendProvider().getBackend(projectDirectory)
-      if (!backend) {
-        cliLogger.error('Failed to connect to OpenCode: agent backend is unavailable')
-        process.exit(EXIT_NO_RESTART)
-      }
-      const markdown = new ShareMarkdown(backend)
+      const markdown = new ShareMarkdown(getBackend())
       const result = await markdown.generate({
         sessionID: sessionId,
         compactTools,
@@ -520,31 +517,29 @@ cli
         process.exit(0)
       }
 
-      // Session not found in current project, search across all projects.
-      // project.list() returns all known projects globally from any OpenCode server,
-      // but session.list/get are scoped to the server's own project. So we try each.
+      // Session not found in the current project, search the other locally
+      // registered projects. Backends are per directory, so every candidate
+      // gets its own initializeForDirectory; unreadable directories are
+      // skipped. This is the same project scope `session list --all` and
+      // `session search --all` use.
       cliLogger.log('Session not in current project, searching all projects...')
-      const projectsResponse = await getClient().project.list()
-      const projects = projectsResponse.data || []
-      const otherProjects = projects
-        .filter((p) => path.resolve(p.worktree) !== projectDirectory)
-        .filter((p) => {
+      const otherDirectories = (await getAllTextChannelDirectories())
+        .map((directory) => path.resolve(directory))
+        .filter((directory) => directory !== projectDirectory)
+        .filter((directory) => {
           try {
-            fs.accessSync(p.worktree, fs.constants.R_OK)
+            fs.accessSync(directory, fs.constants.R_OK)
             return true
           } catch {
             return false
           }
         })
-        // Sort by most recently created first to find sessions faster
-        .sort((a, b) => b.time.created - a.time.created)
 
-      for (const project of otherProjects) {
-        const dir = project.worktree
-        cliLogger.log(`Trying project: ${dir}`)
-        const otherClient = await getAgentBackendProvider().initializeForDirectory(dir)
-        if (otherClient instanceof Error) continue
-        const otherMarkdown = new ShareMarkdown(otherClient())
+      for (const directory of otherDirectories) {
+        cliLogger.log(`Trying project: ${directory}`)
+        const otherBackend = await getAgentBackendProvider().initializeForDirectory(directory)
+        if (otherBackend instanceof Error) continue
+        const otherMarkdown = new ShareMarkdown(otherBackend())
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
           compactTools,
@@ -769,7 +764,7 @@ cli
 
       const listedDirectories = await Promise.all(
         existingDirectories.map(async (projectDirectory) => {
-          cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
+          cliLogger.log(`Connecting to agent backend for ${projectDirectory}...`)
           const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
           if (getClient instanceof Error) {
             return { projectDirectory, getClient, sessions: [] }
@@ -788,12 +783,12 @@ cli
         if (listed.getClient instanceof Error) {
           if (options.all) {
             cliLogger.warn(
-              `Skipping ${listed.projectDirectory}: failed to connect to OpenCode: ${listed.getClient.message}`,
+              `Skipping ${listed.projectDirectory}: failed to connect to the agent backend: ${listed.getClient.message}`,
             )
             continue
           }
           cliLogger.error(
-            'Failed to connect to OpenCode:',
+            'Failed to connect to the agent backend:',
             listed.getClient.message,
           )
           process.exit(EXIT_NO_RESTART)
@@ -1018,9 +1013,9 @@ cli
 cli
   .command(
     'session archive [threadId]',
-    'Archive a Discord thread without stopping its mapped OpenCode session',
+    'Archive a Discord thread without stopping its mapped agent session',
   )
-  .option('--session <sessionId>', 'Resolve thread from an OpenCode session ID')
+  .option('--session <sessionId>', 'Resolve thread from an agent session ID')
   .action(async (threadIdArg: string | undefined, options: { session?: string }) => {
     try {
       // Agent tool shells hold a per-session token, not database credentials;
@@ -1090,7 +1085,7 @@ cli
           )
           if (getBackend instanceof Error) {
             cliLogger.warn(
-              `Could not initialize OpenCode for ${channelConfig.directory}: ${getBackend.message}`,
+              `Could not initialize the agent backend for ${channelConfig.directory}: ${getBackend.message}`,
             )
           } else {
             client = getBackend()
@@ -1098,7 +1093,7 @@ cli
         }
       } else {
         cliLogger.warn(
-          `No mapped OpenCode session found for thread ${resolvedThreadId}`,
+          `No mapped agent session found for thread ${resolvedThreadId}`,
         )
       }
 
@@ -1152,7 +1147,7 @@ cli
       const { token: botToken } = await resolveBotCredentials()
       const rest = createDiscordRest(botToken)
 
-      // Try to resolve the project directory for the OpenCode abort call
+      // Try to resolve the project directory for the backend abort call
       const directory = await resolveSessionDirectoryFromDatabase({ sessionId })
       if (directory instanceof Error) {
         cliLogger.error(directory.message)
@@ -1161,12 +1156,12 @@ cli
 
       const serverResult = await getAgentBackendProvider().initializeForDirectory(directory)
       if (serverResult instanceof Error) {
-        cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
+        cliLogger.error(`Failed to initialize the agent backend: ${serverResult.message}`)
         process.exit(EXIT_NO_RESTART)
       }
 
       const client = serverResult()
-      // Don't pass directory — the server resolves sessions by ID regardless
+      // Don't pass directory — the backend resolves sessions by ID regardless
       // of the x-opencode-directory header, matching archiveThread's pattern.
       // This avoids issues when --cwd was used (session directory != project directory).
       // A rejection was not treated as failure before; only a transport error.
@@ -1203,9 +1198,9 @@ cli
 cli
   .command(
     'session title <title>',
-    'Update the OpenCode session title. Discord thread name follows automatically.',
+    'Update the agent session title. Discord thread name follows automatically.',
   )
-  .option('--session <sessionId>', 'OpenCode session ID')
+  .option('--session <sessionId>', 'Agent session ID')
   .option('--thread <threadId>', 'Discord thread ID')
   .example("roadie session title 'Fix queue draining' --session ses_xxx")
   .action(async (title, options) => {
@@ -1259,7 +1254,7 @@ cli
       if (!sessionId) {
         cliLogger.error(
           options.thread
-            ? `No OpenCode session found for thread: ${options.thread}`
+            ? `No agent session found for thread: ${options.thread}`
             : 'Provide --session <sessionId> or --thread <threadId>',
         )
         process.exit(EXIT_NO_RESTART)
@@ -1275,7 +1270,7 @@ cli
 
       const serverResult = await getAgentBackendProvider().initializeForDirectory(directory)
       if (serverResult instanceof Error) {
-        cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
+        cliLogger.error(`Failed to initialize the agent backend: ${serverResult.message}`)
         process.exit(EXIT_NO_RESTART)
       }
 
@@ -1289,7 +1284,7 @@ cli
         title: trimmedTitle,
       })
       if (updateResult instanceof AgentRequestError) {
-        cliLogger.error('OpenCode rejected the session title update')
+        cliLogger.error('The agent backend rejected the session title update')
         process.exit(EXIT_NO_RESTART)
       }
       if (updateResult instanceof Error) {
@@ -1297,7 +1292,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      note(`Updated OpenCode title: ${trimmedTitle}`, 'Title updated')
+      note(`Updated session title: ${trimmedTitle}`, 'Title updated')
       process.exit(0)
     } catch (error) {
       cliLogger.error(

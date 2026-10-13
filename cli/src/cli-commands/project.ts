@@ -16,7 +16,6 @@ import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessi
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
