@@ -25,6 +25,7 @@ import sendCommands from './cli-commands/send.js'
 import sessionCommands from './cli-commands/session.js'
 import taskCommands from './cli-commands/task.js'
 import threadCommands from './cli-commands/thread.js'
+import channelCommands from './cli-commands/channel.js'
 import userCommands from './cli-commands/user.js'
 import { isIdentityHookConfigured, setIdentityHookCommand } from './identity.js'
 import {
@@ -665,6 +666,7 @@ cli.use(sendCommands)
 cli.use(taskCommands)
 cli.use(projectCommands)
 cli.use(threadCommands)
+cli.use(channelCommands)
 cli.use(userCommands)
 cli.use(sessionCommands)
 cli.use(maintenanceCommands)
