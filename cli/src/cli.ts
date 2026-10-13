@@ -47,6 +47,7 @@ import {
 import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
+  resolveSubcommandAgentBackendProvider,
   run,
 } from './cli-runner.js'
 
@@ -604,6 +605,12 @@ cli
       }
     },
   )
+
+// Every subcommand — and the agent-remote child, which execs this entry with a
+// subcommand — must resolve the same agent backend the bot does (plugins plus
+// Pi channels), or Pi sessions stay invisible to session commands. Runs once
+// per process, before the matched command action.
+cli.use(() => resolveSubcommandAgentBackendProvider())
 
 cli.use(botCommands)
 cli.use(credentialsCommands)

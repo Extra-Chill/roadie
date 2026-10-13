@@ -1,7 +1,8 @@
 // Runtime startup and shared helpers for the Roadie goke CLI.
 // Keeps cli.ts focused on command composition while preserving the bot onboarding flow.
 import type { AgentCommand, AgentDefinition } from './agent-backend/types.js'
-import { getAgentBackendProvider } from './agent-backend/registry.js'
+import { getAgentBackendProvider, resolveAgentBackendProvider } from './agent-backend/registry.js'
+import { loadPlugins, resolvePluginSpecs } from './plugins.js'
 import {
   intro,
   outro,
@@ -84,6 +85,32 @@ import {
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
 
 export const cliLogger = createLogger(LogPrefix.CLI)
+
+/**
+ * Shared subcommand bootstrap: give every CLI subcommand process the same
+ * agent backend resolution the bot does. Loads ROADIE_PLUGINS, then resolves
+ * the provider (the `agent_backend` filter with the Pi channels), so session
+ * commands see Pi sessions and plugin backends instead of the module-default
+ * OpenCode-only provider. cli.ts registers this once as a goke middleware, so
+ * it runs a single time per process before the matched command action — also
+ * in the agent-remote child, which execs cli.ts with a subcommand. The default
+ * bot command is skipped: its own action resolves the provider after --plugin
+ * flags and the Pi credential pool are set up.
+ */
+export async function resolveSubcommandAgentBackendProvider(): Promise<void> {
+  // Same invocation shape the bin.ts respawn wrapper uses: the default bot
+  // command is either bare (`roadie`) or starts with a flag
+  // (`roadie --data-dir ...`); anything else is a subcommand.
+  const firstArg = process.argv[2]
+  if (!firstArg || firstArg.startsWith('-')) return
+  // Subcommands take no --plugin flag; their plugins come from ROADIE_PLUGINS.
+  const plugins = await loadPlugins(resolvePluginSpecs([]))
+  if (plugins instanceof Error) {
+    cliLogger.error(plugins.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+  resolveAgentBackendProvider()
+}
 
 /** Project commands and skills for slash-command registration, from the backend catalog. */
 async function listCommandsForRegistration(directory: string): Promise<AgentCommand[] | Error> {
