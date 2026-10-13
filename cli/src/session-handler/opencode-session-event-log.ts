@@ -1,6 +1,10 @@
-// Debug helper for writing raw OpenCode event stream entries as JSONL.
+// Debug helper for writing raw backend event stream entries as JSONL.
 // When enabled, writes one file per session ID so event ordering and
 // lifecycle behavior can be analyzed with jq.
+//
+// Entries hold the backend's raw payload, tagged with the backend id that
+// produced it (`backend`): OpenCode events keep their { type, properties }
+// envelope; other backends (e.g. Pi) store their native records as-is.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -94,51 +98,85 @@ export type OpencodeEventLogEntry = {
   timestamp: number
   threadId: string
   projectDirectory: string
-  event: OpenCodeEvent
+  /** Which backend produced `event`; absent in older files, which hold OpenCode events only. */
+  backend?: string
+  /** An OpenCode event for backend "opencode"; another backend's raw record as-is. */
+  event: OpenCodeEvent | (Record<string, unknown> & { type: string })
 }
 
 export function buildOpencodeEventLogLine({
   timestamp,
   threadId,
   projectDirectory,
+  backend,
   event,
 }: {
   timestamp: number
   threadId: string
   projectDirectory: string
-  event: OpenCodeEvent
+  backend?: string
+  event: unknown
 }): OpencodeEventLogEntry {
   return {
     timestamp,
     threadId,
     projectDirectory,
+    ...(backend && { backend }),
     event,
-  }
+  } as OpencodeEventLogEntry
 }
 
 /**
  * Whether a raw backend payload has OpenCode's event shape. The runtime hands
- * this log the backend's payload as opaque `unknown`; only OpenCode payloads are
- * written, since every reader of these files parses OpenCode events.
+ * this log the backend's payload as opaque `unknown`; OpenCode payloads are
+ * recognized by their envelope, other backends must say who they are.
  */
-function isOpenCodeEvent(event: unknown): event is OpenCodeEvent {
+export function isOpenCodeEvent(event: unknown): event is OpenCodeEvent {
   if (!event || typeof event !== 'object') return false
   const { type, properties } = event as { type?: unknown; properties?: unknown }
   return typeof type === 'string' && Boolean(properties) && typeof properties === 'object'
 }
 
+/**
+ * The project directory a persisted session event names, in either persisted
+ * shape: Roadie agent events (current rows) carry `session.directory`, raw
+ * OpenCode events (legacy rows) `properties.info.directory`. Undefined when
+ * the row names no directory — never throws on rows of the other shape.
+ */
+export function persistedEventProjectDirectory(event: unknown): string | undefined {
+  if (!event || typeof event !== 'object') return undefined
+  const { type } = event as { type?: unknown }
+  if (type !== 'session.created' && type !== 'session.updated' && type !== 'session.deleted') return undefined
+  const { session, properties } = event as {
+    session?: { directory?: unknown }
+    properties?: { info?: { directory?: unknown } }
+  }
+  for (const candidate of [session?.directory, properties?.info?.directory]) {
+    if (typeof candidate === 'string' && candidate) return candidate
+  }
+  return undefined
+}
+
 export async function appendOpencodeSessionEventLog(
-  entry: Omit<OpencodeEventLogEntry, 'timestamp' | 'event'> & { event: unknown },
+  entry: Omit<OpencodeEventLogEntry, 'timestamp' | 'event'> & {
+    event: unknown
+    /** The agent event's session id, for raw records that do not name one. */
+    sessionId?: string
+  },
 ): Promise<Error | null> {
   if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 
-  const { event } = entry
-  if (!isOpenCodeEvent(event)) {
+  const { event, backend, sessionId: fallbackSessionId } = entry
+  // OpenCode payloads carry their own envelope; any other backend must be
+  // tagged with its id, or the provenance of the record is unknown and it
+  // is dropped rather than misfiled as an OpenCode event.
+  const backendId = backend ?? (isOpenCodeEvent(event) ? 'opencode' : undefined)
+  if (!backendId) {
     return null
   }
-  const sessionId = getOpencodeEventSessionId(event)
+  const sessionId = (isOpenCodeEvent(event) ? getOpencodeEventSessionId(event) : undefined) ?? fallbackSessionId
   if (!sessionId) {
     return null
   }
@@ -159,6 +197,7 @@ export async function appendOpencodeSessionEventLog(
       timestamp: now,
       threadId: entry.threadId,
       projectDirectory: entry.projectDirectory,
+      backend: backendId,
       event,
     }),
   )}\n`

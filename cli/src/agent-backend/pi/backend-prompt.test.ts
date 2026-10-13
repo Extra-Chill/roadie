@@ -1,11 +1,14 @@
-// The Pi backend over a stubbed rpc process: noReply appends, and agent
-// definitions reach the turn (system prompt, model, permission rules).
+// The Pi backend over a stubbed rpc process: noReply appends, agent
+// definitions reach the turn (system prompt, model, permission rules),
+// variants drive the thinking level, summarize honours its model, and abort
+// dismisses a session's open prompts even when the process is gone.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { AgentRequestError } from '../types.js'
+import type { AgentEvent } from '../events.js'
 import { PiBackendProvider } from './backend.js'
 import { PiEventTranslator } from './events.js'
 
@@ -15,19 +18,38 @@ function workspace(): string {
   return fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pi-backend-'))
 }
 
+type ProviderInternals = {
+  sessions: Map<string, unknown>
+  pendingPermissions: Map<string, { uiId: string; sessionId: string; permission: string; patterns: string[]; session: unknown }>
+  pendingQuestions: Map<string, { sessionId: string; session: unknown }>
+  subscribers: Set<(event: { events: AgentEvent[] }) => void>
+  onUiRequest(s: unknown, r: unknown): void
+}
+
+function internalsOf(provider: PiBackendProvider): ProviderInternals {
+  return provider as unknown as ProviderInternals
+}
+
+function collectEvents(provider: PiBackendProvider): AgentEvent[] {
+  const events: AgentEvent[] = []
+  internalsOf(provider).subscribers.add((event) => events.push(...event.events))
+  return events
+}
+
 describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
   const root = workspace()
   const provider = new PiBackendProvider({ bin: 'pi', sessionDir: path.join(root, 'sessions'), idleTimeoutMs: 0 })
 
-  function stubProcess({ disposition = 'handled' }: { disposition?: string } = {}) {
+  function stubProcess({ disposition = 'handled', exited = false, fail = [] }: { disposition?: string; exited?: boolean; fail?: string[] } = {}) {
     const requests: Recorded[] = []
     const sent: Recorded[] = []
     return {
       requests,
       sent,
-      exited: false,
+      exited,
       request: async (command: Recorded) => {
         requests.push(command)
+        if (fail.includes(String(command.type))) return new Error(`stub failure: ${String(command.type)}`)
         if (command.type === 'prompt') return { disposition }
         if (command.type === 'set_model') return { provider: command.provider, id: command.modelId }
         if (command.type === 'set_thinking_level') return {}
@@ -41,10 +63,10 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
     }
   }
 
-  function stubSession({ disposition, model, directory }: { disposition?: string; model?: { provider: string; id: string }; directory?: string } = {}) {
+  function stubSession({ disposition, model, directory, thinking, exited, fail }: { disposition?: string; model?: { provider: string; id: string }; directory?: string; thinking?: string; exited?: boolean; fail?: string[] } = {}) {
     const dir = directory ?? path.join(root, 'plain')
     fs.mkdirSync(dir, { recursive: true })
-    const process = stubProcess({ disposition })
+    const process = stubProcess({ disposition, exited, fail })
     const session = {
       id: 'ses-pi',
       directory: dir,
@@ -58,7 +80,9 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
       createdAt: 1,
       updatedAt: 1,
       busy: false,
+      idleWaiters: [] as Array<() => void>,
       ...(model && { model }),
+      ...(thinking && { thinking, defaultThinking: thinking }),
     }
     ;(provider as unknown as { sessions: Map<string, unknown> }).sessions.set(session.id, session)
     return { session, process, directory: dir }
@@ -169,5 +193,209 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
     if (agents instanceof Error) throw agents
     expect(agents.map((agent) => agent.name)).toEqual(['build', 'plan', 'general', 'explore', 'scout', 'reviewer'])
     expect(agents.find((agent) => agent.name === 'reviewer')).toEqual({ name: 'reviewer', description: 'Reviews only', mode: 'primary' })
+  })
+})
+
+describe('PiBackend thinking variants over a stubbed rpc process', () => {
+  const root = workspace()
+  const provider = new PiBackendProvider({ bin: 'pi', sessionDir: path.join(root, 'sessions'), idleTimeoutMs: 0 })
+
+  test('a variant sets the level; clearing it returns to the level Pi started with', async () => {
+    const { session, process } = stubSession2({ thinking: 'medium' })
+    const prompt = (variant?: string) => provider.getBackend().sessions.prompt({
+      sessionId: 'ses-pi', directory: path.join(root, 'plain'),
+      parts: [{ kind: 'text', text: 'hi' }], ...(variant !== undefined && { variant }),
+    })
+    await prompt('high')
+    expect(process.requests.filter((request) => request.type === 'set_thinking_level')).toEqual([
+      { type: 'set_thinking_level', level: 'high' },
+    ])
+    expect(session.thinking).toBe('high')
+    await prompt()
+    expect(process.requests.filter((request) => request.type === 'set_thinking_level')).toEqual([
+      { type: 'set_thinking_level', level: 'high' },
+      { type: 'set_thinking_level', level: 'medium' },
+    ])
+    expect(session.thinking).toBe('medium')
+    // Already at Pi's default: clearing again changes nothing.
+    await prompt()
+    expect(process.requests.filter((request) => request.type === 'set_thinking_level')).toHaveLength(2)
+  })
+
+  test('the same variant twice sends one set, and an unknown variant is ignored', async () => {
+    const { session, process } = stubSession2({ thinking: 'low' })
+    await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory: path.join(root, 'plain'), parts: [{ kind: 'text', text: 'hi' }], variant: 'high' })
+    await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory: path.join(root, 'plain'), parts: [{ kind: 'text', text: 'hi' }], variant: 'high' })
+    expect(process.requests.filter((request) => request.type === 'set_thinking_level')).toEqual([
+      { type: 'set_thinking_level', level: 'high' },
+    ])
+    await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory: path.join(root, 'plain'), parts: [{ kind: 'text', text: 'hi' }], variant: 'bogus' })
+    expect(process.requests.filter((request) => request.type === 'set_thinking_level')).toHaveLength(1)
+    expect(session.thinking).toBe('high')
+  })
+
+  function stubSession2(options: { thinking?: string }) {
+    const process = {
+      requests: [] as Recorded[],
+      exited: false,
+      request: async (command: Recorded) => {
+        process.requests.push(command)
+        if (command.type === 'set_thinking_level' || command.type === 'set_model') return {}
+        return undefined
+      },
+      send: () => {},
+      kill: () => {},
+    }
+    const dir = path.join(root, 'plain')
+    fs.mkdirSync(dir, { recursive: true })
+    const session = {
+      id: 'ses-pi', directory: dir, sessionFile: path.join(root, 'ses-pi.jsonl'),
+      systemFile: path.join(root, 'ses-pi.system.md'), mcpFile: path.join(root, 'ses-pi.mcp.json'),
+      shellEnvFile: path.join(root, 'ses-pi.shell-env.json'),
+      process, translator: new PiEventTranslator('ses-pi'), title: '', createdAt: 1, updatedAt: 1, busy: false,
+      idleWaiters: [] as Array<() => void>,
+      ...(options.thinking && { thinking: options.thinking, defaultThinking: options.thinking }),
+    }
+    ;(provider as unknown as { sessions: Map<string, unknown> }).sessions.set(session.id, session)
+    return { session, process }
+  }
+})
+
+describe('PiBackend sessions.summarize over a stubbed rpc process', () => {
+  const root = workspace()
+  const provider = new PiBackendProvider({ bin: 'pi', sessionDir: path.join(root, 'sessions'), idleTimeoutMs: 0 })
+
+  test('compact runs on the requested model, then the session gets its own model back', async () => {
+    const { process } = stubSession({ model: { provider: 'fake', id: 'fake-1' } })
+    const result = await provider.getBackend().sessions.summarize!({
+      sessionId: 'ses-pi', directory: path.join(root, 'plain'), model: { providerId: 'fake', modelId: 'fake-2' },
+    })
+    expect(result).toBeUndefined()
+    expect(process.requests.map((request) => [request.type, request.provider, request.modelId])).toEqual([
+      ['set_model', 'fake', 'fake-2'],
+      ['compact', undefined, undefined],
+      ['set_model', 'fake', 'fake-1'],
+    ])
+  })
+
+  test('no model switch when the session already runs the requested model', async () => {
+    const { process } = stubSession({ model: { provider: 'fake', id: 'fake-1' } })
+    const result = await provider.getBackend().sessions.summarize!({
+      sessionId: 'ses-pi', directory: path.join(root, 'plain'), model: { providerId: 'fake', modelId: 'fake-1' },
+    })
+    expect(result).toBeUndefined()
+    expect(process.requests.map((request) => request.type)).toEqual(['compact'])
+  })
+
+  test('a failed compaction restores the session model and reports the error', async () => {
+    const { process } = stubSession({ model: { provider: 'fake', id: 'fake-1' }, fail: ['compact'] })
+    const result = await provider.getBackend().sessions.summarize!({
+      sessionId: 'ses-pi', directory: path.join(root, 'plain'), model: { providerId: 'fake', modelId: 'fake-2' },
+    })
+    expect(result).toBeInstanceOf(AgentRequestError)
+    expect(process.requests.map((request) => [request.type, request.modelId])).toEqual([
+      ['set_model', 'fake-2'],
+      ['compact', undefined],
+      ['set_model', 'fake-1'],
+    ])
+  })
+
+  function stubSession(options: { model?: { provider: string; id: string }; fail?: string[] }) {
+    const process = {
+      requests: [] as Recorded[],
+      exited: false,
+      request: async (command: Recorded) => {
+        process.requests.push(command)
+        if (options.fail?.includes(String(command.type))) return new Error(`stub failure: ${String(command.type)}`)
+        if (command.type === 'set_model') return { provider: command.provider, id: command.modelId }
+        return undefined
+      },
+      send: () => {},
+      kill: () => {},
+    }
+    const dir = path.join(root, 'plain')
+    fs.mkdirSync(dir, { recursive: true })
+    const session = {
+      id: 'ses-pi', directory: dir, sessionFile: path.join(root, 'ses-pi.jsonl'),
+      systemFile: path.join(root, 'ses-pi.system.md'), mcpFile: path.join(root, 'ses-pi.mcp.json'),
+      shellEnvFile: path.join(root, 'ses-pi.shell-env.json'),
+      process, translator: new PiEventTranslator('ses-pi'), title: '', createdAt: 1, updatedAt: 1, busy: false,
+      idleWaiters: [] as Array<() => void>,
+      ...(options.model && { model: options.model }),
+    }
+    ;(provider as unknown as { sessions: Map<string, unknown> }).sessions.set(session.id, session)
+    return { session, process }
+  }
+})
+
+describe('PiBackend sessions.abort over a stubbed rpc process', () => {
+  const root = workspace()
+  const provider = new PiBackendProvider({ bin: 'pi', sessionDir: path.join(root, 'sessions'), idleTimeoutMs: 0 })
+
+  function stubSession({ exited = false }: { exited?: boolean } = {}) {
+    const process = {
+      requests: [] as Recorded[],
+      sent: [] as Recorded[],
+      exited,
+      request: async (command: Recorded) => {
+        process.requests.push(command)
+        return command.type === 'abort' ? undefined : new Error('stub: unexpected request')
+      },
+      send: (record: Recorded) => {
+        process.sent.push(record)
+      },
+      kill: () => {},
+    }
+    const dir = path.join(root, 'plain')
+    fs.mkdirSync(dir, { recursive: true })
+    const session = {
+      id: 'ses-pi', directory: dir, sessionFile: '', systemFile: '', mcpFile: '', shellEnvFile: '',
+      process, translator: new PiEventTranslator('ses-pi'), title: '', createdAt: 1, updatedAt: 1, busy: false,
+      idleWaiters: [] as Array<() => void>,
+    }
+    internalsOf(provider).sessions.set(session.id, session)
+    return { session, process }
+  }
+
+  test('a running session is aborted through its process', async () => {
+    const { process } = stubSession()
+    const result = await provider.getBackend().sessions.abort({ sessionId: 'ses-pi' })
+    expect(result).toBeUndefined()
+    expect(process.requests).toEqual([{ type: 'abort' }])
+  })
+
+  test('a dead process is not asked to abort, and its open permission ask is rejected', async () => {
+    const { session, process } = stubSession({ exited: true })
+    const internals = internalsOf(provider)
+    internals.pendingPermissions.set('ui-dead', { uiId: 'ui-dead', sessionId: 'ses-pi', permission: 'bash', patterns: ['git push'], session })
+    const events = collectEvents(provider)
+    const result = await provider.getBackend().sessions.abort({ sessionId: 'ses-pi' })
+    expect(result).toBeUndefined()
+    expect(process.requests).toEqual([])
+    expect(internals.pendingPermissions.size).toBe(0)
+    expect(process.sent).toEqual([{ type: 'extension_ui_response', id: 'ui-dead', confirmed: false }])
+    expect(events.some((event) => event.type === 'permission.replied' && event.requestId === 'ui-dead' && event.reply === 'reject')).toBe(true)
+  })
+
+  test('a live process keeps its pending permission across abort', async () => {
+    const { session, process } = stubSession()
+    const internals = internalsOf(provider)
+    internals.pendingPermissions.set('ui-live', { uiId: 'ui-live', sessionId: 'ses-pi', permission: 'bash', patterns: ['git push'], session })
+    await provider.getBackend().sessions.abort({ sessionId: 'ses-pi' })
+    expect(process.requests).toEqual([{ type: 'abort' }])
+    expect(internals.pendingPermissions.has('ui-live')).toBe(true)
+  })
+
+  test('a session that is gone still dismisses the questions it left pending', async () => {
+    const { session, process } = stubSession()
+    const internals = internalsOf(provider)
+    internals.sessions.delete('ses-pi')
+    internals.pendingQuestions.set('ui-question', { sessionId: 'ses-pi', session })
+    const events = collectEvents(provider)
+    const result = await provider.getBackend().sessions.abort({ sessionId: 'ses-pi' })
+    expect(result).toBeUndefined()
+    expect(internals.pendingQuestions.size).toBe(0)
+    expect(process.sent).toEqual([{ type: 'extension_ui_response', id: 'ui-question', cancelled: true }])
+    expect(events.some((event) => event.type === 'question.rejected' && event.requestId === 'ui-question')).toBe(true)
   })
 })

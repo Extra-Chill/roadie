@@ -44,7 +44,9 @@ a response lost after a committed write to verify single-dispatch behavior.
 
 ## session event JSONL
 
-To debug OpenCode event ordering, set `ROADIE_LOG_OPENCODE_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). Use `ROADIE_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
+To debug agent backend event ordering, set `ROADIE_LOG_OPENCODE_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). Use `ROADIE_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
+
+Each line holds the backend's raw payload tagged with the backend that produced it (`"backend": "opencode"` or `"pi"`; older files have no tag and hold OpenCode events only). OpenCode entries keep the `{ type, properties }` event envelope; other backends store their native records as-is.
 
 Example when running a test to debug events:
 
