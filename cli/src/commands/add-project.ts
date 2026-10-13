@@ -78,6 +78,13 @@ export async function handleAddProjectCommand({
   }
 
   try {
+    // Discord lets users type any value into an autocomplete option, so only
+    // accept directories that autocomplete would offer, as the old project-id
+    // lookup did.
+    if (!(await listProjectDirectories()).includes(directory)) {
+      await command.editReply('Project not found')
+      return
+    }
     if (!fs.existsSync(directory)) {
       await command.editReply(`Directory does not exist: ${directory}`)
       return

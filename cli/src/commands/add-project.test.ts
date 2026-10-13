@@ -105,11 +105,21 @@ describe('handleAddProjectCommand', () => {
     expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining('Created channel for project'))
   })
 
-  test('reports a directory that does not exist', async () => {
+  test('refuses a directory that does not exist', async () => {
     const command = createCommandStub({ directory: path.join(projectsDir, 'missing') })
     await handleAddProjectCommand({ command, appId: "test-app" })
 
     expect(vi.mocked(createProjectChannels)).not.toHaveBeenCalled()
-    expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining('Directory does not exist'))
+    expect(command.editReply).toHaveBeenCalledWith('Project not found')
+  })
+
+  test('refuses a typed path that autocomplete would not offer', async () => {
+    // Exists on disk, but is neither registered nor under the projects directory.
+    const outside = fs.mkdtempSync(path.join(tempRoot, 'outside-'))
+    const command = createCommandStub({ directory: outside })
+    await handleAddProjectCommand({ command, appId: "test-app" })
+
+    expect(vi.mocked(createProjectChannels)).not.toHaveBeenCalled()
+    expect(command.editReply).toHaveBeenCalledWith('Project not found')
   })
 })
