@@ -39,8 +39,11 @@
 // (e.g. `anthropic/claude-sonnet-5-5` then `zai-coding-plan/glm-5.3-flash`).
 // OAuth accounts keep per-provider adapters (credentials/adapters/): the
 // Anthropic adapter builds `@ai-sdk/anthropic` with a shaping fetch that
-// carries the existing Bearer/beta/system-prefix/tool-name round-trip.
-// Unknown OAuth providers are unsupported with a clear error.
+// carries the existing Bearer/beta/system-prefix/tool-name round-trip, and
+// the ChatGPT (Codex) adapter builds `@ai-sdk/openai` against the Codex
+// Responses endpoint with a fetch that supplies the account's bearer token
+// and `chatgpt-account-id`. Unknown OAuth providers are unsupported with a
+// clear error.
 //
 // A missing pool tag or an empty pool fails closed with a 401 APICallError;
 // the request never reaches upstream. State lives in <dataDir>/credentials/
@@ -50,11 +53,13 @@
 import os from 'node:os'
 import path from 'node:path'
 import { createAnthropic } from '@ai-sdk/anthropic'
+import { createOpenAI } from '@ai-sdk/openai'
 import {
   APICallError,
   type LanguageModelV3,
   type LanguageModelV3CallOptions,
   type LanguageModelV3GenerateResult,
+  type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
 } from '@ai-sdk/provider'
 import {
@@ -68,7 +73,7 @@ import {
   withPoolLockAt,
   type PoolAccount,
 } from './store.js'
-import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
+import { CODEX_POOL_PROVIDER, markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { readSessionRoute, setSessionRoute } from './routes.js'
 import {
@@ -85,7 +90,7 @@ import {
   rewriteRequestPayload,
   wrapResponseStream,
 } from './adapters/anthropic-oauth.js'
-import { refreshCodexToken } from './adapters/openai-codex-oauth.js'
+import { CODEX_RESPONSES_BASE_URL, codexAccountId, refreshCodexToken } from './adapters/openai-codex-oauth.js'
 
 /** OAuth providers the pool can refresh, by pool provider id. */
 const OAUTH_REFRESHERS: Record<string, (input: { refreshToken: string; fetchImpl: PoolFetch }) => Promise<{ refresh: string; access: string; expires: number } | Error>> = {
@@ -226,8 +231,8 @@ export async function ensureFreshOAuthAccount({
   fetchImpl: PoolFetch
 }): Promise<PoolAccount | Error> {
   try {
-    // Shaping and refresh are Anthropic-specific; other oauth providers have
-    // no adapter yet and are dispatched with the stored access token as-is.
+    // Refresh dispatches per provider through OAUTH_REFRESHERS; oauth
+    // providers without a registered adapter are served as-is.
     if (account.type !== 'oauth' || !OAUTH_REFRESHERS[account.provider]) return account
     if (account.expires > now + OAUTH_REFRESH_LEAD_MS) return account
     return await withPoolLockAt(dataDir, poolId, async () => {
@@ -418,6 +423,178 @@ export function makeAnthropicOAuthFetch({
   return fetchWithPreconnect(oauthFetch)
 }
 
+/**
+ * ChatGPT (Codex) OAuth fetch: the pool supplies the account's bearer token,
+ * `chatgpt-account-id` and `originator` (the request body is shaped one level
+ * up, by shapeCodexCallOptions).
+ */
+export function makeCodexOAuthFetch({
+  accessToken,
+  accountId,
+  fetchImpl,
+}: {
+  accessToken: string
+  accountId: string
+  fetchImpl: PoolFetch
+}): PoolFetchWithPreconnect {
+  const codexFetch: PoolFetch = async (input, init = {}) => {
+    const headers = new Headers(init.headers)
+    if (input instanceof Request) {
+      input.headers.forEach((value, name) => {
+        if (!headers.has(name)) headers.set(name, value)
+      })
+    }
+    headers.set('authorization', `Bearer ${accessToken}`)
+    headers.set('chatgpt-account-id', accountId)
+    // The Codex backend identifies its client by `originator`; OpenCode's own
+    // ChatGPT login sends `opencode`, and this is OpenCode's request.
+    headers.set('originator', 'opencode')
+    headers.delete('content-length')
+    return fetchImpl(input, { ...init, headers })
+  }
+  return fetchWithPreconnect(codexFetch)
+}
+
+/** `include` value that returns reasoning as encrypted content when nothing is stored. */
+export const CODEX_ENCRYPTED_REASONING = 'reasoning.encrypted_content'
+
+/**
+ * Reshape one call for the ChatGPT Codex backend (#198). OpenCode tags these
+ * requests for the `roadie` provider, so none of the request options it gives
+ * its own ChatGPT login reach the openai SDK; the backend then rejects them.
+ * Returns a new options object: the delegating model reuses the original for
+ * the next candidate on a 429, which may be a different provider.
+ *   - no output limit: the backend rejects `max_output_tokens`;
+ *   - the system prompt goes in `instructions`, which the backend requires,
+ *     and leaves the input;
+ *   - `store: false`: the backend keeps nothing, so the SDK must send earlier
+ *     turns inline rather than as `item_reference`s to stored items, and ask
+ *     for reasoning back as encrypted content it can replay next turn.
+ */
+export function shapeCodexCallOptions(options: LanguageModelV3CallOptions): LanguageModelV3CallOptions {
+  const system: string[] = []
+  const prompt = options.prompt.filter((message) => {
+    if (message.role !== 'system') return true
+    if (message.content) system.push(message.content)
+    return false
+  })
+  const providerOptions = options.providerOptions ?? {}
+  const openai = providerOptions.openai ?? {}
+  const existingInclude = Array.isArray(openai.include) ? openai.include.filter((item) => typeof item === 'string') : []
+  const include = existingInclude.includes(CODEX_ENCRYPTED_REASONING)
+    ? existingInclude
+    : [...existingInclude, CODEX_ENCRYPTED_REASONING]
+  const { maxOutputTokens: _maxOutputTokens, ...rest } = options
+  return {
+    ...rest,
+    prompt,
+    providerOptions: {
+      ...providerOptions,
+      openai: {
+        ...openai,
+        ...(system.length > 0 && { instructions: system.join('\n\n') }),
+        store: false,
+        include,
+      },
+    },
+  }
+}
+
+/**
+ * A generate result assembled from a streamed call. Text and reasoning blocks
+ * keep the order they started in and the provider metadata of their last
+ * event (the end event carries the item id and encrypted reasoning OpenCode
+ * replays next turn); complete parts (tool calls and results, files, sources)
+ * are kept as they arrive. An `error` part is thrown, as doGenerate would.
+ */
+export async function generateViaStream(
+  model: LanguageModelV3,
+  options: LanguageModelV3CallOptions,
+): Promise<LanguageModelV3GenerateResult> {
+  const { stream, request, response } = await model.doStream(options)
+  const content: LanguageModelV3GenerateResult['content'] = []
+  const open = new Map<string, { index: number }>()
+  let warnings: LanguageModelV3GenerateResult['warnings'] = []
+  let metadata: { id?: string; timestamp?: Date; modelId?: string } = {}
+  let finish: Extract<LanguageModelV3StreamPart, { type: 'finish' }> | undefined
+  const reader = stream.getReader()
+  for (;;) {
+    const { done, value: part } = await reader.read()
+    if (done) break
+    switch (part.type) {
+      case 'text-start':
+      case 'reasoning-start': {
+        const type = part.type === 'text-start' ? 'text' : 'reasoning'
+        open.set(`${type}:${part.id}`, { index: content.length })
+        content.push({ type, text: '', ...(part.providerMetadata && { providerMetadata: part.providerMetadata }) })
+        break
+      }
+      case 'text-delta':
+      case 'reasoning-delta':
+      case 'text-end':
+      case 'reasoning-end': {
+        const type = part.type.startsWith('text') ? 'text' : 'reasoning'
+        const block = open.get(`${type}:${part.id}`)
+        if (!block) break
+        const target = content[block.index] as { text: string; providerMetadata?: unknown }
+        if ('delta' in part) target.text += part.delta
+        if (part.providerMetadata) target.providerMetadata = part.providerMetadata
+        break
+      }
+      case 'tool-call':
+      case 'tool-result':
+      case 'tool-approval-request':
+      case 'file':
+      case 'source':
+        content.push(part)
+        break
+      case 'stream-start':
+        warnings = part.warnings
+        break
+      case 'response-metadata': {
+        const { type: _type, ...rest } = part
+        metadata = rest
+        break
+      }
+      case 'finish':
+        finish = part
+        break
+      case 'error':
+        throw part.error
+      default:
+        break
+    }
+  }
+  if (!finish) throw new Error('stream ended without a finish event')
+  return {
+    content,
+    finishReason: finish.finishReason,
+    usage: finish.usage,
+    ...(finish.providerMetadata && { providerMetadata: finish.providerMetadata }),
+    ...(request && { request }),
+    response: { ...metadata, ...(response?.headers && { headers: response.headers }) },
+    warnings,
+  }
+}
+
+/**
+ * A model whose every call is reshaped by shapeCodexCallOptions first. The
+ * Codex backend only streams ("Stream must be set to true"), so doGenerate —
+ * OpenCode uses it for titles and summaries — streams and assembles.
+ */
+function withCodexCallShaping(model: LanguageModelV3): LanguageModelV3 {
+  return {
+    specificationVersion: model.specificationVersion,
+    provider: model.provider,
+    modelId: model.modelId,
+    get supportedUrls() {
+      return model.supportedUrls
+    },
+    doGenerate: (options) => generateViaStream(model, shapeCodexCallOptions(options)),
+    doStream: (options) => model.doStream(shapeCodexCallOptions(options)),
+  }
+}
+
 type CandidateModelDeps = {
   dataDir: string
   /** Fixed upstream base URL (gateway/proxy); wins over the catalog and accounts. */
@@ -429,9 +606,10 @@ type CandidateModelDeps = {
 
 /**
  * The provider's SDK language model for one candidate. OAuth accounts use the
- * per-provider adapter (anthropic only; anything else is unsupported with a
- * clear error); API-key accounts resolve through the models.dev catalog with
- * the account's `baseURL` override when present.
+ * per-provider adapter (anthropic, and ChatGPT via the Codex Responses
+ * endpoint; anything else is unsupported with a clear error); API-key accounts
+ * resolve through the models.dev catalog with the account's `baseURL`
+ * override when present.
  */
 async function buildCandidateModel({
   candidate,
@@ -443,22 +621,40 @@ async function buildCandidateModel({
   deps: CandidateModelDeps
 }): Promise<LanguageModelV3 | Error> {
   if (account.type === 'oauth') {
-    if (candidate.provider !== 'anthropic') {
-      return new Error(
-        `no OAuth adapter for ${candidate.provider}; only anthropic subscriptions are supported`,
-      )
+    if (candidate.provider === 'anthropic') {
+      const anthropic = createAnthropic({
+        // The shaping fetch replaces auth per account; the SDK only needs a placeholder.
+        apiKey: POOL_MANAGED_API_KEY,
+        ...(deps.gatewayBaseURL && { baseURL: deps.gatewayBaseURL }),
+        fetch: makeAnthropicOAuthFetch({
+          accessToken: account.access,
+          modelId: candidate.modelId,
+          fetchImpl: deps.fetchImpl,
+        }),
+      })
+      return anthropic.languageModel(candidate.modelId)
     }
-    const anthropic = createAnthropic({
-      // The shaping fetch replaces auth per account; the SDK only needs a placeholder.
-      apiKey: POOL_MANAGED_API_KEY,
-      ...(deps.gatewayBaseURL && { baseURL: deps.gatewayBaseURL }),
-      fetch: makeAnthropicOAuthFetch({
-        accessToken: account.access,
-        modelId: candidate.modelId,
-        fetchImpl: deps.fetchImpl,
-      }),
-    })
-    return anthropic.languageModel(candidate.modelId)
+    if (candidate.provider === CODEX_POOL_PROVIDER) {
+      const accountId = codexAccountId(account.access)
+      if (!accountId) {
+        return new Error(`account ${account.id} has no ChatGPT account id in its access token`)
+      }
+      const openai = createOpenAI({
+        apiKey: POOL_MANAGED_API_KEY,
+        // The Codex backend only speaks its own Responses endpoint; a gateway
+        // override wins, exactly as for anthropic.
+        baseURL: deps.gatewayBaseURL ?? CODEX_RESPONSES_BASE_URL,
+        fetch: makeCodexOAuthFetch({
+          accessToken: account.access,
+          accountId,
+          fetchImpl: deps.fetchImpl,
+        }),
+      })
+      return withCodexCallShaping(openai.responses(candidate.modelId))
+    }
+    return new Error(
+      `no OAuth adapter for ${candidate.provider}; only anthropic and openai-codex subscriptions are supported`,
+    )
   }
   const catalog = await deps.getCatalog()
   if (catalog instanceof Error) return catalog

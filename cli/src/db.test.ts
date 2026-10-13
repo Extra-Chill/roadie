@@ -62,6 +62,7 @@ import {
   readPoolAccounts,
   setPoolRotation,
   SHARED_POOL_ID,
+  type PoolAccount,
 } from './credentials/store.js'
 import { resetCatalogCacheForTests } from './credentials/provider-catalog.js'
 
@@ -1236,7 +1237,7 @@ describe('subrouter startup migration', () => {
       expect(accounts).toHaveLength(1)
       expect(formatSubrouterStartupMigration(migration)).toEqual([
         'Migrated 3 stored model choices from subrouter/ to roadie/ (global 1, channel 1, session 1)',
-        'Kept 1 subrouter model choice with no matching rotation: copilot-only',
+        'Kept 1 subrouter model choice with no rotation the pool can serve: copilot-only',
       ])
     } finally {
       await restore()
@@ -1310,7 +1311,7 @@ describe('subrouter startup migration', () => {
     }
   })
 
-  test('an empty pool with no subrouter home skips the import and still rewrites from existing rotations', async () => {
+  test('an empty pool with no subrouter home keeps subrouter choices until the rotation has an account', async () => {
     const { dbPath, restore } = await openLegacyDb('no-home')
     try {
       await setPoolRotation({
@@ -1328,12 +1329,18 @@ describe('subrouter startup migration', () => {
       expect(migration.import).toBeNull()
       expect(migration.importError).toBeNull()
       expect(migration.home).toBeNull()
+      // The pool has no account the max rotation could serve (#198): the
+      // stored choices stay on subrouter, where they still work.
       expect(migration.rewrites).toMatchObject({
-        globalModels: 1,
-        channelModels: 1,
-        sessionModels: 1,
-        unmapped: 1,
+        globalModels: 0,
+        channelModels: 0,
+        sessionModels: 0,
+        unmapped: 4,
+        unmappedPresets: ['copilot-only', 'max'],
       })
+      const db = await getDb()
+      const globalModel = await db.query.global_models.findFirst({ where: { app_id: 'bot-legacy' } })
+      expect(globalModel).toMatchObject({ model_id: 'subrouter/max', variant: 'high' })
       const accounts = readPoolAccounts({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID })
       if (accounts instanceof Error) throw accounts
       expect(accounts).toHaveLength(0)
@@ -1349,9 +1356,11 @@ describe('subrouter startup migration', () => {
     }
   })
 
-  test('an unmappable preset keeps its rows on subrouter with the variant untouched', async () => {
+  test('a rotation no pool account serves keeps its rows on subrouter', async () => {
     const { dbPath, restore } = await openLegacyDb('unmappable')
     try {
+      // A rotation exists for max, but the pool holds no accounts at all, so
+      // repointing would 401 every request (#198).
       await setPoolRotation({
         dataDir: migrationDataDir,
         poolId: SHARED_POOL_ID,
@@ -1364,8 +1373,7 @@ describe('subrouter startup migration', () => {
       })
       expect(migration).not.toBeInstanceOf(Error)
       if (migration instanceof Error) return
-      // ses-unmappable's variant (NULL here) is untouched; the mappable one's
-      // variant is cleared.
+      // Every subrouter row is untouched, variants included.
       const db = await getDb()
       const unmappable = await db.query.session_models.findFirst({
         where: { session_id: 'ses-unmappable' },
@@ -1374,10 +1382,9 @@ describe('subrouter startup migration', () => {
       const mappable = await db.query.session_models.findFirst({
         where: { session_id: 'ses-mappable' },
       })
-      expect(mappable).toMatchObject({ model_id: 'roadie/max', variant: null })
+      expect(mappable).toMatchObject({ model_id: 'subrouter/max', variant: 'thinking' })
       expect(formatSubrouterStartupMigration(migration)).toEqual([
-        'Migrated 3 stored model choices from subrouter/ to roadie/ (global 1, channel 1, session 1)',
-        'Kept 1 subrouter model choice with no matching rotation: copilot-only',
+        'Kept 4 subrouter model choices with no rotation the pool can serve: copilot-only, max',
       ])
     } finally {
       await restore()
@@ -1391,12 +1398,79 @@ describe('subrouter startup migration', () => {
     }
   })
 
-  test('canRewriteSubrouterModel matches exact rotation names with entries only', () => {
-    const rotations = { max: ['anthropic/claude-opus-4-6'], empty: [] }
-    expect(canRewriteSubrouterModel({ modelId: 'subrouter/max', rotations })).toBe(true)
-    expect(canRewriteSubrouterModel({ modelId: 'subrouter/empty', rotations })).toBe(false)
-    expect(canRewriteSubrouterModel({ modelId: 'subrouter/missing', rotations })).toBe(false)
-    expect(canRewriteSubrouterModel({ modelId: 'roadie/max', rotations })).toBe(false)
-    expect(canRewriteSubrouterModel({ modelId: 'anthropic/claude-opus-4-6', rotations })).toBe(false)
+  test('a rotation whose entries match no pool account keeps its rows on subrouter', async () => {
+    const { dbPath, restore } = await openLegacyDb('wrong-provider')
+    try {
+      // The pool has an account, but only for a provider the max rotation
+      // never names (the h44 shape: a ChatGPT pool next to an
+      // anthropic-only rotation) — repointing would 401 (#198).
+      await addPoolAccount({ dataDir: migrationDataDir, poolId: SHARED_POOL_ID, provider: 'openai-codex', key: 'unused-codex-key' })
+      await setPoolRotation({
+        dataDir: migrationDataDir,
+        poolId: SHARED_POOL_ID,
+        name: 'max',
+        entries: ['anthropic/claude-opus-4-6'],
+      })
+      const migration = await migrateSubrouterCredentialsAtStartup({
+        dataDir: migrationDataDir,
+        subrouterHome: path.join(subrouterHome, 'does-not-exist'),
+      })
+      expect(migration).not.toBeInstanceOf(Error)
+      if (migration instanceof Error) return
+      expect(migration.rewrites).toMatchObject({
+        globalModels: 0,
+        channelModels: 0,
+        sessionModels: 0,
+        unmapped: 4,
+        unmappedPresets: ['copilot-only', 'max'],
+      })
+    } finally {
+      await restore()
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('canRewriteSubrouterModel matches exact rotation names with entries an account serves', () => {
+    const rotations = { max: ['anthropic/claude-opus-4-6'], empty: [], codex: ['openai-codex/gpt-5.5'] }
+    const accounts: PoolAccount[] = [
+      { id: '1', provider: 'anthropic', type: 'api', key: 'sk-ant', addedAt: '', lastUsed: null },
+    ]
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/max', rotations, accounts })).toBe(true)
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/empty', rotations, accounts })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/missing', rotations, accounts })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'roadie/max', rotations, accounts })).toBe(false)
+    expect(canRewriteSubrouterModel({ modelId: 'anthropic/claude-opus-4-6', rotations, accounts })).toBe(false)
+    // No accounts, or accounts of a provider the rotation never names: no
+    // rewrite (#198).
+    expect(canRewriteSubrouterModel({ modelId: 'subrouter/max', rotations, accounts: [] })).toBe(false)
+    expect(
+      canRewriteSubrouterModel({
+        modelId: 'subrouter/max',
+        rotations,
+        accounts: [{ id: '2', provider: 'openai-codex', type: 'api', key: 'sk-oai', addedAt: '', lastUsed: null }],
+      }),
+    ).toBe(false)
+    expect(
+      canRewriteSubrouterModel({
+        modelId: 'subrouter/codex',
+        rotations,
+        accounts: [{ id: '2', provider: 'openai-codex', type: 'api', key: 'sk-oai', addedAt: '', lastUsed: null }],
+      }),
+    ).toBe(true)
+
+    // A ChatGPT subscription serves the openai/<model> rotations a ChatGPT
+    // install migrates to (the router's own matching).
+    const subscription: PoolAccount[] = [
+      { id: '3', provider: 'openai-codex', type: 'oauth', refresh: 'rt', access: 'at', expires: 0, addedAt: '', lastUsed: null },
+    ]
+    expect(
+      canRewriteSubrouterModel({ modelId: 'subrouter/sol', rotations: { sol: ['openai/gpt-6.1-sol'] }, accounts: subscription }),
+    ).toBe(true)
   })
 })

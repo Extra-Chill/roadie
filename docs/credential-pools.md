@@ -155,15 +155,27 @@ a custom endpoint is exactly the case the catalog cannot know. The catalog
 also supplies each model's context-window limit for the speaker-billing check
 above.
 
-## Anthropic subscriptions
+## Subscriptions: Anthropic and ChatGPT
 
 `/credentials login-anthropic` (or `roadie credentials login anthropic`) runs
 the Claude Pro/Max OAuth flow: an authorize URL with PKCE, then the code
 pasted back into a modal. Tokens are stored per pool, refreshed under that
 pool's lock shortly before expiry, and requests are shaped the way Claude Code
-sends them (system prefix, beta headers, tool-name round-trip). Only Anthropic
-subscriptions are supported; other providers' subscriptions are not (their
-OAuth is not public).
+sends them (system prefix, beta headers, tool-name round-trip).
+
+A ChatGPT subscription is added through `/login` on Discord (choose OpenAI,
+then the ChatGPT subscription), or imported from subrouter or OpenCode (below)
+(#198). It is stored under the `openai-codex` provider id and served against
+ChatGPT's Codex Responses endpoint with the account's bearer token and
+`chatgpt-account-id` — the same wire the Pi proxy (`roadie-codex`) uses. A
+rotation entry `openai/<model>` is served by a ChatGPT subscription as well as
+by an OpenAI API key, so `openai/gpt-6.1-sol` works on a subscription-only
+pool. Requests are reshaped for the Codex backend: the system prompt goes in
+`instructions`, nothing is stored (`store: false`, reasoning returned
+encrypted), no output limit is sent, and every call streams.
+
+Only these subscriptions are supported; other providers' subscriptions are
+not (their OAuth is not public).
 
 ## Importing from subrouter
 
@@ -172,10 +184,15 @@ roadie credentials import-subrouter
 ```
 
 Copies `~/.subrouter/auth.json` accounts and presets into the `shared` pool:
-Anthropic OAuth accounts, API keys for any catalog-resolvable provider, and
-each preset as a same-named rotation (`#variant` suffixes stripped). The run
-is idempotent — accounts already present are reported and skipped — and
-strictly read-only on subrouter files.
+Anthropic OAuth accounts, ChatGPT subscriptions (the `openai` OAuth entry,
+imported under the pool's `openai-codex` id), API keys for any
+catalog-resolvable provider, and each preset as a same-named rotation
+(`#variant` suffixes stripped; `openai/<model>` entries are kept as they are
+and served by the imported subscription). The run is idempotent —
+accounts already present are reported and skipped — and strictly read-only on
+subrouter files. `roadie credentials import-opencode` imports OpenCode's own
+`auth.json` and `<provider>-oauth-accounts.json` rotation files with the same
+rules, and `export-opencode` writes them back under OpenCode's own keys.
 
 ## Turn affinity
 

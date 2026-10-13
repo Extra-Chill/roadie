@@ -147,8 +147,8 @@ describe('importSubrouterCredentials', () => {
     const result = importResult(
       await importSubrouterCredentials({ dataDir, dryRun: false }),
     )
-    expect(result.accounts.imported).toBe(7)
-    expect(result.accounts.skipped).toBe(2)
+    expect(result.accounts.imported).toBe(8)
+    expect(result.accounts.skipped).toBe(1)
     expect(result.accounts.alreadyPresent).toBe(0)
     // anthropic order: account at activeIndex 4 first, then wrap-around.
     expect(
@@ -163,10 +163,11 @@ describe('importSubrouterCredentials', () => {
       '…th-4',
       '…8888',
       '…0001',
+      '…et-1',
     ])
 
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
-    expect(accounts).toHaveLength(7)
+    expect(accounts).toHaveLength(8)
     if (accounts instanceof Error) return
     const oauth = accounts.filter((account) => account.type === 'oauth')
     expect(oauth.map((account) => (account.type === 'oauth' ? account.refresh : ''))).toEqual([
@@ -175,6 +176,7 @@ describe('importSubrouterCredentials', () => {
       'rt-anth-2',
       'rt-anth-3',
       'rt-anth-4',
+      'ok-rt-secret-1',
     ])
     expect(oauth.map((account) => account.label)).toEqual([
       'elle@example.com',
@@ -182,9 +184,13 @@ describe('importSubrouterCredentials', () => {
       'bridget@example.com',
       'acct-777',
       undefined,
+      undefined,
     ])
     if (oauth[0]?.type !== 'oauth') return
     expect(oauth[0]).toMatchObject({ refresh: 'rt-anth-5', access: 'at-anth-5', expires: 1893456000005 })
+    // The subrouter `openai` OAuth entry is a ChatGPT subscription (#198): it
+    // imports under the pool's openai-codex adapter id.
+    expect(oauth[5]).toMatchObject({ provider: 'openai-codex', type: 'oauth', refresh: 'ok-rt-secret-1' })
     // The zai api key imports for any provider the catalog resolves (#136).
     const api = accounts.filter((account) => account.type === 'api')
     expect(api.map((account) => (account.type === 'api' ? account.key : ''))).toEqual([
@@ -195,7 +201,7 @@ describe('importSubrouterCredentials', () => {
     expect(api[1]).toMatchObject({ provider: 'openai', type: 'api' })
   })
 
-  test('skips github-copilot and openai oauth with per-entry reasons; the zai api key imports', async () => {
+  test('skips github-copilot with a per-entry reason; the openai subscription imports as openai-codex', async () => {
     writeSubrouterFixture()
     const result = importResult(await importSubrouterCredentials({ dataDir }))
     const skips = result.accounts.entries
@@ -203,7 +209,6 @@ describe('importSubrouterCredentials', () => {
       .map((entry) => ({ provider: entry.provider, reason: entry.action === 'skipped' ? entry.reason : '' }))
     expect(skips).toEqual([
       { provider: 'github-copilot', reason: 'no pool adapter for github-copilot' },
-      { provider: 'openai', reason: 'no pool adapter for openai oauth' },
     ])
   })
 
@@ -223,6 +228,8 @@ describe('importSubrouterCredentials', () => {
     if (rotations instanceof Error) return
     expect(rotations).toEqual({
       max: ['anthropic/claude-opus-4-6', 'anthropic/claude-sonnet-4', 'zai/glm-4.7'],
+      // Entries are kept as written: the router serves `openai/` entries with
+      // the imported openai-codex subscription (#198).
       backup: ['openai/gpt-5.5'],
     })
     const text = reportText(result)
@@ -234,12 +241,12 @@ describe('importSubrouterCredentials', () => {
   test('a second run adds nothing and reports already present', async () => {
     writeSubrouterFixture()
     const first = importResult(await importSubrouterCredentials({ dataDir }))
-    expect(first.accounts.imported).toBe(7)
+    expect(first.accounts.imported).toBe(8)
     expect(first.rotations.set).toBe(2)
     const second = importResult(await importSubrouterCredentials({ dataDir }))
     expect(second.accounts.imported).toBe(0)
-    expect(second.accounts.alreadyPresent).toBe(7)
-    expect(second.accounts.skipped).toBe(2)
+    expect(second.accounts.alreadyPresent).toBe(8)
+    expect(second.accounts.skipped).toBe(1)
     expect(second.rotations.set).toBe(0)
     expect(second.rotations.skipped).toBe(4)
     const text = reportText(second)
@@ -247,7 +254,7 @@ describe('importSubrouterCredentials', () => {
     expect(text).toContain('skipped max: rotation already exists')
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     if (accounts instanceof Error) return
-    expect(accounts).toHaveLength(7)
+    expect(accounts).toHaveLength(8)
   })
 
   test('dedupes oauth by refresh token, accountId and email', async () => {
@@ -268,20 +275,21 @@ describe('importSubrouterCredentials', () => {
     fs.writeFileSync(path.join(subrouterHome, 'auth.json'), JSON.stringify(authFile, null, 2))
     const second = importResult(await importSubrouterCredentials({ dataDir }))
     // 3 re-listed anthropic accounts dedupe by refresh/accountId/email, the
-    // unchanged zai and openai api keys by key; nothing new is added.
-    expect(second.accounts.alreadyPresent).toBe(5)
+    // unchanged zai and openai api keys by key and the ChatGPT subscription by
+    // refresh token; nothing new is added.
+    expect(second.accounts.alreadyPresent).toBe(6)
     expect(second.accounts.imported).toBe(0)
-    expect(second.accounts.skipped).toBe(2)
+    expect(second.accounts.skipped).toBe(1)
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     if (accounts instanceof Error) return
-    expect(accounts).toHaveLength(7)
+    expect(accounts).toHaveLength(8)
   })
 
   test('dry run prints the plan and writes nothing', async () => {
     writeSubrouterFixture()
     const result = importResult(await importSubrouterCredentials({ dataDir, dryRun: true }))
     expect(result.dryRun).toBe(true)
-    expect(result.accounts.imported).toBe(7)
+    expect(result.accounts.imported).toBe(8)
     expect(result.rotations.set).toBe(2)
     expect(fs.existsSync(path.join(dataDir, 'credentials'))).toBe(false)
     const text = reportText(result)
@@ -296,7 +304,7 @@ describe('importSubrouterCredentials', () => {
     importResult(await importSubrouterCredentials({ dataDir }))
     const preview = importResult(await importSubrouterCredentials({ dataDir, dryRun: true }))
     expect(preview.accounts.imported).toBe(0)
-    expect(preview.accounts.alreadyPresent).toBe(7)
+    expect(preview.accounts.alreadyPresent).toBe(8)
   })
 
   test('concurrent imports add each account and rotation once', async () => {
@@ -307,11 +315,11 @@ describe('importSubrouterCredentials', () => {
       importSubrouterCredentials({ dataDir }),
     ])
     const results = runs.map(importResult)
-    expect(results.reduce((sum, result) => sum + result.accounts.imported, 0)).toBe(7)
+    expect(results.reduce((sum, result) => sum + result.accounts.imported, 0)).toBe(8)
     expect(results.reduce((sum, result) => sum + result.rotations.set, 0)).toBe(2)
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     if (accounts instanceof Error) throw accounts
-    expect(accounts).toHaveLength(7)
+    expect(accounts).toHaveLength(8)
   })
 
   test('subrouter files are byte-identical after a real import', async () => {
@@ -376,7 +384,7 @@ describe('importSubrouterCredentials', () => {
     fs.rmSync(path.join(subrouterHome, 'config.json'))
     fs.rmSync(path.join(dataDir, 'credentials'), { recursive: true, force: true })
     const good = importResult(await importSubrouterCredentials({ dataDir }))
-    expect(good.accounts.imported).toBe(7)
+    expect(good.accounts.imported).toBe(8)
     expect(good.rotations.set).toBe(0)
   })
 
@@ -402,7 +410,7 @@ describe('importSubrouterCredentials', () => {
       await importSubrouterCredentials({ dataDir, subrouterHome }),
     )
     expect(result.home).toBe(subrouterHome)
-    expect(result.accounts.imported).toBe(7)
+    expect(result.accounts.imported).toBe(8)
   })
 })
 
@@ -425,12 +433,19 @@ describe('catalog-aware routability', () => {
     const imported = plan.accounts
       .filter((entry) => entry.action === 'import')
       .map((entry) => (entry.action === 'import' ? entry.candidate.provider : ''))
-    expect(imported).toEqual(['anthropic', 'anthropic', 'anthropic', 'anthropic', 'anthropic', 'zai', 'openai'])
+    expect(imported).toEqual(['anthropic', 'anthropic', 'anthropic', 'anthropic', 'anthropic', 'zai', 'openai', 'openai-codex'])
     const rotations = plan.rotations.find((entry) => entry.name === 'max')
     expect(rotations).toMatchObject({
       action: 'set',
       entries: ['anthropic/claude-opus-4-6', 'anthropic/claude-sonnet-4', 'zai/glm-4.7'],
       droppedUnroutable: ['github-copilot'],
+    })
+    // Entries are not rewritten for the ChatGPT subscription: the router
+    // serves `openai/` entries with openai-codex accounts (#198).
+    const backup = plan.rotations.find((entry) => entry.name === 'backup')
+    expect(backup).toMatchObject({
+      action: 'set',
+      entries: ['openai/gpt-5.5'],
     })
   })
 
@@ -452,11 +467,30 @@ describe('catalog-aware routability', () => {
       'anthropic',
       'anthropic',
       'openai',
+      'openai-codex',
     ])
     const skippedZai = plan.accounts.find(
       (entry) => entry.action === 'skip' && entry.provider === 'zai',
     )
     expect(skippedZai).toMatchObject({ action: 'skip', reason: 'no pool adapter for zai' })
+  })
+
+  test('openai preset entries keep their single form when the provider holds no oauth account', () => {
+    const subrouterFiles = files()
+    const openai = subrouterFiles.providers.find((provider) => provider.provider === 'openai')
+    if (!openai) throw new Error('fixture is missing the openai provider')
+    openai.accounts = [{ type: 'api', key: 'sk-openai-live-0001', addedAt: 1, lastUsed: 1 }]
+    const plan = planSubrouterImport({
+      files: subrouterFiles,
+      existingAccounts: [],
+      existingRotations: {},
+      catalog: TEST_CATALOG,
+    })
+    const backup = plan.rotations.find((entry) => entry.name === 'backup')
+    expect(backup).toMatchObject({
+      action: 'set',
+      entries: ['openai/gpt-5.5'],
+    })
   })
 
   test('isImportRoutableProvider: catalog resolution vs the legacy fallback pair', () => {
@@ -532,5 +566,23 @@ describe('findExistingPoolAccount', () => {
     expect(findExistingPoolAccount({ accounts: pool, candidate: { ...oauthCandidate, email: 'Alice@Example.com' } })).toMatchObject({ id: '1' })
     expect(findExistingPoolAccount({ accounts: pool, candidate: { ...oauthCandidate, provider: 'openai' } })).toBeNull()
     expect(findExistingPoolAccount({ accounts: [], candidate: oauthCandidate })).toBeNull()
+  })
+
+  test('matches a ChatGPT subscription by the account id in its access token (#198)', () => {
+    const jwt = (accountId: string) =>
+      `h.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })).toString('base64url')}.s`
+    const pool = [
+      { id: 'c1', provider: 'openai-codex', type: 'oauth' as const, refresh: 'rt-a', access: jwt('acc_1'), expires: 1, addedAt: '', lastUsed: null },
+    ]
+    const relogin = { ...oauthCandidate, provider: 'openai-codex', refresh: 'rt-b', access: jwt('acc_1') }
+    expect(findExistingPoolAccount({ accounts: pool, candidate: relogin })).toMatchObject({ id: 'c1' })
+    expect(findExistingPoolAccount({ accounts: pool, candidate: { ...relogin, access: jwt('acc_2') } })).toBeNull()
+    // Opaque tokens carry no account id and never match each other.
+    expect(
+      findExistingPoolAccount({
+        accounts: [{ ...pool[0]!, access: 'opaque' }],
+        candidate: { ...relogin, access: 'opaque' },
+      }),
+    ).toBeNull()
   })
 })

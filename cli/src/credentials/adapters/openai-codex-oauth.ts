@@ -15,7 +15,9 @@ export const CODEX_OAUTH_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authoriz
 export const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token'
 export const CODEX_OAUTH_REDIRECT_URI = 'http://localhost:1455/auth/callback'
 export const CODEX_OAUTH_SCOPE = 'openid profile email offline_access'
-export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
+/** Base URL of the Codex Responses endpoint; SDKs append `/responses`. */
+export const CODEX_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex'
+export const CODEX_RESPONSES_URL = `${CODEX_RESPONSES_BASE_URL}/responses`
 const JWT_CLAIM_PATH = 'https://api.openai.com/auth'
 
 export function buildCodexAuthorizeUrl({ challenge, state, originator = 'roadie' }: { challenge: string; state: string; originator?: string }): string {

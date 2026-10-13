@@ -54,9 +54,30 @@ export function isCoolingDown({
   return typeof until === 'number' && until > now
 }
 
+/** Pool provider id for ChatGPT (Codex) subscription accounts. */
+export const CODEX_POOL_PROVIDER = 'openai-codex'
+
+/**
+ * The candidate provider an account serves a rotation entry's provider as, or
+ * null when it does not serve it. Accounts serve their own provider; a
+ * ChatGPT subscription (an `openai-codex` OAuth account) also serves
+ * `openai/<model>` entries, as the account's own provider so the Codex
+ * adapter is picked (#198). Rotations created from a subscription install
+ * name the model the user picked (`openai/gpt-6.1-sol`), and that install's
+ * only account is the subscription.
+ */
+export function accountServesProvider({ account, provider }: { account: PoolAccount; provider: string }): string | null {
+  if (account.provider === provider) return provider
+  if (provider === 'openai' && account.provider === CODEX_POOL_PROVIDER && account.type === 'oauth') {
+    return CODEX_POOL_PROVIDER
+  }
+  return null
+}
+
 /**
  * Ordered candidates: rotation entries tried top to bottom, each paired with
- * the pool's non-cooled accounts of the matching provider in account order.
+ * the pool's non-cooled accounts that serve the entry's provider (see
+ * accountServesProvider) in account order.
  */
 export function resolveCandidates({
   poolId,
@@ -76,11 +97,12 @@ export function resolveCandidates({
     const parsed = parseRotationEntry(entry)
     if (!parsed) continue
     for (const account of accounts) {
-      if (account.provider !== parsed.provider) continue
+      const provider = accountServesProvider({ account, provider: parsed.provider })
+      if (provider === null) continue
       if (isCoolingDown({ cooldowns, accountId: account.id, now })) continue
       candidates.push({
         poolId,
-        provider: parsed.provider,
+        provider,
         modelId: parsed.modelId,
         account,
       })

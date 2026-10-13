@@ -11,10 +11,13 @@
 //    under the pool lock, so a second startup re-imports nothing.
 // 2. Stored model choices: rewrite `subrouter/<preset>` to `roadie/<preset>` in
 //    global_models, channel_models and session_models — but only when the pool
-//    has a rotation named <preset> (the import creates rotations under the same
-//    names). The variant is cleared on rewritten rows. Every other row is left
-//    untouched; unmappable choices (e.g. presets made only of unroutable
-//    providers such as github-copilot) keep working while subrouter still loads.
+//    can actually serve the rotation: it must have a rotation named <preset>
+//    (the import creates rotations under the same names) whose entries match
+//    at least one account in the pool (#198 — repointing a choice onto a
+//    rotation no account resolves turns a working `subrouter/...` into a 401).
+//    The variant is cleared on rewritten rows. Every other row is left
+//    untouched; unmappable choices keep working while subrouter still loads
+//    and are rewritten on a later startup once the pool can serve them.
 //
 // Output is counts and preset names only: keys and tokens are never printed.
 
@@ -28,7 +31,8 @@ import {
   resolveSubrouterHome,
   type SubrouterImportResult,
 } from './import-subrouter.js'
-import { readPoolAccounts, readPoolRotations, SHARED_POOL_ID } from './store.js'
+import { accountServesProvider, parseRotationEntry } from './router.js'
+import { readPoolAccounts, readPoolRotations, SHARED_POOL_ID, type PoolAccount } from './store.js'
 
 export const SUBROUTER_MODEL_PREFIX = 'subrouter/'
 export const ROADIE_MODEL_PREFIX = 'roadie/'
@@ -84,32 +88,60 @@ export type SubrouterStartupMigration = {
 }
 
 /**
+ * True when at least one of the rotation's entries is served by a pool
+ * account, by the router's own matching (accountServesProvider). Cooldowns
+ * are deliberately ignored: a cooling account still exists and will serve
+ * again.
+ */
+export function rotationHasAccount({
+  entries,
+  accounts,
+}: {
+  entries: string[]
+  accounts: PoolAccount[]
+}): boolean {
+  return entries.some((entry) => {
+    const parsed = parseRotationEntry(entry)
+    return parsed !== null && accounts.some((account) => accountServesProvider({ account, provider: parsed.provider }) !== null)
+  })
+}
+
+/**
  * True when the preset behind a `subrouter/<preset>` row can be rewritten:
  * the pool has a rotation with that exact name (imports create rotations
- * under the subrouter preset names).
+ * under the subrouter preset names) whose entries match at least one pool
+ * account — a rotation no account resolves would 401 every repointed request
+ * (#198).
  */
 export function canRewriteSubrouterModel({
   modelId,
   rotations,
+  accounts,
 }: {
   modelId: string
   rotations: Record<string, string[]>
+  accounts: PoolAccount[]
 }): boolean {
   if (!modelId.startsWith(SUBROUTER_MODEL_PREFIX)) return false
   const preset = modelId.slice(SUBROUTER_MODEL_PREFIX.length)
-  return Boolean(rotations[preset] && rotations[preset]!.length > 0)
+  const rotation = rotations[preset]
+  if (!rotation || rotation.length === 0) return false
+  return rotationHasAccount({ entries: rotation, accounts })
 }
 
 /**
  * Rewrite `subrouter/<preset>` rows to `roadie/<preset>` when the pool has a
- * matching rotation, clearing the variant. Pure with respect to the database
- * apart from the updates themselves; returns per-table counts so the caller
- * logs without touching row data.
+ * matching rotation that at least one pool account serves, clearing the
+ * variant. Pure with respect to the database apart from the updates
+ * themselves; returns per-table counts so the caller logs without touching
+ * row data.
  */
 export async function rewriteSubrouterModelChoices({
   rotations,
+  accounts,
 }: {
   rotations: Record<string, string[]>
+  accounts: PoolAccount[]
 }): Promise<SubrouterModelRewrites | Error> {
   const db = await getDb()
   const rewrites: SubrouterModelRewrites = {
@@ -136,7 +168,7 @@ export async function rewriteSubrouterModelChoices({
       // providers, already-migrated roadie rows) is left untouched.
       if (!row.model_id.startsWith(SUBROUTER_MODEL_PREFIX)) continue
       const preset = row.model_id.slice(SUBROUTER_MODEL_PREFIX.length)
-      if (canRewriteSubrouterModel({ modelId: row.model_id, rotations })) {
+      if (canRewriteSubrouterModel({ modelId: row.model_id, rotations, accounts })) {
         await update(keyOf(row), preset)
         rewritten += 1
       } else {
@@ -239,7 +271,12 @@ export async function migrateSubrouterCredentialsAtStartup({
   const rotations = readPoolRotations({ dataDir, poolId })
   if (rotations instanceof Error) return rotations
 
-  const rewrites = await rewriteSubrouterModelChoices({ rotations })
+  // Re-read accounts: the import above may have populated the pool, and the
+  // rewrite guard needs the post-import snapshot (#198).
+  const rewritableAccounts = readPoolAccounts({ dataDir, poolId })
+  if (rewritableAccounts instanceof Error) return rewritableAccounts
+
+  const rewrites = await rewriteSubrouterModelChoices({ rotations, accounts: rewritableAccounts })
   if (rewrites instanceof Error) return rewrites
 
   return {
@@ -285,7 +322,7 @@ export function formatSubrouterStartupMigration(result: SubrouterStartupMigratio
   }
   if (rewrites.unmapped > 0) {
     lines.push(
-      `Kept ${rewrites.unmapped} subrouter model choice${rewrites.unmapped === 1 ? '' : 's'} with no matching rotation: ${rewrites.unmappedPresets.join(', ')}`,
+      `Kept ${rewrites.unmapped} subrouter model choice${rewrites.unmapped === 1 ? '' : 's'} with no rotation the pool can serve: ${rewrites.unmappedPresets.join(', ')}`,
     )
   }
   return lines

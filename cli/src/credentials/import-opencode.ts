@@ -11,11 +11,13 @@
 // { type: 'oauth', refresh, access, expires, accountId? } or an API key
 // { type: 'api', key }. They are planned with the same rules as the subrouter
 // import (cli/src/credentials/import-subrouter.ts): api-key accounts for any
-// provider the models.dev catalog resolves, anthropic OAuth only — everything
-// else is skipped with a per-entry reason. Everything is validated before the
-// first pool write, dedupe runs under the pool lock, and the report carries
-// counts and labels only: email or accountId when present, otherwise the last
-// 4 characters of the secret. Keys and tokens are never printed.
+// provider the models.dev catalog resolves, anthropic OAuth, and ChatGPT
+// (Codex) subscriptions — the `openai` OAuth entry imports under the pool's
+// `openai-codex` adapter id (#198). Everything else is skipped with a
+// per-entry reason. Everything is validated before the first pool write,
+// dedupe runs under the pool lock, and the report carries counts and labels
+// only: email or accountId when present, otherwise the last 4 characters of
+// the secret. Keys and tokens are never printed.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -145,8 +147,8 @@ export function readOpencodeAuthFiles({ dir }: { dir: string }): OpencodeAuthFil
  * Map the read files onto pool account plan entries. auth.json entries use the
  * provider recorded next to them in the file; rotation-file entries use the
  * provider in the file name. Planning is the subrouter import's: routable
- * api-key providers and anthropic oauth import, everything else is skipped
- * with a per-entry reason.
+ * api-key providers, anthropic oauth, and ChatGPT (Codex) subscriptions
+ * import; everything else is skipped with a per-entry reason.
  */
 export function planOpencodeImport({
   files,
