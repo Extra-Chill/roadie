@@ -27,6 +27,7 @@ type DiscordThreadPayload = {
   last_message_id?: string | null
   thread_metadata?: {
     archived?: boolean
+    archive_timestamp?: string
   }
 }
 
@@ -97,9 +98,13 @@ function parseThreadListPayload({
   payload: unknown
   parentId: string
   guildId: string
-}): { threads: DiscordChannelThread[]; hasMore: boolean } {
+}): {
+  threads: DiscordChannelThread[]
+  hasMore: boolean
+  nextBefore: string | undefined
+} {
   if (!payload || typeof payload !== 'object') {
-    return { threads: [], hasMore: false }
+    return { threads: [], hasMore: false, nextBefore: undefined }
   }
   const list = payload as DiscordThreadListPayload
   const threads = (list.threads ?? []).flatMap((thread) => {
@@ -110,9 +115,14 @@ function parseThreadListPayload({
     })
     return parsed ? [parsed] : []
   })
+  // Discord's archived-thread `before` cursor is an ISO8601 archive timestamp,
+  // not a thread ID. Read it from the last raw entry (before parent filtering)
+  // so pagination advances even when a page holds threads from other channels.
+  const nextBefore = list.threads?.at(-1)?.thread_metadata?.archive_timestamp
   return {
     threads,
     hasMore: Boolean(list.has_more),
+    nextBefore,
   }
 }
 
@@ -125,15 +135,13 @@ async function fetchDiscordJson({
   route: `/${string}`
   query?: URLSearchParams
 }): Promise<unknown | DiscordApiError> {
-  const result = await rest
-    .get(route, query ? { query } : undefined)
-    .catch((cause) => {
-      return new DiscordApiError({
-        status: String(Reflect.get(cause, 'status') ?? 'unknown'),
-        body: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      })
+  const result = await rest.get(route, query ? { query } : undefined).catch((cause) => {
+    return new DiscordApiError({
+      status: String(Reflect.get(cause, 'status') ?? 'unknown'),
+      body: `${route}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause,
     })
+  })
   return result
 }
 
@@ -169,11 +177,10 @@ async function listArchivedPublicThreads({
       guildId,
     })
     threads.push(...page.threads)
-    const lastThread = page.threads.at(-1)
-    if (!page.hasMore || !lastThread) {
+    if (!page.hasMore || !page.nextBefore || page.nextBefore === before) {
       break
     }
-    before = lastThread.id
+    before = page.nextBefore
   }
   return threads
 }
