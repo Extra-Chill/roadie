@@ -102,12 +102,14 @@ channels:
     project: shared-site
     who: [owner, "role:team", "person:<host id>"]   # or "everyone"
     respond: always              # always | mention | never
-    threads: per-message         # per-message | existing-only
+    threads: per-message         # per-message | existing-only | none
   "*":
     respond: never
 ```
 
 Channels can also set `directory`, `agent`, `model`, `verbosity`, `capabilities` and `permissions` directly. Resolution walks thread → channel → category → `"*"`, the most specific value winning. With a config file, a channel that resolves to no policy is not answered, and an invalid file keeps the last valid one in effect (or answers nothing). The file is reloaded when it changes.
+
+`threads` decides where a conversation lives. `per-message` (the default) starts a thread for each new conversation. `existing-only` never starts one, so only existing threads are answered. `none` answers inline: the channel itself is the conversation, with one long-running session keyed by the channel, so context carries across messages the way it does in a thread. Each turn's first reply is anchored to the message that started it, the channel is never renamed from a session title, and `/abort` works in the channel. Pair it with `respond: mention` so only mentions start turns; other messages are ignored unless an explicit `intake` policy makes them context. `threads: none` is Discord-only for now; Slack channels keep per-message threads.
 
 ## Agent backend
 

@@ -32,11 +32,18 @@ export type ChatMessage = { id: string }
 export type ChatThread = {
   /** Optional native presentation of a backend session title. */
   syncTitle?(title: string): Promise<void | Error>
+  /**
+   * Conversations that share their container with other traffic (a channel
+   * answered inline, without threads) anchor each turn's first reply to the
+   * message that started it. The runtime passes that message when a turn
+   * starts; the next `sendPart`/`sendMessage` replies to it once.
+   */
+  setReplyAnchor?(messageId: string | undefined): void
   readonly platform: string
   readonly interactions: ChatInteractions
   readonly capabilities: { rename: boolean; typing: boolean }
   footerMentionUserId(sessionUserId?: string): Promise<string | undefined>
-  /** Platform id of the thread. */
+  /** Platform id of the thread (or of the channel, for inline conversations). */
   readonly id: string
   /** Current thread title. */
   readonly name: string

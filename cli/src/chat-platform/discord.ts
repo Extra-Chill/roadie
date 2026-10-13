@@ -1,7 +1,7 @@
 // Discord implementation of the chat platform seam. Each method performs the
 // exact Discord call the session runtime made before the seam existed.
 
-import { ChannelType, Routes, type ThreadChannel } from 'discord.js'
+import { ChannelType, Routes, type TextChannel, type ThreadChannel } from 'discord.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
@@ -125,5 +125,79 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       }
       return fetched.topic?.trim() || undefined
     },
+  }
+}
+
+/**
+ * A text channel answered inline (channel policy `threads: none`). The channel
+ * itself is the conversation container: one long-running session keyed by the
+ * channel id. It is never renamed, and each turn's first reply is anchored to
+ * the message that started it so answers stay legible in a busy channel.
+ */
+export function createDiscordChatChannel(channel: TextChannel): ChatThread {
+  // The interactive prompt helpers only use the members a text channel shares
+  // with a thread (id, send, messages, client); thread-only fields such as
+  // ownerId read as undefined.
+  const container = channel as unknown as ThreadChannel
+  const base = createDiscordChatThread(container)
+  let replyAnchor: string | undefined
+  const takeAnchor = () => {
+    const anchor = replyAnchor
+    replyAnchor = undefined
+    return anchor
+  }
+  return {
+    platform: 'discord',
+    capabilities: { rename: false, typing: true },
+    interactions: base.interactions,
+    footerMentionUserId: async (sessionUserId) => {
+      const botUserId = channel.client.user?.id
+      return sessionUserId && sessionUserId !== botUserId ? sessionUserId : undefined
+    },
+    get id() {
+      return channel.id
+    },
+    get name() {
+      return channel.name
+    },
+    get parentId() {
+      return channel.id
+    },
+    get spaceId() {
+      return channel.guildId
+    },
+    get createdAt() {
+      return channel.createdTimestamp
+    },
+    get botUserId() {
+      return channel.client.user?.id
+    },
+    setReplyAnchor(messageId) {
+      replyAnchor = messageId
+    },
+    async syncTitle() {
+      // Session titles are not shown on a channel; never rename it.
+    },
+    async sendMessage(content, options) {
+      return sendThreadMessage(channel, content, { flags: flagsFor(options?.notify), replyTo: takeAnchor() })
+    },
+    async sendPart(content, options) {
+      return sendSessionPartMessage(channel, content, {
+        leadWithBlankLine: options?.leadWithBlankLine,
+        flags: flagsFor(options?.notify),
+        replyTo: takeAnchor(),
+      })
+    },
+    async rename() {
+      // Never rename a channel from a session title.
+    },
+    async channelTopic() {
+      return channel.topic?.trim() || undefined
+    },
+    sendNotice: base.sendNotice,
+    readMessageText: base.readMessageText,
+    editMessageText: base.editMessageText,
+    setPendingMarker: base.setPendingMarker,
+    sendTyping: base.sendTyping,
   }
 }

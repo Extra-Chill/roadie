@@ -1,5 +1,6 @@
 // /abort command - Abort the current OpenCode request in this thread.
 
+import { channelUsesChannelConversation } from '../channel-policy.js'
 import {
   ChannelType,
   MessageFlags,
@@ -41,7 +42,11 @@ export async function handleAbortCommand({
     ChannelType.AnnouncementThread,
   ].includes(channel.type)
 
-  if (!isThread) {
+  // Inline channel conversations (`threads: none`) hold their session on the channel.
+  const isChannelConversation =
+    channel.type === ChannelType.GuildText && channelUsesChannelConversation(channel.id)
+
+  if (!isThread && !isChannelConversation) {
     await command.reply({
       content:
         'This command can only be used in a thread with an active session',
