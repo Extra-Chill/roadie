@@ -285,7 +285,7 @@ export function resolveSessionSearchDirectories({
   const uniqueDirectories = [...new Set(registeredDirectories)]
   if (uniqueDirectories.length === 0) {
     return new Error(
-      'No registered projects found. Add a project first with `roadie project add`, or search one directory with --project.',
+      'No registered projects found. Bind channels to directories in the channels config (ROADIE_CHANNELS_CONFIG), or search one directory with --project.',
     )
   }
   return uniqueDirectories

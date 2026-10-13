@@ -5,7 +5,7 @@
 // exports ROADIE_AGENT_TOKEN instead, see agent-token.ts). The `roadie`
 // subcommands agents are told to run — send, session list/search/read/wait/
 // editors/archive/abort/title/discord-url, task list/edit/delete, project
-// list/add/create/remove/open-in-discord, thread list, user list — detect
+// list/remove/open-in-discord, thread list, user list — detect
 // that mode here and call typed JSON endpoints on the bot's local HTTP server
 // instead of opening the database.
 //
@@ -52,8 +52,6 @@ export const AGENT_SESSION_TITLE_PATH = '/roadie/agent/sessions/title'
 export const AGENT_SESSIONS_PATH = '/roadie/agent/sessions'
 export const AGENT_TASKS_PATH = '/roadie/agent/tasks'
 export const AGENT_PROJECTS_PATH = '/roadie/agent/projects'
-export const AGENT_PROJECT_ADD_PATH = '/roadie/agent/projects/add'
-export const AGENT_PROJECT_CREATE_PATH = '/roadie/agent/projects/create'
 export const AGENT_PROJECT_REMOVE_PATH = '/roadie/agent/projects/remove'
 export const AGENT_PROJECT_OPEN_IN_DISCORD_PATH = '/roadie/agent/projects/open-in-discord'
 export const AGENT_THREADS_PATH = '/roadie/agent/threads'
@@ -135,7 +133,10 @@ export async function runAgentCommand({
       ...(request.body !== undefined && { 'content-type': 'application/json' }),
     },
     body: request.body === undefined ? undefined : JSON.stringify(request.body),
-  }).catch((cause: unknown) => new Error(`Could not reach the running Roadie bot on port ${agent.port}`, { cause }))
+  }).catch(
+    (cause: unknown) =>
+      new Error(`Could not reach the running Roadie bot on port ${agent.port}`, { cause }),
+  )
   if (response instanceof Error) {
     stderr.write(`${response.message}\n`)
     return 1
@@ -177,7 +178,8 @@ export function sessionReadQuery(options: {
   if (options.project) query.project = options.project
   if (options.verbose) query.verbose = '1'
   if (options.thinking) query.thinking = '1'
-  if (options.toolInputMaxChars !== undefined) query.toolInputMaxChars = String(options.toolInputMaxChars)
+  if (options.toolInputMaxChars !== undefined)
+    query.toolInputMaxChars = String(options.toolInputMaxChars)
   return query
 }
 
@@ -211,9 +213,7 @@ export function sessionEditorsQuery(options: {
 }
 
 /** Query parameters for `session discord-url <sessionId>`. */
-export function sessionDiscordUrlQuery(options: {
-  json?: boolean
-}): Record<string, string> {
+export function sessionDiscordUrlQuery(options: { json?: boolean }): Record<string, string> {
   const query: Record<string, string> = {}
   if (options.json) query.json = '1'
   return query
@@ -240,9 +240,7 @@ export type AgentSessionTitleBody = {
 }
 
 /** JSON body for `POST /roadie/agent/sessions/title` (`session title`). */
-export function sessionTitleBody(options: {
-  title: string
-}): AgentSessionTitleBody {
+export function sessionTitleBody(options: { title: string }): AgentSessionTitleBody {
   return { title: options.title }
 }
 
@@ -259,51 +257,12 @@ export function projectListQuery(options: {
   return query
 }
 
-export type AgentProjectAddBody = {
-  directory?: string
-  guild?: string
-  appId?: string
-}
-
-/** JSON body for `POST /roadie/agent/projects/add` (`project add`). */
-export function projectAddBody(options: {
-  directory?: string
-  guild?: string
-  appId?: string
-}): AgentProjectAddBody {
-  const body: AgentProjectAddBody = {}
-  if (options.directory) body.directory = options.directory
-  if (options.guild) body.guild = options.guild
-  if (options.appId) body.appId = options.appId
-  return body
-}
-
-export type AgentProjectCreateBody = {
-  name: string
-  guild?: string
-  projectsDir?: string
-}
-
-/** JSON body for `POST /roadie/agent/projects/create` (`project create`). */
-export function projectCreateBody(options: {
-  name: string
-  guild?: string
-  projectsDir?: string
-}): AgentProjectCreateBody {
-  const body: AgentProjectCreateBody = { name: options.name }
-  if (options.guild) body.guild = options.guild
-  if (options.projectsDir) body.projectsDir = options.projectsDir
-  return body
-}
-
 export type AgentProjectRemoveBody = {
   channelId: string
 }
 
 /** JSON body for `POST /roadie/agent/projects/remove` (`project remove`). */
-export function projectRemoveBody(options: {
-  channelId: string
-}): AgentProjectRemoveBody {
+export function projectRemoveBody(options: { channelId: string }): AgentProjectRemoveBody {
   return { channelId: options.channelId }
 }
 
@@ -331,10 +290,7 @@ export function threadListQuery(options: {
 }
 
 /** Query parameters for `user list` (the search text is `query`). */
-export function userListQuery(options: {
-  guild: string
-  query?: string
-}): Record<string, string> {
+export function userListQuery(options: { guild: string; query?: string }): Record<string, string> {
   const query: Record<string, string> = { guild: options.guild }
   if (options.query) query.query = options.query
   return query
@@ -555,7 +511,10 @@ export function buildAgentTaskEditArgs({
   body: unknown
 }): string[] {
   const fields = jsonObjectBody(body)
-  rejectUnknownFields(fields, AGENT_TASK_EDIT_FIELDS.map(([field]) => field))
+  rejectUnknownFields(
+    fields,
+    AGENT_TASK_EDIT_FIELDS.map(([field]) => field),
+  )
   const args = ['task', 'edit', String(taskId)]
   for (const [key, flag] of AGENT_TASK_EDIT_FIELDS) {
     const value = bodyString(fields, key)
@@ -576,32 +535,6 @@ export function buildAgentProjectListArgs(query: URLSearchParams): string[] {
   const guild = queryValue(query, 'guild')
   if (guild) args.push(`--guild=${guild}`)
   // --prune is deliberately unreachable: agents never delete mappings.
-  return args
-}
-
-export function buildAgentProjectAddArgs(body: unknown): string[] {
-  const fields = jsonObjectBody(body)
-  rejectUnknownFields(fields, ['directory', 'guild', 'appId'])
-  const args = ['project', 'add']
-  const directory = bodyString(fields, 'directory')
-  if (directory) args.push(directory)
-  const guild = bodyString(fields, 'guild')
-  if (guild) args.push(`--guild=${guild}`)
-  const appId = bodyString(fields, 'appId')
-  if (appId) args.push(`--app-id=${appId}`)
-  return args
-}
-
-export function buildAgentProjectCreateArgs(body: unknown): string[] {
-  const fields = jsonObjectBody(body)
-  rejectUnknownFields(fields, ['name', 'guild', 'projectsDir'])
-  const name = bodyString(fields, 'name')
-  if (!name) throw new AgentRequestError('name is required')
-  const args = ['project', 'create', name]
-  const guild = bodyString(fields, 'guild')
-  if (guild) args.push(`--guild=${guild}`)
-  const projectsDir = bodyString(fields, 'projectsDir')
-  if (projectsDir) args.push(`--projects-dir=${projectsDir}`)
   return args
 }
 
@@ -685,7 +618,11 @@ function bearerToken(req: http.IncomingMessage): string | null {
     : null
 }
 
-function respondJson(res: http.ServerResponse, status: number, payload: Record<string, string>): void {
+function respondJson(
+  res: http.ServerResponse,
+  status: number,
+  payload: Record<string, string>,
+): void {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(payload))
 }
@@ -797,18 +734,6 @@ export async function handleAgentRequest(
       await runAgentChild(buildAgentSessionTitleArgs({ body: body.value, sessionId }), res)
       return
     }
-    if (req.method === 'POST' && url.pathname === AGENT_PROJECT_ADD_PATH) {
-      const body = await readJsonBody(req, res)
-      if (!body.ok) return
-      await runAgentChild(buildAgentProjectAddArgs(body.value), res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === AGENT_PROJECT_CREATE_PATH) {
-      const body = await readJsonBody(req, res)
-      if (!body.ok) return
-      await runAgentChild(buildAgentProjectCreateArgs(body.value), res)
-      return
-    }
     if (req.method === 'POST' && url.pathname === AGENT_PROJECT_REMOVE_PATH) {
       const body = await readJsonBody(req, res)
       if (!body.ok) return
@@ -825,7 +750,13 @@ export async function handleAgentRequest(
     const readSegment = readMatch?.[1]
     if (req.method === 'GET' && readMatch && readSegment !== undefined) {
       // Read stays as broad as the CLI already is for local operators.
-      await runAgentChild(buildAgentSessionReadArgs({ sessionId: pathSegment(readSegment, 'session id'), query: url.searchParams }), res)
+      await runAgentChild(
+        buildAgentSessionReadArgs({
+          sessionId: pathSegment(readSegment, 'session id'),
+          query: url.searchParams,
+        }),
+        res,
+      )
       return
     }
     const waitMatch = AGENT_SESSION_WAIT_PATTERN.exec(url.pathname)
@@ -844,21 +775,31 @@ export async function handleAgentRequest(
     const abortSegment = abortMatch?.[1]
     if (req.method === 'POST' && abortMatch && abortSegment !== undefined) {
       // Abort follows the CLI rules: any session the caller names.
-      await runAgentChild(buildAgentSessionAbortArgs({ sessionId: pathSegment(abortSegment, 'session id') }), res)
+      await runAgentChild(
+        buildAgentSessionAbortArgs({ sessionId: pathSegment(abortSegment, 'session id') }),
+        res,
+      )
       return
     }
     const discordUrlMatch = AGENT_SESSION_DISCORD_URL_PATTERN.exec(url.pathname)
     const discordUrlSegment = discordUrlMatch?.[1]
     if (req.method === 'GET' && discordUrlMatch && discordUrlSegment !== undefined) {
-      await runAgentChild(buildAgentSessionDiscordUrlArgs({
-        sessionId: pathSegment(discordUrlSegment, 'session id'),
-        query: url.searchParams,
-      }), res)
+      await runAgentChild(
+        buildAgentSessionDiscordUrlArgs({
+          sessionId: pathSegment(discordUrlSegment, 'session id'),
+          query: url.searchParams,
+        }),
+        res,
+      )
       return
     }
     const taskEditMatch = AGENT_TASK_EDIT_PATTERN.exec(url.pathname)
     const taskEditSegment = taskEditMatch?.[1]
-    if (taskEditMatch && taskEditSegment !== undefined && (req.method === 'PATCH' || req.method === 'DELETE')) {
+    if (
+      taskEditMatch &&
+      taskEditSegment !== undefined &&
+      (req.method === 'PATCH' || req.method === 'DELETE')
+    ) {
       const taskId = parseAgentTaskId(taskEditSegment)
       if (req.method === 'DELETE') {
         // Out-of-scope tasks look like any other unknown task.

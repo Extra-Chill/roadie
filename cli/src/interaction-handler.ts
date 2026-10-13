@@ -16,14 +16,9 @@ import { handleTasksCommand } from './commands/tasks.js'
 import { handleLastSessionsCommand } from './commands/last-sessions.js'
 
 import {
-  handleAddProjectCommand,
-  handleAddProjectAutocomplete,
-} from './commands/add-project.js'
-import {
   handleRemoveProjectCommand,
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
-import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handleChannelCommand, isApplicationGuild } from './commands/channel.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
@@ -312,10 +307,6 @@ export function registerInteractionHandler({
               await handleSessionAutocomplete({ interaction, appId })
               return
 
-            case 'add-project':
-              await handleAddProjectAutocomplete({ interaction, appId })
-              return
-
             case 'remove-project':
               await handleRemoveProjectAutocomplete({ interaction, appId })
               return
@@ -368,19 +359,8 @@ export function registerInteractionHandler({
               })
               return
 
-            case 'add-project':
-              await handleAddProjectCommand({ command: interaction, appId })
-              return
-
             case 'remove-project':
               await handleRemoveProjectCommand({ command: interaction, appId })
-              return
-
-            case 'create-new-project':
-              await handleCreateNewProjectCommand({
-                command: interaction,
-                appId,
-              })
               return
 
             case 'abort':

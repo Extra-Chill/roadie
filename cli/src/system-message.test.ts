@@ -737,7 +737,7 @@ describe('system-message', () => {
 
       ## cross-project commands
 
-      When the user references another project by name, run \`roadie project list\` to find its directory and channel ID, then read files, search code, or run commands directly in that directory. If the project is not listed, register its root with \`roadie project add /path/to/repo\` (this creates a Discord channel). Never add subfolders of an existing project.
+      When the user references another project by name, run \`roadie project list\` to find its directory and channel ID, then read files, search code, or run commands directly in that directory. If the project is not listed, its channel is not bound on this deployment: Roadie no longer creates project channels, so ask the host to bind the channel to a directory in the channels config (\`--channels-config\` / \`ROADIE_CHANNELS_CONFIG\`).
 
       \`#project-name\` usually means a Roadie project channel. Resolve \`channel_name\` with \`roadie project list --json\`. The JSON includes \`guild_id\` and \`guild_name\` to tell same-named channels apart. Prefer \`guild_id\`: it is stable, \`guild_name\` can change.
 
@@ -758,8 +758,6 @@ describe('system-message', () => {
       # resolve by channel name (add a guild filter if duplicates exist)
       roadie project list --json | jq -r '.[] | select(.channel_name == "project-name") | .channel_id + " " + .guild_name + " " + .directory'
 
-      roadie project create my-new-app                 # ~/.roadie/projects/<name>: folder + git init + Discord channel
-      roadie project add /path/to/repo                 # add an existing directory
       roadie project remove <channel_id>               # drop a stale mapping (local DB only, keeps the Discord channel)
       \`\`\`
 

@@ -1000,7 +1000,7 @@ export async function startDiscordBot({
             // the channel is linked to a project.
             await message.reply({
               content:
-                'This channel is not connected to an OpenCode project.\nSend your message in a project channel, or use `/add-project` for an existing project, or `/create-new-project` to make a new one.',
+                'This channel is not connected to an OpenCode project.\nSend your message in a project channel, or ask the host to bind this channel to a directory in the channels config (ROADIE_CHANNELS_CONFIG).',
               flags: SILENT_MESSAGE_FLAGS,
             })
             return

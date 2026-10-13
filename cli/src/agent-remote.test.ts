@@ -14,11 +14,14 @@ import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { createScheduledTask } from './database.js'
 import { setRemoteSendRunner } from './remote-send.js'
 import { chooseLockPort } from './test-utils.js'
-import { ensureAgentTokenSecret, mintAgentToken, AGENT_TOKEN_ENV, AGENT_TOKEN_SECRET_ENV } from './agent-token.js'
+import {
+  ensureAgentTokenSecret,
+  mintAgentToken,
+  AGENT_TOKEN_ENV,
+  AGENT_TOKEN_SECRET_ENV,
+} from './agent-token.js'
 import {
   AGENT_PROJECTS_PATH,
-  AGENT_PROJECT_ADD_PATH,
-  AGENT_PROJECT_CREATE_PATH,
   AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
   AGENT_PROJECT_REMOVE_PATH,
   AGENT_SEND_PATH,
@@ -37,7 +40,16 @@ import {
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-agent-remote-'))
 const AGENT_SESSION = 'ses_agent_test'
 const savedEnv = Object.fromEntries(
-  [AGENT_TOKEN_ENV, AGENT_TOKEN_SECRET_ENV, 'ROADIE_OPENCODE_PROCESS', 'ROADIE_LOCK_PORT', 'ROADIE_DB_URL', 'ROADIE_DB_AUTH_TOKEN', 'ROADIE_DB_AUTH_TOKEN_FILE', 'ROADIE_SERVICE_TOKEN'].map((key) => [key, process.env[key]]),
+  [
+    AGENT_TOKEN_ENV,
+    AGENT_TOKEN_SECRET_ENV,
+    'ROADIE_OPENCODE_PROCESS',
+    'ROADIE_LOCK_PORT',
+    'ROADIE_DB_URL',
+    'ROADIE_DB_AUTH_TOKEN',
+    'ROADIE_DB_AUTH_TOKEN_FILE',
+    'ROADIE_SERVICE_TOKEN',
+  ].map((key) => [key, process.env[key]]),
 )
 
 let url = ''
@@ -47,9 +59,13 @@ const runs: string[][] = []
 let nextExit = 0
 let restoreRunner: (() => void) | undefined
 
-const sink = (into: string[]) => ({ write: (chunk: string) => into.push(chunk) }) as unknown as NodeJS.WritableStream
+const sink = (into: string[]) =>
+  ({ write: (chunk: string) => into.push(chunk) }) as unknown as NodeJS.WritableStream
 
-async function runClient(request: AgentCommandRequest, agent = { token: token(), port: Number(process.env.ROADIE_LOCK_PORT) }) {
+async function runClient(
+  request: AgentCommandRequest,
+  agent = { token: token(), port: Number(process.env.ROADIE_LOCK_PORT) },
+) {
   const out: string[] = []
   const err: string[] = []
   const exit = await runAgentCommand({ agent, request, stdout: sink(out), stderr: sink(err) })
@@ -63,7 +79,8 @@ const post = (endpoint: string, auth: string, body: unknown) =>
     body: JSON.stringify(body),
   })
 
-const get = (endpoint: string, auth: string) => fetch(`${url}${endpoint}`, { headers: { authorization: auth } })
+const get = (endpoint: string, auth: string) =>
+  fetch(`${url}${endpoint}`, { headers: { authorization: auth } })
 
 beforeAll(async () => {
   delete process.env.ROADIE_DB_URL
@@ -111,12 +128,18 @@ describe('agent token auth', () => {
       expect(response.status).toBe(401)
     }
     // The cross-user send endpoint keeps its own service-token auth.
-    expect((await post('/roadie/send', `Bearer ${token()}`, { options: { prompt: 'x' } })).status).toBe(401)
+    expect(
+      (await post('/roadie/send', `Bearer ${token()}`, { options: { prompt: 'x' } })).status,
+    ).toBe(401)
   })
 
   test('a valid token for another session cannot wait on this session', async () => {
     const otherSessionToken = mintAgentToken({ secret, sessionId: 'ses_other' })
-    const response = await post(`${AGENT_SESSIONS_PATH}/${AGENT_SESSION}/wait`, `Bearer ${otherSessionToken}`, {})
+    const response = await post(
+      `${AGENT_SESSIONS_PATH}/${AGENT_SESSION}/wait`,
+      `Bearer ${otherSessionToken}`,
+      {},
+    )
     expect(response.status).toBe(403)
   })
 })
@@ -133,14 +156,22 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
   })
 
   test('session search passes the query and allowlisted flags', async () => {
-    await runClient({ method: 'GET', path: AGENT_SESSION_SEARCH_PATH, query: { q: 'auth timeout', days: '0', json: '1' } })
+    await runClient({
+      method: 'GET',
+      path: AGENT_SESSION_SEARCH_PATH,
+      query: { q: 'auth timeout', days: '0', json: '1' },
+    })
     expect(runs.at(-1)).toEqual(['session', 'search', 'auth timeout', '--days=0', '--json'])
   })
 
   test('search requires a query and rejects invalid integers', async () => {
     expect((await get(AGENT_SESSION_SEARCH_PATH, `Bearer ${token()}`)).status).toBe(400)
-    expect((await get(`${AGENT_SESSION_SEARCH_PATH}?q=x&limit=zero`, `Bearer ${token()}`)).status).toBe(400)
-    expect((await get(`${AGENT_SESSION_SEARCH_PATH}?q=x&limit=-3`, `Bearer ${token()}`)).status).toBe(400)
+    expect(
+      (await get(`${AGENT_SESSION_SEARCH_PATH}?q=x&limit=zero`, `Bearer ${token()}`)).status,
+    ).toBe(400)
+    expect(
+      (await get(`${AGENT_SESSION_SEARCH_PATH}?q=x&limit=-3`, `Bearer ${token()}`)).status,
+    ).toBe(400)
   })
 
   test('session read maps to session read arguments', async () => {
@@ -149,7 +180,14 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
       path: `${AGENT_SESSIONS_PATH}/ses_read_target`,
       query: { verbose: '1', thinking: '1', toolInputMaxChars: '40' },
     })
-    expect(runs.at(-1)).toEqual(['session', 'read', 'ses_read_target', '--verbose', '--thinking', '--tool-input-max-chars=40'])
+    expect(runs.at(-1)).toEqual([
+      'session',
+      'read',
+      'ses_read_target',
+      '--verbose',
+      '--thinking',
+      '--tool-input-max-chars=40',
+    ])
   })
 
   test('session wait maps to session wait for the token session', async () => {
@@ -158,7 +196,11 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
   })
 
   test('project list allows json, all and guild but never prune', async () => {
-    await runClient({ method: 'GET', path: AGENT_PROJECTS_PATH, query: { json: '1', all: '1', guild: '123' } })
+    await runClient({
+      method: 'GET',
+      path: AGENT_PROJECTS_PATH,
+      query: { json: '1', all: '1', guild: '123' },
+    })
     expect(runs.at(-1)).toEqual(['project', 'list', '--json', '--all', '--guild=123'])
     expect(runs.at(-1)).not.toContain('--prune')
   })
@@ -180,41 +222,41 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
       body: { options: { prompt: 'hi there', thread: '42', permission: ['bash:deny'] } },
     })
     expect(accepted.exit).toBe(0)
-    expect(runs.at(-1)).toEqual(['send', '--prompt=hi there', '--thread=42', '--permission=bash:deny'])
-  })
-
-  test('project add maps the resolved directory, guild and app id', async () => {
-    await runClient({
-      method: 'POST',
-      path: AGENT_PROJECT_ADD_PATH,
-      body: { directory: '/repos/site', guild: '555', appId: '999' },
-    })
-    expect(runs.at(-1)).toEqual(['project', 'add', '/repos/site', '--guild=555', '--app-id=999'])
-  })
-
-  test('project create maps the name and options', async () => {
-    await runClient({
-      method: 'POST',
-      path: AGENT_PROJECT_CREATE_PATH,
-      body: { name: 'my-new-app', guild: '555', projectsDir: '/srv/projects' },
-    })
-    expect(runs.at(-1)).toEqual(['project', 'create', 'my-new-app', '--guild=555', '--projects-dir=/srv/projects'])
+    expect(runs.at(-1)).toEqual([
+      'send',
+      '--prompt=hi there',
+      '--thread=42',
+      '--permission=bash:deny',
+    ])
   })
 
   test('project remove and open-in-discord map their bodies', async () => {
     await runClient({ method: 'POST', path: AGENT_PROJECT_REMOVE_PATH, body: { channelId: '42' } })
     expect(runs.at(-1)).toEqual(['project', 'remove', '42'])
-    await runClient({ method: 'POST', path: AGENT_PROJECT_OPEN_IN_DISCORD_PATH, body: { directory: '/repos/site' } })
+    await runClient({
+      method: 'POST',
+      path: AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
+      body: { directory: '/repos/site' },
+    })
     expect(runs.at(-1)).toEqual(['project', 'open-in-discord', '/repos/site'])
+  })
+
+  test('removed project add and create endpoints are gone', async () => {
+    const before = runs.length
+    for (const path of ['/roadie/agent/projects/add', '/roadie/agent/projects/create']) {
+      const response = await fetch(`${url}${path}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ directory: '/repos/site' }),
+      })
+      expect(response.status).toBe(404)
+    }
+    expect(runs.length).toBe(before)
   })
 
   test('project mutations reject unknown fields and missing values', async () => {
     const before = runs.length
     const cases: Array<[string, unknown]> = [
-      [AGENT_PROJECT_ADD_PATH, { directory: '/repos/site', prune: true }],
-      [AGENT_PROJECT_ADD_PATH, { directory: 7 }],
-      [AGENT_PROJECT_CREATE_PATH, {}],
-      [AGENT_PROJECT_CREATE_PATH, { name: 'x', noSuchField: 'y' }],
       [AGENT_PROJECT_REMOVE_PATH, {}],
       [AGENT_PROJECT_REMOVE_PATH, { channelId: 42 }],
       [AGENT_PROJECT_OPEN_IN_DISCORD_PATH, {}],
@@ -233,13 +275,21 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
 
   test('thread list requires the channel and maps the flags', async () => {
     expect((await get(AGENT_THREADS_PATH, `Bearer ${token()}`)).status).toBe(400)
-    await runClient({ method: 'GET', path: AGENT_THREADS_PATH, query: { channel: '42', json: '1', limit: '10' } })
+    await runClient({
+      method: 'GET',
+      path: AGENT_THREADS_PATH,
+      query: { channel: '42', json: '1', limit: '10' },
+    })
     expect(runs.at(-1)).toEqual(['thread', 'list', '--channel=42', '--json', '--limit=10'])
   })
 
   test('user list requires the guild and maps the query', async () => {
     expect((await get(AGENT_USERS_PATH, `Bearer ${token()}`)).status).toBe(400)
-    await runClient({ method: 'GET', path: AGENT_USERS_PATH, query: { guild: '555', query: 'tommy' } })
+    await runClient({
+      method: 'GET',
+      path: AGENT_USERS_PATH,
+      query: { guild: '555', query: 'tommy' },
+    })
     expect(runs.at(-1)).toEqual(['user', 'list', '--guild=555', '--query=tommy'])
     await runClient({ method: 'GET', path: AGENT_USERS_PATH, query: { guild: '555' } })
     expect(runs.at(-1)).toEqual(['user', 'list', '--guild=555'])
@@ -260,7 +310,13 @@ describe('session list, editors, archive, abort, title and discord-url endpoints
       query: { project: '/repos/site', all: '1', active: '1', exclude: 'ses_other', json: '1' },
     })
     expect(runs.at(-1)).toEqual([
-      'session', 'list', '--project=/repos/site', '--all', '--active', '--exclude=ses_other', '--json',
+      'session',
+      'list',
+      '--project=/repos/site',
+      '--all',
+      '--active',
+      '--exclude=ses_other',
+      '--json',
     ])
   })
 
@@ -270,19 +326,34 @@ describe('session list, editors, archive, abort, title and discord-url endpoints
       path: AGENT_SESSION_EDITORS_PATH,
       query: { file: '/repos/site/src/cli.ts', json: '1', limit: '5' },
     })
-    expect(runs.at(-1)).toEqual(['session', 'editors', '/repos/site/src/cli.ts', '--json', '--limit=5'])
-    expect((await get(`${AGENT_SESSION_EDITORS_PATH}?file=/repos/site/x.ts`, `Bearer ${token()}`)).status).toBe(200)
+    expect(runs.at(-1)).toEqual([
+      'session',
+      'editors',
+      '/repos/site/src/cli.ts',
+      '--json',
+      '--limit=5',
+    ])
+    expect(
+      (await get(`${AGENT_SESSION_EDITORS_PATH}?file=/repos/site/x.ts`, `Bearer ${token()}`))
+        .status,
+    ).toBe(200)
   })
 
   test('session editors requires the file', async () => {
     expect((await get(AGENT_SESSION_EDITORS_PATH, `Bearer ${token()}`)).status).toBe(400)
-    expect((await get(`${AGENT_SESSION_EDITORS_PATH}?limit=5`, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(`${AGENT_SESSION_EDITORS_PATH}?limit=5`, `Bearer ${token()}`)).status).toBe(
+      400,
+    )
   })
 
   test('session archive maps threadId or sessionId like the CLI', async () => {
     await runClient({ method: 'POST', path: AGENT_SESSION_ARCHIVE_PATH, body: { threadId: '123' } })
     expect(runs.at(-1)).toEqual(['session', 'archive', '123'])
-    await runClient({ method: 'POST', path: AGENT_SESSION_ARCHIVE_PATH, body: { sessionId: 'ses_x' } })
+    await runClient({
+      method: 'POST',
+      path: AGENT_SESSION_ARCHIVE_PATH,
+      body: { sessionId: 'ses_x' },
+    })
     expect(runs.at(-1)).toEqual(['session', 'archive', '--session=ses_x'])
     // An empty body reaches the CLI, which prints its own usage error.
     await runClient({ method: 'POST', path: AGENT_SESSION_ARCHIVE_PATH, body: {} })
@@ -314,7 +385,11 @@ describe('session list, editors, archive, abort, title and discord-url endpoints
   })
 
   test('session title is bound to the token session', async () => {
-    await runClient({ method: 'POST', path: AGENT_SESSION_TITLE_PATH, body: { title: 'New title' } })
+    await runClient({
+      method: 'POST',
+      path: AGENT_SESSION_TITLE_PATH,
+      body: { title: 'New title' },
+    })
     expect(runs.at(-1)).toEqual(['session', 'title', 'New title', `--session=${AGENT_SESSION}`])
   })
 
@@ -339,7 +414,11 @@ describe('session list, editors, archive, abort, title and discord-url endpoints
   test('session discord-url maps to session discord-url arguments', async () => {
     await runClient({ method: 'GET', path: `${AGENT_SESSIONS_PATH}/ses_target/discord-url` })
     expect(runs.at(-1)).toEqual(['session', 'discord-url', 'ses_target'])
-    await runClient({ method: 'GET', path: `${AGENT_SESSIONS_PATH}/ses_target/discord-url`, query: { json: '1' } })
+    await runClient({
+      method: 'GET',
+      path: `${AGENT_SESSIONS_PATH}/ses_target/discord-url`,
+      query: { json: '1' },
+    })
     expect(runs.at(-1)).toEqual(['session', 'discord-url', 'ses_target', '--json'])
   })
 })
@@ -375,7 +454,13 @@ describe('tasks are scoped to the token session or thread', () => {
       body: { prompt: 'New prompt', allowConcurrency: 'true' },
     })
     expect(result.exit).toBe(0)
-    expect(runs.at(-1)).toEqual(['task', 'edit', String(scopedTaskId), '--prompt=New prompt', '--allow-concurrency=true'])
+    expect(runs.at(-1)).toEqual([
+      'task',
+      'edit',
+      String(scopedTaskId),
+      '--prompt=New prompt',
+      '--allow-concurrency=true',
+    ])
   })
 
   test('editing another session task is refused like an unknown task', async () => {
@@ -434,14 +519,20 @@ describe('tasks are scoped to the token session or thread', () => {
   })
 
   test('deleting an in-scope task runs task delete', async () => {
-    const result = await runClient({ method: 'DELETE', path: `${AGENT_TASKS_PATH}/${scopedTaskId}` })
+    const result = await runClient({
+      method: 'DELETE',
+      path: `${AGENT_TASKS_PATH}/${scopedTaskId}`,
+    })
     expect(result.exit).toBe(0)
     expect(runs.at(-1)).toEqual(['task', 'delete', String(scopedTaskId)])
   })
 
   test('deleting another session task is refused like an unknown task', async () => {
     const before = runs.length
-    const response = await fetch(`${url}${AGENT_TASKS_PATH}/${foreignTaskId}`, { method: 'DELETE', headers: { authorization: `Bearer ${token()}` } })
+    const response = await fetch(`${url}${AGENT_TASKS_PATH}/${foreignTaskId}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token()}` },
+    })
     expect(response.status).toBe(404)
     expect(runs.length).toBe(before)
   })
@@ -449,7 +540,10 @@ describe('tasks are scoped to the token session or thread', () => {
   test('malformed delete ids are refused before any run', async () => {
     const before = runs.length
     for (const id of ['abc', '0', '1.5', '-2']) {
-      const response = await fetch(`${url}${AGENT_TASKS_PATH}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token()}` } })
+      const response = await fetch(`${url}${AGENT_TASKS_PATH}/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token()}` },
+      })
       expect(response.status).toBe(400)
     }
     expect(runs.length).toBe(before)

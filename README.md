@@ -72,7 +72,7 @@ To stop a run, use `/abort`. To have something done after the current task, say 
 
 ### Discord
 
-Roadie registers its slash commands in each server it is invited to. Channels are linked to projects with `/add-project`, `/create-new-project` or `roadie project add`, or through a [channel configuration file](#channels-and-projects). Long prompts can be sent as a file attachment ("Send message as file"); Roadie reads attachments as the message.
+Roadie registers its slash commands in each server it is invited to. Channels are linked to project directories only through a [channel configuration file](#channels-and-projects); Roadie does not create project channels. Long prompts can be sent as a file attachment ("Send message as file"); Roadie reads attachments as the message.
 
 Without a channel configuration file, Discord access works like this. A user needs **one** of:
 

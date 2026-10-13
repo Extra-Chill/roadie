@@ -25,7 +25,7 @@ import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
-import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
+import { setDataDir, getDataDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
@@ -170,7 +170,7 @@ cli
 
       if (projectDirectories.length === 0) {
         cliLogger.error(
-          'No registered project directories found. Add a project with `roadie project add`.',
+          'No registered project directories found. Bind channels to directories in the channels config (ROADIE_CHANNELS_CONFIG).',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -742,7 +742,7 @@ cli
       }
       if (existingDirectories.length === 0) {
         cliLogger.error(
-          'No searchable project directories found. Add a project with `roadie project add`, or pass --project.',
+          'No searchable project directories found. Bind channels to directories in the channels config (ROADIE_CHANNELS_CONFIG), or pass --project.',
         )
         process.exit(EXIT_NO_RESTART)
       }

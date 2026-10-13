@@ -10,7 +10,6 @@ import path from 'node:path'
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
 import {
   setDataDir,
-  setProjectsDir,
   getDataDir,
   getProjectsDir,
 } from './config.js'
@@ -67,10 +66,6 @@ cli
   .option(
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.roadie)',
-  )
-  .option(
-    '--projects-dir <path>',
-    'Directory where new projects are created (default: <data-dir>/projects)',
   )
   .option('--install-url', 'Print the bot install URL and exit')
   .option(
@@ -215,7 +210,6 @@ cli
       restartOnboarding?: boolean
       addChannels?: boolean
       dataDir?: string
-      projectsDir?: string
       installUrl?: boolean
       useWorktrees?: boolean
       enableVoiceChannels?: boolean
@@ -273,11 +267,6 @@ cli
         if (options.dataDir) {
           setDataDir(options.dataDir)
           cliLogger.log(`Using data directory: ${getDataDir()}`)
-        }
-
-        if (options.projectsDir) {
-          setProjectsDir(options.projectsDir)
-          cliLogger.log(`Using projects directory: ${getProjectsDir()}`)
         }
 
         // Initialize file logging to <dataDir>/roadie.log

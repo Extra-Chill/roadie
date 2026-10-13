@@ -277,24 +277,6 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('add-project')
-      .setDescription(
-        truncateCommandDescription('Create Discord channels for a project. Use `npx roadie project add` for unlisted projects'),
-      )
-      .addStringOption((option) => {
-        option
-          .setName('project')
-          .setDescription(
-            truncateCommandDescription('Recent projects. Use `npx roadie project add` if not listed'),
-          )
-          .setRequired(true)
-          .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('remove-project')
       .setDescription(truncateCommandDescription('Remove Discord channels for a project'))
       .addStringOption((option) => {
@@ -303,21 +285,6 @@ export function buildStaticSlashCommands() {
           .setDescription(truncateCommandDescription('Select a project to remove'))
           .setRequired(true)
           .setAutocomplete(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('create-new-project')
-      .setDescription(
-        truncateCommandDescription('Create a new project folder, initialize git, and start a session'),
-      )
-      .addStringOption((option) => {
-        option
-          .setName('name')
-          .setDescription(truncateCommandDescription('Name for the new project folder'))
-          .setRequired(true)
 
         return option
       })
