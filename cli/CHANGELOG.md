@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.58.0] - 2026-10-13
+
+### Added
+- register Pi-native commands; port injection guard and kitty graphics to Pi
+
 ## [0.57.1] - 2026-10-13
 
 ### Fixed
