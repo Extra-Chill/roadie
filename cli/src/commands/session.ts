@@ -15,7 +15,6 @@ import {
   setThreadWorkingDirectory,
   type ThreadWorkingDirectory,
 } from '../database.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   sendThreadMessage,
   splitMarkdownForDiscord,
@@ -28,6 +27,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { createLogger, LogPrefix } from '../logger.js'
 import { DiscordOperationError } from '../errors.js'
 import { resolveConversationIntake, recordConversationAdmission } from '../conversation-intake.js'
+import { searchProjectFiles } from '../file-search.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -47,8 +47,10 @@ export async function createNewSessionThread({
   files?: string[]
   userId: string
 }): Promise<ThreadChannel | Error> {
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
-  if (getClient instanceof Error) return getClient
+  const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory, {
+    channelId: backendChannelId(textChannel),
+  })
+  if (getBackend instanceof Error) return getBackend
 
   const [starter, ...remaining] = splitMarkdownForDiscord({
     content: `**Starting OpenCode session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
@@ -277,17 +279,10 @@ export async function handleSessionAutocomplete({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (getClient instanceof Error) {
-      await interaction.respond([])
-      return
-    }
-
-    const response = await getClient().find.files({
-      query: currentQuery || '',
+    const files = searchProjectFiles({
+      directory: projectDirectory,
+      query: currentQuery,
     })
-
-    const files = response.data || []
 
     const prefix =
       previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''

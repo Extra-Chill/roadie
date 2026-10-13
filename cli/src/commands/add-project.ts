@@ -1,22 +1,75 @@
-// /add-project command - Create Discord channels for an existing OpenCode project.
+// /add-project command - Create Discord channels for an existing project.
+//
+// Project candidates come from backend-neutral sources: directories already
+// registered to channels in Roadie's database, plus subdirectories of the
+// projects directory. No agent backend has to be running.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { findChannelsByDirectory } from '../database.js'
+import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { abbreviatePath } from '../utils.js'
-import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.ADD_PROJECT)
+
+/** Test scaffolding directories are never offered as projects. */
+function isTestProjectDirectory(directory: string): boolean {
+  return path.basename(directory).startsWith('opencode-test-')
+}
+
+/**
+ * Backend-neutral project candidates: channel directories Roadie already
+ * knows about, plus subdirectories of the projects directory. Existing
+ * directories only, deduplicated, registration order first.
+ */
+export async function listProjectDirectories(): Promise<string[]> {
+  const registeredDirectories = await findChannelsByDirectory({ channelType: 'text' })
+    .then((rows) => rows.map((row) => row.directory))
+    .catch((error) => {
+      logger.warn('[ADD-PROJECT] Could not read registered channel directories:', error)
+      return []
+    })
+
+  const projectsDir = getProjectsDir()
+  const projectsDirEntries = (() => {
+    try {
+      return fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map((entry) => path.join(projectsDir, entry.name))
+    } catch {
+      return []
+    }
+  })()
+
+  const seen = new Set<string>()
+  const directories: string[] = []
+  for (const directory of [...registeredDirectories, ...projectsDirEntries]) {
+    if (seen.has(directory)) continue
+    seen.add(directory)
+    if (isTestProjectDirectory(directory)) continue
+    if (!fs.existsSync(directory)) continue
+    directories.push(directory)
+  }
+  return directories
+}
+
+function modifiedTime(directory: string): number {
+  try {
+    return fs.statSync(directory).mtimeMs
+  } catch {
+    return 0
+  }
+}
 
 export async function handleAddProjectCommand({
   command,
 }: CommandContext): Promise<void> {
   await command.deferReply()
 
-  const projectId = command.options.getString('project', true)
+  const directory = command.options.getString('project', true)
   const guild = command.guild
 
   if (!guild) {
@@ -25,28 +78,6 @@ export async function handleAddProjectCommand({
   }
 
   try {
-    const currentDir = process.cwd()
-    const getClient = await initializeOpencodeForDirectory(currentDir)
-    if (getClient instanceof Error) {
-      await command.editReply(getClient.message)
-      return
-    }
-
-    const projectsResponse = await getClient().project.list({})
-    if (!projectsResponse.data) {
-      await command.editReply('Failed to fetch projects')
-      return
-    }
-
-    const project = projectsResponse.data.find((p) => p.id === projectId)
-
-    if (!project) {
-      await command.editReply('Project not found')
-      return
-    }
-
-    const directory = project.worktree
-
     if (!fs.existsSync(directory)) {
       await command.editReply(`Directory does not exist: ${directory}`)
       return
@@ -78,43 +109,20 @@ export async function handleAddProjectAutocomplete({
   const focusedValue = interaction.options.getFocused()
 
   try {
-    const currentDir = process.cwd()
-    const getClient = await initializeOpencodeForDirectory(currentDir)
-    if (getClient instanceof Error) {
-      await interaction.respond([])
-      return
-    }
-
-    const projectsResponse = await getClient().project.list({})
-    if (!projectsResponse.data) {
-      await interaction.respond([])
-      return
-    }
-
-    const availableProjects = projectsResponse.data.filter((project) => {
-      if (path.basename(project.worktree).startsWith('opencode-test-')) {
-        return false
-      }
-      return true
-    })
-
-    const projects = availableProjects
-      .filter((project) => {
-        const baseName = path.basename(project.worktree)
-        const searchText = `${baseName} ${project.worktree}`.toLowerCase()
+    const projects = (await listProjectDirectories())
+      .sort((a, b) => modifiedTime(b) - modifiedTime(a))
+      .filter((directory) => {
+        const baseName = path.basename(directory)
+        const searchText = `${baseName} ${directory}`.toLowerCase()
         return searchText.includes(focusedValue.toLowerCase())
       })
-      .sort((a, b) => {
-        const aTime = a.time.initialized || a.time.created
-        const bTime = b.time.initialized || b.time.created
-        return bTime - aTime
-      })
+      .filter((directory) => directory.length <= 100)
       .slice(0, 25)
-      .map((project) => {
-        const name = `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`
+      .map((directory) => {
+        const name = `${path.basename(directory)} (${abbreviatePath(directory)})`
         return {
           name: name.length > 100 ? name.slice(0, 99) + '…' : name,
-          value: project.id,
+          value: directory,
         }
       })
 
