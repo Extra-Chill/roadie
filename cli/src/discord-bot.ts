@@ -55,7 +55,7 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import YAML from 'yaml'
-import { getFileAttachments, getTextAttachments, resolveContentMentions } from './message-formatting.js'
+import { getFileAttachments, getStarterMessageText, getTextAttachments, resolveContentMentions } from './message-formatting.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -1068,12 +1068,10 @@ export async function startDiscordBot({
         })
         if (intake.outcome !== 'respond') return
 
-        const baseThreadName =
-          stripMentions(message.content || '')
+        const threadName =
+          stripMentions(await getStarterMessageText(message))
             .replace(/\s+/g, ' ')
             .trim() || 'roadie thread'
-
-        const threadName = baseThreadName
 
         const thread = await message.startThread({
           name: threadName.slice(0, 80),

@@ -570,6 +570,34 @@ export async function getTextAttachments(message: Message): Promise<string> {
   return textContents.join('\n\n')
 }
 
+// Discord turns long messages into a `message.txt` attachment with empty
+// content. Reading only the head of that file keeps thread naming fast.
+const STARTER_PREVIEW_BYTES = 2048
+const STARTER_PREVIEW_TIMEOUT_MS = 3000
+
+/**
+ * Text a new thread is named from: the message content, or the head of its
+ * first text attachment when the content is empty. Returns '' when neither
+ * yields text; the caller owns the final fallback name.
+ */
+export async function getStarterMessageText(message: Message): Promise<string> {
+  if (message.content?.trim()) return message.content
+  const attachment = Array.from(message.attachments.values()).find((candidate) => {
+    return isTextMimeType(candidate.contentType)
+  })
+  if (!attachment) return ''
+  const response = await fetch(attachment.url, {
+    headers: { Range: `bytes=0-${STARTER_PREVIEW_BYTES - 1}` },
+    signal: AbortSignal.timeout(STARTER_PREVIEW_TIMEOUT_MS),
+  }).catch((e) => new FetchError({ url: attachment.url, cause: e }))
+  if (response instanceof Error || !response.ok) {
+    logger.warn(`Could not preview ${attachment.name} for thread name: ${response instanceof Error ? response.message : response.status}`)
+    return ''
+  }
+  const head = (await response.text()).slice(0, STARTER_PREVIEW_BYTES)
+  return head.split('\n').map((line) => line.trim()).find(Boolean) ?? ''
+}
+
 export async function getFileAttachments(
   message: Message,
 ): Promise<DiscordFileAttachment[]> {
