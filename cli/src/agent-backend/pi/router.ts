@@ -4,7 +4,8 @@
 // Session operations route by session id, so a Pi session keeps working
 // wherever Roadie reaches it (permission buttons, /abort, CLI) even through
 // `getBackend(directory)`, which carries no channel. Directory-wide listings
-// merge both backends. Event streams are merged.
+// merge both backends (sessions lists, MCP status, catalog commands). Event
+// streams are merged.
 
 import type { AgentSessionMessage } from '../types.js'
 import {
@@ -12,6 +13,7 @@ import {
   type AgentBackend,
   type AgentBackendEvent,
   type AgentBackendProvider,
+  type AgentCatalogOperations,
   type AgentMcpOperations,
   type AgentSessionOperations,
 } from '../types.js'
@@ -115,10 +117,39 @@ function routedMcp(fallback: AgentBackend | null, pi: PiBackendProvider): AgentM
   }
 }
 
+/**
+ * Directory-wide command listings merge both backends (default first, Pi
+ * appended), deduplicated by name: registration calls the composite through
+ * `getBackend(directory)`, which carries no channel, so without the merge the
+ * OpenCode catalog alone would list and Pi-native prompts/skills (.pi/prompts,
+ * .agents/skills) would never become Discord slash commands. A backend that
+ * is down or lists nothing does not block the other side; an error is only
+ * returned when both fail.
+ */
+function routedCommands({ fallback, pi }: { fallback: AgentBackend | null; pi: PiBackendProvider }): NonNullable<AgentCatalogOperations['commands']> {
+  return async ({ directory }) => {
+    const [own, other] = await Promise.all([
+      pi.getBackend().catalog.commands?.({ directory }),
+      fallback?.catalog.commands?.({ directory }),
+    ])
+    if ((own === undefined || own instanceof Error) && (other === undefined || other instanceof Error)) {
+      return own ?? other ?? []
+    }
+    const seen = new Set<string>()
+    return [...(other instanceof Error ? [] : other ?? []), ...(own instanceof Error ? [] : own ?? [])]
+      .filter((command) => {
+        if (seen.has(command.name)) return false
+        seen.add(command.name)
+        return true
+      })
+  }
+}
+
 function composite(fallback: AgentBackend | null, pi: PiBackendProvider, piChannel: boolean): AgentBackend {
   const base = piChannel || !fallback ? pi.getBackend() : fallback
   return {
     ...base,
+    catalog: { ...base.catalog, commands: routedCommands({ fallback, pi }) },
     sessions: routedSessions({ fallback, pi, createInPi: piChannel }),
     mcp: routedMcp(fallback, pi),
   }
