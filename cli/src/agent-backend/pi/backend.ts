@@ -147,6 +147,14 @@ export type PiBackendOptions = {
    */
   shellEnvTemplates?: Record<string, string>
   /**
+   * Roadie's per-session injection guard config directory: the session runtime
+   * writes `<sessionId>.json` files there for `send --injection-guard`, and
+   * the Roadie Pi extension reads them (via ROADIE_PI_INJECTION_GUARD_DIR in
+   * the session's env) to scan matched tool results, like the OpenCode
+   * injection guard plugin does inside the OpenCode server.
+   */
+  injectionGuardDir?: string
+  /**
    * Bill model calls to Roadie's credential pools through the loopback proxy.
    * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
    */
@@ -652,6 +660,9 @@ export class PiBackendProvider implements AgentBackendProvider {
         ROADIE_PI_SYSTEM_FILE: systemFile,
         ROADIE_PI_TOOLS_FILE: this.toolsFile,
         ROADIE_PI_MCP_FILE: mcpFile,
+        // The extension's injection guard reads per-session scan patterns
+        // (`send --injection-guard`) from this directory.
+        ...(this.options.injectionGuardDir && { ROADIE_PI_INJECTION_GUARD_DIR: this.options.injectionGuardDir }),
         ...(poolKey && { ROADIE_PI_KEY: poolKey }),
       },
     })

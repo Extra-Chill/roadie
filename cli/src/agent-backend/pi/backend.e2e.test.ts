@@ -375,6 +375,82 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     editProvider.dispose()
   }, 40_000)
 
+  test('bash shells get AGENT_GRAPHICS so CLIs can emit kitty graphics (OpenCode parity)', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'RUN_TOOL echo AG=[$AGENT_GRAPHICS]' }] })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+    expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output).toContain('AG=[kitty]')
+  }, 30_000)
+
+  test('kitty graphics in bash output become image content, escapes stripped (OpenCode parity)', async () => {
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const bodiesBefore = server.bodies.length
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({
+      sessionId: session.id,
+      directory: project,
+      parts: [{ kind: 'text', text: `RUN_TOOL printf 'KITTY_BEFORE\\x1b_Gf=100,m=0,a=T,d;${png}\\x1b\\\\ KITTY_AFTER'` }],
+    })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+    const output = tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : ''
+    expect(output).toContain('KITTY_BEFORE')
+    expect(output).not.toContain('\x1b_G')
+    // The follow-up model request carries the extracted image instead of the escapes.
+    const sent = server.bodies.slice(bodiesBefore).join('\n')
+    expect(sent).toContain(`data:image/png;base64,${png}`)
+  }, 30_000)
+
+  test('send --injection-guard patterns scan Pi tool results and replace flagged output (OpenCode parity)', async () => {
+    const guardDir = path.join(root, 'injection-guard')
+    fs.mkdirSync(guardDir, { recursive: true })
+    const guardProvider = new PiBackendProvider({
+      ...makeProvider().options,
+      sessionDir: path.join(root, 'guard-sessions'),
+      injectionGuardDir: guardDir,
+    })
+    await listen(guardProvider)
+    const dir = path.join(root, 'guard-project')
+    fs.mkdirSync(dir, { recursive: true })
+    const session = await guardProvider.getBackend().sessions.create({ directory: dir })
+    if (session instanceof Error) throw session
+    // The per-session patterns the session runtime writes for --injection-guard.
+    fs.writeFileSync(path.join(guardDir, `${session.id}.json`), JSON.stringify({ scanPatterns: ['bash:*'] }))
+    const before = idleCount(session.id)
+    await guardProvider.getBackend().sessions.prompt({
+      sessionId: session.id,
+      directory: dir,
+      parts: [{ kind: 'text', text: 'RUN_TOOL echo injection-canary-output' }],
+    })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+    const output = tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : ''
+    expect(output).toContain('[BLOCKED BY INJECTION GUARD]')
+    expect(output).toContain('Reason: test injection')
+    expect(output).not.toContain('injection-canary-output')
+    // The model's follow-up saw the redaction, not the tool output.
+    const followUp = [...server.bodies].reverse().find((body) => body.includes('"role":"tool"'))
+    expect(followUp).toContain('BLOCKED BY INJECTION GUARD')
+    guardProvider.dispose()
+  }, 60_000)
+
+  test('without scan patterns the injection guard leaves tool output untouched', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'RUN_TOOL echo unguarded-canary-output' }] })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
+    const output = tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : ''
+    expect(output).toContain('unguarded-canary-output')
+    expect(output).not.toContain('BLOCKED BY INJECTION GUARD')
+  }, 30_000)
+
   test('the model hears the git branch once, and again when it changes; titles come from an isolated request', async () => {
     const dir = path.join(root, 'git-project')
     fs.mkdirSync(dir, { recursive: true })
@@ -535,7 +611,14 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     await provider.getBackend().sessions.abort({ sessionId: session.id })
     await until(() => (idleCount(started.childSessionId) >= 1 ? true : undefined))
     // The child's turn ended aborted, and the parent's task call failed, not completed.
-    const history = await provider.getBackend().sessions.messages({ sessionId: started.childSessionId, directory: project })
+    // The one-shot child process is SIGTERMed as soon as the parent's task call
+    // resolves, so a read racing that kill fails with `pi exited with code 143`;
+    // a stopped Pi session resumes from its file on the next read, so one retry settles it.
+    let history = await provider.getBackend().sessions.messages({ sessionId: started.childSessionId, directory: project })
+    if (history instanceof Error) {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      history = await provider.getBackend().sessions.messages({ sessionId: started.childSessionId, directory: project })
+    }
     if (history instanceof Error) throw history
     expect(history.some((h) => h.message.role === 'assistant' && h.message.error?.name === 'MessageAbortedError')).toBe(true)
     const task = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.tool === 'task' && e.part.sessionId === session.id)

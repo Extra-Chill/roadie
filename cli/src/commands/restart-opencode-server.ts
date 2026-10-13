@@ -118,7 +118,10 @@ export async function handleRestartOpencodeServerCommand({
   })
 
   // Re-register Discord slash commands after restart so new/changed
-  // commands, agents, and plugins are picked up immediately.
+  // commands, agents, and plugins are picked up immediately. Listings go
+  // through the backend provider, whose composite merges every backend in
+  // use (OpenCode plus Pi channels), so Pi-native prompts and skills are
+  // registered too; a failed OpenCode init only costs OpenCode's listings.
   const token = command.client.token
   if (!token) {
     logger.error('[RESTART] No bot token available, skipping command registration')
@@ -130,36 +133,31 @@ export async function handleRestartOpencodeServerCommand({
   const guildIds = [...command.client.guilds.cache.keys()]
 
   const opencodeResult = await initializeOpencodeForDirectory(projectDirectory)
-  const [userCommands, agents]: [AgentCommand[], AgentInfo[]] =
-    await (async (): Promise<[AgentCommand[], AgentInfo[]]> => {
-      if (opencodeResult instanceof Error) {
-        logger.warn('[RESTART] OpenCode init failed, registering without user commands:', opencodeResult.message)
-        return [[], []]
+  if (opencodeResult instanceof Error) {
+    logger.warn('[RESTART] OpenCode init failed, registering provider listings without it:', opencodeResult.message)
+  }
+  const backend = getAgentBackendProvider().getBackend(projectDirectory)
+  const [userCommands, agents] = await Promise.all([
+    (async (): Promise<AgentCommand[]> => {
+      const commands = await backend?.catalog.commands?.({ directory: projectDirectory })
+        .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
+      if (commands instanceof Error) {
+        logger.warn('[RESTART] Failed to load user commands:', commands.stack)
+        return []
       }
-      const [cmds, ags] = await Promise.all([
-        (async (): Promise<AgentCommand[]> => {
-          const catalog = getAgentBackendProvider().getBackend(projectDirectory)?.catalog
-          const commands = await catalog?.commands?.({ directory: projectDirectory })
-            .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
-          if (commands instanceof Error) {
-            logger.warn('[RESTART] Failed to load user commands:', commands.stack)
-            return []
-          }
-          return commands ?? []
-        })(),
-        (async (): Promise<AgentInfo[]> => {
-          const agents = await getAgentBackendProvider().getBackend(projectDirectory)?.catalog
-            .agents({ directory: projectDirectory })
-            .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
-          if (agents instanceof Error || !agents) {
-            logger.warn('[RESTART] Failed to load agents:', agents instanceof Error ? agents.stack : 'agent backend is unavailable')
-            return []
-          }
-          return agents
-        })(),
-      ])
-      return [cmds, ags]
-    })()
+      return commands ?? []
+    })(),
+    (async (): Promise<AgentInfo[]> => {
+      if (!backend) return []
+      const listed = await backend.catalog.agents({ directory: projectDirectory })
+        .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
+      if (listed instanceof Error || !listed) {
+        logger.warn('[RESTART] Failed to load agents:', listed instanceof Error ? listed.stack : 'agent backend is unavailable')
+        return []
+      }
+      return listed
+    })(),
+  ])
 
   const registerResult = await registerCommands({ token, appId, guildIds, userCommands, agents })
     .then(() => null)

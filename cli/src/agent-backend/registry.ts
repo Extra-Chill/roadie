@@ -74,6 +74,8 @@ function defaultProvider(): AgentBackendProvider {
     // Same configured --shell-env / ROADIE_SHELL_ENV templates the OpenCode
     // backend's shell.env hook applies to tool shells.
     shellEnvTemplates: store.getState().shellEnvTemplates,
+    // Same per-session injection guard files the OpenCode plugin reads.
+    injectionGuardDir: path.join(getDataDir(), 'injection-guard'),
     ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
