@@ -20,6 +20,11 @@ function textOf(content: unknown): string {
 export function scriptedReply(messages: ChatMessage[]): { text: string } | { tool: string; args: Record<string, unknown> } {
   const last = messages.at(-1)
   if (last?.role === 'tool') return { text: `tool said: ${textOf(last.content).trim()}` }
+  // The injection guard judge (a tool-less, system-prompted model call) always
+  // reports a flagged tool output so tests can assert the redaction.
+  if (messages.some((m) => textOf(m.content).includes('security-focused alignment analyst'))) {
+    return { text: `{"flagged": true, "confidence": 0.99, "observation": "test injection"}` }
+  }
   const user = [...messages].reverse().find((m) => m.role === 'user')
   const said = textOf(user?.content)
   const match = /RUN_TOOL (.+)$/m.exec(said)

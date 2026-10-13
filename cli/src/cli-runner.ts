@@ -1022,14 +1022,29 @@ export async function backgroundInit({
     const opencodeResult = await initializeOpencodeForDirectory(currentDir)
     if (opencodeResult instanceof Error) {
       cliLogger.warn('Background OpenCode init failed:', opencodeResult.message)
-      // Still try to register basic commands without user commands/agents
-      await registerCommands({
-        token,
-        appId,
-        guildIds,
-        userCommands: [],
-        agents: [],
-      })
+      // Still register what the provider can list without an OpenCode server:
+      // with Pi channels configured the composite serves Pi's own prompts and
+      // skills (and agents), so they become slash commands even while OpenCode
+      // is down. Without Pi this lists nothing and the behavior is unchanged.
+      const [userCommands, agents] = await Promise.all([
+        listCommandsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load user commands during background init:',
+            result.stack ?? result.message,
+          )
+          return []
+        }),
+        listAgentsForRegistration(currentDir).then((result) => {
+          if (!(result instanceof Error)) return result
+          cliLogger.warn(
+            'Failed to load agents during background init:',
+            result.stack ?? result.message,
+          )
+          return []
+        }),
+      ])
+      await registerCommands({ token, appId, guildIds, userCommands, agents })
       return
     }
 
