@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type {
+  LanguageModelV3,
   LanguageModelV3CallOptions,
   LanguageModelV3StreamPart,
 } from '@ai-sdk/provider'
@@ -29,6 +30,8 @@ import {
   estimatePromptTokens,
   POOL_HEADER,
   SESSION_HEADER,
+  generateViaStream,
+  shapeCodexCallOptions,
   type PoolFetch,
 } from './provider.js'
 import { ROUTES_TTL_MS, readSessionRoute, setSessionRoute } from './routes.js'
@@ -1380,6 +1383,294 @@ describe('oauth accounts', () => {
     expect(error.statusCode).toBe(401)
     expect(error.message).toContain('no OAuth adapter for openai')
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('openai-codex oauth (#198)', () => {
+  const codexJwt = (accountId: string) => {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    return `${part({ alg: 'none' })}.${part({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })}.sig`
+  }
+
+
+  // The Codex backend only streams, so doGenerate is served from a stream too.
+  const codexSse = (text: string) =>
+    new Response(
+      `data: ${JSON.stringify({ type: 'response.created', response: { id: 'resp_1', created_at: 1, model: 'gpt-6-luna' } })}\n\n` +
+        `data: ${JSON.stringify({ type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'msg_1' } })}\n\n` +
+        `data: ${JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg_1', delta: text })}\n\n` +
+        `data: ${JSON.stringify({ type: 'response.output_item.done', output_index: 0, item: { type: 'message', id: 'msg_1' } })}\n\n` +
+        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )
+
+  async function seedCodexPool({ access }: { access: string }): Promise<void> {
+    const added = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'openai-codex',
+      refresh: 'rt-codex',
+      access,
+      expires: NOW + 10 * 3_600_000,
+    })
+    expect(added).not.toBeInstanceOf(Error)
+    const set = await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['openai-codex/gpt-6-luna'] })
+    expect(set).toBe(true)
+  }
+
+  test('serves a ChatGPT subscription on the Codex Responses endpoint, shaped for the Codex backend', async () => {
+    await seedCodexPool({ access: codexJwt('acc_777') })
+    let capturedUrl: string | URL | Request | undefined
+    let capturedInit: RequestInit | undefined
+    const fetchImpl = stubFetch(async (input, init) => {
+      capturedUrl = input
+      capturedInit = init
+      return codexSse('ok codex')
+    })
+    const model = poolProvider({ fetchImpl }).languageModel('default')
+    const result = await model.doGenerate({
+      ...generateOptions({ pool: 'shared', system: 'You are the H44 agent.' }),
+      maxOutputTokens: 32_000,
+    })
+    expect(result.content[0]).toMatchObject({ type: 'text', text: 'ok codex' })
+
+    expect(String(capturedUrl)).toBe('https://chatgpt.com/backend-api/codex/responses')
+    const headers = new Headers(capturedInit?.headers)
+    expect(headers.get('authorization')).toBe(`Bearer ${codexJwt('acc_777')}`)
+    expect(headers.get('chatgpt-account-id')).toBe('acc_777')
+    expect(headers.get('originator')).toBe('opencode')
+    const body = JSON.parse(initBody(capturedInit)) as {
+      model: string
+      stream?: boolean
+      store?: boolean
+      instructions?: string
+      max_output_tokens?: number
+      input: Array<{ role?: string }>
+    }
+    expect(body.model).toBe('gpt-6-luna')
+    // The Codex backend stores nothing, requires instructions, and rejects
+    // an output limit.
+    expect(body.store).toBe(false)
+    expect(body.instructions).toBe('You are the H44 agent.')
+    expect(body.max_output_tokens).toBeUndefined()
+    expect(body.input.some((item) => item.role === 'system' || item.role === 'developer')).toBe(false)
+    // The backend rejects anything but a streamed request; doGenerate streams
+    // and assembles the result.
+    expect(body.stream).toBe(true)
+    const state = readStateOrThrow()
+    expect(state.cooldowns).toEqual({})
+  })
+
+  test('streams from the Codex Responses endpoint', async () => {
+    await seedCodexPool({ access: codexJwt('acc_778') })
+    let capturedInit: RequestInit | undefined
+    const sseBody =
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg_1', delta: 'he' })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg_1', delta: 'llo' })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 2 } } })}\n\n`
+    const fetchImpl = stubFetch(async (_input, init) => {
+      capturedInit = init
+      return new Response(sseBody, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    })
+    const model = poolProvider({ fetchImpl }).languageModel('default')
+    const { stream } = await model.doStream(generateOptions({ pool: 'shared' }))
+    const parts = await collectStream(stream)
+    const text = parts
+      .filter((part) => part.type === 'text-delta')
+      .map((part) => (part as { delta: string }).delta)
+      .join('')
+    expect(text).toBe('hello')
+    const body = JSON.parse(initBody(capturedInit)) as { model: string; stream: boolean }
+    expect(body.model).toBe('gpt-6-luna')
+    expect(body.stream).toBe(true)
+  })
+
+  test('a 429 cools the account down and the next codex account answers', async () => {
+    const first = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'openai-codex',
+      refresh: 'rt-codex-1',
+      access: codexJwt('acc_1'),
+      expires: NOW + 10 * 3_600_000,
+    })
+    expect(first).not.toBeInstanceOf(Error)
+    const second = await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'openai-codex',
+      refresh: 'rt-codex-2',
+      access: codexJwt('acc_2'),
+      expires: NOW + 10 * 3_600_000,
+    })
+    expect(second).not.toBeInstanceOf(Error)
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['openai-codex/gpt-6-luna'] })
+
+    const accountIds: Array<string | null> = []
+    const fetchImpl = stubFetch(async (_input, init) => {
+      accountIds.push(new Headers(init?.headers).get('chatgpt-account-id'))
+      if (accountIds.length === 1) return jsonResponse(429, { error: { message: 'rate limited' } })
+      return codexSse('ok codex')
+    })
+    const model = poolProvider({ fetchImpl }).languageModel('default')
+    const result = await model.doGenerate(generateOptions({ pool: 'shared' }))
+    expect(result.content[0]).toMatchObject({ type: 'text', text: 'ok codex' })
+    expect(accountIds).toEqual(['acc_1', 'acc_2'])
+    const state = readStateOrThrow()
+    expect(state.cooldowns[(first as { id: string }).id]).toBeGreaterThan(NOW)
+  })
+
+  test('an access token without a ChatGPT account id skips the candidate', async () => {
+    await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'openai-codex',
+      refresh: 'rt-codex-noacc',
+      access: codexJwt(''),
+      expires: NOW + 10 * 3_600_000,
+    })
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['openai-codex/gpt-6-luna'] })
+    const fetchImpl = stubFetch(async () => codexSse('ok codex'))
+    const model = poolProvider({ fetchImpl }).languageModel('default')
+    const error = await model.doGenerate(generateOptions({ pool: 'shared' })).then(
+      () => null,
+      (cause: unknown) => cause,
+    )
+    if (!(error instanceof APICallError)) throw error
+    expect(error.statusCode).toBe(401)
+    expect(error.message).toContain('no ChatGPT account id')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('an openai/<model> rotation entry is served by a ChatGPT subscription', async () => {
+    // The rotation a ChatGPT install migrates to names the model the user
+    // picked; its only account is the subscription.
+    await addPoolOAuthAccount({
+      dataDir,
+      poolId: SHARED_POOL_ID,
+      provider: 'openai-codex',
+      refresh: 'rt-codex-alias',
+      access: codexJwt('acc_alias'),
+      expires: NOW + 10 * 3_600_000,
+    })
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'openai-gpt-6-luna', entries: ['openai/gpt-6-luna'] })
+    let capturedUrl: string | URL | Request | undefined
+    let capturedInit: RequestInit | undefined
+    const fetchImpl = stubFetch(async (input, init) => {
+      capturedUrl = input
+      capturedInit = init
+      return codexSse('ok codex')
+    })
+    const model = poolProvider({ fetchImpl }).languageModel('openai-gpt-6-luna')
+    const result = await model.doGenerate(generateOptions({ pool: 'shared' }))
+    expect(result.content[0]).toMatchObject({ type: 'text', text: 'ok codex' })
+    expect(String(capturedUrl)).toBe('https://chatgpt.com/backend-api/codex/responses')
+    expect(new Headers(capturedInit?.headers).get('chatgpt-account-id')).toBe('acc_alias')
+  })
+})
+
+describe('generateViaStream (#198)', () => {
+  const streamModel = (parts: LanguageModelV3StreamPart[]): LanguageModelV3 =>
+    ({
+      specificationVersion: 'v3',
+      provider: 'test',
+      modelId: 'm',
+      supportedUrls: {},
+      doGenerate: async () => {
+        throw new Error('not used')
+      },
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part)
+            controller.close()
+          },
+        }),
+        response: { headers: { 'x-test': '1' } },
+      }),
+    }) as LanguageModelV3
+
+  const finish = {
+    type: 'finish',
+    finishReason: { unified: 'stop', raw: 'completed' },
+    usage: { inputTokens: { total: 1 }, outputTokens: { total: 2 } },
+  } as unknown as LanguageModelV3StreamPart
+
+  test('assembles reasoning and text in start order, keeping the end metadata', async () => {
+    const result = await generateViaStream(
+      streamModel([
+        { type: 'stream-start', warnings: [] },
+        { type: 'response-metadata', id: 'resp_1', modelId: 'm' },
+        { type: 'reasoning-start', id: 'r1' },
+        { type: 'reasoning-delta', id: 'r1', delta: 'think' },
+        { type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'enc' } } },
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'po' },
+        { type: 'text-delta', id: 't1', delta: 'ng' },
+        { type: 'text-end', id: 't1', providerMetadata: { openai: { itemId: 'msg_1' } } },
+        { type: 'tool-call', toolCallId: 'c1', toolName: 'bash', input: '{}' },
+        finish,
+      ]),
+      { prompt: [] },
+    )
+    expect(result.content).toEqual([
+      { type: 'reasoning', text: 'think', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'enc' } } },
+      { type: 'text', text: 'pong', providerMetadata: { openai: { itemId: 'msg_1' } } },
+      { type: 'tool-call', toolCallId: 'c1', toolName: 'bash', input: '{}' },
+    ])
+    expect(result.finishReason).toEqual({ unified: 'stop', raw: 'completed' })
+    expect(result.response).toMatchObject({ id: 'resp_1', modelId: 'm', headers: { 'x-test': '1' } })
+  })
+
+  test('an error part is thrown, and a stream without a finish is an error', async () => {
+    const boom = new Error('upstream failed')
+    await expect(generateViaStream(streamModel([{ type: 'error', error: boom }]), { prompt: [] })).rejects.toBe(boom)
+    await expect(generateViaStream(streamModel([{ type: 'stream-start', warnings: [] }]), { prompt: [] })).rejects.toThrow(
+      'without a finish event',
+    )
+  })
+})
+
+describe('shapeCodexCallOptions (#198)', () => {
+  const base = (): LanguageModelV3CallOptions => ({
+    prompt: [
+      { role: 'system', content: 'first' },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'system', content: 'second' },
+    ],
+    maxOutputTokens: 1000,
+    providerOptions: {
+      openai: { include: ['file_search_call.results', 'reasoning.encrypted_content'], reasoningEffort: 'high' },
+      other: { keep: true },
+    },
+  })
+
+  test('moves system messages into instructions, drops the output limit, disables storage', () => {
+    const shaped = shapeCodexCallOptions(base())
+    expect(shaped.prompt).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(shaped.maxOutputTokens).toBeUndefined()
+    expect('maxOutputTokens' in shaped).toBe(false)
+    expect(shaped.providerOptions).toEqual({
+      openai: {
+        include: ['file_search_call.results', 'reasoning.encrypted_content'],
+        reasoningEffort: 'high',
+        instructions: 'first\n\nsecond',
+        store: false,
+      },
+      other: { keep: true },
+    })
+  })
+
+  test('adds encrypted reasoning once, and leaves instructions unset without a system prompt', () => {
+    const shaped = shapeCodexCallOptions({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] })
+    expect(shaped.providerOptions).toEqual({ openai: { store: false, include: ['reasoning.encrypted_content'] } })
+  })
+
+  test('never mutates the options the next candidate reuses', () => {
+    const options = base()
+    const snapshot = structuredClone(options)
+    shapeCodexCallOptions(options)
+    expect(options).toEqual(snapshot)
   })
 })
 

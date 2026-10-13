@@ -30,6 +30,8 @@ import {
   type OAuthPoolAccount,
 } from './store.js'
 import { defaultOpencodeDataDir, resolveOpencodeDataDir } from './import-opencode.js'
+import { codexAccountId } from './adapters/openai-codex-oauth.js'
+import { CODEX_POOL_PROVIDER } from './router.js'
 
 export { defaultOpencodeDataDir, resolveOpencodeDataDir }
 
@@ -39,10 +41,23 @@ export type OpencodeOauthEntry = {
   refresh: string
   access: string
   expires: number
+  /** ChatGPT account id; OpenCode's own ChatGPT login writes it. */
+  accountId?: string
 }
 
+/**
+ * Pool provider ids that export under a different OpenCode key: a ChatGPT
+ * subscription lives in the pool under `openai-codex` but OpenCode's own auth
+ * files key it `openai` (#198), and the export is import-opencode's rollback
+ * direction, so the key must be the one an import maps back.
+ */
+const OPENCODE_PROVIDER_KEYS: Record<string, string> = { [CODEX_POOL_PROVIDER]: 'openai' }
+
 function toOpencodeEntry(account: OAuthPoolAccount): OpencodeOauthEntry {
-  return { type: 'oauth', refresh: account.refresh, access: account.access, expires: account.expires }
+  const entry: OpencodeOauthEntry = { type: 'oauth', refresh: account.refresh, access: account.access, expires: account.expires }
+  // OpenCode's ChatGPT login records the account id next to the tokens.
+  const accountId = account.provider === CODEX_POOL_PROVIDER ? codexAccountId(account.access) : undefined
+  return accountId ? { ...entry, accountId } : entry
 }
 
 /** Output label: the pool account's label when present, otherwise `…last4`. */
@@ -98,9 +113,11 @@ export async function exportOpencodeCredentials({
   const byProvider = new Map<string, OAuthPoolAccount[]>()
   for (const account of accounts) {
     if (account.type !== 'oauth') continue
-    const existing = byProvider.get(account.provider) ?? []
+    // Group under the OpenCode auth key the account exports as.
+    const providerKey = OPENCODE_PROVIDER_KEYS[account.provider] ?? account.provider
+    const existing = byProvider.get(providerKey) ?? []
     existing.push(account)
-    byProvider.set(account.provider, existing)
+    byProvider.set(providerKey, existing)
   }
 
   const written: string[] = []

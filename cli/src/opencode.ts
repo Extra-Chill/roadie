@@ -133,7 +133,7 @@ export type RoadiePoolProviderConfig = {
  */
 function isVisionCapableUpstream({ provider, modelId }: { provider: string; modelId: string }): boolean {
   if (provider === 'anthropic') return modelId.startsWith('claude-')
-  if (provider === 'openai' || provider === 'github-copilot') {
+  if (provider === 'openai' || provider === 'github-copilot' || provider === 'openai-codex') {
     return ['gpt-4o', 'gpt-4.1', 'gpt-5'].some((prefix) => modelId.startsWith(prefix))
   }
   return false

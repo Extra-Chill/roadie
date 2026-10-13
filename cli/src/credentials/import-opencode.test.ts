@@ -47,6 +47,8 @@ const ALL_SECRETS = [
   'ok-at-secret-2',
   'ok-rt-secret-3',
   'ok-at-secret-3',
+  'ok-rt-secret-9',
+  'ok-at-secret-9',
   'zai-live-key-8888',
   'sk-openai-live-0001',
   'rotated-rt',
@@ -206,31 +208,35 @@ describe('importOpencodeCredentials', () => {
     // auth.json: anthropic oauth + zai api import, github-copilot oauth skips.
     // The rotation file's first entry duplicates the auth.json account (same
     // refresh token) and reports already present; its other two import. The
-    // openai rotation entry skips (no oauth adapter for openai).
-    expect(result.accounts.imported).toBe(4)
-    expect(result.accounts.skipped).toBe(2)
+    // openai rotation entry is a ChatGPT subscription (#198) and imports as
+    // openai-codex.
+    expect(result.accounts.imported).toBe(5)
+    expect(result.accounts.skipped).toBe(1)
     expect(result.accounts.alreadyPresent).toBe(1)
     expect(
       result.accounts.entries
         .filter((entry) => entry.action === 'imported')
         .map((entry) => (entry.action === 'imported' ? entry.display : '')),
-    ).toEqual(['acct-777', '…8888', 'bridget@example.com', '…et-3'])
+    ).toEqual(['acct-777', '…8888', 'bridget@example.com', '…et-3', '…et-9'])
 
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     expect(accounts).not.toBeInstanceOf(Error)
     if (accounts instanceof Error) return
-    expect(accounts).toHaveLength(4)
+    expect(accounts).toHaveLength(5)
     const oauth = accounts.filter((account) => account.type === 'oauth')
     expect(oauth.map((account) => (account.type === 'oauth' ? account.refresh : ''))).toEqual([
       'ok-rt-secret-1',
       'ok-rt-secret-2',
       'ok-rt-secret-3',
+      'ok-rt-secret-9',
     ])
     expect(oauth.map((account) => account.label)).toEqual([
       'acct-777',
       'bridget@example.com',
       undefined,
+      undefined,
     ])
+    expect(oauth[3]).toMatchObject({ provider: 'openai-codex', type: 'oauth' })
     const api = accounts.filter((account) => account.type === 'api')
     expect(api.map((account) => (account.type === 'api' ? account.key : ''))).toEqual(['zai-live-key-8888'])
   })
@@ -242,11 +248,11 @@ describe('importOpencodeCredentials', () => {
     expect(second.accounts.imported).toBe(0)
     // Every plan entry is a dedupe match on the second run, including the
     // auth.json/rotation duplicate.
-    expect(second.accounts.alreadyPresent).toBe(5)
-    expect(second.accounts.skipped).toBe(2)
+    expect(second.accounts.alreadyPresent).toBe(6)
+    expect(second.accounts.skipped).toBe(1)
     const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     if (accounts instanceof Error) return
-    expect(accounts).toHaveLength(4)
+    expect(accounts).toHaveLength(5)
   })
 
   test('skips with per-entry reasons: un-adapted oauth and unknown api providers', async () => {
@@ -260,7 +266,6 @@ describe('importOpencodeCredentials', () => {
     expect(skips).toEqual([
       { provider: 'github-copilot', reason: 'no pool adapter for github-copilot' },
       { provider: 'groq', reason: 'no pool adapter for groq' },
-      { provider: 'openai', reason: 'no pool adapter for openai oauth' },
     ])
   })
 
@@ -268,7 +273,7 @@ describe('importOpencodeCredentials', () => {
     writeOpencodeFixture()
     const result = importResult(await importOpencodeCredentials({ dataDir, opencodeData, dryRun: true }))
     expect(result.dryRun).toBe(true)
-    expect(result.accounts.imported).toBe(4)
+    expect(result.accounts.imported).toBe(5)
     expect(result.accounts.alreadyPresent).toBe(1)
     expect(fs.existsSync(path.join(dataDir, 'credentials'))).toBe(false)
     const text = reportText(result)
@@ -334,26 +339,31 @@ describe('exportOpencodeCredentials', () => {
     })
     expect(updated).not.toBeInstanceOf(Error)
 
-    // An unrelated provider entry in auth.json must survive the export.
+    // Unrelated provider entries in auth.json must survive the export; the
+    // openai entry is not one of them — the pool's ChatGPT subscription
+    // exports under it (#198).
     fs.writeFileSync(
       path.join(opencodeData, 'auth.json'),
-      JSON.stringify({ openai: { type: 'api', key: 'sk-unrelated' } }, null, 2),
+      JSON.stringify({ openai: { type: 'api', key: 'sk-unrelated' }, zai: { type: 'api', key: 'zai-live-key-8888' } }, null, 2),
     )
 
     const result = await exportOpencodeCredentials({ dataDir, opencodeData })
     expect(result).not.toBeInstanceOf(Error)
     if (result instanceof Error) return
-    // The pool holds one anthropic rotation (3 accounts after the refresh)
-    // and one zai api key. Only oauth accounts export, so only anthropic is
-    // written — the pool has no openai oauth account, and its stale rotation
-    // file on disk is left alone.
-    expect(result.providers.map((provider) => provider.provider)).toEqual(['anthropic'])
+    // The pool holds one anthropic rotation (3 accounts after the refresh),
+    // one zai api key, and one openai-codex ChatGPT subscription. Only oauth
+    // accounts export: anthropic under its own key, and the ChatGPT
+    // subscription under OpenCode's own `openai` key so an import maps it
+    // back (#198). The zai api key stays pool-managed.
+    expect(result.providers.map((provider) => provider.provider)).toEqual(['anthropic', 'openai'])
     expect(result.providers[0]).toMatchObject({ count: 3, first: 'acct-777' })
-    expect(result.written).toHaveLength(2)
+    expect(result.providers[1]).toMatchObject({ count: 1, first: '…et-9' })
+    expect(result.written).toHaveLength(3)
 
     const auth = JSON.parse(fs.readFileSync(path.join(opencodeData, 'auth.json'), 'utf8')) as Record<string, unknown>
     expect(auth.anthropic).toEqual({ type: 'oauth', refresh: 'rotated-rt', access: 'rotated-at', expires: 1893456999999 })
-    expect(auth.openai).toEqual({ type: 'api', key: 'sk-unrelated' })
+    expect(auth.openai).toEqual({ type: 'oauth', refresh: 'ok-rt-secret-9', access: 'ok-at-secret-9', expires: 1893456000004 })
+    expect(auth.zai).toEqual({ type: 'api', key: 'zai-live-key-8888' })
 
     const rotation = JSON.parse(
       fs.readFileSync(path.join(opencodeData, 'anthropic-oauth-accounts.json'), 'utf8'),
@@ -361,8 +371,15 @@ describe('exportOpencodeCredentials', () => {
     expect(rotation).toHaveLength(3)
     expect(rotation[0]).toMatchObject({ type: 'oauth', refresh: 'rotated-rt' })
 
+    const codexRotation = JSON.parse(
+      fs.readFileSync(path.join(opencodeData, 'openai-oauth-accounts.json'), 'utf8'),
+    ) as Array<Record<string, unknown>>
+    expect(codexRotation).toHaveLength(1)
+    expect(codexRotation[0]).toMatchObject({ type: 'oauth', refresh: 'ok-rt-secret-9' })
+
     const text = formatOpencodeExportReport(result).join('\n')
     expect(text).toContain('anthropic: 3 accounts')
+    expect(text).toContain('openai: 1 account')
     for (const secret of ALL_SECRETS) {
       expect(text).not.toContain(secret)
     }
@@ -401,16 +418,21 @@ describe('exportOpencodeCredentials', () => {
     expect(exported).not.toBeInstanceOf(Error)
 
     // Import back into a second pool from the exported files: same accounts.
+    // The ChatGPT subscription exports under `openai` and imports back as
+    // openai-codex (#198).
     const second = importResult(
       await importOpencodeCredentials({ dataDir, poolId: 'rollback', opencodeData }),
     )
-    expect(second.accounts.imported).toBe(4)
-    expect(second.accounts.alreadyPresent).toBe(1)
+    expect(second.accounts.imported).toBe(5)
+    expect(second.accounts.alreadyPresent).toBe(2)
     const rollback = readPoolAccounts({ dataDir, poolId: 'rollback' })
     if (rollback instanceof Error) throw rollback
     const original = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     if (original instanceof Error) throw original
     expect(rollback.length).toBe(original.length)
+    expect(rollback.map((account) => account.provider).sort()).toEqual(
+      original.map((account) => account.provider).sort(),
+    )
   })
 
   test('leaves pool rotations untouched', async () => {

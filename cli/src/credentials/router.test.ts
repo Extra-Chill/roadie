@@ -10,6 +10,7 @@ import {
   type PoolAccount,
 } from './store.js'
 import {
+  accountServesProvider,
   isCoolingDown,
   markCooldown,
   parseRotationEntry,
@@ -187,6 +188,68 @@ describe('resolvePoolCandidates + markCooldown integration', () => {
       now: NOW,
     })
     if (candidates instanceof Error) throw candidates
+    expect(candidates).toEqual([])
+  })
+})
+
+describe('ChatGPT subscriptions serve openai/ entries (#198)', () => {
+  const codexOauth: PoolAccount = {
+    id: 'codex',
+    provider: 'openai-codex',
+    type: 'oauth',
+    refresh: 'rt',
+    access: 'at',
+    expires: 0,
+    addedAt: '',
+    lastUsed: null,
+  }
+  const codexApi: PoolAccount = { id: 'codex-key', provider: 'openai-codex', type: 'api', key: 'k', addedAt: '', lastUsed: null }
+  const openaiKey: PoolAccount = { id: 'openai-key', provider: 'openai', type: 'api', key: 'sk', addedAt: '', lastUsed: null }
+  const anthropicKey: PoolAccount = { id: 'ant', provider: 'anthropic', type: 'api', key: 'sk-ant', addedAt: '', lastUsed: null }
+
+  test('accountServesProvider maps only openai entries onto ChatGPT oauth accounts', () => {
+    expect(accountServesProvider({ account: codexOauth, provider: 'openai' })).toBe('openai-codex')
+    expect(accountServesProvider({ account: codexOauth, provider: 'openai-codex' })).toBe('openai-codex')
+    expect(accountServesProvider({ account: codexApi, provider: 'openai' })).toBeNull()
+    expect(accountServesProvider({ account: codexOauth, provider: 'anthropic' })).toBeNull()
+    expect(accountServesProvider({ account: openaiKey, provider: 'openai' })).toBe('openai')
+    expect(accountServesProvider({ account: openaiKey, provider: 'openai-codex' })).toBeNull()
+  })
+
+  test('an openai/<model> entry resolves the subscription as an openai-codex candidate, in order', () => {
+    const candidates = resolveCandidates({
+      poolId: SHARED_POOL_ID,
+      rotation: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'],
+      accounts: [anthropicKey, codexOauth, openaiKey, codexApi],
+      cooldowns: {},
+      now: NOW,
+    })
+    expect(candidates.map(candidateKey)).toEqual([
+      'openai-codex/gpt-6.1-sol:codex',
+      'openai/gpt-6.1-sol:openai-key',
+      'anthropic/claude-sonnet-5-5:ant',
+    ])
+  })
+
+  test('the Pi proxy openai-codex/codex entry resolves exactly as before', () => {
+    const candidates = resolveCandidates({
+      poolId: SHARED_POOL_ID,
+      rotation: ['openai-codex/codex'],
+      accounts: [openaiKey, codexOauth, codexApi],
+      cooldowns: {},
+      now: NOW,
+    })
+    expect(candidates.map(candidateKey)).toEqual(['openai-codex/codex:codex', 'openai-codex/codex:codex-key'])
+  })
+
+  test('a cooling subscription is skipped', () => {
+    const candidates = resolveCandidates({
+      poolId: SHARED_POOL_ID,
+      rotation: ['openai/gpt-6.1-sol'],
+      accounts: [codexOauth],
+      cooldowns: { codex: NOW + 1 },
+      now: NOW,
+    })
     expect(candidates).toEqual([])
   })
 })

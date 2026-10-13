@@ -6,16 +6,20 @@
 // and planned before the first pool write, so a malformed subrouter file
 // reports the parse error and writes nothing.
 //
-// Mapping (issue #128, extended by issue #136): anthropic oauth accounts go in
-// via addPoolOAuthAccount, and api-key accounts for any provider the models.dev
-// catalog resolves (cli/src/credentials/provider-catalog.ts) go in via
-// addPoolAccount — only unsupported oauth providers and unresolvable providers
-// are skipped, with a per-entry reason. Presets become same-named rotations via
-// setPoolRotation with `#variant` suffixes stripped and unroutable entries
-// dropped; an existing rotation with the same name is never overwritten. Runs
-// are idempotent: dedupe compares inside the pool lock (api keys by key, oauth
-// accounts by refresh token or accountId/email) and an existing match is
-// reported as already present.
+// Mapping (issue #128, extended by issue #136 and #198): anthropic oauth
+// accounts and ChatGPT (Codex) subscription accounts — which travel as the
+// source provider's `openai` OAuth entry — go in via addPoolOAuthAccount, and
+// api-key accounts for any provider the models.dev catalog resolves
+// (cli/src/credentials/provider-catalog.ts) go in via addPoolAccount — only
+// unsupported oauth providers and unresolvable providers are skipped, with a
+// per-entry reason. Presets become same-named rotations via setPoolRotation
+// with `#variant` suffixes stripped and unroutable entries dropped; an
+// existing rotation with the same name is never overwritten. Rotation entries
+// keep naming `openai/<model>`: the router serves those with an imported
+// `openai-codex` subscription account (router.ts accountServesProvider), so
+// existing rotations need no rewrite. Runs are idempotent: dedupe compares inside the pool lock (api
+// keys by key, oauth accounts by refresh token or accountId/email) and an
+// existing match is reported as already present.
 //
 // Output is counts and labels only: email or accountId when present,
 // otherwise the last 4 characters of the secret. Keys and tokens are never
@@ -36,7 +40,8 @@ import {
   SHARED_POOL_ID,
   type PoolAccount,
 } from './store.js'
-import { parseRotationEntry } from './router.js'
+import { CODEX_POOL_PROVIDER, parseRotationEntry } from './router.js'
+import { codexAccountId } from './adapters/openai-codex-oauth.js'
 import { isCatalogProviderRoutable, resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 
 /**
@@ -44,6 +49,15 @@ import { isCatalogProviderRoutable, resolveCatalog, type ModelsDevCatalog } from
  * keep the pre-#136 pair so an import never regresses for anthropic/openai.
  */
 const LEGACY_IMPORT_PROVIDERS: readonly string[] = ['anthropic', 'openai']
+
+/**
+ * Source provider id that carries ChatGPT subscriptions in auth files. Source
+ * files (subrouter auth.json, OpenCode auth.json) key the subscription under
+ * `openai` alongside platform API keys, so its OAuth entry imports under the
+ * pool's CODEX_POOL_PROVIDER id (#198), the id `credentials login` and the Pi
+ * proxy use.
+ */
+const CHATGPT_SOURCE_PROVIDER = 'openai'
 
 /**
  * True when an api-key account for the provider can be routed: the models.dev
@@ -241,10 +255,10 @@ function identityFields(record: Record<string, unknown>): { email?: string; acco
 
 /**
  * Map one ordered subrouter account entry onto the pool. Api-key accounts for
- * any catalog-resolvable provider and anthropic oauth accounts import;
- * everything else is skipped with a per-entry reason. Malformed entries
- * (missing key/tokens) are skipped too, with the entry's own reason, and
- * never block the rest of the import.
+ * any catalog-resolvable provider, anthropic oauth accounts, and ChatGPT
+ * (Codex) subscription accounts import; everything else is skipped with a
+ * per-entry reason. Malformed entries (missing key/tokens) are skipped too,
+ * with the entry's own reason, and never block the rest of the import.
  */
 export function planSubrouterAccount(
   entry: unknown,
@@ -272,7 +286,11 @@ export function planSubrouterAccount(
     }
   }
   if (type === 'oauth') {
-    if (provider !== 'anthropic') {
+    // The `openai` OAuth entry is a ChatGPT subscription and imports under
+    // the pool's `openai-codex` adapter id (#198); platform API keys of the
+    // same source provider stay under `openai`.
+    const poolProvider = provider === CHATGPT_SOURCE_PROVIDER ? CODEX_POOL_PROVIDER : provider
+    if (provider !== 'anthropic' && provider !== CHATGPT_SOURCE_PROVIDER) {
       return { action: 'skip', provider, display, reason: `no pool adapter for ${provider} oauth` }
     }
     const refresh = record.refresh
@@ -291,7 +309,7 @@ export function planSubrouterAccount(
     }
     return {
       action: 'import',
-      candidate: { kind: 'oauth', provider, refresh, access, expires, ...identity, display },
+      candidate: { kind: 'oauth', provider: poolProvider, refresh, access, expires, ...identity, display },
     }
   }
   const typeLabel = typeof type === 'string' && type ? type : 'account'
@@ -363,7 +381,8 @@ export function planSubrouterPreset({
 /**
  * Dedupe match against current pool accounts: api keys by key, oauth accounts
  * by refresh token or by accountId/email (compared against the account label
- * the import and `credentials login` write). Same provider only for oauth.
+ * the import and `credentials login` write), and ChatGPT subscriptions by the
+ * account id in their access token. Same provider only for oauth.
  */
 export function findExistingPoolAccount({
   accounts,
@@ -380,6 +399,13 @@ export function findExistingPoolAccount({
     accounts.find((existing) => {
       if (existing.provider !== candidate.provider) return false
       if (existing.type === 'oauth' && existing.refresh === candidate.refresh) return true
+      // A ChatGPT subscription is one account however many times it logged
+      // in: match on the account id in the access token, as
+      // `credentials login` does (#198).
+      if (candidate.provider === CODEX_POOL_PROVIDER && existing.type === 'oauth') {
+        const existingId = codexAccountId(existing.access)
+        if (existingId && existingId === codexAccountId(candidate.access)) return true
+      }
       if (!existing.label) return false
       if (candidate.accountId && existing.label === candidate.accountId) return true
       if (email && existing.label.trim().toLowerCase() === email) return true
