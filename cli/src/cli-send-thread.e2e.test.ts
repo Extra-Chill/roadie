@@ -8,12 +8,11 @@
 // The ThreadCreate handler should pick it up and start a session. The
 // MessageCreate handler must NOT try to startThread() on the same message.
 //
-// Uses opencode-deterministic-provider (no real LLM calls).
+// Runs on real Pi against the scripted fake model server (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval.
 
 import fs from 'node:fs'
 import path from 'node:path'
-import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
 import {
   ChannelType,
@@ -23,10 +22,10 @@ import {
   Routes,
 } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
-import {
-  buildDeterministicOpencodeConfig,
-  type DeterministicMatcher,
-} from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
+import { startPiE2eBackend, type PiE2eBackend } from './pi-e2e-backend.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -41,12 +40,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import {
-  initializeOpencodeForDirectory,
-  stopOpencodeServer,
-} from './opencode.js'
-import {
   chooseAvailableLockPort,
-  cleanupTestSessions,
   initTestGitRepo,
   waitForBotMessageContaining,
   waitForFooterMessage, removeTestDataDir } from './test-utils.js'
@@ -91,8 +85,8 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-function createDeterministicMatchers(): DeterministicMatcher[] {
-  const userReplyMatcher: DeterministicMatcher = {
+function createMatchers(): FakeMatcher[] {
+  const userReplyMatcher: FakeMatcher = {
     id: 'user-reply',
     priority: 10,
     when: {
@@ -116,7 +110,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   // Catch-all: any user message gets a reply
-  const catchAll: DeterministicMatcher = {
+  const catchAll: FakeMatcher = {
     id: 'catch-all',
     priority: 0,
     when: { lastMessageRole: 'user' },
@@ -138,15 +132,14 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   return [userReplyMatcher, catchAll]
 }
 
-describe('roadie send --channel thread creation', () => {
+describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
+  let piBackend: PiE2eBackend | undefined
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
   let previousDefaultVerbosity: VerbosityLevel | null = null
-  let testStartTime = Date.now()
 
   beforeAll(async () => {
-    testStartTime = Date.now()
     directories = createRunDirectories()
     const lockPort = await chooseAvailableLockPort({ key: 'cli-send-thread-e2e' })
 
@@ -199,32 +192,12 @@ describe('roadie send --channel thread creation', () => {
 
     await discord.start()
 
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(
-          process.cwd(),
-          '..',
-          'opencode-deterministic-provider',
-          'src',
-          'index.ts',
-        ),
-      )
-      .toString()
-
-    const opencodeConfig = buildDeterministicOpencodeConfig({
-      providerName: 'deterministic-provider',
-      providerNpm,
-      model: 'deterministic-v2',
-      smallModel: 'deterministic-v2',
-      settings: {
-        strict: false,
-        matchers: createDeterministicMatchers(),
-      },
+    piBackend = await startPiE2eBackend({
+      root: directories.root,
+      dataDir: directories.dataDir,
+      projectDirectory: directories.projectDirectory,
+      matchers: createMatchers(),
     })
-    fs.writeFileSync(
-      path.join(directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
-    )
 
     const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
     const hranaResult = await startHranaServer({ dbPath })
@@ -264,26 +237,16 @@ describe('roadie send --channel thread creation', () => {
       discordClient: botClient,
     })
 
-    // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    // The bot entrypoint starts IPC polling, not startDiscordBot.
+    await startIpcPolling({ discordClient: botClient })
   }, 20_000)
 
   afterAll(async () => {
-    if (directories) {
-      await cleanupTestSessions({
-        projectDirectory: directories.projectDirectory,
-        testStartTime,
-      })
-    }
     if (botClient) {
       void botClient.destroy()
     }
-    await stopOpencodeServer()
+    stopIpcPolling()
+    await piBackend?.stop()
     await Promise.all([
       closeDatabase().catch(() => {
         return
@@ -303,6 +266,8 @@ describe('roadie send --channel thread creation', () => {
     if (directories) {
       removeTestDataDir(directories.dataDir)
     }
+    // A Pi suite must never start or use OpenCode.
+    expect(piBackend?.opencodeTouched ?? []).toEqual([])
   }, 5_000)
 
   test(
@@ -409,9 +374,9 @@ describe('roadie send --channel thread creation', () => {
         "--- from: user (cli-send-tester)
         thread empty content seed
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         caught-by-model
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)
         I can see you sent a message, but Discord did not include its text.
@@ -468,31 +433,21 @@ describe('roadie send --channel thread creation', () => {
           Routes.threadMembers(threadData.id, TEST_USER_ID),
         )
 
-        // Wait for the command detection result AFTER the starter message.
-        // New-session model banners are also bot replies, so waiting for any
-        // message can return before the command result is visible.
+        // The prompt took the command route: the backend looked up the
+        // command (Pi has no /hello-test, so it refuses) instead of the model
+        // receiving "/hello-test-cmd" as plain text. Waiting after the starter
+        // message, since new-session model banners are bot replies too.
         await waitForBotMessageContaining({
           discord,
           threadId: threadData.id,
           userId: discord.botUserId,
-          text: 'Command not found: "hello-test"',
+          text: 'Unknown command /hello-test',
           afterMessageId: starterMessage.id,
           timeout: 4_000,
         })
-
-        const messages = await discord.thread(threadData.id).getMessages()
-        const botReplies = messages.filter((m) => {
-          return m.author.id === discord.botUserId && m.id !== starterMessage.id
-        })
-
-        const allContent = botReplies.map((m) => {
-          return m.content
-        })
         expect(
-          allContent.some((content) => {
-            return content.includes('Command not found: "hello-test"')
-          }),
-        ).toBe(true)
+          piBackend!.modelServer.log.some((request) => JSON.stringify(request.messages).includes('hello-test')),
+        ).toBe(false)
       } finally {
         store.setState({ registeredUserCommands: prevCommands })
       }

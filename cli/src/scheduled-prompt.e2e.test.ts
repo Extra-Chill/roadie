@@ -1,8 +1,9 @@
 // Exercises durable scheduled delivery through Discord multipart uploads and
-// attachment ingestion into the actual deterministic agent runtime.
+// attachment ingestion into a real Pi agent runtime.
 import { afterEach, describe, expect, test } from 'vitest'
 import { Routes } from 'discord.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { createScheduledTask, getScheduledTask } from './database.js'
 import { runScheduledTaskNow } from './task-runner.js'
@@ -14,7 +15,7 @@ const CHANNEL_ID = '200000000000001079'
 const prompt = 'SCHEDULED_FULL_PROMPT\n' + 'complete 漢字 instructions\n'.repeat(150)
 const stdout = 'pre-run café '.repeat(500) + 'STDOUT_END'
 const fullPrompt = appendTaskCommandOutput({ prompt, stdout })
-const completeMatcher: DeterministicMatcher = {
+const completeMatcher: FakeMatcher = {
   id: 'scheduled-complete-prompt',
   priority: 150,
   when: { lastMessageRole: 'user', latestUserTextIncludes: fullPrompt },
@@ -33,10 +34,11 @@ const completeMatcher: DeterministicMatcher = {
   },
 }
 
-describe('oversized scheduled prompts', () => {
+describe.skipIf(!findPi())('oversized scheduled prompts', () => {
   const originalBaseUrl = store.getState().discordBaseUrl
   afterEach(() => store.setState({ discordBaseUrl: originalBaseUrl }))
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: CHANNEL_ID,
     channelName: 'scheduled-prompt-e2e',
     dirName: 'scheduled-prompt-e2e',

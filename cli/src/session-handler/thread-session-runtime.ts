@@ -3981,6 +3981,13 @@ export class ThreadSessionRuntime {
 
       await this.recordTurnAttribution({ sessionId: session.id, input })
       await waitForGlobalEventListener()
+      // Disposed while preparing (thread deleted, backend restarting or
+      // shutting down): the backend may no longer own this session, so the
+      // prompt must not be sent anywhere.
+      if (this.disposed) {
+        logger.log(`[DISPATCH] Runtime disposed before prompt was sent sessionId=${session.id}`)
+        return
+      }
       // A busy session takes this prompt at its next step boundary; the
       // running step is never aborted. Only /abort stops a run.
       // Marked before sending so a fast pickup event can't arrive first.
@@ -5044,6 +5051,10 @@ export class ThreadSessionRuntime {
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
       await this.recordTurnAttribution({ sessionId: session.id, input })
+      if (this.disposed) {
+        logger.log(`[DISPATCH] Runtime disposed before command was sent sessionId=${session.id}`)
+        return false
+      }
       const commandResponse = await getClient().sessions.command(
         {
           sessionId: session.id,
@@ -5113,6 +5124,10 @@ export class ThreadSessionRuntime {
 
     await this.recordTurnAttribution({ sessionId: session.id, input })
     await waitForGlobalEventListener()
+    if (this.disposed) {
+      logger.log(`[DISPATCH] Runtime disposed before prompt was sent sessionId=${session.id}`)
+      return false
+    }
     const promptResponse = await getClient().sessions.prompt({
       sessionId: session.id,
       directory: this.sdkDirectory,
