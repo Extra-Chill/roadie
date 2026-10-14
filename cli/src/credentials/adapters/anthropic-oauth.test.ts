@@ -263,6 +263,35 @@ describe('request/response shaping', () => {
     ])
   })
 
+  test('rewriteRequestPayload neutralizes the Pi harness identity and drops its docs section', () => {
+    const system =
+      'You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files.\n\n' +
+      '<rules>\n- Be concise\n</rules>\n\n' +
+      '<docs>\nPi documentation (read only when the user asks about pi itself):\n- Main documentation: /opt/pi/README.md\n</docs>\n\n' +
+      '<cwd>\n/srv/app\n</cwd>'
+    const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
+      system: Array<{ type: string; text: string }>
+    }
+    expect(payload.system).toEqual([
+      { type: 'text', text: CLAUDE_CODE_IDENTITY },
+      {
+        type: 'text',
+        text:
+          'You are an expert coding assistant. You help users by reading files.\n\n' +
+          '<rules>\n- Be concise\n</rules>\n\n' +
+          '<cwd>\n/srv/app\n</cwd>',
+      },
+    ])
+  })
+
+  test('rewriteRequestPayload keeps a docs section that is not the Pi documentation index', () => {
+    const system = 'Intro.\n<docs>\nProject docs live in /srv/app/docs.\n</docs>\nTail.'
+    const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
+      system: Array<{ type: string; text: string }>
+    }
+    expect(payload.system[1]?.text).toBe(system)
+  })
+
   test('rewriteRequestPayload leaves an identity block without a closing env tag untouched', () => {
     const system = 'You are OpenCode, the best coding agent on the planet. No env block.'
     const payload = JSON.parse(String(rewriteRequestPayload(JSON.stringify({ system })).body)) as {
