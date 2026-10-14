@@ -42,7 +42,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { AgentBackendError } from '../errors.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
-import { markPendingForkTitle } from '../fork-title.js'
+import { markPendingSessionTitle } from '../session-title.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
 
 const forkLogger = createLogger(LogPrefix.FORK)
@@ -222,7 +222,7 @@ export async function forkSessionToThread({
     })
   }
   const thread = createdThread
-  await markPendingForkTitle(forkedSession)
+  await markPendingSessionTitle(forkedSession)
   const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
   const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
   const channelId = sourceThread.parentId || sourceThread.id

@@ -16,7 +16,7 @@ import { addFilter } from './hooks.js'
 import { getThreadWorkingDirectory } from './database.js'
 import { setChannelDirectory } from './database.js'
 import { disposeRuntime, getRuntime, resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
-import { applyPendingForkTitle } from './fork-title.js'
+import { applyPendingSessionTitle } from './session-title.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { clearIdentityCache, type Person } from './identity.js'
 const exec = promisify(execFile)
@@ -45,6 +45,7 @@ describe.skipIf(!findPi())('/fork', () => {
       ['fork-cache-investigation', 'Cache Investigation'],
       ['fork-permission-review', 'Permission Review'],
       ['fork-deferred-task', 'Deferred Fork Task'],
+      ['new-thread-task', 'New Thread Task'],
        ['fork-title-slow', 'Follow-up Investigation'],
        ].map<FakeMatcher>(([marker, title]) => ({
       id: `generated-title-${marker}`, priority: 200,
@@ -453,7 +454,7 @@ describe.skipIf(!findPi())('/fork', () => {
       consume: () => ({ resume: [{ threadId: fork.id, sessionId, userId: TEST_USER_ID, username: 'fork-tester' }], stale: [] }),
     })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
-    expect(await (await getDb()).query.pending_fork_titles.findFirst({ where: { session_id: sessionId } })).toMatchObject({ task_prompt: null })
+    expect(await (await getDb()).query.pending_session_titles.findFirst({ where: { session_id: sessionId } })).toMatchObject({ task_prompt: null })
     const prompt = 'Reply with exactly: fork-deferred-task'
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: prompt })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-deferred-task' })
@@ -465,6 +466,17 @@ describe.skipIf(!findPi())('/fork', () => {
     // The thread rename follows the backend's session.updated event.
     await expect.poll(async () => (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toBe('Deferred Fork Task')
     expect(await getThreadSession(fork.id)).toBe(sessionId)
+  }, 30_000)
+
+  test('a new thread is named from its first task through the isolated title request', async () => {
+    const existing = new Set((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((t) => t.id))
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: new-thread-task' })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({ timeout: 4_000, predicate: (t) => !existing.has(t.id) })
+    const sessionId = await waitForThreadSession(thread.id)
+    await waitForGeneratedTitle(sessionId, 'New Thread Task')
+    await expect.poll(async () => (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((t) => t.id === thread.id)?.name).toBe('New Thread Task')
+    // Named once: the marker is consumed, so later turns keep the title.
+    expect(await (await getDb()).query.pending_session_titles.findFirst({ where: { session_id: sessionId } })).toBeUndefined()
   }, 30_000)
 
   test('a user-chosen fork title is preserved before the first task message', async () => {
@@ -493,12 +505,12 @@ describe.skipIf(!findPi())('/fork', () => {
     if (!session || session instanceof Error) throw new Error('Missing fork fixture session')
     const originalPrompt = 'Reply with exactly: fork-cache-investigation'
     const failure = new Error('Fixture title inference unavailable')
-    const result = await applyPendingForkTitle({
+    const result = await applyPendingSessionTitle({
       session, prompt: originalPrompt, directory,
       backend: { ...backend, sessions: { ...backend.sessions, generateTitle: async () => failure } },
     })
     expect(result).toBe(failure)
-    const pending = () => getDb().then((db) => db.query.pending_fork_titles.findFirst({ where: { session_id: sessionId } }))
+    const pending = () => getDb().then((db) => db.query.pending_session_titles.findFirst({ where: { session_id: sessionId } }))
     expect((await pending())?.task_prompt).toBe(originalPrompt)
 
     disposeRuntime(fork.id)

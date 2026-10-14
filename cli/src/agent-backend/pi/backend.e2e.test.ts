@@ -49,7 +49,9 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
   const idleCount = (sessionId: string) => events.filter((e) => e.type === 'idle' && e.sessionId === sessionId).length
 
   beforeAll(async () => {
-    server = await startFakeModelServer()
+    server = await startFakeModelServer({ matchers: [
+      { id: 'title-rejected', when: { latestUserTextIncludes: 'TITLE_MODEL_REJECTS', toolsEmpty: true }, then: { error: { status: 400, message: 'thinking is not supported for this model' } } },
+    ] })
     root = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'roadie-pi-'))
     project = path.join(root, 'project')
     fs.mkdirSync(project)
@@ -429,6 +431,11 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const request = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }>; tools?: unknown[] }
     expect(JSON.stringify(request.messages[0]?.content)).toContain('Generate a concise descriptive chat title')
     expect(request.tools ?? []).toEqual([])
+
+    // A provider rejection reaches the caller with its reason, not as an empty title.
+    const rejected = await provider.getBackend().sessions.generateTitle!({ directory: dir, prompt: 'TITLE_MODEL_REJECTS this request' })
+    expect(rejected).toBeInstanceOf(Error)
+    expect((rejected as Error).message).toContain('thinking is not supported for this model')
   }, 40_000)
 
   test('the catalog lists Pi models; fork copies a whole session', async () => {
