@@ -1,5 +1,5 @@
 // E2e: a run interrupted by a restart gets a continuation turn on startup.
-// The deterministic provider only answers "continuation-seen" to the
+// The scripted model only answers "continuation-seen" to the
 // continuation prompt, so that reply proves the resumed turn reached the model
 // in the same thread and session.
 
@@ -8,11 +8,12 @@ import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setu
 import { resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
 import { getThreadSession } from './database.js'
 import { waitForBotMessageContaining } from './test-utils.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakePart } from './agent-backend/pi/fake-model-server.js'
 
 const TEXT_CHANNEL_ID = '200000000000001060'
 
-function reply(id: string, text: string): DeterministicMatcher['then']['parts'] {
+function reply(id: string, text: string): FakePart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id },
@@ -22,9 +23,10 @@ function reply(id: string, text: string): DeterministicMatcher['then']['parts'] 
   ]
 }
 
-describe('restart continuation', () => {
+describe.skipIf(!findPi())('restart continuation', () => {
   let resumedThreadId = ''
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-continuation-e2e',
     dirName: 'qa-restart-continuation-e2e',
@@ -83,6 +85,8 @@ describe('restart continuation', () => {
     const text = await ctx.discord.thread(thread.id).text()
     expect(text).toContain('Roadie restarted while this session was running. Resuming.')
     expect(await getThreadSession(thread.id)).toBe(sessionId)
+    const continuation = ctx.modelServer!.log.find((request) => request.matcher === 'restart-continuation')
+    expect(JSON.stringify(continuation?.messages)).toContain('first-turn-done')
     resumedThreadId = thread.id
   }, 25_000)
 

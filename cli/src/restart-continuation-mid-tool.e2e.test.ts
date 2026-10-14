@@ -1,6 +1,7 @@
-// E2e: a restart that lands while a tool call is still running. The agent
-// server is stopped mid-tool, a fresh one is started, and the continuation
-// turn must still produce a reply in the same thread and session.
+// E2e: a restart that lands while a tool call is still running. Every Pi
+// process is killed mid-tool, a fresh backend is started over the same session
+// files, and the continuation turn must still produce a reply in the same
+// thread and session.
 
 import { describe, test, expect } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
@@ -10,15 +11,15 @@ import {
   snapshotBusyRuntimes,
 } from './session-handler/thread-session-runtime.js'
 import { getThreadSession } from './database.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { waitForBotMessageContaining } from './test-utils.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakePart } from './agent-backend/pi/fake-model-server.js'
 
 const TEXT_CHANNEL_ID = '200000000000001062'
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
 
-function reply(id: string, text: string): DeterministicMatcher['then']['parts'] {
+function reply(id: string, text: string): FakePart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id },
@@ -41,8 +42,9 @@ async function waitFor<T>(
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-describe('restart continuation mid-tool', () => {
+describe.skipIf(!findPi())('restart continuation mid-tool', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-mid-tool-e2e',
     dirName: 'qa-restart-mid-tool-e2e',
@@ -78,7 +80,17 @@ describe('restart continuation mid-tool', () => {
   })
 
   test('a run stopped mid-tool resumes after the agent server restarts', async () => {
-    const projectDirectory = ctx.directories.projectDirectory
+    // Pi reports the bash call as running once it has started it.
+    const listening = new AbortController()
+    const events = await ctx.pi!.subscribeEvents({ signal: listening.signal })
+    const toolRunning = (async () => {
+      for await (const { events: batch } of events) {
+        const running = batch.some((event) =>
+          event.type === 'part' && event.part.kind === 'tool' && event.part.callId === 'midtool-sleep' && event.part.status === 'running',
+        )
+        if (running) return listening.abort()
+      }
+    })()
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
       content: 'MIDTOOL_PROBE start a long tool',
     })
@@ -91,29 +103,18 @@ describe('restart continuation mid-tool', () => {
       label: 'thread session',
     })
 
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (getClient instanceof Error) throw getClient
-    await waitFor(
-      async () => {
-        const { data } = await getClient().session.messages({ sessionID: sessionId, directory: projectDirectory })
-        const running = (data ?? []).some((message) =>
-          message.parts.some((part) => part.type === 'tool' && part.state.status === 'running'),
-        )
-        return running || undefined
-      },
-      { timeout: 10_000, label: 'the bash tool to start running' },
-    )
+    await Promise.race([
+      toolRunning,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for the bash tool to start running')), 10_000)),
+    ]).finally(() => listening.abort())
 
-    // Shutdown: snapshot busy runs, drop the runtimes, stop the agent server.
+    // Shutdown: snapshot busy runs, drop the runtimes, kill every Pi process.
     const interrupted = snapshotBusyRuntimes()
     expect(interrupted.map((entry) => entry.threadId)).toContain(thread.id)
     disposeRuntime(thread.id)
-    await stopOpencodeServer()
+    await ctx.restartPi!()
 
-    // Startup: a fresh agent server, then the continuation pass.
-    const restarted = await initializeOpencodeForDirectory(projectDirectory)
-    if (restarted instanceof Error) throw restarted
-
+    // Startup: the continuation pass on the fresh backend.
     const result = await resumeInterruptedSessions({
       discordClient: ctx.botClient,
       appId: ctx.discord.botUserId,
@@ -129,5 +130,11 @@ describe('restart continuation mid-tool', () => {
       timeout: 15_000,
     })
     expect(await getThreadSession(thread.id)).toBe(sessionId)
+    // The continuation ran on the interrupted history: the probe and the
+    // half-finished tool call reached the model again.
+    const continuation = ctx.modelServer!.log.find((request) => request.matcher === 'restart-mid-tool-continuation')
+    const history = JSON.stringify(continuation?.messages)
+    expect(history).toContain('MIDTOOL_PROBE')
+    expect(history).toContain('midtool-sleep')
   }, 45_000)
 })

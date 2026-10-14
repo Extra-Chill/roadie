@@ -72,6 +72,15 @@ describe('fake model server', () => {
     expect(server.log.map((request) => [request.matcher, request.model, request.aborted])).toEqual([['slow-tool', 'fake-2', false]])
   })
 
+  test("the finish part's usage is reported", async () => {
+    server = await startFakeModelServer({
+      matchers: [{ id: 'big', then: { parts: [{ type: 'text-delta', id: 't', delta: 'x' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 } }] } }],
+    })
+    const body = await (await ask('anything')).text()
+    const chunks = body.split('\n\n').filter((line) => line.startsWith('data: {')).map((line) => JSON.parse(line.slice(6)))
+    expect(chunks.at(-1).usage).toEqual({ prompt_tokens: 15_000, completion_tokens: 1, total_tokens: 15_001 })
+  })
+
   test('an error matcher fails the request with its status', async () => {
     server = await startFakeModelServer({ matchers: [{ id: 'overloaded', then: { error: { status: 529, message: 'Overloaded' } } }] })
     const response = await ask('anything')

@@ -95,7 +95,7 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
   afterAll(async () => {
     stopIpcPolling()
     restore?.()
-    pi?.dispose()
+    await pi?.dispose()
     await proxy?.close()
     const report = { model: directAgentDir ? directModel : codexModel ? `roadie-codex/${codexModel}` : `roadie/${rotation}`, upstreamStatuses: upstream, usage }
     fs.writeFileSync(path.join(process.env['TMPDIR'] || '/tmp', 'pi-real-model-report.json'), JSON.stringify(report, null, 2))

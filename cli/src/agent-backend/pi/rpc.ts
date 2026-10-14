@@ -134,7 +134,18 @@ export class PiProcess {
     return response.data as T
   }
 
-  kill(): void {
-    if (!this.exited) this.child.kill('SIGTERM')
+  /**
+   * SIGTERM, then SIGKILL if pi is still up after `graceMs`. Resolves once it
+   * has exited, so its session file is no longer being written.
+   */
+  kill({ graceMs = 3_000 }: { graceMs?: number } = {}): Promise<void> {
+    if (this.exited) return Promise.resolve()
+    const exited = new Promise<void>((resolve) => this.child.once('exit', () => resolve()))
+    this.child.kill('SIGTERM')
+    const force = setTimeout(() => {
+      if (!this.exited) this.child.kill('SIGKILL')
+    }, graceMs)
+    force.unref()
+    return exited.finally(() => clearTimeout(force))
   }
 }

@@ -70,7 +70,7 @@ describe.skipIf(!bin)('retired OpenCode sessions move to Pi', () => {
   afterAll(async () => {
     stopIpcPolling()
     restore?.()
-    pi?.dispose()
+    await pi?.dispose()
     await server?.close()
   })
 

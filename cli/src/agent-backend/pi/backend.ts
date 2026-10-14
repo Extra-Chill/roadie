@@ -604,10 +604,11 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   onStarted() {}
 
-  /** Stop every Pi process. */
-  dispose() {
-    for (const session of this.sessions.values()) session.process.kill()
+  /** Stop every Pi process; resolves once they have all exited. */
+  async dispose(): Promise<void> {
+    const processes = [...this.sessions.values()].map((session) => session.process)
     this.sessions.clear()
+    await Promise.all(processes.map((process) => process.kill()))
   }
 
   private emit(events: AgentEvent[], raw: unknown) {

@@ -1,30 +1,15 @@
-// E2e tests for ThreadSessionRuntime lifecycle behaviors.
-// Tests scenarios not covered by the queue/interrupt tests:
+// E2e tests for ThreadSessionRuntime lifecycle behaviors, on Pi with the
+// scripted fake model server. Tests scenarios not covered by the queue tests:
 // 1. Sequential completions: listener stays alive across multiple full run cycles
 // 2. Concurrent first messages: runtime serialization without threadMessageQueue
+// 3. A backend restart under a live runtime
 //
-// Uses opencode-deterministic-provider (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval.
 
-import fs from 'node:fs'
-
-import path from 'node:path'
-import url from 'node:url'
-import { describe, beforeAll, afterAll, test, expect } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
-import { DigitalDiscord } from 'discord-digital-twin/src'
-import {
-  buildDeterministicOpencodeConfig,
-  type DeterministicMatcher,
-} from 'opencode-deterministic-provider'
-import { setDataDir } from './config.js'
-import { store } from './store.js'
-import { startDiscordBot } from './discord-bot.js'
+import { describe, test, expect } from 'vitest'
+import { ChannelType } from 'discord.js'
 import { getRuntime } from './session-handler/thread-session-runtime.js'
 import {
-  setBotToken,
-  initDatabase,
-  closeDatabase,
   createScheduledTask,
   getChannelDirectory,
   getScheduledTask,
@@ -33,243 +18,79 @@ import {
   insertThreadQueueItem,
   listThreadQueueItems,
   setChannelDirectory,
-  setChannelVerbosity,
-  type VerbosityLevel,
   upsertSessionSleep,
 } from './database.js'
-import { startHranaServer, stopHranaServer } from './hrana-server.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import {
-  initializeOpencodeForDirectory,
-  restartOpencodeServer,
-  stopOpencodeServer,
-} from './opencode.js'
-import {
-  chooseLockPort,
-  cleanupTestSessions,
-  initTestGitRepo,
   isFooterMessage,
   waitForBotMessageContaining,
-  waitForBotReplyAfterUserMessage, removeTestDataDir } from './test-utils.js'
+  waitForBotReplyAfterUserMessage,
+} from './test-utils.js'
 
-
-const TEST_USER_ID = '200000000000000888'
 const TEXT_CHANNEL_ID = '200000000000000889'
 
-function createRunDirectories() {
-  const root = path.resolve(process.cwd(), 'tmp', 'runtime-lifecycle-e2e')
-  fs.mkdirSync(root, { recursive: true })
-  const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
-  const projectDirectory = path.join(root, 'project')
-  fs.mkdirSync(projectDirectory, { recursive: true })
-  initTestGitRepo(projectDirectory)
-  return { root, dataDir, projectDirectory }
+// 15k of the fake model's 100k context window: past the 10% notice threshold.
+const highUsageReplyMatcher: FakeMatcher = {
+  id: 'high-usage-reply',
+  priority: 20,
+  when: {
+    lastMessageRole: 'user',
+    rawPromptIncludes: 'Reply with exactly: footer-high-usage',
+  },
+  then: {
+    parts: [
+      { type: 'text-delta', id: 'high-usage-reply', delta: 'ok' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 },
+      },
+    ],
+    partDelaysMs: [100, 0],
+  },
 }
 
-
-
-function createDiscordJsClient({ restUrl }: { restUrl: string }) {
-  return new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildVoiceStates,
-    ],
-    partials: [
-      Partials.Channel,
-      Partials.Message,
-      Partials.User,
-      Partials.ThreadMember,
-    ],
-    rest: {
-      api: restUrl,
-      version: '10',
+// A two-step run: the first step (a tool call) already reports 15% usage,
+// so the context notice is due before the run ends.
+const highUsageToolMatchers: FakeMatcher[] = [
+  {
+    id: 'high-usage-tool-step',
+    priority: 30,
+    when: { lastMessageRole: 'user', latestUserTextIncludes: 'CONTEXT_NOTICE_PROBE' },
+    then: {
+      parts: [
+        { type: 'text-delta', id: 'notice-step', delta: 'checking' },
+        { type: 'tool-call', toolCallId: 'notice-step-bash', toolName: 'bash', input: JSON.stringify({ command: 'true' }) },
+        { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 } },
+      ],
     },
+  },
+  {
+    id: 'high-usage-final-step',
+    // Above the shared 'tool done' follow-up.
+    priority: 60,
+    when: { lastMessageRole: 'tool', latestUserTextIncludes: 'CONTEXT_NOTICE_PROBE' },
+    then: {
+      parts: [
+        { type: 'text-delta', id: 'notice-final', delta: 'notice-probe-done' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 15_100, outputTokens: 1, totalTokens: 15_101 } },
+      ],
+      partDelaysMs: [300, 0],
+    },
+  },
+]
+
+describe.skipIf(!findPi())('runtime lifecycle', () => {
+  const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
+    channelId: TEXT_CHANNEL_ID,
+    channelName: 'lifecycle-e2e',
+    dirName: 'runtime-lifecycle-e2e',
+    username: 'lifecycle-tester',
+    extraMatchers: [highUsageReplyMatcher, ...highUsageToolMatchers],
   })
-}
-
-function createDeterministicMatchers(): DeterministicMatcher[] {
-  const highUsageReplyMatcher: DeterministicMatcher = {
-    id: 'high-usage-reply',
-    priority: 20,
-    when: {
-      lastMessageRole: 'user',
-      rawPromptIncludes: 'Reply with exactly: footer-high-usage',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'high-usage-reply' },
-        { type: 'text-delta', id: 'high-usage-reply', delta: 'ok' },
-        { type: 'text-end', id: 'high-usage-reply' },
-        {
-          type: 'finish',
-          finishReason: 'stop',
-          usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 },
-        },
-      ],
-      partDelaysMs: [0, 100, 0, 0, 0],
-    },
-  }
-
-  // Simple reply matcher: model echoes back the requested text.
-  // Uses 100ms delay on first text delta to keep streams async without adding
-  // unnecessary latency. Tests verify ordering/serialization, not latency handling.
-  const userReplyMatcher: DeterministicMatcher = {
-    id: 'user-reply',
-    priority: 10,
-    when: {
-      lastMessageRole: 'user',
-      rawPromptIncludes: 'Reply with exactly:',
-    },
-    then: {
-      parts: [
-        { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'default-reply' },
-        { type: 'text-delta', id: 'default-reply', delta: 'ok' },
-        { type: 'text-end', id: 'default-reply' },
-        {
-          type: 'finish',
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        },
-      ],
-      partDelaysMs: [0, 100, 0, 0, 0],
-    },
-  }
-
-  return [highUsageReplyMatcher, userReplyMatcher]
-}
-
-describe('runtime lifecycle', () => {
-  let directories: ReturnType<typeof createRunDirectories>
-  let discord: DigitalDiscord
-  let botClient: Client
-  let previousDefaultVerbosity: VerbosityLevel | null = null
-  let testStartTime = Date.now()
-
-  beforeAll(async () => {
-    testStartTime = Date.now()
-    directories = createRunDirectories()
-    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
-
-    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
-    setDataDir(directories.dataDir)
-    previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
-
-    const digitalDiscordDbPath = path.join(
-      directories.dataDir,
-      'digital-discord.db',
-    )
-
-    discord = new DigitalDiscord({
-      guild: {
-        name: 'Lifecycle E2E Guild',
-        ownerId: TEST_USER_ID,
-      },
-      channels: [
-        {
-          id: TEXT_CHANNEL_ID,
-          name: 'lifecycle-e2e',
-          type: ChannelType.GuildText,
-        },
-      ],
-      users: [
-        {
-          id: TEST_USER_ID,
-          username: 'lifecycle-tester',
-        },
-      ],
-      dbUrl: `file:${digitalDiscordDbPath}`,
-    })
-
-    await discord.start()
-
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(
-          process.cwd(),
-          '..',
-          'opencode-deterministic-provider',
-          'src',
-          'index.ts',
-        ),
-      )
-      .toString()
-
-    const opencodeConfig = buildDeterministicOpencodeConfig({
-      providerName: 'deterministic-provider',
-      providerNpm,
-      model: 'deterministic-v2',
-      smallModel: 'deterministic-v2',
-      settings: {
-        strict: false,
-        matchers: createDeterministicMatchers(),
-      },
-    })
-    fs.writeFileSync(
-      path.join(directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
-    )
-
-    const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
-    const hranaResult = await startHranaServer({ dbPath })
-    if (hranaResult instanceof Error) {
-      throw hranaResult
-    }
-    process.env['ROADIE_DB_URL'] = hranaResult
-    await initDatabase()
-    await setBotToken(discord.botUserId, discord.botToken)
-
-    await setChannelDirectory({
-      channelId: TEXT_CHANNEL_ID,
-      directory: directories.projectDirectory,
-      channelType: 'text',
-    })
-    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools_and_text')
-
-    botClient = createDiscordJsClient({ restUrl: discord.restUrl })
-    await startDiscordBot({
-      token: discord.botToken,
-      appId: discord.botUserId,
-      discordClient: botClient,
-    })
-
-    // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
-  }, 20_000)
-
-  afterAll(async () => {
-    if (directories) {
-      await cleanupTestSessions({
-        projectDirectory: directories.projectDirectory,
-        testStartTime,
-      })
-    }
-    if (botClient) {
-      void botClient.destroy()
-    }
-    await stopOpencodeServer()
-    await Promise.all([
-      closeDatabase().catch(() => { return }),
-      stopHranaServer().catch(() => { return }),
-      discord?.stop().catch(() => { return }),
-    ])
-    delete process.env['ROADIE_LOCK_PORT']
-    delete process.env['ROADIE_DB_URL']
-    if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity })
-    }
-    if (directories) {
-      removeTestDataDir(directories.dataDir)
-    }
-  }, 5_000)
 
   test(
     'two sequential completions reuse same runtime and listener',
@@ -280,22 +101,22 @@ describe('runtime lifecycle', () => {
       // This is the "calm" path — no abort, no queue, just sequential use.
 
       // 1. Send first message → thread created, session established
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: seq-alpha',
       })
 
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: seq-alpha'
         },
       })
 
-      const th = discord.thread(thread.id)
+      const th = ctx.discord.thread(thread.id)
 
       // Wait for footer (italic project info line) — proves run A completed
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
@@ -312,7 +133,7 @@ describe('runtime lifecycle', () => {
       })
 
       await waitForBotReplyAfterUserMessage({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'seq-beta',
@@ -321,7 +142,7 @@ describe('runtime lifecycle', () => {
 
       // Wait for B's footer
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
@@ -335,14 +156,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -353,11 +174,11 @@ describe('runtime lifecycle', () => {
     'footer includes context percentage and model id',
     async () => {
       const prompt = 'Reply with exactly: footer-check'
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: prompt,
       })
 
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
         predicate: (t) => {
           return t.name === prompt
@@ -365,59 +186,59 @@ describe('runtime lifecycle', () => {
       })
 
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '%',
         timeout: 4_000,
       })
 
-      const messages = await discord.thread(thread.id).getMessages()
+      const messages = await ctx.discord.thread(thread.id).getMessages()
 
       const footerMessage = messages.find((message) => {
-        if (!isFooterMessage({ message, botUserId: discord.botUserId })) {
+        if (!isFooterMessage({ message, botUserId: ctx.discord.botUserId })) {
           return false
         }
-        return message.content.includes('deterministic-v2') && message.content.includes('%')
+        return message.content.includes('fake-1') && message.content.includes('%')
       })
 
-      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      expect(await ctx.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
         throw new Error('Expected footer message to be present')
       }
-      expect(footerMessage.content).toContain('deterministic-v2')
+      expect(footerMessage.content).toContain('fake-1')
       expect(footerMessage.content).toMatch(/\d+%/)
     },
     10_000,
   )
 
   test(
-    'existing runtime reconnects after shared opencode server restart',
+    'existing runtime keeps working after the Pi backend restarts',
     async () => {
       const prompt = 'Reply with exactly: reconnect-alpha'
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: prompt,
       })
 
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
         predicate: (t) => {
           return t.name === prompt
         },
       })
 
-      const th = discord.thread(thread.id)
+      const th = ctx.discord.thread(thread.id)
 
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
@@ -426,18 +247,19 @@ describe('runtime lifecycle', () => {
 
       const runtimeBeforeRestart = getRuntime(thread.id)
       expect(runtimeBeforeRestart).toBeDefined()
+      const sessionBeforeRestart = await getThreadSession(thread.id)
+      const piBeforeRestart = ctx.pi
 
-      const restartResult = await restartOpencodeServer()
-      if (restartResult instanceof Error) {
-        throw restartResult
-      }
+      // Every Pi process is killed and a fresh backend takes over; the
+      // session resumes from its file on the next prompt.
+      await ctx.restartPi!()
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: reconnect-beta',
       })
 
       await waitForBotReplyAfterUserMessage({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'reconnect-beta',
@@ -445,7 +267,7 @@ describe('runtime lifecycle', () => {
       })
 
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
@@ -457,18 +279,24 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)
       expect(runtimeAfterRestart).toBe(runtimeBeforeRestart)
+      // The fresh backend served the same session, with its history.
+      expect(ctx.pi).not.toBe(piBeforeRestart)
+      expect(ctx.pi!.owns(sessionBeforeRestart!)).toBe(true)
+      expect(await getThreadSession(thread.id)).toBe(sessionBeforeRestart)
+      const beta = ctx.modelServer!.log.findLast((request) => JSON.stringify(request.messages).includes('reconnect-beta'))
+      expect(JSON.stringify(beta?.messages)).toContain('reconnect-alpha')
     },
     15_000,
   )
@@ -478,37 +306,40 @@ describe('runtime lifecycle', () => {
     async () => {
       const prompt = 'Reply with exactly: footer-high-usage'
       const existingThreadIds = new Set(
-        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
           return thread.id
         }),
       )
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: prompt,
       })
 
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 6_000,
         predicate: (t) => {
           return !existingThreadIds.has(t.id)
         },
       })
 
+      // The footer ends the run, so every notice it could have had is posted.
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: 'deterministic-v2',
+        text: '*project',
         timeout: 6_000,
       })
 
-      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      expect(await ctx.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*"
+        -# *using fake/fake-1*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
 
-      const threadText = await discord.thread(thread.id).text()
+      const threadText = await ctx.discord.thread(thread.id).text()
       expect(threadText).not.toContain('-# context usage')
     },
     10_000,
@@ -524,28 +355,28 @@ describe('runtime lifecycle', () => {
 
       // 1. Establish thread + session
       const existingThreadIds = new Set(
-        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
+        (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => {
           return thread.id
         }),
       )
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: concurrent-setup',
       })
 
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 6_000,
         predicate: (t) => {
           return !existingThreadIds.has(t.id)
         },
       })
 
-      const th = discord.thread(thread.id)
+      const th = ctx.discord.thread(thread.id)
       const setupReply = await th.waitForBotReply({ timeout: 6_000 })
       expect(setupReply.content.trim().length).toBeGreaterThan(0)
 
       // Wait for setup footer so the run is fully idle
       await waitForBotMessageContaining({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
@@ -555,7 +386,7 @@ describe('runtime lifecycle', () => {
       // Snapshot bot message count before sending concurrent messages
       const beforeMessages = await th.getMessages()
       const beforeBotCount = beforeMessages.filter((m) => {
-        return m.author.id === discord.botUserId
+        return m.author.id === ctx.discord.botUserId
       }).length
 
       // 2. Fire B and C simultaneously — no await between sends
@@ -569,7 +400,7 @@ describe('runtime lifecycle', () => {
 
       // 3. Both should eventually get bot replies — the runtime serializes them
       await waitForBotReplyAfterUserMessage({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'concurrent-bravo',
@@ -577,7 +408,7 @@ describe('runtime lifecycle', () => {
       })
 
       await waitForBotReplyAfterUserMessage({
-        discord,
+        discord: ctx.discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'concurrent-charlie',
@@ -611,14 +442,14 @@ describe('runtime lifecycle', () => {
 
       // Charlie (the last queued message) must have a bot reply after it.
       const charlieReplyIndex = messages.findIndex((m, i) => {
-        return i > charlieIndex && m.author.id === discord.botUserId
+        return i > charlieIndex && m.author.id === ctx.discord.botUserId
       })
       expect(charlieReplyIndex).toBeGreaterThan(-1)
 
       // At least 1 new bot message appeared (charlie's reply). If bravo
       // wasn't aborted, there will be 2. Either way, no deadlock.
       const afterBotCount = messages.filter((m) => {
-        return m.author.id === discord.botUserId
+        return m.author.id === ctx.discord.botUserId
       }).length
       expect(afterBotCount).toBeGreaterThanOrEqual(beforeBotCount + 1)
     },
@@ -626,7 +457,7 @@ describe('runtime lifecycle', () => {
   )
 
   test('deleting a project channel clears its active Discord work', async () => {
-    const guild = botClient.guilds.cache.first()
+    const guild = ctx.botClient.guilds.cache.first()
     if (!guild) throw new Error('Expected test guild')
     const projectChannel = await guild.channels.create({
       name: 'deleted-project',
@@ -634,19 +465,19 @@ describe('runtime lifecycle', () => {
     })
     await setChannelDirectory({
       channelId: projectChannel.id,
-      directory: directories.projectDirectory,
+      directory: ctx.directories.projectDirectory,
       channelType: 'text',
       guildId: guild.id,
     })
-    await discord.channel(projectChannel.id).user(TEST_USER_ID).sendMessage({
+    await ctx.discord.channel(projectChannel.id).user(TEST_USER_ID).sendMessage({
       content: 'Reply with exactly: deleted-project',
     })
-    const thread = await discord.channel(projectChannel.id).waitForThread({
+    const thread = await ctx.discord.channel(projectChannel.id).waitForThread({
       timeout: 4_000,
       predicate: (candidate) => candidate.name === 'Reply with exactly: deleted-project',
     })
     await waitForBotMessageContaining({
-      discord,
+      discord: ctx.discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
       text: '*project',
@@ -676,13 +507,13 @@ describe('runtime lifecycle', () => {
       channelId: projectChannel.id,
     })
 
-    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    expect(await ctx.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
       "--- from: user (lifecycle-tester)
       Reply with exactly: deleted-project
       --- from: assistant (TestBot)
-      -# *using deterministic-provider/deterministic-v2*
+      -# *using fake/fake-1*
       ok
-      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
     `)
     await projectChannel.delete()
 
@@ -710,4 +541,35 @@ describe('runtime lifecycle', () => {
       },
     })
   }, 15_000)
+
+  test('prints a context-usage notice when usage crosses 10% mid-run', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'CONTEXT_NOTICE_PROBE use some context',
+    })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (t) => t.name?.includes('CONTEXT_NOTICE_PROBE') ?? false,
+    })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      userId: TEST_USER_ID,
+      text: '*project',
+      afterUserMessageIncludes: 'CONTEXT_NOTICE_PROBE',
+      timeout: 6_000,
+    })
+    expect(await ctx.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: user (lifecycle-tester)
+      CONTEXT_NOTICE_PROBE use some context
+      --- from: assistant (TestBot)
+      -# *using fake/fake-1*
+      > checking
+      -# context usage 15%
+
+      -# ┣ bash _true_
+
+      notice-probe-done
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
+    `)
+  }, 10_000)
 })
