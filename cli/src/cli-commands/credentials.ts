@@ -16,6 +16,7 @@
 //   roadie credentials client list
 //   roadie credentials client remove <name>
 //   roadie credentials client pi-agent-dir <dir> --base-url <url> [--pools <id,id>]
+//   roadie credentials serve [--host <addr>] [--port <n>]   (headless pool host, #226)
 // API keys are read from stdin (never argv) and never printed; only the last
 // 4 characters are shown. OAuth tokens are never printed; `list` shows the
 // access token's expiry instead.
@@ -64,6 +65,7 @@ import {
 } from '../credentials/person-mcp-store.js'
 import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 import { addPoolClient, readPoolClients, removePoolClient } from '../credentials/pool-clients.js'
+import { resolvePoolServeAddress, servePool } from '../credentials/serve.js'
 import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -523,6 +525,31 @@ cli
     writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, openaiRotations, codexModels })
     cliLogger.log(`Wrote Pi agent dir ${dir} (anthropic rotations: ${rotations.join(', ') || 'none'}; api-key rotations: ${openaiRotations.join(', ') || 'none'}; ChatGPT models: ${codexModels.join(', ') || 'none'})`)
     process.exit(0)
+  })
+
+cli
+  .command(
+    'credentials serve',
+    'Run this host as a headless credential pool: the pool proxy for registered clients, with no chat platform and no agent backend. Clients reach it with their key (x-roadie-key). Binds 127.0.0.1 unless --host or ROADIE_POOL_PROXY_HOST names another address.',
+  )
+  .option('--host <addr>', 'Listen address (default: ROADIE_POOL_PROXY_HOST, else 127.0.0.1)')
+  .option('--port <n>', 'Listen port (default: ROADIE_POOL_PROXY_PORT; required)')
+  .action(async (options) => {
+    await refuseAgentMode()
+    const address = resolvePoolServeAddress({ host: options.host, port: options.port })
+    if (address instanceof Error) exitWithError(address.message)
+    const proxy = await servePool({ dataDir: getDataDir(), ...address })
+    if (proxy instanceof Error) exitWithError(proxy.message)
+    const clients = readPoolClients(getDataDir())
+    cliLogger.log(`Credential pool serving ${proxy.baseUrl} for ${clients instanceof Error ? 0 : clients.length} registered client(s)`)
+    const stop = async (signal: string) => {
+      cliLogger.log(`${signal}: closing the credential pool`)
+      await proxy.close().catch(() => {})
+      process.exit(0)
+    }
+    process.once('SIGTERM', () => void stop('SIGTERM'))
+    process.once('SIGINT', () => void stop('SIGINT'))
+    await new Promise<never>(() => {})
   })
 
 export default cli
