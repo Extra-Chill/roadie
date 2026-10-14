@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.5] - 2026-10-14
+
+### Changed
+- make the credential pool the only credential owner
+
 ## [0.68.4] - 2026-10-14
 
 ### Fixed
