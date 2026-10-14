@@ -22,6 +22,10 @@ const allowedCommands = [
   ['upgrade'],
 ] as const
 
+export function isAllowedOperatorCommand(argv: string[]): boolean {
+  return allowedCommands.some((prefix) => prefix.every((part, index) => argv[index] === part))
+}
+
 function snapshot(request: OperatorRequest): OperatorRequest {
   return { ...request, argv: [...request.argv], createdAt: new Date(request.createdAt) }
 }
@@ -46,7 +50,7 @@ export function createOperatorRequest({
     !Array.isArray(argv) ||
     !argv.length ||
     !argv.every((arg) => typeof arg === 'string' && arg.length > 0 && !arg.includes('\0')) ||
-    !allowedCommands.some((prefix) => prefix.every((part, index) => argv[index] === part))
+    !isAllowedOperatorCommand(argv)
   ) {
     throw new Error('Invalid operator request: command is not allowed')
   }

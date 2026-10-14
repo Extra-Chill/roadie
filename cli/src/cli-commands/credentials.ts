@@ -44,7 +44,7 @@ import {
   ANTHROPIC_OAUTH_REDIRECT_URI,
 } from '../credentials/adapters/anthropic-oauth.js'
 import { EXIT_NO_RESTART } from '../cli-runner.js'
-import { AGENT_OPERATOR_ONLY_MESSAGE, isAgentMode } from '../agent-remote.js'
+import { isAgentMode, runAgentOperatorRequest } from '../agent-remote.js'
 import {
   formatSubrouterImportReport,
   importSubrouterCredentials,
@@ -89,8 +89,8 @@ function exitWithError(message: string): never {
 }
 
 /** Credential pool management is operator-only: agent shells never read pool files. */
-function refuseAgentMode(): void {
-  if (isAgentMode()) exitWithError(AGENT_OPERATOR_ONLY_MESSAGE)
+async function refuseAgentMode(): Promise<void> {
+  if (isAgentMode()) process.exit(await runAgentOperatorRequest(process.argv.slice(2)))
 }
 
 /** Resolve --pool (default `shared`), exiting when the id is malformed. */
@@ -108,7 +108,7 @@ cli
   .command('credentials list', 'List the accounts and rotations in a credential pool (default: shared)')
   .option('--pool <id>', 'Pool to list (default: shared)')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const dataDir = getDataDir()
     const accounts = readPoolAccounts({ dataDir, poolId })
@@ -158,7 +158,7 @@ cli
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const provider = options.provider?.trim()
     if (!provider) {
@@ -213,7 +213,7 @@ cli
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (provider: string, options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     if (provider !== 'anthropic') {
       exitWithError(`Unsupported OAuth provider: ${provider}. Only anthropic is supported.`)
     }
@@ -273,7 +273,7 @@ cli
     'Subrouter home directory (default: $SUBROUTER_HOME, then ~/.subrouter)',
   )
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const result = await importSubrouterCredentials({
       dataDir: getDataDir(),
       ...(options.subrouterHome && { subrouterHome: options.subrouterHome }),
@@ -298,7 +298,7 @@ cli
   .option('--pool <id>', 'Pool to add the accounts to (default: shared)')
   .option('--dry-run', 'Print the import plan without writing anything')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const result = await importOpencodeCredentials({
       dataDir: getDataDir(),
       poolId: resolvePoolId(options.pool),
@@ -323,7 +323,7 @@ cli
   )
   .option('--pool <id>', 'Pool to export the accounts from (default: shared)')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const result = await exportOpencodeCredentials({
       dataDir: getDataDir(),
       poolId: resolvePoolId(options.pool),
@@ -340,7 +340,7 @@ cli
   .command('credentials remove <id>', 'Remove an account from a credential pool (default: shared) by id')
   .option('--pool <id>', 'Pool to remove the account from (default: shared)')
   .action(async (id: string, options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const removed = await removePoolAccount({
       dataDir: getDataDir(),
@@ -360,7 +360,7 @@ cli
   )
   .option('--pool <id>', 'Pool to set the rotation in (default: shared)')
   .action(async (name: string, models: string[] | undefined, options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const result = await setPoolRotation({
       dataDir: getDataDir(),
@@ -391,7 +391,7 @@ cli
   .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
   .option('--credential <name>', 'Credential name referenced by the identity hook mcp_servers entry (default: the server name)')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const personKey = requirePersonKey(options.person)
     const credential = options.credential?.trim()
     if (!credential) exitWithError('--credential is required')
@@ -433,7 +433,7 @@ cli
   .command('credentials mcp list', 'List the MCP credential names stored for a person (never the tokens)')
   .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const personKey = requirePersonKey(options.person)
     const names = listPersonMcpCredentials({ dataDir: getDataDir(), personKey })
     cliLogger.log(names.length === 0 ? `No MCP credentials stored for ${personKey}` : names.join('\n'))
@@ -445,7 +445,7 @@ cli
   .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
   .option('--credential <name>', 'Credential name to remove')
   .action(async (options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const personKey = requirePersonKey(options.person)
     const credential = options.credential?.trim()
     if (!credential) exitWithError('--credential is required')
@@ -469,7 +469,7 @@ cli
   )
   .option('--pools <ids>', 'Comma-separated pools the client bills to (default: shared)')
   .action(async (name: string, options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const added = addPoolClient({ dataDir: getDataDir(), name, pools: resolvePoolIds(options.pools) })
     if (added instanceof Error) exitWithError(added.message)
     cliLogger.log(`Registered pool client ${added.client.name} (pools: ${added.client.pools.join(', ')})`)
@@ -482,7 +482,7 @@ cli
 cli
   .command('credentials client list', 'List registered external pool clients (never their keys)')
   .action(async () => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const clients = readPoolClients(getDataDir())
     if (clients instanceof Error) exitWithError(clients.message)
     if (clients.length === 0) cliLogger.log('No pool clients registered.')
@@ -495,7 +495,7 @@ cli
 cli
   .command('credentials client remove <name>', 'Revoke an external pool client; its key stops working on the next request')
   .action(async (name: string) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const removed = removePoolClient({ dataDir: getDataDir(), name })
     if (removed instanceof Error) exitWithError(removed.message)
     if (!removed) exitWithError(`Pool client ${name} not found`)
@@ -511,7 +511,7 @@ cli
   .option('--base-url <url>', 'Pool proxy URL as the client reaches it (e.g. http://127.0.0.1:47120)')
   .option('--pools <ids>', 'Pools whose rotations and ChatGPT accounts to offer (default: shared)')
   .action(async (dir: string, options) => {
-    refuseAgentMode()
+    await refuseAgentMode()
     const baseUrl = String(options.baseUrl ?? '').trim()
     if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) exitWithError('--base-url must be an http(s) URL')
     const dataDir = getDataDir()

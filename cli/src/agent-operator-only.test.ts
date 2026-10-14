@@ -1,12 +1,12 @@
-// Operator-only commands never run inside an agent tool shell: the shell has
-// no database credentials, so the CLI refuses before touching anything. The
-// commands are exercised through the real CLI entry (tsx subprocess) with an
+// Agent shells route allowlisted commands through operator approval; other
+// operator-only commands still refuse. Exercised through the real CLI with an
 // agent-mode environment — the same env the shell.env hook produces — and
 // once without it, proving operator mode is unchanged.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import http from 'node:http'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { execAsync } from './exec-async.js'
 import { setDataDir } from './config.js'
@@ -84,12 +84,11 @@ afterAll(() => {
 
 describe('operator-only commands refuse in agent mode', () => {
   const agentOnlyCommands: string[][] = [
-    ['credentials', 'list'],
+    ['credentials', 'client', 'add', 'example'],
     ['bot', 'token'],
     ['bot', 'status', 'set', 'hello'],
     ['bot', 'status', 'clear'],
     ['discord-install-url'],
-    ['upgrade', '--skip-restart'],
     ['session', 'export-events-jsonl', '--session', 'ses_x', '--out', './tmp/ses_x.jsonl'],
   ]
 
@@ -109,5 +108,32 @@ describe('operator-only commands refuse in agent mode', () => {
     const { code, stderr } = await runCli(['credentials', 'list'], 'operator')
     expect(code).toBe(0)
     expect(stderr).toContain('Pool shared has no accounts')
+  }, 30_000)
+
+  test('credentials list sends exact argv and relays streamed output and exit code', async () => {
+    const received: unknown[] = []
+    const server = http.createServer(async (req, res) => {
+      expect(req.url).toBe('/roadie/agent/operator-requests')
+      expect(req.method).toBe('POST')
+      expect(req.headers.authorization).toBe(`Bearer ${token}`)
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk)
+      received.push(JSON.parse(Buffer.concat(chunks).toString()))
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+      res.write(`${JSON.stringify({ stream: 'stdout', data: 'operator output\n' })}\n`)
+      res.write(`${JSON.stringify({ stream: 'stderr', data: 'operator warning\n' })}\n`)
+      res.end(`${JSON.stringify({ exit: 7 })}\n`)
+    })
+    const port = chooseLockPort({ key: 'agent-operator-only-test' })
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
+    try {
+      const result = await runCli(['credentials', 'list'], 'agent')
+      expect(received).toEqual([{ argv: ['credentials', 'list'] }])
+      expect(result.code).toBe(7)
+      expect(result.stdout).toContain('operator output\n')
+      expect(result.stderr).toContain('operator warning\n')
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    }
   }, 30_000)
 })
