@@ -158,10 +158,6 @@ cli
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
-    '--gateway',
-    'Removed: Roadie only runs your own Discord bot (hosted gateway mode is not supported)',
-  )
-  .option(
     '--allow-mention <type>',
     z
       .array(z.enum(['users', 'roles', 'everyone']))
@@ -233,7 +229,6 @@ cli
       autoRestart?: boolean
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
-      gateway?: boolean
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       plugin?: string[]
@@ -530,12 +525,6 @@ cli
         }
         if (options.noAnalytics) {
           cliLogger.log('--no-analytics is a no-op: Roadie no longer sends product analytics')
-        }
-        if (options.gateway) {
-          cliLogger.error(
-            '--gateway is not supported: Roadie runs your own Discord bot. Remove the flag and set ROADIE_BOT_TOKEN or run the setup wizard.',
-          )
-          process.exit(EXIT_NO_RESTART)
         }
 
         if (options.installUrl) {

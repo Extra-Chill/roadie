@@ -12,11 +12,9 @@ import { getDb, closeDb } from './db.js'
 import { createLogger, LogPrefix } from './logger.js'
 import * as schema from './schema.js'
 import type {
-  BotMode,
   ChannelType,
   IpcRequestType,
   SessionEvent,
-  ThreadSessionSource,
   VerbosityLevel,
 } from './schema.js'
 import { store } from './store.js'
@@ -44,7 +42,6 @@ export type ScheduledTaskRun = typeof schema.scheduled_task_runs.$inferSelect
 export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
 export type SessionSleep = typeof schema.session_sleeps.$inferSelect
 export type ModelPreference = { modelId: string; variant: string | null }
-export type { BotMode }
 
 function countRows<T>(rows: T[]) {
   return rows.length
@@ -681,12 +678,6 @@ export type ThreadWorkingDirectory = {
   workspaceId?: string
 }
 
-// Before bindings were generic, only worktrees were stored, under
-// 'roadie-worktree' (migrated from thread_worktrees) or 'kimaki-worktree'.
-function normalizeWorkingDirectoryKind(kind: string): string {
-  return /worktree/.test(kind) ? 'git-worktree' : kind
-}
-
 export async function getThreadWorkingDirectory(threadId: string): Promise<ThreadWorkingDirectory | undefined> {
   const db = await getDb()
   const row = await db.query.thread_workspaces.findFirst({ where: { thread_id: threadId } })
@@ -697,7 +688,7 @@ export async function getThreadWorkingDirectory(threadId: string): Promise<Threa
     projectDirectory: row.project_directory,
     workingDirectory: row.workspace_directory,
     label: row.workspace_name,
-    kind: normalizeWorkingDirectoryKind(row.workspace_type),
+    kind: row.workspace_type,
     ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
   }
 }
@@ -862,10 +853,6 @@ export async function updateThreadQueueItemPayload({
 }
 
 export async function setThreadSession(threadId: string, sessionId: string) {
-  await upsertThreadSession({ threadId, sessionId, source: 'roadie' })
-}
-
-export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
   const db = await getDb()
   // updated_at is written explicitly on BOTH paths, never left to the column's
   // CURRENT_TIMESTAMP default. The default stores "YYYY-MM-DD HH:MM:SS" while
@@ -874,10 +861,10 @@ export async function upsertThreadSession({ threadId, sessionId, source }: { thr
   // getThreadIdBySessionId honest and gives it millisecond resolution.
   const boundAt = new Date()
   await db.insert(schema.thread_sessions)
-    .values({ thread_id: threadId, session_id: sessionId, source, updated_at: boundAt })
+    .values({ thread_id: threadId, session_id: sessionId, updated_at: boundAt })
     .onConflictDoUpdate({
       target: schema.thread_sessions.thread_id,
-      set: { session_id: sessionId, source, updated_at: boundAt },
+      set: { session_id: sessionId, updated_at: boundAt },
     })
 }
 
@@ -903,11 +890,6 @@ export async function setThreadParentSessionId({
     .update(schema.thread_sessions)
     .set({ parent_session_id: parentSessionId })
     .where(orm.eq(schema.thread_sessions.thread_id, threadId))
-}
-
-export async function getThreadSessionSource(threadId: string) {
-  const db = await getDb()
-  return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId }, columns: { source: true } }))?.source
 }
 
 /**
@@ -1168,33 +1150,17 @@ function createServiceCredentials() {
   return { clientId: crypto.randomUUID(), clientSecret: crypto.randomBytes(32).toString('hex') }
 }
 
-export async function getBotTokenWithMode(): Promise<{
+export async function getBotToken(): Promise<{
   appId: string
   token: string
   gatewayToken: string
-  mode: BotMode
-  clientId: string | null
-  clientSecret: string | null
-  proxyUrl: string | null
 } | undefined> {
   const db = await getDb()
   const [row] = await db.query.bot_tokens.findMany({ orderBy: { last_used_at: 'desc', created_at: 'desc' }, limit: 1 })
   if (!row) return undefined
   const gatewayToken = await ensureServiceAuthToken({ appId: row.app_id })
-  const serviceParts = splitServiceAuthToken({ token: gatewayToken })
-  const mode: BotMode = row.bot_mode === 'gateway' ? 'gateway' : 'self_hosted'
-  const token = mode === 'gateway' && serviceParts ? gatewayToken : row.token
-  const discordBaseUrl = mode === 'gateway' && row.proxy_url ? row.proxy_url : 'https://discord.com'
-  store.setState({ discordBaseUrl, gatewayToken })
-  return {
-    appId: row.app_id,
-    token,
-    gatewayToken,
-    mode,
-    clientId: serviceParts?.clientId || row.client_id,
-    clientSecret: serviceParts?.clientSecret || row.client_secret,
-    proxyUrl: row.proxy_url,
-  }
+  store.setState({ gatewayToken })
+  return { appId: row.app_id, token: row.token, gatewayToken }
 }
 
 export async function ensureServiceAuthToken({ appId, preferredGatewayToken }: { appId: string; preferredGatewayToken?: string }) {

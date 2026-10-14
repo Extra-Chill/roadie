@@ -150,21 +150,41 @@ async function rebuildLegacyThreadQueueItems(client: Client) {
   )
 }
 
-// CREATE TABLE IF NOT EXISTS cannot drop columns. The first two session_sleeps
-// shapes kept thread_id NOT NULL and posted_at. Inserts now omit thread_id, so
-// existing DBs fail with SQLITE_CONSTRAINT_NOTNULL until those columns go away.
+async function tableColumns(client: Client, table: string): Promise<Set<string>> {
+  const info = await client.execute(`PRAGMA table_info(${table})`)
+  return new Set(info.rows.map((row) => String(row.name)))
+}
+
+// CREATE TABLE IF NOT EXISTS cannot drop columns, so retired ones go here.
+async function dropColumnsIfPresent(client: Client, table: string, drop: string[]) {
+  const columns = await tableColumns(client, table)
+  for (const column of drop) {
+    if (columns.has(column)) {
+      await client.execute(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+    }
+  }
+}
+
+// The first two session_sleeps shapes kept thread_id NOT NULL and posted_at.
+// Inserts now omit thread_id, so existing DBs fail with
+// SQLITE_CONSTRAINT_NOTNULL until those columns go away.
 async function dropLegacySessionSleepsColumns(client: Client) {
-  const info = await client.execute('PRAGMA table_info(session_sleeps)')
-  const columns = new Set(info.rows.map((row) => String(row.name)))
-  if (columns.has('thread_id')) {
-    await client.execute('ALTER TABLE session_sleeps DROP COLUMN thread_id')
-  }
-  if (columns.has('posted_at')) {
-    await client.execute('ALTER TABLE session_sleeps DROP COLUMN posted_at')
-  }
+  await dropColumnsIfPresent(client, 'session_sleeps', ['thread_id', 'posted_at'])
   await client.execute(
     "UPDATE session_sleeps SET status = 'planned' WHERE status = 'posted'",
   )
+}
+
+// Hosted gateway mode is gone. Its saved rows hold shared hosted-bot
+// credentials that cannot log in as a self-hosted bot, so they are deleted
+// and the next start runs onboarding. thread_sessions.source only ever held
+// 'roadie' once the Kimaki and external-poll writers were removed.
+async function dropRetiredGatewayAndSourceColumns(client: Client) {
+  if ((await tableColumns(client, 'bot_tokens')).has('bot_mode')) {
+    await client.execute("DELETE FROM bot_tokens WHERE bot_mode = 'gateway'")
+  }
+  await dropColumnsIfPresent(client, 'bot_tokens', ['bot_mode', 'proxy_url'])
+  await dropColumnsIfPresent(client, 'thread_sessions', ['source'])
 }
 
 async function migrateSchema({
@@ -212,12 +232,9 @@ async function migrateSchema({
     'ALTER TABLE session_models ADD COLUMN variant TEXT',
     'ALTER TABLE global_models ADD COLUMN variant TEXT',
     'ALTER TABLE bot_api_keys ADD COLUMN openai_api_key TEXT',
-    "ALTER TABLE bot_tokens ADD COLUMN bot_mode TEXT DEFAULT 'self_hosted'",
     'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
-    'ALTER TABLE bot_tokens ADD COLUMN proxy_url TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
-    "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
@@ -247,7 +264,6 @@ async function migrateSchema({
     "UPDATE channel_verbosity SET verbosity = 'tools_and_text' WHERE verbosity = 'tools-and-text'",
     "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
     "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
-    "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
     "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
     'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
@@ -269,6 +285,7 @@ async function migrateSchema({
   `)
 
   await dropLegacySessionSleepsColumns(client)
+  await dropRetiredGatewayAndSourceColumns(client)
 
   // Migrate legacy thread_worktrees rows into thread_workspaces.
   // Rows that already exist in thread_workspaces (by thread_id) are skipped.
@@ -278,11 +295,17 @@ async function migrateSchema({
       project_directory, workspace_directory, workspace_name, created_at
     )
     SELECT
-      thread_id, 'roadie-worktree', status, error_message,
+      thread_id, 'git-worktree', status, error_message,
       project_directory, worktree_directory, worktree_name, created_at
     FROM thread_worktrees
     WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)
   `).catch(() => undefined)
+  // Worktree bindings used to be stored as 'roadie-worktree' or
+  // 'kimaki-worktree'; the current kind is 'git-worktree'.
+  await client.execute(`
+    UPDATE thread_workspaces SET workspace_type = 'git-worktree'
+    WHERE workspace_type IN ('roadie-worktree', 'kimaki-worktree')
+  `)
 
   const botRows = await db.query.bot_tokens.findMany({
     columns: {

@@ -27,8 +27,6 @@ const datetime = sqliteCore.customType<{
 export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   thread_id: sqliteCore.text('thread_id').primaryKey().notNull(),
   session_id: sqliteCore.text('session_id').notNull(),
-  // 'kimaki' is a legacy value kept for existing rows.
-  source: sqliteCore.text('source', { enum: ['roadie', 'kimaki', 'external_poll'] }).notNull().default('roadie'),
   last_synced_name: sqliteCore.text('last_synced_name'),
   // Parent agent session that spawned this thread via roadie send --parent-session.
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
@@ -127,10 +125,8 @@ export const part_messages = sqliteCore.sqliteTable('part_messages', {
 export const bot_tokens = sqliteCore.sqliteTable('bot_tokens', {
   app_id: sqliteCore.text('app_id').primaryKey().notNull(),
   token: sqliteCore.text('token').notNull(),
-  bot_mode: sqliteCore.text('bot_mode', { enum: ['self_hosted', 'gateway'] }).notNull().default('self_hosted'),
   client_id: sqliteCore.text('client_id'),
   client_secret: sqliteCore.text('client_secret'),
-  proxy_url: sqliteCore.text('proxy_url'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
   last_used_at: datetime('last_used_at'),
 })
@@ -516,12 +512,10 @@ export const relations = defineRelations({
   credential_payer_notices: {},
 }))
 
-export type BotMode = typeof bot_tokens.$inferSelect.bot_mode
 export type ChannelType = typeof channel_directories.$inferSelect.channel_type
 export type IpcRequestType = typeof ipc_requests.$inferSelect.type
 export type SessionSleepStatus = typeof session_sleeps.$inferSelect.status
 export type SessionEvent = typeof session_events.$inferSelect
-export type ThreadSessionSource = typeof thread_sessions.$inferSelect.source
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity
 export type WorktreeStatus = typeof thread_worktrees.$inferSelect.status
 export type WorkspaceStatus = typeof thread_workspaces.$inferSelect.status

@@ -34,7 +34,7 @@ import {
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
-  getBotTokenWithMode,
+  getBotToken,
   ensureServiceAuthToken,
   setBotToken,
   setChannelDirectory,
@@ -184,12 +184,8 @@ export function stripBracketedPaste(value: string | undefined): string {
 // Derive the Discord Application ID from a bot token.
 // Discord bot tokens have the format: base64(userId).timestamp.hmac
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
-// Tokens in "client_id:secret" form (Kimaki's removed gateway mode) are not
-// bot tokens and return undefined.
+// Anything else returns undefined.
 export function appIdFromToken(token: string): string | undefined {
-  if (token.includes(':')) {
-    return undefined
-  }
   const segment = token.split('.')[0]
   if (!segment) {
     return undefined
@@ -223,7 +219,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   }
 
   // Fall back to saved credentials in the database
-  const botRow = await getBotTokenWithMode().catch((e) => {
+  const botRow = await getBotToken().catch((e) => {
     cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
     return null
   })
@@ -668,7 +664,7 @@ export function emitJsonEvent(event: ProgrammaticEvent): void {
 export async function printDiscordInstallUrlAndExit() {
   await initDatabase()
 
-  const existingBot = await getBotTokenWithMode()
+  const existingBot = await getBotToken()
 
   if (!existingBot) {
     cliLogger.error('No bot configured yet. Run `roadie` first to set up.')
@@ -928,7 +924,7 @@ export async function resolveCredentials({
   forceRestartOnboarding: boolean
 }): Promise<CredentialResult> {
   const envToken = readRoadieSecret('ROADIE_BOT_TOKEN')
-  const existingBot = await getBotTokenWithMode()
+  const existingBot = await getBotToken()
 
   // 1. Env var takes precedence (headless deployments)
   if (envToken && !forceRestartOnboarding) {
@@ -946,14 +942,6 @@ export async function resolveCredentials({
 
   // 2. Saved credentials in the database
   // Reuse saved creds unless --restart-onboarding forces re-setup.
-  // Rows saved by Kimaki's removed gateway mode hold shared hosted-bot
-  // credentials that no longer work here, so they are never reused.
-  if (existingBot && existingBot.mode === 'gateway' && !forceRestartOnboarding) {
-    cliLogger.error(
-      'Saved credentials use the hosted gateway bot, which Roadie does not support. Run with --restart-onboarding to set up your own Discord bot, or set ROADIE_BOT_TOKEN.',
-    )
-    process.exit(EXIT_NO_RESTART)
-  }
   if (existingBot && !forceRestartOnboarding) {
     note(
       `Using saved bot credentials:\nApp ID: ${existingBot.appId}\n\nTo use different credentials, run with --restart-onboarding`,
@@ -1120,7 +1108,7 @@ export async function run({
 
   // Mark this bot as the most recently used so subcommands in separate
   // processes (send, upload-to-discord, project list) pick the correct bot.
-  // getBotTokenWithMode() orders by last_used_at DESC as cross-process
+  // getBotToken() orders by last_used_at DESC as cross-process
   // source of truth.
   await (await getDb()).update(dbSchema.bot_tokens)
     .set({ last_used_at: new Date() })

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotToken, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import type { ThreadStartMarker } from '../system-message.js'
@@ -196,15 +196,9 @@ cli
         initLogFile(getDataDir())
         await initDatabase()
 
-        const botRow = await getBotTokenWithMode()
+        const botRow = await getBotToken()
         if (!botRow) {
           cliLogger.error('No bot configured. Run `roadie` first.')
-          process.exit(EXIT_NO_RESTART)
-        }
-        if (botRow.mode === 'gateway') {
-          cliLogger.error(
-            'Cannot set status in gateway mode — it would change the shared bot status for all users.',
-          )
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -287,7 +281,7 @@ cli
       initLogFile(getDataDir())
       await initDatabase()
 
-      const botRow = await getBotTokenWithMode()
+      const botRow = await getBotToken()
       if (!botRow) {
         cliLogger.error('No bot configured. Run `roadie` first.')
         process.exit(EXIT_NO_RESTART)
@@ -322,15 +316,9 @@ cli
       initLogFile(getDataDir())
       await initDatabase()
 
-      const botRow = await getBotTokenWithMode()
+      const botRow = await getBotToken()
       if (!botRow) {
         cliLogger.error('No bot configured. Run `roadie` first.')
-        process.exit(EXIT_NO_RESTART)
-      }
-      if (botRow.mode === 'gateway') {
-        cliLogger.error(
-          'Cannot clear status in gateway mode — it would change the shared bot status for all users.',
-        )
         process.exit(EXIT_NO_RESTART)
       }
 
