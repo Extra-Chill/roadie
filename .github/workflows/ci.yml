@@ -33,6 +33,14 @@ jobs:
       - name: Verify opencode
         run: opencode --version
 
+      # Pi is the default backend; its e2e suites drive a real pi against the
+      # scripted model server. Pinned to the version wp-coding-agents installs.
+      - name: Install Pi
+        run: npm install -g @earendil-works/pi-coding-agent@1.2.0
+
+      - name: Verify Pi
+        run: pi --version
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -50,3 +58,4 @@ jobs:
         working-directory: cli
         env:
           NODE_ENV: test
+          ROADIE_REQUIRE_PI: '1'
