@@ -133,8 +133,8 @@ function createMatchers(): FakeMatcher[] {
     },
   }
 
-  // Slow matcher for "hotel" so the 200ms sleep in the queueing test
-  // guarantees "india" arrives while hotel is still streaming.
+  // Slow matcher for "hotel": its reply lands ~400ms after the request, so a
+  // message sent once the request is in flight arrives mid-stream.
   const hotelSlowMatcher: FakeMatcher = {
     id: 'hotel-slow-reply',
     priority: 20,
@@ -463,7 +463,7 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      expect((await settledText(th)).replace(/\nok(?=\nok)/g, '')).toMatchInlineSnapshot(`
+      expect(await settledText(th)).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)
@@ -616,10 +616,9 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
         content: 'Reply with exactly: hotel',
       })
 
-      // 3. Wait briefly for B to start, then send C to queue behind it
-      await new Promise((r) => {
-        setTimeout(r, 200)
-      })
+      // 3. Once B's model request is in flight, send C so it arrives
+      //    mid-stream and queues behind it.
+      await expect.poll(() => ctx.modelServer!.log.some((request) => request.matcher === 'hotel-slow-reply'), { timeout: 4_000 }).toBe(true)
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: india',
       })
@@ -643,14 +642,10 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
         afterMessageIncludes: 'india',
       })
 
-      // C's user message appears before its bot response. Whether india
-      // joined hotel's turn or followed it as its own (a timing question)
-      // only changes how many reply+footer pairs end the transcript.
-      const settled = (await settledText(th)).replace(
-        /(\nok\n-# \*project ⋅[^\n]*)+$/,
-        (_all, last: string) => last,
-      )
-      expect(settled).toMatchInlineSnapshot(`
+      // hotel's reply posts after india's message (it was mid-stream), and
+      // each gets its own reply and footer: india is answered as a follow-up
+      // after hotel's turn, never folded into it.
+      expect(await settledText(th)).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: golf
         --- from: assistant (TestBot)
@@ -661,6 +656,8 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
@@ -694,16 +691,15 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
       })
 
       const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
+      // Each message is answered in its own turn, so the transcript is done
+      // when it has one footer per message sent.
+      const waitForFooters = (count: number) => expect.poll(
+        async () => (await th.text()).split('\n').filter((line) => line.startsWith('-# *project ⋅')).length,
+        { timeout: 4_000 },
+      ).toBe(count)
+      await waitForFooters(1)
 
-      const before = await th.getMessages()
-      const beforeBotCount = before.filter((m) => {
-        return m.author.id === discord.botUserId
-      }).length
-
-      // 2. Rapidly send B, C, D back-to-back to avoid timing windows where
-      // one run can finish between sends and reorder transcript lines.
+      // 2. Rapidly send B, C, D back-to-back: B runs, C and D queue behind it.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: kilo',
       })
@@ -713,67 +709,38 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: mike',
       })
+      await waitForFooters(4)
 
-      // 3. Wait until the last burst message (mike) has a bot reply after it.
-      const afterBurst = await waitForBotReplyAfterUserMessage({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'mike',
-        timeout: 4_000,
-      })
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'mike',
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      // 4. Queue should be clean — send E and verify it also gets processed
+      // 3. The queue drained: E is answered too.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: november',
       })
+      await waitForFooters(5)
 
-      const afterE = await waitForBotReplyAfterUserMessage({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'november',
-        timeout: 4_000,
-      })
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'november',
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      const textWithoutFooters = (await th.text())
-        .split('\n')
-        .filter((line) => {
-          return !line.startsWith('*project ⋅') && !line.startsWith('> *project ⋅') && !line.startsWith('-# *project ⋅')
-        })
-        .join('\n')
-
-      // How many "ok" lines the burst gets depends on how the queued messages
-      // batch, so assert order and the final reply rather than the transcript.
-      const lines = textWithoutFooters.split('\n')
-      expect(lines.filter((line) => line.startsWith('Reply with exactly:'))).toEqual(
-        ['juliet', 'kilo', 'lima', 'mike', 'november'].map((word) => `Reply with exactly: ${word}`),
-      )
-      expect(lines.at(-1)).toBe('ok')
-      // E's user message appears before the final bot response
-      const userNovemberIndex = afterE.findIndex((m) => {
-        return m.author.id === TEST_USER_ID && m.content.includes('november')
-      })
-      expect(userNovemberIndex).toBeGreaterThan(-1)
-      const lastBotIndex = afterE.findLastIndex((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(userNovemberIndex).toBeLessThan(lastBotIndex)
+      expect(await settledText(th)).toMatchInlineSnapshot(`
+        "--- from: user (queue-tester)
+        Reply with exactly: juliet
+        --- from: assistant (TestBot)
+        -# *using fake/fake-1*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        --- from: user (queue-tester)
+        Reply with exactly: kilo
+        Reply with exactly: lima
+        Reply with exactly: mike
+        --- from: assistant (TestBot)
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        --- from: user (queue-tester)
+        Reply with exactly: november
+        --- from: assistant (TestBot)
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
+      `)
     },
     8_000,
   )
