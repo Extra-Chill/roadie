@@ -248,7 +248,21 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
 }
 
 /** models.json content registering the fake server as provider "fake", models "fake-1" and "fake-2". */
-export function fakeModelsJson(baseUrl: string): string {
+export type FakeModel = {
+  id: string
+  name?: string
+  /** A reasoning model offers thinking levels (Roadie's model variants). */
+  reasoning?: boolean
+}
+
+/**
+ * Two identical models by default, so tests can switch a session's model.
+ * All are served by the same fake server under the `fake` provider.
+ */
+export function fakeModelsJson(
+  baseUrl: string,
+  { models = [{ id: 'fake-1' }, { id: 'fake-2' }] }: { models?: FakeModel[] } = {},
+): string {
   return JSON.stringify({
     providers: {
       fake: {
@@ -256,8 +270,7 @@ export function fakeModelsJson(baseUrl: string): string {
         api: 'openai-completions',
         apiKey: 'fake',
         compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        // Two identical models, so tests can switch a session's model.
-        models: ['fake-1', 'fake-2'].map((id) => ({ id, name: id.replace('fake-', 'Fake '), reasoning: false, input: ['text', 'image'], contextWindow: 100000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
+        models: models.map(({ id, name, reasoning = false }) => ({ id, name: name ?? id.replace('fake-', 'Fake '), reasoning, input: ['text', 'image'], contextWindow: 100000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
       },
     },
   }, null, 2)
