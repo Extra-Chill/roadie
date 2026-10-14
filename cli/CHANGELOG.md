@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.3] - 2026-10-14
+
+### Fixed
+- route rotation set through the PoolAccounts seam
+
 ## [0.68.2] - 2026-10-14
 
 ### Fixed
