@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.70.1] - 2026-10-14
+
+### Changed
+- run the suite under a clean Roadie environment
+
 ## [0.70.0] - 2026-10-14
 
 ### Added
