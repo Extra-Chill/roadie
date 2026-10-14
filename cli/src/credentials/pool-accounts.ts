@@ -1,8 +1,9 @@
 // Pool account management seam (#238).
 //
-// Every caller that adds, lists, removes or reorders pool accounts (the
-// Discord /credentials and /login flows, the `roadie credentials` CLI and the
-// pool host's admin API) goes through one PoolAccounts implementation:
+// Every caller that adds, lists, removes, reorders pool accounts or sets pool
+// rotations (the Discord /credentials and /login flows, the `roadie
+// credentials` CLI and the pool host's admin API) goes through one
+// PoolAccounts implementation:
 //
 //   localPoolAccounts   the pool files in this Roadie's data dir
 //   remotePoolAccounts  a pool host's admin API (credentials/pool-admin.ts)
@@ -27,6 +28,7 @@ import {
   readPoolState,
   removePoolAccount,
   seedPoolRotations,
+  setPoolRotation,
   type PoolAccount,
 } from './store.js'
 import {
@@ -93,6 +95,8 @@ export type PoolAccounts = {
   completeOAuth(input: { poolId: string; flowId: string; input: string }): Promise<PoolAccountAdded | Error>
   remove(input: { poolId: string; accountId: string }): Promise<boolean | Error>
   move(input: { poolId: string; accountId: string; position: number }): Promise<PoolAccountView[] | Error>
+  /** Set (or replace) a named rotation; an empty entry list removes it. */
+  setRotation(input: { poolId: string; name: string; entries: string[] }): Promise<true | Error>
 }
 
 /** Build the secret-free view. An allowlist: new account fields stay out until added here. */
@@ -310,6 +314,14 @@ export function localPoolAccounts({
       if (ordered instanceof Error) return ordered
       const timestamp = now()
       return ordered.map((account, index) => toPoolAccountView({ account, position: index + 1, now: timestamp }))
+    },
+
+    async setRotation({ poolId, name, entries }) {
+      const invalid = invalidPool(poolId)
+      if (invalid) return invalid
+      // Never 'exists': onlyIfAbsent is off, so a set replaces any existing rotation.
+      const result = await setPoolRotation({ dataDir, poolId, name, entries })
+      return result === 'exists' ? new Error(`Could not set rotation ${name}`) : result
     },
   }
 }

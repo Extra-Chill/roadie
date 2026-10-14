@@ -16,10 +16,11 @@
 //   roadie credentials client remove <name>
 //   roadie credentials client pi-agent-dir <dir> --base-url <url> [--pools <id,id>]
 //   roadie credentials serve [--host <addr>] [--port <n>]   (headless pool host, #226)
-// list, add-key, login and remove go through the PoolAccounts seam: this
-// host's pool, or the pool host's admin API when ROADIE_POOL_URL is set
-// (#238). API keys are read from stdin (never argv); no key or token is ever
-// printed. `list` shows an OAuth account's access expiry instead.
+// list, add-key, login, remove, move (reorder) and rotation set go through
+// the PoolAccounts seam: this host's pool, or the pool host's admin API when
+// ROADIE_POOL_URL is set (#238). API keys are read from stdin (never argv); no
+// key or token is ever printed. `list` shows an OAuth account's access expiry
+// instead.
 import { goke } from 'goke'
 import fs from 'node:fs'
 import { createInterface } from 'node:readline/promises'
@@ -27,7 +28,6 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { getDataDir } from '../config.js'
 import {
   isValidPoolId,
-  setPoolRotation,
   SHARED_POOL_ID,
 } from '../credentials/store.js'
 import {
@@ -289,17 +289,15 @@ cli
   .action(async (name: string, models: string[] | undefined, options) => {
     await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
-    const result = await setPoolRotation({
-      dataDir: getDataDir(),
-      poolId,
-      name,
-      entries: models ?? [],
-    })
+    const entries = models ?? []
+    const accounts = poolAccounts()
+    const result = await accounts.setRotation({ poolId, name, entries })
     if (result instanceof Error) exitWithError(result.message)
-    if ((models ?? []).length === 0) {
-      cliLogger.log(`Removed rotation ${name} from pool ${poolId}`)
+    const where = accounts.location === 'local' ? '' : ` on ${accounts.location}`
+    if (entries.length === 0) {
+      cliLogger.log(`Removed rotation ${name} from pool ${poolId}${where}`)
     } else {
-      cliLogger.log(`Set rotation ${name} in pool ${poolId}: ${(models ?? []).join(' ')}`)
+      cliLogger.log(`Set rotation ${name} in pool ${poolId}${where}: ${entries.join(' ')}`)
     }
     process.exit(0)
   })
