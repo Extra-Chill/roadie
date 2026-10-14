@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.4] - 2026-10-14
+
+### Changed
+- run scheduled-prompt, sleep and cli-send-thread e2e suites on Pi
+
 ## [0.65.3] - 2026-10-14
 
 ### Fixed
