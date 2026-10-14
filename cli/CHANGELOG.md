@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.67.1] - 2026-10-14
+
+### Fixed
+- make generated schema.sql identical on every host
+- label session errors without naming a backend
+- cook roadie
+- run openai/ models on ChatGPT accounts, derived from rotations
+- make fake model server tool-call ids unique per request
+
 ## [0.67.0] - 2026-10-14
 
 ### Changed
