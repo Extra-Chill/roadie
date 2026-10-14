@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.3] - 2026-10-14
+
+### Fixed
+- make operator-approved upgrades restart-safe and post their outcome
+
 ## [0.65.2] - 2026-10-14
 
 ### Changed
