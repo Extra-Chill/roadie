@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.2] - 2026-10-14
+
+### Fixed
+- a failed person lookup is a short-lived failure, not a cached denial
+
 ## [0.68.1] - 2026-10-14
 
 ### Fixed
