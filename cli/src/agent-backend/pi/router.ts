@@ -280,6 +280,9 @@ export function withPiDefault({
   return {
     id: `pi+${fallback.id}`,
     sessionBackendId: (sessionId) => sessionBackendId({ sessionId, fallback, pi }),
+    // Hard cutover (#177): with Pi the default, a fallback-owned session is
+    // never prompted again; its thread moves to a new Pi session.
+    isRetiredSession: (sessionId) => !pi.owns(sessionId),
     getBackend(directory) {
       return composite(fallback.getBackend(directory), pi, true)
     },

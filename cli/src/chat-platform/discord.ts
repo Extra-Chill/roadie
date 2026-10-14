@@ -88,6 +88,20 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       return message instanceof Error ? message : message.content
     },
 
+    async readRecentMessages(limit) {
+      const messages = await thread.messages.fetch({ limit: Math.min(100, Math.max(1, limit)) })
+        .catch((e) => new DiscordOperationError({ operation: 'fetchMessages', cause: e }))
+      if (messages instanceof Error) return messages
+      return [...messages.values()]
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((message) => ({
+          id: message.id,
+          author: message.member?.displayName || message.author.displayName || message.author.username,
+          fromBot: message.author.id === thread.client.user?.id,
+          text: message.content,
+        }))
+    },
+
     async editMessageText(messageId, content) {
       const result = await thread.messages.edit(messageId, { content })
         .catch((e) => new DiscordOperationError({ operation: 'editMessage', cause: e }))

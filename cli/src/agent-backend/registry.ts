@@ -178,6 +178,11 @@ export function getAgentBackendProvider(): AgentBackendProvider {
   return currentProvider
 }
 
+/** Whether `sessionId` is on a retired backend (see `AgentBackendProvider.isRetiredSession`). */
+export function isRetiredSession(sessionId: string): boolean {
+  return currentProvider.isRetiredSession?.(sessionId) ?? false
+}
+
 /** Id of the backend running `sessionId` (e.g. "pi" or "opencode"). */
 export function getSessionBackendId(sessionId: string): string {
   return currentProvider.sessionBackendId?.(sessionId) ?? currentProvider.id
