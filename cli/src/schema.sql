@@ -11,10 +11,8 @@ CREATE TABLE IF NOT EXISTS `bot_api_keys` (
 CREATE TABLE IF NOT EXISTS `bot_tokens` (
 	`app_id` text PRIMARY KEY,
 	`token` text NOT NULL,
-	`bot_mode` text DEFAULT 'self_hosted' NOT NULL,
 	`client_id` text,
 	`client_secret` text,
-	`proxy_url` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
 	`last_used_at` datetime
 );
@@ -282,7 +280,6 @@ CREATE TABLE IF NOT EXISTS `thread_queue_items` (
 CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`thread_id` text PRIMARY KEY,
 	`session_id` text NOT NULL,
-	`source` text DEFAULT 'roadie' NOT NULL,
 	`last_synced_name` text,
 	`parent_session_id` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,

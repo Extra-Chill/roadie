@@ -148,10 +148,7 @@ export type RoadieState = {
   isolateShellsUser: string | null
 
   // Base URL for Discord REST API calls (default https://discord.com).
-  // Overridden when using a gateway-proxy or gateway Discord mode.
-  // Changes: set by getBotTokenWithMode() which runs at startup and on
-  // multiple runtime paths (CLI init, opencode spawn). May be updated
-  // whenever bot credentials are re-read from the DB.
+  // Changes: overridden only by tests that point Roadie at a mock Discord.
   // Read by: discord-urls.ts (getDiscordRestApiUrl), REST client construction.
   discordBaseUrl: string
 

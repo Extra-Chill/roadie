@@ -11,7 +11,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { initDatabase } from '../discord-bot.js'
 import { getDefaultRoadieDirectory } from '../channel-management.js'
 import {
-  getBotTokenWithMode,
+  getBotToken,
   getDb,
   deleteChannelDirectoryById,
   findChannelsByDirectory,
@@ -89,7 +89,7 @@ cli
     })
 
     // Fetch Discord channel names and guild IDs via REST API
-    const botRow = await getBotTokenWithMode()
+    const botRow = await getBotToken()
     const rest = botRow ? createDiscordRest(botRow.token) : null
 
     const localChannelIds = new Set(channels.map((ch) => ch.channel_id))
@@ -380,7 +380,7 @@ cli
 
     await initDatabase()
 
-    const botRow = await getBotTokenWithMode()
+    const botRow = await getBotToken()
     if (!botRow) {
       cliLogger.error('No bot configured. Run `roadie` first.')
       process.exit(EXIT_NO_RESTART)

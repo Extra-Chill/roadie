@@ -14,8 +14,8 @@ import { store } from './store.js'
 /**
  * Base URL for Discord (default: https://discord.com).
  * All REST API and raw fetch calls derive their URLs from this.
- * Reads from the centralized store so gateway mode can set it via
- * store.setState({ discordBaseUrl }) after startup.
+ * Reads from the centralized store so tests can point it at a mock Discord
+ * via store.setState({ discordBaseUrl }).
  */
 export function getDiscordRestBaseUrl(): string {
   return store.getState().discordBaseUrl

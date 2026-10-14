@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { REST } from 'discord.js'
 import {
+  appIdFromToken,
   backgroundInit,
   buildLongPromptMessage,
   getOpenUrlCommand,
@@ -19,6 +20,20 @@ vi.mock('./discord-command-registration.js', async (importOriginal) => ({
 
 beforeEach(() => {
   vi.mocked(registerCommands).mockClear()
+})
+
+describe('appIdFromToken', () => {
+  test('derives the application ID from a bot token', () => {
+    const appId = '123456789012345678'
+    const token = `${Buffer.from(appId).toString('base64')}.abc.def`
+    expect(appIdFromToken(token)).toBe(appId)
+  })
+
+  test('rejects anything that is not a bot token', () => {
+    expect(appIdFromToken('client-id:client-secret')).toBeUndefined()
+    expect(appIdFromToken('not-a-token')).toBeUndefined()
+    expect(appIdFromToken('')).toBeUndefined()
+  })
 })
 
 describe('backgroundInit', () => {

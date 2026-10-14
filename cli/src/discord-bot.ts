@@ -282,8 +282,8 @@ type StartOptions = {
 }
 
 export async function createDiscordClient() {
-  // Read REST API URL lazily so gateway mode can set store.discordBaseUrl
-  // after module import but before client creation.
+  // Read REST API URL lazily so tests can point store.discordBaseUrl at a
+  // mock Discord after module import but before client creation.
   const restApiUrl = getDiscordRestApiUrl()
   const { allowedMentions } = store.getState()
   return new Client({

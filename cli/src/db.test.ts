@@ -19,6 +19,7 @@ import {
   setThreadWorkingDirectory,
   deleteChannelDirectoryById,
   deleteThreadQueueItem,
+  getBotToken,
   getChannelDirectory,
   getDueSessionSleeps,
   getIpcRequestById,
@@ -588,6 +589,124 @@ describe('getDb', () => {
     }
   })
 
+  test('migrates Kimaki-era identifiers on upgraded databases', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['ROADIE_DB_URL']
+    const dbPath = path.join(testDbDir, `test-db-legacy-kimaki-${crypto.randomUUID().slice(0, 8)}.db`)
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE bot_tokens (
+          app_id text PRIMARY KEY,
+          token text NOT NULL,
+          bot_mode text DEFAULT 'self_hosted' NOT NULL,
+          client_id text,
+          client_secret text,
+          proxy_url text,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP,
+          last_used_at datetime
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL,
+          source text DEFAULT 'kimaki' NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE thread_workspaces (
+          thread_id text PRIMARY KEY,
+          workspace_id text,
+          workspace_type text NOT NULL,
+          status text DEFAULT 'pending' NOT NULL,
+          error_message text,
+          project_directory text NOT NULL,
+          workspace_directory text,
+          workspace_name text NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE thread_worktrees (
+          thread_id text PRIMARY KEY,
+          worktree_name text NOT NULL,
+          worktree_directory text,
+          project_directory text NOT NULL,
+          status text DEFAULT 'pending' NOT NULL,
+          error_message text,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      // The gateway row was used most recently, so it would win the lookup.
+      await client.execute(`
+        INSERT INTO bot_tokens (app_id, token, bot_mode, client_id, client_secret, proxy_url, last_used_at) VALUES
+          ('app-self', 'self-token', 'self_hosted', 'cid', 'csecret', NULL, '2026-01-01 00:00:00'),
+          ('app-gateway', 'hosted', 'gateway', 'gid', 'gsecret', 'https://gateway.example', '2026-02-01 00:00:00')
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id, source) VALUES
+          ('thr-kimaki', 'ses-kimaki', 'kimaki'),
+          ('thr-roadie', 'ses-roadie', 'roadie'),
+          ('thr-old-worktree', 'ses-old-worktree', 'roadie')
+      `)
+      await client.execute(`
+        INSERT INTO thread_workspaces (thread_id, workspace_type, status, project_directory, workspace_directory, workspace_name) VALUES
+          ('thr-kimaki', 'kimaki-worktree', 'ready', '/p', '/w/kimaki', 'kimaki'),
+          ('thr-roadie', 'roadie-worktree', 'ready', '/p', '/w/roadie', 'roadie')
+      `)
+      await client.execute(`
+        INSERT INTO thread_worktrees (thread_id, worktree_name, worktree_directory, project_directory, status)
+        VALUES ('thr-old-worktree', 'old', '/w/old', '/p', 'ready')
+      `)
+      client.close()
+
+      process.env['ROADIE_DB_URL'] = `file:${dbPath}`
+      const db = await getDb()
+
+      const inspect = createClient({ url: `file:${dbPath}` })
+      const columnsOf = async (table: string) =>
+        (await inspect.execute(`PRAGMA table_info(${table})`)).rows.map((row) => String(row.name))
+      expect(await columnsOf('thread_sessions')).not.toContain('source')
+      expect(await columnsOf('bot_tokens')).not.toContain('bot_mode')
+      expect(await columnsOf('bot_tokens')).not.toContain('proxy_url')
+      inspect.close()
+
+      // Gateway credentials are gone; the self-hosted bot is what remains.
+      expect((await db.query.bot_tokens.findMany()).map((row) => row.app_id)).toEqual(['app-self'])
+      expect(await getBotToken()).toMatchObject({ appId: 'app-self', token: 'self-token' })
+
+      const types = await db.query.thread_workspaces.findMany({ columns: { thread_id: true, workspace_type: true } })
+      expect(types.sort((a, b) => a.thread_id.localeCompare(b.thread_id))).toEqual([
+        { thread_id: 'thr-kimaki', workspace_type: 'git-worktree' },
+        { thread_id: 'thr-old-worktree', workspace_type: 'git-worktree' },
+        { thread_id: 'thr-roadie', workspace_type: 'git-worktree' },
+      ])
+      expect((await getThreadWorkingDirectory('thr-kimaki'))?.kind).toBe('git-worktree')
+
+      // Session bindings still write without the dropped column.
+      await setThreadSession('thr-kimaki', 'ses-rebound')
+      expect((await getThreadSession('thr-kimaki'))).toBe('ses-rebound')
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['ROADIE_DB_URL']
+      } else {
+        process.env['ROADIE_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
   test('credential owner: the first speaker owns and later speakers do not move it', async () => {
     const sessionId = `ses-owner-${crypto.randomUUID()}`
     await recordCredentialOwner({ sessionId, poolId: 'alice', personKey: 'discord:1' })
@@ -889,23 +1008,19 @@ describe('getDb', () => {
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 
-  test('legacy pending rows are ignored and legacy worktree kinds normalize', async () => {
+  test('legacy pending rows are ignored', async () => {
     const db = await getDb()
     const pendingThread = `test-workdir-pending-${Date.now()}`
-    const legacyThread = `test-workdir-legacy-${Date.now()}`
     await db.insert(schema.thread_sessions).values([
       { thread_id: pendingThread, session_id: '' },
-      { thread_id: legacyThread, session_id: '' },
     ])
     await db.insert(schema.thread_workspaces).values([
-      { thread_id: pendingThread, workspace_type: 'roadie-worktree', workspace_name: 'x', project_directory: '/p', status: 'pending' },
-      { thread_id: legacyThread, workspace_type: 'kimaki-worktree', workspace_name: 'b', project_directory: '/p', workspace_directory: '/w', status: 'ready' },
+      { thread_id: pendingThread, workspace_type: 'git-worktree', workspace_name: 'x', project_directory: '/p', status: 'pending' },
     ])
 
     expect(await getThreadWorkingDirectory(pendingThread)).toBeUndefined()
-    expect((await getThreadWorkingDirectory(legacyThread))?.kind).toBe('git-worktree')
 
-    for (const id of [pendingThread, legacyThread]) {
+    for (const id of [pendingThread]) {
       await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, id))
       await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, id))
     }

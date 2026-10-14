@@ -625,16 +625,11 @@ export async function registerCommands({
         ? firstRegisteredCount.value.registeredCount
         : commands.length
 
-    // In gateway mode, global application routes (/applications/{app_id}/commands)
-    // are denied by the proxy (DeniedWithoutGuild). Legacy global commands only
-    // exist for self-hosted bots that previously registered commands globally.
-    const isGateway = store.getState().discordBaseUrl !== 'https://discord.com'
-    if (!isGateway) {
-      await clearGlobalCommands({
-        rest,
-        appId,
-      })
-    }
+    // Commands are registered per guild; clear any legacy global commands.
+    await clearGlobalCommands({
+      rest,
+      appId,
+    })
 
     cliLogger.info(
       `COMMANDS: Successfully registered ${registeredCommandCount} slash commands for ${successfulGuilds} guild(s)`,

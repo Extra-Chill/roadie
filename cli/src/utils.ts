@@ -8,7 +8,6 @@ import os from 'node:os'
 // discord.js uses tslib's __exportStar which is opaque to static analysis.
 import * as discord from 'discord.js'
 const { PermissionsBitField } = discord
-import type { BotMode } from './database.js'
 import * as errore from 'errore'
 
 type GenerateInstallUrlOptions = {

@@ -22,7 +22,7 @@ import { getDataDir, setDataDir } from './config.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { store } from './store.js'
 import { chooseAvailableLockPort } from './test-utils.js'
-import { getThreadIdBySessionId, upsertSessionSleep, getSessionSleep, setBotToken, getBotTokenWithMode } from './database.js'
+import { getThreadIdBySessionId, upsertSessionSleep, getSessionSleep, setBotToken, getBotToken } from './database.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -161,7 +161,7 @@ test('cached IPC database follows credential-file rotation and server restart wi
     expect(await getThreadIdBySessionId('fork-session')).toBe('fork-thread')
     // Actual startup sequence: credentials load after the database listener.
     await setBotToken('credential-bootstrap-fixture', 'fixture-discord-token')
-    const bot = await getBotTokenWithMode()
+    const bot = await getBotToken()
     expect(bot?.gatewayToken).not.toBe('first-token')
     expect(await getThreadIdBySessionId('fork-session')).toBe('fork-thread')
     await stopHranaServer()
