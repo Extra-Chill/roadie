@@ -3,7 +3,8 @@
 // The retry is a new user turn, so a single-id / current-turn flush misses it.
 
 import { describe, test, expect } from 'vitest'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -13,8 +14,8 @@ import { getMessageVisibleText, waitForBotMessageContaining } from './test-utils
 
 const TEXT_CHANNEL_ID = '200000000000001043'
 
-function createAbortRetryQuestionMatchers(): DeterministicMatcher[] {
-  const leftoverOpenTextMatcher: DeterministicMatcher = {
+function createAbortRetryQuestionMatchers(): FakeMatcher[] {
+  const leftoverOpenTextMatcher: FakeMatcher = {
     id: 'abort-retry-leftover-open-text',
     priority: 130,
     when: {
@@ -23,14 +24,9 @@ function createAbortRetryQuestionMatchers(): DeterministicMatcher[] {
     },
     then: {
       parts: [
+        // One text block that never ends: the run is aborted mid-block and
+        // the partial text is all Roadie has of it.
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'abort-retry-started' },
-        {
-          type: 'text-delta',
-          id: 'abort-retry-started',
-          delta: 'abort-retry-started',
-        },
-        { type: 'text-end', id: 'abort-retry-started' },
         { type: 'text-start', id: 'abort-retry-leftover' },
         {
           type: 'text-delta',
@@ -43,11 +39,11 @@ function createAbortRetryQuestionMatchers(): DeterministicMatcher[] {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      partDelaysMs: [0, 0, 0, 0, 0, 0, 100_000],
+      partDelaysMs: [0, 0, 0, 100_000],
     },
   }
 
-  const questionAfterAbortMatcher: DeterministicMatcher = {
+  const questionAfterAbortMatcher: FakeMatcher = {
     id: 'question-after-abort-retry',
     priority: 131,
     when: {
@@ -92,8 +88,9 @@ function createAbortRetryQuestionMatchers(): DeterministicMatcher[] {
   return [leftoverOpenTextMatcher, questionAfterAbortMatcher]
 }
 
-describe('question text before dropdown after abort retry', () => {
+describe.skipIf(!findPi())('question text before dropdown after abort retry', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort-retry-order',
     dirName: 'qa-question-abort-retry-order',
@@ -117,12 +114,16 @@ describe('question text before dropdown after abort retry', () => {
       })
       const th = ctx.discord.thread(thread.id)
 
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'abort-retry-started',
-        timeout: 8_000,
-      })
+      // Pi shows a text block when it ends, and this one never does: wait
+      // until the model has streamed it, then abort mid-block.
+      const streamStart = Date.now()
+      while (
+        !ctx.modelServer!.log.some((request) => request.matcher === 'abort-retry-leftover-open-text')
+        && Date.now() - streamStart < 8_000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300))
 
       const runtime = getRuntime(thread.id)
       expect(runtime).toBeDefined()
@@ -146,8 +147,7 @@ describe('question text before dropdown after abort retry', () => {
         "--- from: user (question-abort-retry-tester)
         ABORT_RETRY_LEFTOVER_TEXT_MARKER
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        > abort-retry-started
+        -# *using fake/fake-1*
         --- from: user (question-abort-retry-tester)
         QUESTION_AFTER_ABORT_RETRY_MARKER
         --- from: assistant (TestBot)
