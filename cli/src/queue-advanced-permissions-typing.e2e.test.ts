@@ -1,6 +1,8 @@
 // E2e tests for typing indicator behavior around permission prompts.
 
-import { describe, test, expect } from 'vitest'
+import { afterAll, beforeAll, describe, test, expect } from 'vitest'
+import { addFilter } from './hooks.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -38,16 +40,27 @@ async function waitForPendingPermission({
   throw new Error('Timed out waiting for pending permission context')
 }
 
-describe('queue advanced: typing around permissions', () => {
+describe.skipIf(!findPi())('queue advanced: typing around permissions', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-permission-typing-e2e',
     dirName: 'qa-permission-typing-e2e',
     username: 'queue-permission-tester',
-    // These tests are about the permission button + typing lifecycle, so they
-    // need a permission prompt to actually fire. The shipped default allows
-    // every directory, so opt into the --restrict-directories behaviour here.
-    restrictExternalDirectories: true,
+  })
+
+  // These tests are about the permission button + typing lifecycle, so they
+  // need a permission prompt to actually fire. The shipped default allows
+  // every directory, so a plugin rule asks before leaving the project.
+  let removeAskRule: (() => boolean) | undefined
+  beforeAll(() => {
+    removeAskRule = addFilter('permission_rules', (rules) => [
+      ...rules,
+      { permission: 'external_directory', pattern: '*', action: 'ask' as const },
+    ])
+  })
+  afterAll(() => {
+    removeAskRule?.()
   })
 
   test(
@@ -125,19 +138,19 @@ describe('queue advanced: typing around permissions', () => {
         "--- from: user (queue-permission-tester)
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         > requesting external read permission
 
         -# ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
         Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
-        **Pattern:** \`/Users/morse/*\`
+        **Pattern:** \`/Users/morse\`
         ✅ Permission **accepted**
         [user clicks button]
 
         permission-flow-done
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
 
       const timeline = await th.text({

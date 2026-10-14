@@ -29,6 +29,13 @@ import {
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { setAgentBackendProvider } from './agent-backend/registry.js'
+import type { AgentBackendProvider } from './agent-backend/types.js'
+import { PiBackendProvider } from './agent-backend/pi/backend.js'
+import { withPiDefault } from './agent-backend/pi/router.js'
+import { fakeModelsJson, startFakeModelServer, type FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
+import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 
 /**
  * OpenCode bootstraps a directory's instance (config, plugins, skills, file
@@ -54,6 +61,7 @@ export async function warmOpencodeInstance({
 import {
   cleanupTestSessions,
 } from './test-utils.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 
 
 export function createRunDirectories({ name }: { name: string }) {
@@ -246,10 +254,15 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Keeps the run busy after the first visible assistant message so tests can
+  // assert that typing resumes while the agent is still working. The text is
+  // posted when its block ends, which a chat-completions stream marks by
+  // starting the next block, so the busy part is a slow tool call.
   const typingRepulseMatcher: DeterministicMatcher = {
     id: 'typing-repulse-marker',
     priority: 101,
     when: {
+      lastMessageRole: 'user',
       latestUserTextIncludes: 'TYPING_REPULSE_MARKER',
     },
     then: {
@@ -259,14 +272,18 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         { type: 'text-delta', id: 'typing-repulse-text', delta: 'repulse-first' },
         { type: 'text-end', id: 'typing-repulse-text' },
         {
+          type: 'tool-call',
+          toolCallId: 'typing-repulse-sleep',
+          toolName: 'bash',
+          input: JSON.stringify({ command: 'sleep 1.8' }),
+        },
+        {
           type: 'finish',
-          finishReason: 'stop',
+          finishReason: 'tool-calls',
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      // Keep the run busy after the first visible assistant message so tests can
-      // assert that typing resumes while OpenCode is still working.
-      partDelaysMs: [0, 100, 0, 0, 1_800],
+      partDelaysMs: [0, 100, 0, 0, 0, 0],
     },
   }
 
@@ -274,6 +291,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'plugin-timeout-sleep',
     priority: 100,
     when: {
+      lastMessageRole: 'user',
       latestUserTextIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
     },
     then: {
@@ -283,12 +301,17 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         { type: 'text-delta', id: 'sleep-text', delta: 'starting sleep 100' },
         { type: 'text-end', id: 'sleep-text' },
         {
+          type: 'tool-call',
+          toolCallId: 'plugin-timeout-sleep-call',
+          toolName: 'bash',
+          input: JSON.stringify({ command: 'sleep 100' }),
+        },
+        {
           type: 'finish',
-          finishReason: 'stop',
+          finishReason: 'tool-calls',
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      partDelaysMs: [0, 0, 0, 0, 100_000],
     },
   }
 
@@ -313,7 +336,9 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           type: 'tool-call',
           toolCallId: 'permission-typing-read-call',
           toolName: 'read',
+          // `path` for Pi's read tool, `filePath` for OpenCode's.
           input: JSON.stringify({
+            path: '/Users/morse/.zprofile',
             filePath: '/Users/morse/.zprofile',
           }),
         },
@@ -374,7 +399,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           type: 'tool-call',
           toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
+          input: JSON.stringify({ path: EXTERNAL_DIRECTORY_PROBE_FILE, filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
         },
         {
           type: 'finish',
@@ -951,6 +976,26 @@ export type QueueAdvancedContext = {
   discord: DigitalDiscord
   botClient: Client
   testStartTime: number
+  /** Set with `backend: 'pi'`: the Pi backend and the scripted model server it calls. */
+  pi?: PiBackendProvider
+  modelServer?: Awaited<ReturnType<typeof startFakeModelServer>>
+}
+
+/**
+ * OpenCode stand-in for Pi suites. Pi is the default backend; anything that
+ * reaches the old backend is a bug, so it records the call and refuses.
+ */
+export function untouchableOpencodeFallback(touched: string[] = []): AgentBackendProvider {
+  return {
+    id: 'opencode',
+    getBackend: () => null,
+    async initializeForDirectory(directory) {
+      touched.push(`initializeForDirectory ${directory}`)
+      return new Error('the retired OpenCode backend was started')
+    },
+    subscribeEvents: async () => new Error('the retired OpenCode backend has no events'),
+    onStarted: () => {},
+  }
 }
 
 export const TEST_USER_ID = '200000000000000991'
@@ -970,14 +1015,19 @@ export function setupQueueAdvancedSuite({
   projectPermission,
   extraMatchers = [],
   isolateShellsUser,
+  backend = 'opencode',
 }: {
+  // 'pi' runs the suite on real Pi processes against the scripted fake model
+  // server (same matchers), with Pi as the default backend over a stub
+  // OpenCode. Callers skip the suite when findPi() finds no binary.
+  backend?: 'opencode' | 'pi'
   channelId: string
   channelName: string
   dirName: string
   username: string
   // Matchers only this suite needs. Keeps narrow markers out of the shared list
   // so they cannot cascade into unrelated e2e files.
-  extraMatchers?: DeterministicMatcher[]
+  extraMatchers?: (DeterministicMatcher | FakeMatcher)[]
   // Opt into the --restrict-directories behaviour so reads outside the project
   // still raise an external_directory permission prompt. Off by default, which
   // matches the shipped default of allowing every directory.
@@ -1002,6 +1052,8 @@ export function setupQueueAdvancedSuite({
   let previousDefaultVerbosity: VerbosityLevel | null = null
   let previousRestrictExternalDirectories: boolean | null = null
   let previousIsolateShellsUser: string | null = null
+  let restoreProvider: (() => void) | undefined
+  const opencodeTouched: string[] = []
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -1042,6 +1094,23 @@ export function setupQueueAdvancedSuite({
 
     await ctx.discord.start()
 
+    const matchers = [...createDeterministicMatchers(), ...extraMatchers]
+    if (backend === 'pi') {
+      ctx.modelServer = await startFakeModelServer({ matchers: matchers as FakeMatcher[] })
+      const agentDir = path.join(ctx.directories.root, 'pi-agent')
+      fs.mkdirSync(agentDir, { recursive: true })
+      fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(ctx.modelServer.baseUrl))
+      ctx.pi = new PiBackendProvider({
+        bin: findPi()!,
+        sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
+        fileEditLogDir: ctx.directories.dataDir,
+        model: 'fake/fake-1',
+        env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
+      })
+      restoreProvider = setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
+      restartGlobalEventListener()
+    }
+
     const providerNpm = url
       .pathToFileURL(
         path.resolve(process.cwd(), '..', 'opencode-deterministic-provider', 'src', 'index.ts'),
@@ -1055,10 +1124,10 @@ export function setupQueueAdvancedSuite({
       smallModel: 'deterministic-v3',
       settings: {
         strict: false,
-        matchers: [...createDeterministicMatchers(), ...extraMatchers],
+        matchers: matchers as DeterministicMatcher[],
       },
     })
-    fs.writeFileSync(
+    if (backend === 'opencode') fs.writeFileSync(
       path.join(ctx.directories.projectDirectory, 'opencode.json'),
       JSON.stringify(
         projectPermission
@@ -1094,6 +1163,12 @@ export function setupQueueAdvancedSuite({
       discordClient: ctx.botClient,
     })
 
+    if (backend === 'pi') {
+      // The bot entrypoint (cli-runner) starts IPC polling, not startDiscordBot.
+      // Pi's Roadie tools (action buttons, sleep, file upload) go through it.
+      await startIpcPolling({ discordClient: ctx.botClient })
+      return
+    }
     const warmup = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
     if (warmup instanceof Error) {
       throw warmup
@@ -1105,7 +1180,9 @@ export function setupQueueAdvancedSuite({
   }, 30_000)
 
   afterAll(async () => {
-    if (ctx.directories) {
+    // Pi sessions live in the suite's data dir and go with it; OpenCode's
+    // shared server keeps them, so those are deleted here.
+    if (ctx.directories && backend === 'opencode') {
       await cleanupTestSessions({
         projectDirectory: ctx.directories.projectDirectory,
         testStartTime: ctx.testStartTime,
@@ -1116,7 +1193,14 @@ export function setupQueueAdvancedSuite({
       void ctx.botClient.destroy()
     }
 
-    await stopOpencodeServer()
+    if (backend === 'pi') {
+      stopIpcPolling()
+      restoreProvider?.()
+      ctx.pi?.dispose()
+      await ctx.modelServer?.close()
+    } else {
+      await stopOpencodeServer()
+    }
     await Promise.all([
       closeDatabase().catch(() => {}),
       stopHranaServer().catch(() => {}),
@@ -1140,6 +1224,8 @@ export function setupQueueAdvancedSuite({
     if (ctx.directories) {
       removeTestDataDir(ctx.directories.dataDir)
     }
+    // A Pi suite must never start or use OpenCode.
+    expect(opencodeTouched).toEqual([])
   }, 5_000)
 
   afterEach(async () => {
@@ -1147,6 +1233,7 @@ export function setupQueueAdvancedSuite({
     for (const threadId of threadIds) {
       disposeRuntime(threadId)
     }
+    if (backend === 'pi') return
     await cleanupTestSessions({
       projectDirectory: ctx.directories.projectDirectory,
       testStartTime: ctx.testStartTime,

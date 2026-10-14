@@ -1,45 +1,22 @@
 // E2e tests for basic per-thread message queue ordering.
 // Advanced interrupt/abort/retry tests are in thread-queue-advanced.e2e.test.ts.
 //
-// Uses opencode-deterministic-provider which returns canned responses instantly
-// (no real LLM calls), so poll timeouts can be aggressive (4s). The only real
-// latency is OpenCode server startup (beforeAll) and intentional partDelaysMs
-// in matchers (100ms for user-reply).
+// Runs real Pi against the scripted fake model server, which answers
+// instantly (no real LLM calls), so poll timeouts can be aggressive (4s). The
+// only real latency is Pi process startup and intentional partDelaysMs in
+// matchers (100ms for user-reply).
 //
 // If total duration of a file exceeds ~10s, split into a new test file
 // so vitest can parallelize across files.
 
 import fs from 'node:fs'
 import path from 'node:path'
-import url from 'node:url'
-import { describe, beforeAll, afterAll, test, expect } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
-import { DigitalDiscord } from 'discord-digital-twin/src'
-import {
-  buildDeterministicOpencodeConfig,
-  type DeterministicMatcher,
-} from 'opencode-deterministic-provider'
-import {
-  setDataDir,
-} from './config.js'
+import { describe, beforeAll, test, expect } from 'vitest'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID, type QueueAdvancedContext } from './queue-advanced-e2e-setup.js'
 import { store } from './store.js'
-import { startDiscordBot } from './discord-bot.js'
 import {
-  setBotToken,
-  initDatabase,
-  closeDatabase,
-  setChannelDirectory,
-  setChannelVerbosity,
-  getChannelVerbosity,
-  type VerbosityLevel,
-} from './database.js'
-import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
-import { warmOpencodeInstance } from './queue-advanced-e2e-setup.js'
-import {
-  chooseLockPort,
-  cleanupTestSessions,
-  initTestGitRepo,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForMessageById,
@@ -47,46 +24,11 @@ import {
   waitForBotReplyAfterUserMessage,
   waitForBotReplyTo,
   waitForThreadState,
-  getMessageVisibleText, removeTestDataDir } from './test-utils.js'
+  getMessageVisibleText } from './test-utils.js'
 
 
-const e2eTest = describe
-
-function createRunDirectories() {
-  const root = path.resolve(process.cwd(), 'tmp', 'thread-queue-e2e')
-  fs.mkdirSync(root, { recursive: true })
-
-  const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
-  const projectDirectory = path.join(root, 'project')
-  fs.mkdirSync(projectDirectory, { recursive: true })
-  initTestGitRepo(projectDirectory)
-
-  return { root, dataDir, projectDirectory }
-}
-
-function createDiscordJsClient({ restUrl }: { restUrl: string }) {
-  return new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildVoiceStates,
-    ],
-    partials: [
-      Partials.Channel,
-      Partials.Message,
-      Partials.User,
-      Partials.ThreadMember,
-    ],
-    rest: {
-      api: restUrl,
-      version: '10',
-    },
-  })
-}
-
-function createDeterministicMatchers() {
-  const bashCreateFileMatcher: DeterministicMatcher = {
+function createMatchers(): FakeMatcher[] {
+  const bashCreateFileMatcher: FakeMatcher = {
     id: 'bash-create-file',
     priority: 130,
     when: {
@@ -133,7 +75,7 @@ function createDeterministicMatchers() {
     },
   }
 
-  const bashCreateFileFollowupMatcher: DeterministicMatcher = {
+  const bashCreateFileFollowupMatcher: FakeMatcher = {
     id: 'bash-create-file-followup',
     priority: 120,
     when: {
@@ -163,7 +105,7 @@ function createDeterministicMatchers() {
     },
   }
 
-  const raceFinalReplyMatcher: DeterministicMatcher = {
+  const raceFinalReplyMatcher: FakeMatcher = {
     id: 'race-final-reply',
     priority: 110,
     when: {
@@ -193,7 +135,7 @@ function createDeterministicMatchers() {
 
   // Slow matcher for "hotel" so the 200ms sleep in the queueing test
   // guarantees "india" arrives while hotel is still streaming.
-  const hotelSlowMatcher: DeterministicMatcher = {
+  const hotelSlowMatcher: FakeMatcher = {
     id: 'hotel-slow-reply',
     priority: 20,
     when: {
@@ -215,7 +157,7 @@ function createDeterministicMatchers() {
     },
   }
 
-  const userReplyMatcher: DeterministicMatcher = {
+  const userReplyMatcher: FakeMatcher = {
     id: 'user-reply',
     priority: 10,
     when: {
@@ -245,7 +187,7 @@ function createDeterministicMatchers() {
   // Matcher that keeps the session busy for 2s after the first text part.
   // Used by queue-edit tests to ensure the follow-up message lands in the
   // local queue before the session finishes.
-  const slowBusyMatcher: DeterministicMatcher = {
+  const slowBusyMatcher: FakeMatcher = {
     id: 'slow-busy-reply',
     priority: 115,
     when: {
@@ -277,165 +219,53 @@ function createDeterministicMatchers() {
   ]
 }
 
-const TEST_USER_ID = '200000000000000777'
 const TEXT_CHANNEL_ID = '200000000000000778'
 
-e2eTest('thread message queue ordering', () => {
-  let directories: ReturnType<typeof createRunDirectories>
-  let discord: DigitalDiscord
-  let botClient: Client
-  let previousDefaultVerbosity: VerbosityLevel | null =
-    null
-  let testStartTime = Date.now()
-
-  beforeAll(async () => {
-    testStartTime = Date.now()
-    directories = createRunDirectories()
-    const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
-
-    process.env['ROADIE_LOCK_PORT'] = String(lockPort)
-    setDataDir(directories.dataDir)
-    previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
-
-    const digitalDiscordDbPath = path.join(
-      directories.dataDir,
-      'digital-discord.db',
-    )
-
-    discord = new DigitalDiscord({
-      guild: {
-        name: 'Queue E2E Guild',
-        ownerId: TEST_USER_ID,
-      },
-      channels: [
-        {
-          id: TEXT_CHANNEL_ID,
-          name: 'queue-e2e',
-          type: ChannelType.GuildText,
-        },
-      ],
-      users: [
-        {
-          id: TEST_USER_ID,
-          username: 'queue-tester',
-        },
-      ],
-      dbUrl: `file:${digitalDiscordDbPath}`,
-    })
-
-    await discord.start()
-
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(
-          process.cwd(),
-          '..',
-          'opencode-deterministic-provider',
-          'src',
-          'index.ts',
-        ),
-      )
-      .toString()
-
-    const opencodeConfig = buildDeterministicOpencodeConfig({
-      providerName: 'deterministic-provider',
-      providerNpm,
-      model: 'deterministic-v2',
-      smallModel: 'deterministic-v2',
-      settings: {
-        strict: false,
-        matchers: createDeterministicMatchers(),
-      },
-    })
-    fs.writeFileSync(
-      path.join(directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
-    )
-
-    const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
-    const hranaResult = await startHranaServer({ dbPath })
-    if (hranaResult instanceof Error) {
-      throw hranaResult
+/**
+ * The thread transcript once the run is over: it ends with a footer and has
+ * not changed for half a second. A follow-up answered in the same run gets
+ * its own footer after the first one, so the first footer is not the end.
+ */
+async function settledText(th: { text: () => Promise<string> }, timeout = 4_000): Promise<string> {
+  const start = Date.now()
+  let last = ''
+  let stableSince = Date.now()
+  while (Date.now() - start < timeout) {
+    const text = await th.text()
+    if (text !== last) {
+      last = text
+      stableSince = Date.now()
+    } else if (/\n-# \*project ⋅[^\n]*$/.test(text) && Date.now() - stableSince >= 500) {
+      return text
     }
-    process.env['ROADIE_DB_URL'] = hranaResult
-    await initDatabase()
-    await setBotToken(discord.botUserId, discord.botToken)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return last
+}
 
-    await setChannelDirectory({
-      channelId: TEXT_CHANNEL_ID,
-      directory: directories.projectDirectory,
-      channelType: 'text',
-    })
-    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools_and_text')
-    const channelVerbosity = await getChannelVerbosity(TEXT_CHANNEL_ID)
-    expect(channelVerbosity).toBe('tools_and_text')
+describe.skipIf(!findPi())('thread message queue ordering', () => {
+  const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
+    channelId: TEXT_CHANNEL_ID,
+    channelName: 'queue-e2e',
+    dirName: 'thread-queue-e2e',
+    username: 'queue-tester',
+    extraMatchers: createMatchers(),
+  })
+  let directories: QueueAdvancedContext['directories']
+  let discord: QueueAdvancedContext['discord']
 
-    botClient = createDiscordJsClient({ restUrl: discord.restUrl })
-    await startDiscordBot({
-      token: discord.botToken,
-      appId: discord.botUserId,
-      discordClient: botClient,
-    })
-
-    // Pre-warm the opencode server so the first test doesn't include
-    // server startup time (~3-4s) inside its 4s poll timeouts.
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
-    // Also pay the per-directory instance bootstrap on first session.create.
-    await warmOpencodeInstance({
-      getClient: warmup,
-      directory: directories.projectDirectory,
-    })
-  }, 60_000)
-
-  afterAll(async () => {
-    if (directories) {
-      await cleanupTestSessions({
-        projectDirectory: directories.projectDirectory,
-        testStartTime,
-      })
-    }
-
-    if (botClient) {
-      void botClient.destroy()
-    }
-
-    await stopOpencodeServer()
-    await Promise.all([
-      closeDatabase().catch(() => {
-        return
-      }),
-      stopHranaServer().catch(() => {
-        return
-      }),
-      discord?.stop().catch(() => {
-        return
-      }),
-    ])
-
-    delete process.env['ROADIE_LOCK_PORT']
-    delete process.env['ROADIE_DB_URL']
-    if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity })
-    }
-    if (directories) {
-      removeTestDataDir(directories.dataDir)
-    }
-  }, 20_000)
+  beforeAll(() => {
+    directories = ctx.directories
+    discord = ctx.discord
+  })
 
   test(
-    'first prompt after cold opencode server start still streams text parts',
+    'first prompt on a cold backend still streams text parts',
     async () => {
-      // Reproduce cold-start path: clear in-memory server/client registry so
-      // runtime startEventListener() runs once before initialize and exits with
-      // "No OpenCode client". The first prompt must still show text parts.
-      await stopOpencodeServer()
-
+      // First test in the file: no Pi process is running yet, so the runtime's
+      // event listener starts before the session exists. The first prompt
+      // must still show text parts.
       const prompt = 'Reply with exactly: cold-start-stream'
 
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -469,9 +299,9 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
     },
     30_000,
@@ -602,7 +432,7 @@ e2eTest('thread message queue ordering', () => {
       }).length
 
       // 2. Rapidly send messages B and C. Neither interrupts: C reaches the
-      // busy session at its next step boundary, so B and C share one run.
+      // busy session as a follow-up, answered (with its own footer) after B.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: two',
       })
@@ -619,7 +449,7 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
-      // The shared run ends with one footer once C has been answered.
+      // The first footer after C; settledText waits for the last one.
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
@@ -634,19 +464,21 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      expect((await th.text()).replace(/\nok(?=\nok)/g, '')).toMatchInlineSnapshot(`
+      expect((await settledText(th)).replace(/\nok(?=\nok)/g, '')).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -728,14 +560,13 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        > running create file
-        > creating marker
+        -# *using fake/fake-1*
+        > running create filecreating marker
 
         -# ┣ bash _Create marker file for e2e test_
 
         file created
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -819,15 +650,15 @@ e2eTest('thread message queue ordering', () => {
         "--- from: user (queue-tester)
         Reply with exactly: golf
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -923,35 +754,13 @@ e2eTest('thread message queue ordering', () => {
         })
         .join('\n')
 
-      const normalizedTextWithoutFooters = textWithoutFooters.replace(
-        [
-          '--- from: assistant (TestBot)',
-          'ok',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
-        [
-          '--- from: assistant (TestBot)',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
+      // How many "ok" lines the burst gets depends on how the queued messages
+      // batch, so assert order and the final reply rather than the transcript.
+      const lines = textWithoutFooters.split('\n')
+      expect(lines.filter((line) => line.startsWith('Reply with exactly:'))).toEqual(
+        ['juliet', 'kilo', 'lima', 'mike', 'november'].map((word) => `Reply with exactly: ${word}`),
       )
-
-      expect(normalizedTextWithoutFooters).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        Reply with exactly: juliet
-        --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
-        --- from: user (queue-tester)
-        Reply with exactly: kilo
-        Reply with exactly: lima
-        Reply with exactly: mike
-        --- from: assistant (TestBot)
-        --- from: user (queue-tester)
-        Reply with exactly: november
-        --- from: assistant (TestBot)
-        ok"
-      `)
+      expect(lines.at(-1)).toBe('ok')
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('november')

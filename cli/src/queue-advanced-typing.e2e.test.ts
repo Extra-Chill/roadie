@@ -2,6 +2,7 @@
 // Split from thread-queue-advanced.e2e.test.ts for parallelization.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -15,10 +16,11 @@ import {
 
 const TEXT_CHANNEL_ID = '200000000000001002'
 
-const e2eTest = describe
+const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: typing lifecycle', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-typing-e2e',
     dirName: 'qa-typing-e2e',

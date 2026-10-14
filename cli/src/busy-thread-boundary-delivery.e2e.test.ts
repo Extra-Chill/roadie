@@ -1,11 +1,12 @@
 // E2e test for busy-thread delivery (#83): a message sent while the agent is
-// running a slow tool never aborts that tool. OpenCode takes the message at the
-// next step boundary, so the step right after the tool already answers it.
+// running a slow tool never aborts that tool. Pi takes it as a follow-up
+// (streamingBehavior "followUp"): the run finishes its step, then answers it.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, test, expect } from 'vitest'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -20,7 +21,7 @@ const TOOL_DONE_FILE = 'boundary-tool-done.txt'
 
 // Runs a bash tool that takes ~2s and then writes a file. An aborted tool
 // never writes it.
-const slowToolMatcher: DeterministicMatcher = {
+const slowToolMatcher: FakeMatcher = {
   id: 'boundary-slow-tool',
   priority: 120,
   when: {
@@ -53,7 +54,7 @@ const slowToolMatcher: DeterministicMatcher = {
 }
 
 // Answers the steered message once it is the latest user message.
-const steerReplyMatcher: DeterministicMatcher = {
+const steerReplyMatcher: FakeMatcher = {
   id: 'boundary-steer-reply',
   priority: 119,
   when: {
@@ -75,8 +76,9 @@ const steerReplyMatcher: DeterministicMatcher = {
   },
 }
 
-describe('busy thread: boundary delivery', () => {
+describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'boundary-delivery-e2e',
     dirName: 'boundary-delivery-e2e',
@@ -85,7 +87,7 @@ describe('busy thread: boundary delivery', () => {
   })
 
   test(
-    'a message during a slow tool does not abort it and is answered at the next step boundary',
+    'a message during a slow tool does not abort it and is answered after it',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'BOUNDARY_SLOW_TOOL_MARKER start',
@@ -132,9 +134,8 @@ describe('busy thread: boundary delivery', () => {
       const toolOutput = path.join(ctx.directories.projectDirectory, TOOL_DONE_FILE)
       expect(fs.readFileSync(toolOutput, 'utf8').trim()).toBe('done')
 
-      // The run was never aborted. The old interrupt aborted it (a
-      // MessageAbortedError) and replayed the message, even though the slow
-      // shell command itself still finished.
+      // The run was never aborted (an abort is a MessageAbortedError and a
+      // replay of the message, even though the shell command still finished).
       const eventsDir = path.join(ctx.directories.root, 'opencode-session-events')
       const threadEvents = fs
         .readdirSync(eventsDir)
@@ -143,14 +144,14 @@ describe('busy thread: boundary delivery', () => {
         .join('\n')
       expect(threadEvents).toContain('boundary-slow-bash')
       expect(threadEvents).not.toContain('MessageAbortedError')
+      expect(ctx.modelServer!.log.some((request) => request.aborted)).toBe(false)
 
       const timeline = await th.text()
-      // Delivered at the boundary: the step after the tool already saw the
-      // steered message, so the plain post-tool reply never ran.
-      expect(timeline).not.toContain('tool done')
       expect(timeline).not.toMatch(/abort/i)
-      // One run, one footer.
-      expect(timeline.match(/\*project ⋅/g)?.length).toBe(1)
+      // The slow step finished first, then the steered message was answered.
+      expect(timeline.indexOf('tool done')).toBeGreaterThan(-1)
+      expect(timeline.indexOf('tool done')).toBeLessThan(timeline.indexOf('steer-received'))
+      expect(timeline.match(/steer-received/g)?.length).toBe(1)
     },
     20_000,
   )

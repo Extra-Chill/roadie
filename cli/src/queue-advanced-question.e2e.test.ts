@@ -4,116 +4,20 @@
 // get consumed as a tool result answer (which lost voice/image content).
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import {
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
 } from './test-utils.js'
-import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
 
-type SessionMessage = { info: Message; parts: Part[] }
-
-function getOpencodeClientForTest(projectDirectory: string) {
-  const client = getOpencodeClient(projectDirectory)
-  if (!client) {
-    throw new Error('OpenCode client not found for project directory')
-  }
-  return client
-}
-
-function getTextFromParts(parts: Part[]): string[] {
-  return parts.flatMap((part) => {
-    if (part.type === 'text') {
-      return [part.text]
-    }
-    return []
-  })
-}
-
-function normalizeSessionText(text: string): string {
-  return text
-    .replace(/\[current git branch is [^\]]+\]/g, '')
-    .replace(/<discord-user[^>]*\/>/g, '<discord-user />')
-    .trim()
-}
-
-function getSessionRoleTextTimeline(messages: SessionMessage[]) {
-  return messages.flatMap((message) => {
-    const text = normalizeSessionText(getTextFromParts(message.parts).join(''))
-    if (!text.trim()) {
-      return []
-    }
-    return [{ role: message.info.role, text }]
-  })
-}
-
-function getSessionMessageSummary(messages: SessionMessage[]) {
-  return messages.map((message) => {
-    return {
-      role: message.info.role,
-      parts: message.parts.map((part) => {
-        if (part.type === 'text') {
-          return {
-            type: part.type,
-            text: normalizeSessionText(part.text),
-          }
-        }
-        if (part.type === 'tool') {
-          return {
-            type: part.type,
-            tool: part.tool,
-            status: part.state.status,
-            title: part.state.status === 'completed' ? part.state.title : undefined,
-            output: part.state.status === 'completed' ? part.state.output : undefined,
-          }
-        }
-        return { type: part.type }
-      }),
-    }
-  })
-}
-
-async function waitForSessionMessages({
-  projectDirectory,
-  sessionId,
-  timeoutMs,
-  predicate,
-}: {
-  projectDirectory: string
-  sessionId: string
-  timeoutMs: number
-  predicate: (messages: SessionMessage[]) => boolean
-}): Promise<SessionMessage[]> {
-  const client = getOpencodeClientForTest(projectDirectory)
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const response = await client.session.messages({
-      sessionID: sessionId,
-      directory: projectDirectory,
-    })
-    const messages = response.data ?? []
-    if (predicate(messages)) {
-      return messages
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-
-  const finalResponse = await client.session.messages({
-    sessionID: sessionId,
-    directory: projectDirectory,
-  })
-  return finalResponse.data ?? []
-}
-
-describe('queue advanced: question tool answer', () => {
+describe.skipIf(!findPi())('queue advanced: question tool answer', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-e2e',
     dirName: 'qa-question-e2e',
