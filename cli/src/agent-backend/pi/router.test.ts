@@ -223,6 +223,16 @@ describe('withPiDefault', () => {
     expect(calls).toEqual([])
   })
 
+  test('retires every session Pi does not own; per-channel opt-in retires nothing', () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })
+    expect(provider.isRetiredSession?.('ses_legacy')).toBe(true)
+    expect(provider.isRetiredSession?.('pi_new')).toBe(false)
+    const channels = withPiChannels({ fallback: lazyFallback(calls), pi: fakePi(calls), channels: new Set() })
+    expect(channels.isRetiredSession).toBeUndefined()
+    expect(calls).toEqual([])
+  })
+
   test('a session id Pi does not own routes to the fallback, starting it on first use', async () => {
     const calls: string[] = []
     const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })

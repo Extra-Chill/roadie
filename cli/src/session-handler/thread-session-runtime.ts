@@ -41,7 +41,8 @@ import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
-import { agentBackendLabel, getAgentBackendProvider, getSessionBackendId } from '../agent-backend/registry.js'
+import { agentBackendLabel, getAgentBackendProvider, getSessionBackendId, isRetiredSession } from '../agent-backend/registry.js'
+import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
@@ -3713,6 +3714,12 @@ export class ThreadSessionRuntime {
           )
           return
         }
+        // Never wake a retired backend for context: the next real prompt
+        // moves the thread, and its seed reads this message from the chat.
+        if (isRetiredSession(existingSessionId)) {
+          logger.log(`[INGRESS] Skipping noReply message for thread ${this.threadId}: session ${existingSessionId} is on a retired backend`)
+          return
+        }
         if (input.contextOnly) {
           const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory, { channelId: this.channelId })
           if (backend instanceof Error) {
@@ -3757,6 +3764,7 @@ export class ThreadSessionRuntime {
         agent: input.agent,
         permissions: input.permissions,
         injectionGuardPatterns: input.injectionGuardPatterns,
+        sourceMessageId: input.sourceMessageId,
         sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
         sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
       })
@@ -4780,6 +4788,7 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       permissions: input.permissions,
       injectionGuardPatterns: input.injectionGuardPatterns,
+      sourceMessageId: input.sourceMessageId,
       sessionStartScheduleKind: input.sessionStartScheduleKind,
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
@@ -5358,11 +5367,53 @@ export class ThreadSessionRuntime {
     return null
   }
 
+  /**
+   * First message of a session that replaces one on a retired backend: the
+   * thread's recent chat history as context-only input, then one notice in
+   * the thread. Failures are logged, never fatal: the turn still runs.
+   */
+  private async seedFromRetiredSession({
+    client,
+    sessionId,
+    retiredSessionId,
+    sourceMessageId,
+  }: {
+    client: AgentBackend
+    sessionId: string
+    retiredSessionId: string
+    sourceMessageId?: string
+  }): Promise<void> {
+    const retiredBackend = agentBackendLabel(getSessionBackendId(retiredSessionId))
+    const newBackend = agentBackendLabel(getSessionBackendId(sessionId))
+    const history = await this.chat.readRecentMessages?.(RETIRED_SEED_HISTORY_LIMIT)
+    if (history instanceof Error) {
+      logger.warn(`[RETIRED SESSION] Cannot read thread ${this.thread.id} history: ${history.message}`)
+    }
+    const seeded = await client.sessions.prompt({
+      sessionId,
+      directory: this.sdkDirectory,
+      parts: [{
+        kind: 'text',
+        synthetic: true,
+        text: buildRetiredSessionSeed({ retiredSessionId, retiredBackend, history, excludeMessageId: sourceMessageId }),
+      }],
+      noReply: true,
+    })
+    if (seeded instanceof Error) {
+      logger.warn(`[RETIRED SESSION] Cannot seed ${sessionId} from thread ${this.thread.id}: ${seeded.message}`)
+    }
+    logger.log(`[RETIRED SESSION] Thread ${this.thread.id} moved from ${retiredBackend} session ${retiredSessionId} to ${newBackend} session ${sessionId}`)
+    await this.chat.sendNotice(asSubtext(
+      `This thread moved from ${retiredBackend} to ${newBackend}. It's a new session that starts from this thread's recent messages.`,
+    ))
+  }
+
   private async ensureSession({
     prompt,
     agent,
     permissions,
     injectionGuardPatterns,
+    sourceMessageId,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
   }: {
@@ -5371,6 +5422,8 @@ export class ThreadSessionRuntime {
     /** Raw "tool:action" strings from --permission flag */
     permissions?: string[]
     injectionGuardPatterns?: string[]
+    /** Chat message that started this turn; left out of a retired-session seed. */
+    sourceMessageId?: string
     sessionStartScheduleKind?: 'at' | 'cron'
     sessionStartScheduledTaskId?: number
   }): Promise<
@@ -5402,6 +5455,13 @@ export class ThreadSessionRuntime {
     if (!sessionId) {
       // Fallback to DB
       sessionId = await getThreadSession(this.thread.id) || undefined
+    }
+    // A session on a retired backend is not resumed: the thread moves to a
+    // new session, seeded from its chat history below.
+    let retiredSessionId: string | undefined
+    if (sessionId && isRetiredSession(sessionId)) {
+      retiredSessionId = sessionId
+      sessionId = undefined
     }
 
     let session: { id: string; title: string } | undefined
@@ -5460,6 +5520,14 @@ export class ThreadSessionRuntime {
         })
       }
       createdNewSession = true
+      if (retiredSessionId) {
+        await this.seedFromRetiredSession({
+          client: getClient(),
+          sessionId: session.id,
+          retiredSessionId,
+          sourceMessageId,
+        })
+      }
     }
 
     if (!session) {

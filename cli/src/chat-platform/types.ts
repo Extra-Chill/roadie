@@ -29,6 +29,15 @@ export type ChatInteractions = {
 
 export type ChatMessage = { id: string }
 
+/** One message of a thread's history, as `ChatThread.readRecentMessages` reads it. */
+export type ChatHistoryMessage = {
+  id: string
+  author: string
+  /** Sent by this bot (agent output, notices) rather than a person. */
+  fromBot: boolean
+  text: string
+}
+
 export type ChatThread = {
   /** Optional native presentation of a backend session title. */
   syncTitle?(title: string): Promise<void | Error>
@@ -70,6 +79,12 @@ export type ChatThread = {
   ): Promise<ChatMessage>
   /** Current text of a message in this thread. */
   readMessageText(messageId: string): Promise<Error | string>
+  /**
+   * The thread's most recent messages, oldest first. Optional: platforms that
+   * cannot read a thread's tail cheaply, and inline channel conversations
+   * (whose container holds other traffic), omit it.
+   */
+  readRecentMessages?(limit: number): Promise<Error | ChatHistoryMessage[]>
   /** Replace the text of a message the bot sent in this thread. */
   editMessageText(messageId: string, content: string): Promise<Error | void>
   /**

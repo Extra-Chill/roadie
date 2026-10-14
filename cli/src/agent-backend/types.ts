@@ -329,6 +329,13 @@ export type AgentBackendProvider = {
    * across several backends. Single-backend providers omit it: `id` answers.
    */
   sessionBackendId?(sessionId: string): string
+  /**
+   * True for a session on a backend Roadie no longer runs new work on. Its
+   * thread starts a new session (seeded from the thread) on the next prompt
+   * instead of reaching the retired backend. Providers that retire nothing
+   * omit it.
+   */
+  isRetiredSession?(sessionId: string): boolean
   /** Backend for a directory whose server is already running, or null. */
   getBackend(directory: string): AgentBackend | null
   /** Ensure the backend serving `directory` is running; returns a getter. */
