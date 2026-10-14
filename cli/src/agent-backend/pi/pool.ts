@@ -34,6 +34,14 @@ export const PI_KEY_ENV = 'ROADIE_PI_KEY'
 const CODEX_ENTRY_PROVIDERS = new Set(['openai', 'openai-codex'])
 
 /**
+ * OpenAI-completions compat the catalog API-key providers accept (#276): Pi's
+ * catalog marks zai and opencode-go models with these same flags. Without
+ * them Pi sends the system prompt as the `developer` role and `store: true`,
+ * which e.g. z.ai rejects with `400 Incorrect role information`.
+ */
+const OPENAI_POOL_COMPAT = { supportsDeveloperRole: false, supportsStore: false, maxTokensField: 'max_tokens' } as const
+
+/**
  * Pi's Codex client reads the ChatGPT account id from its token, so it gets a
  * placeholder token naming no real account; the proxy authenticates the
  * request by its x-roadie-key and swaps in the pool account's real token.
@@ -167,7 +175,7 @@ export function piPoolModelsJson({ baseUrl, rotations, openaiRotations = [], cod
         api: 'openai-completions',
         apiKey: 'roadie-pool-managed',
         headers: keyHeader,
-        models: openaiRotations.map(poolModel),
+        models: openaiRotations.map((rotation) => ({ ...poolModel(rotation), compat: { ...OPENAI_POOL_COMPAT } })),
       } }),
     },
   }

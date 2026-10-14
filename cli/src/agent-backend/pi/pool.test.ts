@@ -75,7 +75,7 @@ describe('rotation wire formats', () => {
     expect(providers[PI_CODEX_POOL_PROVIDER]).toBeUndefined()
     expect(providers[PI_POOL_PROVIDER]?.models.find((model) => model.id === 'claude-best')?.compat).toEqual({ forceAdaptiveThinking: true })
     expect(providers[PI_POOL_PROVIDER]?.models.find((model) => model.id === 'claude-legacy')?.compat).toBeUndefined()
-    expect(providers[PI_OPENAI_POOL_PROVIDER]?.models[0]?.compat).toBeUndefined()
+    expect(providers[PI_OPENAI_POOL_PROVIDER]?.models[0]?.compat).toEqual({ supportsDeveloperRole: false, supportsStore: false, maxTokensField: 'max_tokens' })
     for (const provider of [providers[PI_POOL_PROVIDER]!, providers[PI_OPENAI_POOL_PROVIDER]!]) {
       expect(provider.models[0]).toMatchObject({ reasoning: true, input: ['text', 'image'] })
     }
