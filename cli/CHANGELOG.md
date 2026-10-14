@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.62.1] - 2026-10-14
+
+### Fixed
+- regenerate schema.sql so the release package step stays clean
+- cook roadie
+- name the session's agent backend instead of OpenCode in prompts and logs
+- judge send --wait completion from persisted events, not a CLI-started backend
+- report timeouts honestly and stop the whole command tree
+- read the cached person for speaker MCP registration
+
 ## [0.62.0] - 2026-10-14
 
 ### Added
