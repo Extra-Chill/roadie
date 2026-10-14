@@ -247,7 +247,7 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/abort` | Stop the current run |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
 | `/model`, `/agent` | Change the model or agent for this channel or session |
-| `/login` | Authenticate a provider (subscription or API key) |
+| `/login` | Add a provider account (subscription or API key) to a credential pool. Registered only while credential pools are on (the default); with `--no-credential-pools`, Pi's own agent-dir `auth.json` applies and is managed with `pi` on the host |
 | `/new-session`, `/last-sessions` | Start a session in this project; list recent ones |
 | `/compact`, `/context-usage` | Compact the context; show how much is in use |
 | `/run-shell-command` | Run a shell command in the thread's working directory |

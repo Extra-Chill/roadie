@@ -36,12 +36,6 @@ function createPiRoutingProviderStub(): { provider: AgentBackendProvider; calls:
       config: async () => ({}),
       agents: async () => [],
     },
-    auth: {
-      methods: async () => ({}),
-      startOAuth: async () => new Error('not implemented'),
-      finishOAuth: async () => undefined,
-      setApiKey: async () => undefined,
-    },
     sessions: {
       create: async () => ({ id: 'new-session-1' }),
       get: async () => undefined,

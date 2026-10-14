@@ -1,6 +1,7 @@
 // /model command - Set the preferred model for this channel or session.
 
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { store } from '../store.js'
 import {
   ButtonBuilder,
   ButtonStyle,
@@ -590,7 +591,9 @@ export async function handleModelCommand({
     if (availableProviders.length === 0) {
       await interaction.editReply({
         content:
-          'No providers with credentials found. Use `/login` to connect a provider and add credentials.',
+          store.getState().credentialPoolsEnabled
+            ? 'No providers with credentials found. Use `/login` to add a provider account to your credential pool.'
+            : 'No providers with credentials found. Sign in with `pi` on the host.',
       })
       return
     }

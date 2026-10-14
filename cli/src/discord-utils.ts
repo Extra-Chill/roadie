@@ -132,8 +132,8 @@ export function hasRoadieBotPermission(
 
 /**
  * Stricter permission check that ignores allowAllUsers.
- * Use for admin-only commands like /login that
- * configure shared credentials. Always requires owner, admin, manage
+ * Use for admin-only commands that
+ * configure shared state. Always requires owner, admin, manage
  * server, or Roadie role regardless of --allow-all-users flag.
  */
 export function hasRoadieAdminPermission(

@@ -91,6 +91,19 @@ export function buildQuickAgentSlashCommand({
 }
 
 /**
+ * /login: add an account (OAuth or API key) to a credential pool. Registered
+ * only when credential pools are enabled, like /credentials.
+ */
+export function buildLoginSlashCommand() {
+  return new SlashCommandBuilder()
+    .setName('login')
+    .setDescription(
+      truncateCommandDescription('Add an AI provider account (OAuth or API key) to your credential pool'),
+    )
+    .setDMPermission(false)
+}
+
+/**
  * /credentials (credential pools phase 2b): manage your own credential pool.
  * Registered only when credential pools are enabled, so servers with pools
  * off see no change. The API key is only ever entered in a modal — there is
@@ -343,13 +356,6 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('login')
-      .setDescription(
-        truncateCommandDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('agent')
       .setDescription(truncateCommandDescription('Set the preferred agent for this channel or session'))
       .setDMPermission(false)
@@ -424,10 +430,10 @@ export function buildStaticSlashCommands() {
 }
 
 /**
- * The always-registered static commands plus the opt-in credential pools
- * command: /credentials is only registered when --credential-pools is on, so
- * servers with pools off see no change (issue #134) and /login stays the only
- * credentials entry point for them.
+ * The always-registered static commands plus the credential pool commands:
+ * /login and /credentials are only registered when credential pools are
+ * enabled (the default). With --no-credential-pools Pi's own agent-dir
+ * auth.json applies and is managed with `pi` on the host.
  */
 export function buildRegistrableStaticCommands({
   credentialPoolsEnabled,
@@ -436,7 +442,9 @@ export function buildRegistrableStaticCommands({
 }) {
   return [
     ...buildStaticSlashCommands(),
-    ...(credentialPoolsEnabled ? [buildCredentialsSlashCommand().toJSON()] : []),
+    ...(credentialPoolsEnabled
+      ? [buildLoginSlashCommand().toJSON(), buildCredentialsSlashCommand().toJSON()]
+      : []),
   ]
 }
 

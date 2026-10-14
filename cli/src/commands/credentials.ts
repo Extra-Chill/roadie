@@ -1,6 +1,6 @@
 // /credentials command — manage your own credential pool from Discord
 // (credential pools phase 2b). Registered only when --credential-pools is on,
-// so servers with pools off see no change and /login is untouched.
+// so servers with pools off see no change.
 //
 // Subcommands:
 //   /credentials list                        — accounts + rotations (no secrets)
@@ -11,7 +11,7 @@
 //   /credentials reorder account:<id> position:<n> — move an account in the
 //                                              pool order (router tiebreaker)
 //
-// /login reuses the two write flows when --credential-pools is on
+// /login (also registered only with credential pools on) reuses the two write flows
 // (startCredentialsApiKeyModal + startCredentialsAnthropicOAuth): same
 // target-pool resolution, same shared-pool admin rule, same ephemeral replies.
 //
