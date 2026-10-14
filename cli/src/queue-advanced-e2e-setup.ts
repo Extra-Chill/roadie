@@ -979,6 +979,12 @@ export type QueueAdvancedContext = {
   /** Set with `backend: 'pi'`: the Pi backend and the scripted model server it calls. */
   pi?: PiBackendProvider
   modelServer?: Awaited<ReturnType<typeof startFakeModelServer>>
+  /**
+   * Set with `backend: 'pi'`: a Roadie restart as the backend sees it. Kills
+   * every Pi process and installs a fresh provider over the same session
+   * directory, so sessions resume from their files.
+   */
+  restartPi?: () => void
 }
 
 /**
@@ -1100,15 +1106,24 @@ export function setupQueueAdvancedSuite({
       const agentDir = path.join(ctx.directories.root, 'pi-agent')
       fs.mkdirSync(agentDir, { recursive: true })
       fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(ctx.modelServer.baseUrl))
-      ctx.pi = new PiBackendProvider({
+      const piOptions = {
         bin: findPi()!,
         sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
         fileEditLogDir: ctx.directories.dataDir,
         model: 'fake/fake-1',
         env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
-      })
+      }
+      ctx.pi = new PiBackendProvider(piOptions)
       restoreProvider = setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
       restartGlobalEventListener()
+      ctx.restartPi = () => {
+        ctx.pi!.dispose()
+        ctx.pi = new PiBackendProvider(piOptions)
+        // Replaces the suite's provider; the first restore still puts back
+        // whatever was installed before the suite.
+        setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
+        restartGlobalEventListener()
+      }
     }
 
     const providerNpm = url

@@ -1,24 +1,21 @@
 // E2e: the agent backend aborts a restart continuation turn before it produces
-// anything (the live failure in roadie#100). The abort comes straight from the
-// OpenCode API, not through Roadie, so Roadie must notice the silent turn on
-// idle, re-send the continuation once, and post a notice if that fails too.
+// anything (the live failure in roadie#100). The abort goes straight to the
+// backend, not through Roadie, so Roadie must notice the silent turn on idle,
+// re-send the continuation once, and post a notice if that fails too.
 
 import { describe, test, expect } from 'vitest'
-import fs from 'node:fs'
-import path from 'node:path'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
 import { getThreadSession } from './database.js'
-import { initializeOpencodeForDirectory, OPENCODE_SERVER_LOG_FILE } from './opencode.js'
-import { RESTART_CONTINUATION_PROMPT } from './service-lifecycle.js'
 import { waitForBotMessageContaining } from './test-utils.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakePart } from './agent-backend/pi/fake-model-server.js'
 
 const TEXT_CHANNEL_ID = '200000000000001064'
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
 
-function reply(id: string, text: string): DeterministicMatcher['then']['parts'] {
+function reply(id: string, text: string): FakePart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id },
@@ -41,8 +38,9 @@ async function waitFor<T>(
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-describe('restart continuation aborted by the backend', () => {
+describe.skipIf(!findPi())('restart continuation aborted by the backend', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-abort-e2e',
     dirName: 'qa-restart-abort-e2e',
@@ -91,31 +89,25 @@ describe('restart continuation aborted by the backend', () => {
     return { thread, sessionId: sessionId! }
   }
 
-  /** Abort the given continuation attempt from the backend side once it has started. */
-  async function abortContinuationAttempt({ sessionId, attempt }: { sessionId: string; attempt: number }) {
-    const directory = ctx.directories.projectDirectory
-    const getClient = await initializeOpencodeForDirectory(directory)
-    if (getClient instanceof Error) throw getClient
+  /**
+   * Abort the given continuation attempt from the backend side once it has
+   * reached the model, which holds its reply back so nothing is output yet.
+   */
+  async function abortContinuationAttempt({ tag, sessionId, attempt }: { tag: string; sessionId: string; attempt: number }) {
+    const attempts = () => ctx.modelServer!.log.filter((request) =>
+      request.matcher === 'restart-abort-continuation' && JSON.stringify(request.messages).includes(tag),
+    )
     await waitFor(
-      async () => {
-        const { data } = await getClient().session.messages({ sessionID: sessionId, directory })
-        const messages = data ?? []
-        const continuations = messages.filter((message) =>
-          message.info.role === 'user'
-          && message.parts.some((part) => part.type === 'text' && part.text.includes(RESTART_CONTINUATION_PROMPT)),
-        )
-        const target = continuations[attempt - 1]
-        if (!target) return undefined
-        const started = messages.some((message) =>
-          message.info.role === 'assistant'
-          && message.info.parentID === target.info.id
-          && !message.info.time.completed,
-        )
-        return started || undefined
-      },
+      async () => (attempts().length >= attempt ? true : undefined),
       { timeout: 10_000, label: `continuation attempt ${attempt} to start` },
     )
-    await getClient().session.abort({ sessionID: sessionId, directory })
+    const aborted = await ctx.pi!.getBackend().sessions.abort({ sessionId, directory: ctx.directories.projectDirectory })
+    if (aborted instanceof Error) throw aborted
+    // The model saw the abort: the client hung up on the held-back reply.
+    await waitFor(
+      async () => (attempts()[attempt - 1]!.aborted ? true : undefined),
+      { timeout: 5_000, label: `continuation attempt ${attempt} to be aborted` },
+    )
   }
 
   test('an aborted continuation with no output is re-sent once and then replies', async () => {
@@ -130,7 +122,7 @@ describe('restart continuation aborted by the backend', () => {
     })
     expect(result.resumed).toEqual([thread.id])
 
-    await abortContinuationAttempt({ sessionId, attempt: 1 })
+    await abortContinuationAttempt({ tag: 'BACKEND_ABORT_ONCE', sessionId, attempt: 1 })
 
     await waitForBotMessageContaining({
       discord: ctx.discord,
@@ -142,10 +134,6 @@ describe('restart continuation aborted by the backend', () => {
     const text = await ctx.discord.thread(thread.id).text()
     expect(text).not.toContain("couldn't resume this run")
     expect(await getThreadSession(thread.id)).toBe(sessionId)
-
-    // The backend's own record of the abort is kept for the next diagnosis.
-    const serverLog = fs.readFileSync(path.join(ctx.directories.dataDir, OPENCODE_SERVER_LOG_FILE), 'utf8')
-    expect(serverLog).toMatch(new RegExp(`level=INFO .*message=cancel session\\.id=${sessionId}`))
   }, 40_000)
 
   test('a continuation aborted on every attempt ends with a notice, not silence', async () => {
@@ -159,8 +147,8 @@ describe('restart continuation aborted by the backend', () => {
       }),
     })
 
-    await abortContinuationAttempt({ sessionId, attempt: 1 })
-    await abortContinuationAttempt({ sessionId, attempt: 2 })
+    await abortContinuationAttempt({ tag: 'BACKEND_ABORT_ALWAYS', sessionId, attempt: 1 })
+    await abortContinuationAttempt({ tag: 'BACKEND_ABORT_ALWAYS', sessionId, attempt: 2 })
 
     await waitForBotMessageContaining({
       discord: ctx.discord,

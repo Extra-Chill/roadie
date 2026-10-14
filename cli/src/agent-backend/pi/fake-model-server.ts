@@ -205,6 +205,7 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
       chunk({ role: 'assistant' })
       let toolIndex = 0
       let finished = false
+      let usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
       for (const [index, part] of parts.entries()) {
         const delay = then?.partDelaysMs?.[index] ?? then?.defaultPartDelayMs ?? 0
         if (delay > 0) await sleep(delay)
@@ -216,12 +217,13 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
           chunk({ tool_calls: [{ index: toolIndex++, id, type: 'function', function: { name: part.toolName, arguments: part.input } }] })
         } else if (part.type === 'finish') {
           finished = true
+          if (part.usage) usage = { prompt_tokens: part.usage.inputTokens, completion_tokens: part.usage.outputTokens, total_tokens: part.usage.totalTokens }
           chunk({}, FINISH_REASONS[part.finishReason])
         }
       }
       if (!finished) chunk({}, toolIndex > 0 ? 'tool_calls' : 'stop')
       if (closed) return
-      res.write(`data: ${JSON.stringify({ id: 'fake', object: 'chat.completion.chunk', created: 0, model, choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`)
+      res.write(`data: ${JSON.stringify({ id: 'fake', object: 'chat.completion.chunk', created: 0, model, choices: [], usage })}\n\n`)
       res.end('data: [DONE]\n\n')
     })
   })
