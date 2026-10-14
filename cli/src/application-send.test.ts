@@ -17,7 +17,7 @@ test('real CLI fails before database or Discord mutations instead of creating a 
   const caller = path.join(root, 'developer-repo')
   const data = path.join(root, 'data')
   fs.mkdirSync(caller)
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ROADIE_') && !key.startsWith('KIMAKI_')))
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ROADIE_')))
   const run = (flags: string[], config?: string) => execAsync({
     command: process.execPath,
     args: ['--import', createRequire(import.meta.url).resolve('tsx'), fileURLToPath(new URL('./bin.ts', import.meta.url)), 'send', '--prompt', 'test', ...flags],

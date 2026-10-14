@@ -3,32 +3,17 @@ dist
 esm
 .DS_Store
 *.tsbuildinfo
-.ultra.cache.json
 coverage
-useraudio
 .env
 .dev.vars
 *.db
 *.wav
-discord-audio-logs
 tmp
-/cli/skills
 
-# opensrc - source code for packages
-/opensrc
 __snapshots__
-traforo/dist/
-skills/jitter/dist/
-bin-local.sh
 roadie.log
 app.log
 generated
-.zig-cache
-zig-out
-website/.wrangler/
-.wrangler
-betterstack
-/subrouter-opencode-v2-plugin/
 
 # Release tarballs built by cli/scripts/pack-release.ts
 /cli/release

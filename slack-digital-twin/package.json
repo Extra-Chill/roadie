@@ -7,11 +7,11 @@
   "author": "remorses <beats.by.morse@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/remorses/kimaki.git",
+    "url": "git+https://github.com/Extra-Chill/roadie.git",
     "directory": "slack-digital-twin"
   },
-  "homepage": "https://github.com/remorses/kimaki/tree/main/slack-digital-twin",
-  "bugs": "https://github.com/remorses/kimaki/issues",
+  "homepage": "https://github.com/Extra-Chill/roadie/tree/main/slack-digital-twin",
+  "bugs": "https://github.com/Extra-Chill/roadie/issues",
   "keywords": [
     "slack",
     "testing",

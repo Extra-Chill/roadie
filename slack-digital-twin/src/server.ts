@@ -599,7 +599,6 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // --- usergroups.list ---
   // Stub: returns empty list (no Slack usergroups by default).
-  // The discord-slack-bridge maps these to Discord guild roles.
   app.post('/api/usergroups.list', async () => {
     return Response.json({
       ok: true,
@@ -609,7 +608,7 @@ export function createServer(config: ServerConfig): ServerComponents {
 
   // --- views.open ---
   // Stub: acknowledges modal open without rendering.
-  // The discord-slack-bridge calls this for type-9 interaction responses.
+  // Used for modal interaction responses.
   app.post('/api/views.open', async ({ request }) => {
     const body = await parseUnknownBody(request)
     const openedView = normalizeOpenedView(body)

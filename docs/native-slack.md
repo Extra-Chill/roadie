@@ -3,7 +3,7 @@
 Roadie's native Slack path talks directly to Slack's Events API, Web API and
 Block Kit. It uses the same `ThreadSessionRuntime`, agent backend, local queue,
 permission policy, host context hooks, IPC tools and task scheduler as Discord.
-It does not run `discord-slack-bridge` or translate Slack into Discord IDs.
+It does not translate Slack into Discord IDs.
 API calls use Slack's official Web API client, including its rate-limit and
 transient-request handling.
 

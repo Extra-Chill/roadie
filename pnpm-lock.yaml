@@ -213,40 +213,6 @@ importers:
         specifier: ^3.0.0
         version: 3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  discord-slack-bridge:
-    dependencies:
-      '@slack/web-api':
-        specifier: ^7.14.1
-        version: 7.17.0
-      discord-api-types:
-        specifier: ^0.38.40
-        version: 0.38.49
-      spiceflow:
-        specifier: 1.26.0-rsc.3
-        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.5))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.5)
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
-    devDependencies:
-      '@types/node':
-        specifier: ^24.11.0
-        version: 24.13.2
-      '@types/ws':
-        specifier: ^8.5.0
-        version: 8.18.1
-      discord.js:
-        specifier: ^14.25.1
-        version: 14.26.4
-      slack-digital-twin:
-        specifier: workspace:^
-        version: link:../slack-digital-twin
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
-
   slack-digital-twin:
     dependencies:
       '@libsql/client':
