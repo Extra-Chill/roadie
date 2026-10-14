@@ -1078,6 +1078,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
     if (accepted.disposition !== 'handled') {
       // The command never ran: Pi started a real turn with the literal message.
+      session.translator.markAborting()
       await session.process.request({ type: 'abort' })
       return new AgentRequestError({ detail: 'Pi did not record the context-only message (Roadie append command missing)' })
     }
@@ -1345,9 +1346,13 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.cancelQuestions(sessionId, { permissions: dead })
         // Aborting a parent stops its running task children too.
         for (const child of this.sessions.values()) {
-          if (child.childOf === sessionId && !child.process.exited) void child.process.request({ type: 'abort' })
+          if (child.childOf === sessionId && !child.process.exited) {
+            child.translator.markAborting()
+            void child.process.request({ type: 'abort' })
+          }
         }
         if (dead) return undefined
+        session!.translator.markAborting()
         const result = await session!.process.request({ type: 'abort' })
         return result instanceof Error ? new AgentRequestError({ detail: result.message }) : undefined
       },

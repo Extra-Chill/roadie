@@ -245,8 +245,14 @@ export class PiEventTranslator {
   private assistantId: string | undefined
   private assistantStartedAt: number | undefined
   private tools = new Map<string, ToolState>()
+  private aborting = false
 
   constructor(readonly sessionId: string) {}
+
+  /** Roadie asked Pi to abort the current run; its failure is an abort, not an error. */
+  markAborting() {
+    this.aborting = true
+  }
 
   /** The assistant message that issued a tool call, when the stream showed it. */
   messageIdForCall(callId: string): string | undefined {
@@ -294,6 +300,7 @@ export class PiEventTranslator {
     const sessionId = this.sessionId
     switch (record.type) {
       case 'agent_start':
+        this.aborting = false
         return [{ type: 'status', sessionId, status: { state: 'busy' } }]
       case 'agent_end':
         this.assistantId = undefined
@@ -392,9 +399,10 @@ export class PiEventTranslator {
     const sessionId = this.sessionId
     const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: true })!
     const assistant = message as PiAssistantMessage
-    // Only model failures surface as session errors; aborts are deliberate
-    // (interrupts, dismissed questions) and are handled where they start.
-    const error = assistant.stopReason === 'error' ? toError(assistant) : undefined
+    // A run Roadie aborted can end as a request error ("This operation was
+    // aborted"); report it as an abort, which the runtime treats as expected.
+    const failure = toError(assistant)
+    const error = failure && this.aborting ? { ...failure, name: 'MessageAbortedError' } : failure
     return [
       { type: 'message', message: agentMessage },
       {

@@ -131,7 +131,7 @@ describe('history', () => {
 })
 
 describe('PiEventTranslator message errors', () => {
-  test('emits an APIError after a failed assistant message, but not for a normal stop or an abort', () => {
+  test('emits an APIError after a failed assistant message, but not for a normal stop', () => {
     const translator = new PiEventTranslator('ses-pi')
     const failed = translator.translate({
       type: 'message_end',
@@ -147,11 +147,23 @@ describe('PiEventTranslator message errors', () => {
     })
     expect(normal.some((event) => event.type === 'error')).toBe(false)
 
+  })
+
+  test('reports a run Roadie aborted as MessageAbortedError, even when Pi ends it as a request error', () => {
+    const translator = new PiEventTranslator('ses-pi')
+    translator.markAborting()
     const aborted = translator.translate({
       type: 'message_end',
-      message: { role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'This operation was aborted', timestamp: 3 },
+      message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'This operation was aborted', timestamp: 3 },
     })
-    expect(aborted.some((event) => event.type === 'error')).toBe(false)
+    expect(aborted.find((event) => event.type === 'error')).toMatchObject({ error: { name: 'MessageAbortedError' } })
+
+    translator.translate({ type: 'agent_start' })
+    const failed = translator.translate({
+      type: 'message_end',
+      message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Model unavailable', timestamp: 4 },
+    })
+    expect(failed.find((event) => event.type === 'error')).toMatchObject({ error: { name: 'APIError' } })
   })
 })
 
