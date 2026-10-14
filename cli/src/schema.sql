@@ -169,6 +169,11 @@ CREATE TABLE IF NOT EXISTS `pending_fork_titles` (
 	`task_prompt` text
 );
 
+CREATE TABLE IF NOT EXISTS `person_welcomes` (
+	`person_key` text PRIMARY KEY,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `scheduled_task_runs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`scheduled_task_id` integer NOT NULL,

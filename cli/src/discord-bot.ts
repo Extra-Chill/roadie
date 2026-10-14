@@ -143,6 +143,7 @@ import {
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
 import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from './identity.js'
+import { welcomeDiscordUser } from './commands/start.js'
 import {
   channelAllowsCapability,
   channelAllowsSpeaker,
@@ -769,6 +770,17 @@ export async function startDiscordBot({
           })
           return
         }
+      }
+
+      // First contact with an admitted person: one private welcome (DM).
+      // Bots never reach here; CLI-asserted actors are excluded.
+      if (!isCliInjectedPrompt && message.guild) {
+        void welcomeDiscordUser({
+          user: message.author,
+          displayName: message.member?.displayName || message.author.displayName,
+          person: getCachedPerson({ platform: 'discord', id: message.author.id }),
+          channelId: message.channelId,
+        })
       }
 
       const isThread = [

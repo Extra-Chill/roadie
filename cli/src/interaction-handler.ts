@@ -81,6 +81,12 @@ import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
+import {
+  CONNECT_BUTTON_PREFIX,
+  handleConnectButton,
+  handleConnectCommand,
+} from './commands/connect.js'
+import { handleStartCommand, welcomeDiscordUser } from './commands/start.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -200,6 +206,14 @@ export function registerInteractionHandler({
           }`,
         )
 
+        // Connect buttons sent in a welcome DM have no guild channel to own.
+        // The handler authorizes from the clicking user's own person (fail
+        // closed), so a DM button can only ever act on the clicker's account.
+        if (!interaction.guild && interaction.isButton() && interaction.customId.startsWith(CONNECT_BUTTON_PREFIX)) {
+          await handleConnectButton(interaction)
+          return
+        }
+
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
@@ -276,6 +290,18 @@ export function registerInteractionHandler({
             }
             return
           }
+        }
+
+        // First contact with an admitted person: one private welcome (DM).
+        // /start shows the same text itself.
+        const startCommand = interaction.isChatInputCommand() && interaction.commandName === 'start'
+        if (interaction.guild && !interaction.isAutocomplete() && !startCommand) {
+          void welcomeDiscordUser({
+            user: interaction.user,
+            displayName: interaction.user.displayName,
+            person: getCachedPerson({ platform: 'discord', id: interaction.user.id }),
+            ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
+          })
         }
 
         if (!interaction.isAutocomplete() && interaction.channel?.isThread() && interaction.isRepliable() && resolveChannelPolicy(interaction.channel.id)?.intake) {
@@ -458,6 +484,14 @@ export function registerInteractionHandler({
               await handleMcpCommand({ command: interaction, appId })
               return
 
+            case 'connect':
+              await handleConnectCommand({ command: interaction })
+              return
+
+            case 'start':
+              await handleStartCommand({ command: interaction })
+              return
+
           }
 
           // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
@@ -491,6 +525,12 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
+
+          if (customId.startsWith(CONNECT_BUTTON_PREFIX)) {
+            // Acts only on the clicking user's own person key and servers.
+            await handleConnectButton(interaction)
+            return
+          }
 
           if (customId.startsWith(OPERATOR_REQUEST_PREFIX)) {
             await handleOperatorRequestButton(interaction)

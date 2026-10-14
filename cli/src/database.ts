@@ -1075,6 +1075,25 @@ export async function recordCredentialPayerNotice({
   return inserted.length > 0
 }
 
+/**
+ * Claim the one-time welcome for a person key. True only for the first caller
+ * ever (atomic across concurrent turns and restarts).
+ */
+export async function claimPersonWelcome(personKey: string): Promise<boolean> {
+  const db = await getDb()
+  const inserted = await db.insert(schema.person_welcomes)
+    .values({ person_key: personKey })
+    .onConflictDoNothing({ target: schema.person_welcomes.person_key })
+    .returning({ personKey: schema.person_welcomes.person_key })
+  return inserted.length > 0
+}
+
+/** Undo a claim (e.g. the welcome could not be built), so a later turn retries. */
+export async function releasePersonWelcome(personKey: string): Promise<void> {
+  const db = await getDb()
+  await db.delete(schema.person_welcomes).where(orm.eq(schema.person_welcomes.person_key, personKey))
+}
+
 export async function appendSessionEventsSinceLastTimestamp({ sessionId, events }: { sessionId: string; events: Array<typeof schema.session_events.$inferInsert> }) {
   if (events.length === 0) return 0
   const db = await getDb()
