@@ -86,6 +86,10 @@ export type Person = {
   // Per-person MCP servers (identity hook `mcp_servers`). Empty or absent
   // means the person gets no extra MCP servers.
   mcpServers?: PersonMcpServer[]
+  // The identity hook or a `person` filter failed, so nobody could vouch for
+  // the actor. Denied like any unknown actor, but callers report the failure
+  // instead of a permission denial.
+  lookupFailed?: boolean
 }
 
 const hookOutputSchema = z.object({
@@ -114,6 +118,12 @@ const DENIED: Person = Object.freeze({
   capabilities: new Set<Capability>(),
   permissions: [],
 })
+
+const LOOKUP_FAILED: Person = Object.freeze({ ...DENIED, lookupFailed: true })
+
+// Short TTL so a broken lookup doesn't spawn a process per message, while a
+// transient failure clears quickly.
+const FAILURE_TTL_SECONDS = 10
 
 type CacheEntry = { person: Person; expiresAt: number }
 
@@ -195,11 +205,19 @@ export async function resolvePerson({
     .then(async ({ person, ttlSeconds }) => {
       // Plugins refine or supply the person. With an identity layer in place,
       // an actor nobody vouches for is denied (fail closed).
-      const filtered = (await applyFiltersAsync('person', person, { actor, context })) ?? DENIED
-      if (ttlSeconds > 0) {
-        cache.set(key, { person: filtered, expiresAt: Date.now() + ttlSeconds * 1000 })
+      // A filter that throws leaves nobody vouching for the actor: deny, but
+      // as a lookup failure with the short failure TTL, never the full TTL
+      // that would lock an authorized person out after one slow lookup.
+      let failed = false
+      const filtered = (await applyFiltersAsync('person', person, { actor, context }, {
+        onError: () => { failed = true },
+      })) ?? DENIED
+      const resolved = failed ? LOOKUP_FAILED : filtered
+      const ttl = failed ? FAILURE_TTL_SECONDS : ttlSeconds
+      if (ttl > 0) {
+        cache.set(key, { person: resolved, expiresAt: Date.now() + ttl * 1000 })
       }
-      return filtered
+      return resolved
     })
     .finally(() => {
       inflight.delete(key)
@@ -207,6 +225,10 @@ export async function resolvePerson({
   inflight.set(key, promise)
   return promise
 }
+
+/** Reply for an actor whose identity lookup failed (not a permission denial). */
+export const IDENTITY_LOOKUP_FAILED_MESSAGE =
+  `Couldn't verify your account: the identity lookup failed. Try again in a moment.`
 
 export function personHas(person: Person, capability: Capability): boolean {
   return person.allowed && person.capabilities.has(capability)
@@ -235,8 +257,7 @@ async function runHook({
   })
   if (raw instanceof Error) {
     logger.warn(`[IDENTITY] hook failed for ${actor.platform}:${actor.id}, denying: ${raw.message}`)
-    // Short TTL so a broken hook doesn't spawn a process per message.
-    return { person: DENIED, ttlSeconds: 10 }
+    return { person: LOOKUP_FAILED, ttlSeconds: FAILURE_TTL_SECONDS }
   }
 
   const parsed = (() => {
@@ -248,7 +269,7 @@ async function runHook({
   })()
   if (!parsed.success) {
     logger.warn(`[IDENTITY] hook returned invalid output for ${actor.platform}:${actor.id}, denying`)
-    return { person: DENIED, ttlSeconds: 10 }
+    return { person: LOOKUP_FAILED, ttlSeconds: FAILURE_TTL_SECONDS }
   }
 
   const out = parsed.data

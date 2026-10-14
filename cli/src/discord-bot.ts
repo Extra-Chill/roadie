@@ -142,7 +142,7 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
-import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from './identity.js'
+import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityHookConfigured, resolvePerson } from './identity.js'
 import { welcomeDiscordUser } from './commands/start.js'
 import {
   channelAllowsCapability,
@@ -728,7 +728,7 @@ export async function startDiscordBot({
 
         // Identity hook (if configured): resolve the person before the
         // synchronous permission checks below, which read the cached result.
-        await resolvePerson({
+        const person = await resolvePerson({
           actor: {
             platform: 'discord',
             id: message.author.id,
@@ -763,7 +763,9 @@ export async function startDiscordBot({
         if (!hasRoadieBotPermission(member, message.guild)) {
           if (explicitIntake) return
           await message.reply({
-            content: isIdentityHookConfigured()
+            content: person?.lookupFailed
+              ? IDENTITY_LOOKUP_FAILED_MESSAGE
+              : isIdentityHookConfigured()
               ? `You don't have permission to start sessions.\nAsk an admin to link and authorize your account.`
               : `You don't have permission to start sessions.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
             flags: SILENT_MESSAGE_FLAGS,

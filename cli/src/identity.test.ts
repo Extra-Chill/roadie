@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import {
   clearIdentityCache,
   getCachedPerson,
@@ -84,6 +84,36 @@ describe('identity hook', () => {
       // registerSpeakerMcpServers performs this cached-only lookup.
       expect(getCachedPerson(actor)?.allowed).toBe(true)
       expect(invocations).toEqual([{ guildId: 'guild-1', channelId: 'channel-1' }])
+    } finally {
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
+  test('a throwing person filter is a short-lived lookup failure, not a cached denial', async () => {
+    const actor = { platform: 'discord', id: 'flaky-lookup' }
+    let fail = true
+    const removeFilter = addFilter('person', () => {
+      if (fail) throw new Error('WordPress context lookup failed')
+      return { allowed: true, capabilities: new Set(['sessions'] as const), permissions: [] }
+    })
+    try {
+      const failed = await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+      expect(failed?.allowed).toBe(false)
+      expect(failed?.lookupFailed).toBe(true)
+
+      // Expire the short failure entry; the next lookup must run again and
+      // admit the person instead of replaying a cached denial.
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 11_000)
+      try {
+        fail = false
+        const recovered = await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+        expect(recovered?.allowed).toBe(true)
+        expect(recovered?.lookupFailed).toBeUndefined()
+      } finally {
+        clock.mockRestore()
+      }
     } finally {
       removeFilter()
       clearIdentityCache(actor)
