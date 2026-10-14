@@ -19,12 +19,10 @@ A thread bound to a session Pi does not own — for example one started on the r
 
 ## Project configuration
 
-Besides Pi's own resources (`.pi/prompts`, `.pi/skills`, `.agents/skills` and the user-level equivalents), Roadie reads OpenCode-format project configuration and passes it to Pi:
+Prompt templates and skills are Pi's own: `.pi/prompts`, `.pi/skills`, `.agents/skills` and the user-level equivalents. Roadie also reads OpenCode-format project configuration for agents and MCP servers and passes it to Pi:
 
 - **Agents:** `.opencode/agent[s]/*.md` and `agent` entries in `opencode.json`, plus the built-in primary and subagent agents. A selected agent contributes its system prompt, model and permission rules to the turn.
 - **MCP servers:** `mcp` entries in `opencode.json` (local and remote), plus per-person servers.
-- **Commands:** `.opencode/command[s]`, `~/.config/opencode/command[s]`, and `command` entries in `opencode.json`, as prompt templates (`$ARGUMENTS` works; `` !`cmd` `` and `@file` expansions do not).
-- **Skills:** `.opencode/skill[s]`, `.claude/skills`, `~/.config/opencode/skill[s]` and `~/.claude/skills`, filtered by `--enable-skill` / `--disable-skill`.
 
 `opencode.jsonc` is read as well as `opencode.json`.
 

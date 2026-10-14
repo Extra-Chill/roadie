@@ -90,9 +90,6 @@ function buildPiProvider(): PiBackendProvider {
     bin: process.env['ROADIE_PI_BIN'] || 'pi',
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     fileEditLogDir: getDataDir(),
-    // --enable-skill / --disable-skill.
-    enabledSkills: store.getState().enabledSkills,
-    disabledSkills: store.getState().disabledSkills,
     // Configured --shell-env / ROADIE_SHELL_ENV templates for tool shells.
     shellEnvTemplates: store.getState().shellEnvTemplates,
     // Per-session injection guard files.

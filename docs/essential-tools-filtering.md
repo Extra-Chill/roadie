@@ -156,9 +156,7 @@ Example Discord output:
 
 ## Skill Tool Configuration
 
-**File:** `cli/src/agent-backend/pi/resources.ts`
-
-Pi discovers its own skills; Roadie adds the project and user skill directories (`.opencode/skill[s]`, `.claude/skills`, `~/.config/opencode/skill[s]`, `~/.claude/skills`), filtered by `--enable-skill` / `--disable-skill`. See [Agent backend](agent-backend.md#project-configuration).
+Skills come from Pi's own discovery (`.pi/skills`, `.agents/skills` and the user-level equivalents). See [Agent backend](agent-backend.md#project-configuration).
 
 ## Other Verbosity Filtering Uses
 

@@ -176,24 +176,6 @@ cli
       ),
   )
   .option(
-    '--enable-skill <name>',
-    z
-      .array(z.string())
-      .optional()
-      .describe(
-        'Allow only the named skills. Skills come from your Pi setup and the project skills directories; all others are hidden from the model and are not registered as slash commands. Repeatable. Mutually exclusive with --disable-skill.',
-      ),
-  )
-  .option(
-    '--disable-skill <name>',
-    z
-      .array(z.string())
-      .optional()
-      .describe(
-        'Hide the named skills from the model and from slash commands. Skills come from your Pi setup and the project skills directories. Repeatable. Mutually exclusive with --enable-skill.',
-      ),
-  )
-  .option(
     '--shell-env <NAME=template>',
     z
       .array(z.string())
@@ -294,17 +276,6 @@ cli
           process.exit(EXIT_NO_RESTART)
         })()
 
-        // --enable-skill and --disable-skill are mutually exclusive: the user
-        // either whitelists a small allowlist or blacklists a few unwanted
-        // skills, never both. The Pi backend applies them via isSkillAllowed().
-        const enabledSkills = options.enableSkill ?? []
-        const disabledSkills = options.disableSkill ?? []
-        if (enabledSkills.length > 0 && disabledSkills.length > 0) {
-          cliLogger.error(
-            'Cannot use --enable-skill and --disable-skill at the same time. Use one or the other.',
-          )
-          process.exit(EXIT_NO_RESTART)
-        }
         // --permission-timeout-minutes validation
         // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
         const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
@@ -394,8 +365,6 @@ cli
           ...(options.credentialPools === false && { credentialPoolsEnabled: false }),
           ...(credentialsMode && { credentialsMode }),
           ...(threadBilling && { threadBilling }),
-          ...(enabledSkills.length > 0 && { enabledSkills }),
-          ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
           ...(Object.keys(shellEnvTemplates).length > 0 && { shellEnvTemplates }),
         })
@@ -428,17 +397,6 @@ cli
               'Shell isolation check: project directories are agent-writable; the data dir and Pi agent dir are not agent-readable',
             )
           }
-        }
-
-        if (enabledSkills.length > 0) {
-          cliLogger.log(
-            `Skill whitelist enabled: only [${enabledSkills.join(', ')}] will be injected`,
-          )
-        }
-        if (disabledSkills.length > 0) {
-          cliLogger.log(
-            `Skill blacklist enabled: [${disabledSkills.join(', ')}] will be hidden`,
-          )
         }
 
         if (options.identityHook) {

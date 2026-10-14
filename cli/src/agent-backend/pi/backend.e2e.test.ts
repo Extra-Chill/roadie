@@ -200,20 +200,25 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'disabled' } })
   })
 
-  test('OpenCode-format commands and skills, plus opencode.json commands, list and run in Pi', async () => {
+  test("Pi's own project prompts and skills list and run; OpenCode-format ones are not loaded", async () => {
     const dir = path.join(root, 'cmd-project')
+    fs.mkdirSync(path.join(dir, '.pi', 'prompts'), { recursive: true })
+    fs.mkdirSync(path.join(dir, '.agents', 'skills', 'deploy-notes'), { recursive: true })
     fs.mkdirSync(path.join(dir, '.opencode', 'command'), { recursive: true })
-    fs.mkdirSync(path.join(dir, '.claude', 'skills', 'deploy-notes'), { recursive: true })
-    fs.writeFileSync(path.join(dir, '.opencode', 'command', 'shout.md'), '---\ndescription: Shout it\n---\nRUN_TOOL echo SHOUT-$ARGUMENTS\n')
-    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'deploy-notes', 'SKILL.md'), '---\nname: deploy-notes\ndescription: How we deploy\n---\nRUN_TOOL echo skill-loaded\n')
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', 'legacy-skill'), { recursive: true })
+    fs.writeFileSync(path.join(dir, '.pi', 'prompts', 'shout.md'), '---\ndescription: Shout it\n---\nRUN_TOOL echo SHOUT-$ARGUMENTS\n')
+    fs.writeFileSync(path.join(dir, '.agents', 'skills', 'deploy-notes', 'SKILL.md'), '---\nname: deploy-notes\ndescription: How we deploy\n---\nRUN_TOOL echo skill-loaded\n')
+    fs.writeFileSync(path.join(dir, '.opencode', 'command', 'legacy.md'), '---\ndescription: Legacy\n---\nRUN_TOOL echo legacy\n')
+    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'legacy-skill', 'SKILL.md'), '---\nname: legacy-skill\ndescription: Legacy\n---\nRUN_TOOL echo legacy\n')
     fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ command: { whisper: { description: 'Whisper it', template: 'RUN_TOOL echo whisper-$ARGUMENTS' } } }))
     const listed = await provider.getBackend().catalog.commands!({ directory: dir })
     if (listed instanceof Error) throw listed
     expect(listed).toEqual(expect.arrayContaining([
       { name: 'shout', description: 'Shout it', source: 'command' },
-      { name: 'whisper', description: 'Whisper it', source: 'command' },
       expect.objectContaining({ name: 'deploy-notes', source: 'skill' }),
     ]))
+    const names = listed.map((c) => c.name)
+    for (const legacy of ['legacy', 'legacy-skill', 'whisper']) expect(names).not.toContain(legacy)
     const session = await provider.getBackend().sessions.create({ directory: dir })
     if (session instanceof Error) throw session
     const runCommand = async (command: string, args: string) => {
@@ -224,55 +229,8 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
       return tool?.type === 'part' && tool.part.kind === 'tool' ? tool.part.output : undefined
     }
     expect(await runCommand('shout', 'hey')).toContain('SHOUT-hey')
-    expect(await runCommand('whisper', 'psst')).toContain('whisper-psst')
     expect(await runCommand('deploy-notes', '')).toContain('skill-loaded')
     expect(await provider.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'nope', arguments: '' })).toBeInstanceOf(Error)
-  }, 60_000)
-
-  test('--disable-skill X: X is not passed to pi and /skill:X is refused; other skills still run', async () => {
-    const dir = path.join(root, 'skill-disable-project')
-    for (const name of ['alpha', 'beta']) {
-      fs.mkdirSync(path.join(dir, '.claude', 'skills', name), { recursive: true })
-      fs.writeFileSync(path.join(dir, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name}\n---\nRUN_TOOL echo ${name}-skill\n`)
-    }
-    const gated = new PiBackendProvider({ ...makeProvider().options, disabledSkills: ['alpha'] })
-    await listen(gated)
-    const listed = await gated.getBackend().catalog.commands!({ directory: dir })
-    if (listed instanceof Error) throw listed
-    expect(listed.flatMap((c) => (c.source === 'skill' ? [c.name] : []))).toEqual(['beta'])
-    const session = await gated.getBackend().sessions.create({ directory: dir })
-    if (session instanceof Error) throw session
-    const refused = await gated.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'skill:alpha', arguments: '' })
-    expect(refused).toBeInstanceOf(Error)
-    expect((refused as Error).message).toContain('alpha')
-    const before = idleCount(session.id)
-    expect(await gated.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'beta', arguments: '' })).toBeUndefined()
-    await until(() => (idleCount(session.id) > before ? true : undefined))
-    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
-    expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output).toContain('beta-skill')
-    gated.dispose()
-  }, 60_000)
-
-  test('--enable-skill Y: only Y is passed to pi; the rest are refused', async () => {
-    const dir = path.join(root, 'skill-enable-project')
-    for (const name of ['alpha', 'beta']) {
-      fs.mkdirSync(path.join(dir, '.claude', 'skills', name), { recursive: true })
-      fs.writeFileSync(path.join(dir, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name}\n---\nRUN_TOOL echo ${name}-skill\n`)
-    }
-    const gated = new PiBackendProvider({ ...makeProvider().options, enabledSkills: ['beta'] })
-    await listen(gated)
-    const listed = await gated.getBackend().catalog.commands!({ directory: dir })
-    if (listed instanceof Error) throw listed
-    expect(listed.flatMap((c) => (c.source === 'skill' ? [c.name] : []))).toEqual(['beta'])
-    const session = await gated.getBackend().sessions.create({ directory: dir })
-    if (session instanceof Error) throw session
-    expect(await gated.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'skill:alpha', arguments: '' })).toBeInstanceOf(Error)
-    const before = idleCount(session.id)
-    expect(await gated.getBackend().sessions.command({ sessionId: session.id, directory: dir, command: 'skill:beta', arguments: '' })).toBeUndefined()
-    await until(() => (idleCount(session.id) > before ? true : undefined))
-    const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id)
-    expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output).toContain('beta-skill')
-    gated.dispose()
   }, 60_000)
 
   test('fork at a user message keeps only the history before it; a workspace fork runs in the worktree', async () => {
