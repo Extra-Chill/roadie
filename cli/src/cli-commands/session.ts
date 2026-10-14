@@ -585,19 +585,17 @@ cli
 
       await initDatabase()
 
-      const projectDirectory = await resolveSessionDirectoryFromDatabase({
+      // Only a session this bot knows has persisted events to wait on.
+      const known = await resolveSessionDirectoryFromDatabase({
         sessionId,
       })
-      if (projectDirectory instanceof Error) {
-        cliLogger.error(projectDirectory.message)
+      if (known instanceof Error) {
+        cliLogger.error(known.message)
         process.exit(EXIT_NO_RESTART)
       }
 
       const { waitAndOutputExistingSession } = await import('../wait-session.js')
-      await waitAndOutputExistingSession({
-        sessionId,
-        projectDirectory,
-      })
+      await waitAndOutputExistingSession({ sessionId })
 
       process.exit(0)
     } catch (error) {

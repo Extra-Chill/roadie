@@ -3,16 +3,24 @@
 // session completes (idle, latest turn finished naturally, no pending
 // permission) OR pauses for a user question. A session parked on a `question`
 // tool never completes on its own, so it is treated as done for automation.
+//
+// Everything is read from the session events the running bot persists, never
+// from an agent backend this process starts. The bot is the one running the
+// session: a second backend here cannot see a Pi session (Pi has no shared
+// server; a CLI that cannot run `pi` even routed Pi ids to OpenCode, #217),
+// and the persisted stream is the same normalized events for every backend.
 
-import type { AgentMessage } from './agent-backend/events.js'
-import { getAgentBackendProvider } from './agent-backend/registry.js'
+import type { AgentMessage, AgentSession } from './agent-backend/events.js'
+import type { AgentSessionMessage, AgentSessionOperations } from './agent-backend/types.js'
 import { parsePersistedEvents } from './session-handler/persisted-events.js'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
+  deriveLatestUnansweredQuestion,
   derivePendingPermissionRequests,
   isAssistantMessageNaturalCompletion,
+  isSessionBusy,
   type EventBufferEntry,
 } from './session-handler/event-stream-state.js'
 
@@ -49,19 +57,40 @@ export async function waitForSessionId({
   )
 }
 
+/** Where a session stands, judged from its persisted events alone. */
+export type PersistedSessionState = 'complete' | 'question' | 'running'
+
+export function persistedSessionState({
+  events,
+  sessionId,
+  waitStartedAtMs = 0,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  waitStartedAtMs?: number
+}): PersistedSessionState {
+  const busy = isSessionBusy({ events, sessionId })
+  // A session parked on a `question` tool stays busy and never completes on
+  // its own, so a live question counts as done for automation. Guard on busy:
+  // an orphaned question left after an abort (session idle) falls through to
+  // the normal completion checks.
+  if (busy && deriveLatestUnansweredQuestion({ events, sessionId })) return 'question'
+  if (busy) return 'running'
+  if (derivePendingPermissionRequests({ events, sessionId }).length > 0) return 'running'
+  const messages = persistedMessages({ events, sessionId }).map((entry) => entry.message)
+  return hasCompletedUserTurn({ messages, sessionId, waitStartedAtMs }) ? 'complete' : 'running'
+}
+
 /**
- * Poll the OpenCode SDK and persisted Roadie events until the session is idle,
- * its latest user turn completed naturally, and no permission prompt is pending
- * -- or until the session pauses on a user question (which never completes on
- * its own and is treated as done for automation).
+ * Poll the session events the bot persists until the session is idle, its
+ * latest user turn completed naturally, and no permission prompt is pending
+ * -- or until the session pauses on a user question.
  */
 export async function waitForSessionComplete({
-  projectDirectory,
   sessionId,
   timeoutMs = 30 * 60 * 1000,
   waitStartedAtMs = 0,
 }: {
-  projectDirectory: string
   sessionId: string
   timeoutMs?: number
   waitStartedAtMs?: number
@@ -70,62 +99,16 @@ export async function waitForSessionComplete({
   const startTime = Date.now()
   let completedSinceMs: number | null = null
 
-  const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
-  if (getBackend instanceof Error) {
-    throw new Error(
-      `Failed to connect to OpenCode server: ${getBackend.message}`,
-      {
-        cause: getBackend,
-      },
-    )
-  }
-
   while (Date.now() - startTime < timeoutMs) {
-    const statuses = await getBackend().sessions.status({
-      directory: projectDirectory,
-    })
-    if (statuses instanceof Error) {
-      throw new Error('Failed to check session status', { cause: statuses })
-    }
-    const sessionStatus = statuses[sessionId]
-    const isBusy = Boolean(sessionStatus && sessionStatus.state !== 'idle')
-
-    // A session parked on a `question` tool reports busy but will never complete
-    // on its own, so treat a live question as done for automation and stop
-    // waiting. Guard on `busy`: an orphaned question left after an abort
-    // (session idle) must fall through to the normal idle/completion checks
-    // instead of returning early.
-    if (isBusy) {
-      const questions = await getBackend().sessions.questions?.({ directory: projectDirectory })
-      const hasPendingQuestion = (questions instanceof Error ? [] : questions ?? []).some((request) => {
-        return request.sessionId === sessionId
-      })
-      if (hasPendingQuestion) {
-        waitLogger.log(`Session ${sessionId} is showing a user question; treating as complete`)
-        return
-      }
-    }
-
-    const messagesResult = await getBackend().sessions.messages({
-      sessionId,
-      directory: projectDirectory,
-    })
-    const messages = messagesResult instanceof Error ? [] : messagesResult.map((entry) => entry.message)
     const events = await loadPersistedSessionEvents({ sessionId })
-    const pendingPermissions = derivePendingPermissionRequests({
-      events,
-      sessionId,
-    })
-
-    const isIdle = !sessionStatus || sessionStatus.state === 'idle'
-    const hasPendingPermissions = pendingPermissions.length > 0
-    const hasCompletedTurn = hasCompletedUserTurn({
-      messages,
-      sessionId,
-      waitStartedAtMs,
-    })
-
-    if (isIdle && hasCompletedTurn && !hasPendingPermissions) {
+    const state = persistedSessionState({ events, sessionId, waitStartedAtMs })
+    if (state === 'question') {
+      waitLogger.log(`Session ${sessionId} is showing a user question; treating as complete`)
+      return
+    }
+    // Stable across one poll: the bot persists events debounced, so a single
+    // idle snapshot can precede the turn's last events.
+    if (state === 'complete') {
       completedSinceMs ??= Date.now()
       if (Date.now() - completedSinceMs >= pollIntervalMs) {
         waitLogger.log(`Session ${sessionId} completed`)
@@ -145,47 +128,88 @@ export async function waitForSessionComplete({
   )
 }
 
+/**
+ * The session's messages and parts, rebuilt from its persisted events: the
+ * latest version of each message and part, in first-seen order.
+ */
+export function persistedMessages({
+  events,
+  sessionId,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+}): AgentSessionMessage[] {
+  const messages = new Map<string, AgentSessionMessage>()
+  for (const { event } of events) {
+    if (event.type === 'message' && event.message.sessionId === sessionId) {
+      const existing = messages.get(event.message.id)
+      messages.set(event.message.id, { message: event.message, parts: existing?.parts ?? [] })
+    } else if (event.type === 'message.removed' && event.sessionId === sessionId) {
+      messages.delete(event.messageId)
+    } else if (event.type === 'part' && event.part.sessionId === sessionId) {
+      const entry = messages.get(event.part.messageId)
+      if (!entry) continue
+      const index = entry.parts.findIndex((part) => part.id === event.part.id)
+      if (index === -1) entry.parts.push(event.part)
+      else entry.parts[index] = event.part
+    } else if (event.type === 'part.removed' && event.sessionId === sessionId) {
+      const entry = messages.get(event.messageId)
+      if (entry) entry.parts = entry.parts.filter((part) => part.id !== event.partId)
+    }
+  }
+  return [...messages.values()]
+}
+
+/** A read-only session view over persisted events, enough for ShareMarkdown. */
+export function persistedSessionReader({
+  events,
+  sessionId,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+}): { sessions: Pick<AgentSessionOperations, 'get' | 'messages'> } {
+  let session: AgentSession | undefined
+  for (const { event } of events) {
+    if ((event.type === 'session.created' || event.type === 'session.updated') && event.session.id === sessionId) {
+      session = event.session
+    }
+  }
+  const messages = persistedMessages({ events, sessionId })
+  return {
+    sessions: {
+      get: async ({ sessionId: id }) => (id === sessionId ? session ?? { id, title: '' } : undefined),
+      messages: async ({ sessionId: id }) => (id === sessionId ? messages : []),
+    },
+  }
+}
+
 export async function waitAndOutputExistingSession({
   sessionId,
-  projectDirectory,
   completionTimeoutMs,
   waitStartedAtMs,
 }: {
   sessionId: string
-  projectDirectory: string
   completionTimeoutMs?: number
   waitStartedAtMs?: number
 }): Promise<void> {
   waitLogger.log(`Waiting for session ${sessionId} to complete...`)
   await waitForSessionComplete({
-    projectDirectory,
     sessionId,
     timeoutMs: completionTimeoutMs,
     waitStartedAtMs,
   })
 
-  await outputSessionMarkdown({ sessionId, projectDirectory })
+  await outputSessionMarkdown({ sessionId })
 }
 
 async function outputSessionMarkdown({
   sessionId,
-  projectDirectory,
 }: {
   sessionId: string
-  projectDirectory: string
 }): Promise<void> {
   waitLogger.log('Generating session output...')
-  const getBackend = await getAgentBackendProvider().initializeForDirectory(projectDirectory)
-  if (getBackend instanceof Error) {
-    throw new Error(
-      `Failed to connect to OpenCode server: ${getBackend.message}`,
-      {
-        cause: getBackend,
-      },
-    )
-  }
-
-  const markdown = new ShareMarkdown(getBackend())
+  const events = await loadPersistedSessionEvents({ sessionId })
+  const markdown = new ShareMarkdown(persistedSessionReader({ events, sessionId }))
   const result = await markdown.generate({ sessionID: sessionId })
   if (result instanceof Error) {
     throw new Error(`Failed to generate session markdown: ${result.message}`, {
@@ -196,7 +220,7 @@ async function outputSessionMarkdown({
   process.stdout.write(result)
 }
 
-async function loadPersistedSessionEvents({
+export async function loadPersistedSessionEvents({
   sessionId,
 }: {
   sessionId: string
@@ -256,13 +280,11 @@ function hasCompletedUserTurn({
  */
 export async function waitAndOutputSession({
   threadId,
-  projectDirectory,
   sessionIdTimeoutMs,
   completionTimeoutMs,
   waitStartedAtMs,
 }: {
   threadId: string
-  projectDirectory: string
   sessionIdTimeoutMs?: number
   completionTimeoutMs?: number
   waitStartedAtMs?: number
@@ -275,11 +297,10 @@ export async function waitAndOutputSession({
 
   waitLogger.log(`Waiting for session ${sessionId} to complete...`)
   await waitForSessionComplete({
-    projectDirectory,
     sessionId,
     timeoutMs: completionTimeoutMs,
     waitStartedAtMs,
   })
 
-  await outputSessionMarkdown({ sessionId, projectDirectory })
+  await outputSessionMarkdown({ sessionId })
 }
