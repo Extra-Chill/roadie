@@ -51,20 +51,6 @@ export type RoadieState = {
   // Read by: ThreadSessionRuntime.emitFooter().
   footerMentionsEnabled: boolean
 
-  // User-specified skill whitelist. When non-empty, only these skill names
-  // are injected into the model's system prompt (all others are hidden
-  // behind an opencode permission.skill deny-all rule). Mutually exclusive
-  // with disabledSkills — cli.ts enforces this at startup.
-  // Changes: set once at startup from --enable-skill CLI flag.
-  // Read by: opencode.ts when building opencode-config.json.
-  enabledSkills: string[]
-
-  // User-specified skill blacklist. Skills listed here are hidden from the
-  // model via opencode permission.skill deny rules. Mutually exclusive with
-  // enabledSkills — cli.ts enforces this at startup.
-  // Changes: set once at startup from --disable-skill CLI flag.
-  // Read by: opencode.ts when building opencode-config.json.
-  disabledSkills: string[]
 
   // Which mention types the bot is allowed to trigger in messages.
   // Maps directly to Discord's allowedMentions.parse array.
@@ -191,8 +177,6 @@ export const store = createStore<RoadieState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   footerMentionsEnabled: false,
-  enabledSkills: [],
-  disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
   restrictExternalDirectories: false,

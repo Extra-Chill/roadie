@@ -59,7 +59,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 - **Scheduled tasks.** Run a prompt at a future time or on a cron schedule with `roadie send --send-at`; manage them with `/tasks` or `roadie task list`. Sessions can also sleep and wake themselves later.
 - **Thread working directories.** `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree, and the thread keeps that folder across restarts. Creating and merging checkouts is left to your own tooling.
 - **Images and files** in both directions.
-- **Project commands, skills and MCP prompts** become slash commands (Pi's own, plus OpenCode-format `opencode.json` / `.opencode/` config; see [Agent backend](docs/agent-backend.md)). Switch agents with `/<name>-agent`.
+- **Project commands, skills and MCP prompts** become slash commands (Pi's own `.pi/prompts`, `.pi/skills` and `.agents/skills`; see [Agent backend](docs/agent-backend.md)). Switch agents with `/<name>-agent`.
 - **Shell commands.** Prefix a message with `!` to run it in the thread's working directory.
 
 ### How messages reach a busy session

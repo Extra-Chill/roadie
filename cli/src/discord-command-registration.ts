@@ -16,7 +16,6 @@ import {
   sanitizeAgentName,
   buildQuickAgentCommandDescription,
 } from './commands/agent.js'
-import { isSkillAllowed } from './skill-filter.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -490,17 +489,8 @@ export async function registerCommands({
     return (sourceOrder[a.source || ''] ?? 0) - (sourceOrder[b.source || ''] ?? 0)
   })
 
-  // Filter out skill commands disabled via --enable-skill / --disable-skill.
-  // This prevents disabled skills from consuming Discord's 100-command budget.
-  const { enabledSkills, disabledSkills } = store.getState()
-
   for (const cmd of sortedUserCommands) {
     if (SKIP_USER_COMMANDS.includes(cmd.name)) {
-      continue
-    }
-
-    // Skip skills that are denied by the skill filter flags
-    if (cmd.source === 'skill' && !isSkillAllowed({ name: cmd.name, enabledSkills, disabledSkills })) {
       continue
     }
 
