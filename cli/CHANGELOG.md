@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.7] - 2026-10-14
+
+### Fixed
+- strip Pi harness identity and docs index from Anthropic OAuth requests
+
 ## [0.65.6] - 2026-10-14
 
 ### Fixed
