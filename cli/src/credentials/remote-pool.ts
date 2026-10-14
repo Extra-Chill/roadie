@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
+  POOL_ADMIN_PATH,
   POOL_CATALOG_PATH,
   POOL_END_TURN_PATH,
   PROXY_KEY_HEADER,
@@ -26,24 +27,29 @@ import {
   type PoolCatalog,
 } from './messages-proxy.js'
 import { POOL_CLIENT_SCOPE_PATTERN } from './pool-clients.js'
+import type { PoolAccountAdded, PoolAccountView, PoolAccounts, PoolListing, PoolOAuthStart } from './pool-accounts.js'
 
 export type RemotePoolConfig = { url: string; key: string }
 type RelayFetch = (input: string, init?: RequestInit) => Promise<Response>
 
 /** The configured remote pool, undefined when this bot uses its local pool. */
-export function readRemotePoolConfig(env: NodeJS.ProcessEnv = process.env): RemotePoolConfig | undefined | Error {
+export function readRemotePoolConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  /** The key file variable: the bot's client key, or ROADIE_POOL_ADMIN_KEY_FILE for account management. */
+  keyVar: 'ROADIE_POOL_KEY_FILE' | 'ROADIE_POOL_ADMIN_KEY_FILE' = 'ROADIE_POOL_KEY_FILE',
+): RemotePoolConfig | undefined | Error {
   const url = env['ROADIE_POOL_URL']?.trim()
   if (!url) return undefined
   if (!/^https?:\/\/[^\s]+$/.test(url)) return new Error(`ROADIE_POOL_URL must be an http(s) URL, got "${url}"`)
-  const keyFile = env['ROADIE_POOL_KEY_FILE']?.trim()
-  if (!keyFile) return new Error('ROADIE_POOL_URL is set but ROADIE_POOL_KEY_FILE is not: the bot needs its pool client key')
+  const keyFile = env[keyVar]?.trim()
+  if (!keyFile) return new Error(`ROADIE_POOL_URL is set but ${keyVar} is not: the bot needs its pool client key`)
   let key: string
   try {
     key = fs.readFileSync(keyFile, 'utf8').trim()
   } catch (cause) {
-    return new Error(`cannot read ROADIE_POOL_KEY_FILE ${keyFile}`, { cause })
+    return new Error(`cannot read ${keyVar} ${keyFile}`, { cause })
   }
-  if (!key) return new Error(`ROADIE_POOL_KEY_FILE ${keyFile} is empty`)
+  if (!key) return new Error(`${keyVar} ${keyFile} is empty`)
   return { url: url.replace(/\/+$/, ''), key }
 }
 
@@ -147,5 +153,44 @@ export async function startRemotePoolRelay({
         .catch(() => {})
     },
     close: () => new Promise((resolve) => server.close(() => resolve())),
+  }
+}
+
+/**
+ * PoolAccounts over a pool host's admin API (credentials/pool-admin.ts).
+ * `key` is an admin client key (ROADIE_POOL_ADMIN_KEY_FILE). Host errors
+ * come back as Errors carrying the host's message.
+ */
+export function remotePoolAccounts({ url, key, fetchImpl = fetch }: RemotePoolConfig & { fetchImpl?: RelayFetch }): PoolAccounts {
+  async function call<T>(method: string, route: string, body?: Record<string, unknown>): Promise<T | Error> {
+    const response = await fetchImpl(`${url}${POOL_ADMIN_PATH}${route}`, {
+      method,
+      headers: { [PROXY_KEY_HEADER]: key, ...(body && { 'content-type': 'application/json' }) },
+      ...(body && { body: JSON.stringify(body) }),
+    }).catch((cause: unknown) => new Error(`pool host ${url} is unreachable`, { cause }))
+    if (response instanceof Error) return response
+    const parsed = (await response.json().catch(() => undefined)) as { error?: { message?: unknown } } | undefined
+    if (!response.ok) {
+      const message = typeof parsed?.error?.message === 'string' ? parsed.error.message : `HTTP ${response.status}`
+      return new Error(`pool host ${url}: ${message}`)
+    }
+    if (parsed === undefined) return new Error(`pool host ${url} returned an invalid response`)
+    return parsed as T
+  }
+  const query = (poolId: string) => `pool=${encodeURIComponent(poolId)}`
+  return {
+    location: url,
+    list: ({ poolId }) => call<PoolListing>('GET', `accounts?${query(poolId)}`),
+    addApiKey: ({ poolId, ...rest }) => call<PoolAccountAdded>('POST', 'accounts/api-key', { pool: poolId, ...rest }),
+    startOAuth: ({ poolId, ...rest }) => call<PoolOAuthStart>('POST', 'oauth/start', { pool: poolId, ...rest }),
+    completeOAuth: ({ poolId, ...rest }) => call<PoolAccountAdded>('POST', 'oauth/complete', { pool: poolId, ...rest }),
+    async remove({ poolId, accountId }) {
+      const result = await call<{ removed: boolean }>('DELETE', `accounts/${encodeURIComponent(accountId)}?${query(poolId)}`)
+      return result instanceof Error ? result : result.removed === true
+    },
+    async move({ poolId, accountId, position }) {
+      const result = await call<{ accounts: PoolAccountView[] }>('POST', 'accounts/reorder', { pool: poolId, accountId, position })
+      return result instanceof Error ? result : result.accounts
+    },
   }
 }

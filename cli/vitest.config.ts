@@ -18,6 +18,9 @@ export default defineConfig({
     hookTimeout: 5_000,
     env: {
       ROADIE_VITEST: '1',
+      // A developer's remote pool must not leak into tests: an empty value
+      // means "no remote pool" (credentials/pool-accounts.ts).
+      ROADIE_POOL_URL: '',
     },
     // Use forked workers so e2e suites that mutate process.env (ROADIE_DB_URL,
     // ROADIE_LOCK_PORT, etc.) do not race across files. Thread workers share
