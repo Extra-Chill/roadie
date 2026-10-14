@@ -73,7 +73,8 @@ Invite the bot to configured channels. Required scopes include `chat:write`,
 `channels:read`, `channels:history`, `reactions:write` (pending-message
 marker; without it the marker is skipped and logged), `groups:read`/`groups:history` for private
 channels, `users:read`, `app_mentions:read`, `commands`, `files:read`, and
-`files:write`. Slack's thread-history token/scope eligibility must be verified
+`files:write`. The first-contact welcome DM (and Connect clicks on it) also
+needs `im:write` to open the direct message. Slack's thread-history token/scope eligibility must be verified
 for the installed app when using `conversations.replies`.
 
 The receiver verifies the original bytes and five-minute timestamp window,
@@ -126,6 +127,20 @@ when the value is omitted. An explicit thread timestamp also works:
 ```
 
 Project-defined backend commands can be invoked through `/roadie <command>`.
+
+Personal commands need no thread and answer only the speaker (ephemeral):
+
+- `/roadie connect` lists the per-person MCP servers the identity hook names
+  for you, connected or not, with Connect and Disconnect buttons. Connect runs
+  the OAuth device sign-in; the link and code replace that ephemeral message
+  (through Slack's `response_url`) and the message updates again when the
+  sign-in finishes. The person is always the clicking user, never data on the
+  button.
+- `/roadie start` shows the welcome again.
+
+Newly admitted people get the welcome once as a DM, with Connect buttons for
+servers they have not connected yet; see `welcome_message` in the README.
+A Connect click on that DM continues in the same DM.
 
 ## CLI and automation
 

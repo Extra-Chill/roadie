@@ -103,6 +103,62 @@ export class SlackApi {
     return result instanceof Error ? result : undefined
   }
 
+  /** A message only `user` sees in `channel`. Slack returns no editable ts. */
+  async postEphemeral(input: { channel: string; user: string; text: string; blocks?: unknown[] }) {
+    const result = await this.call(
+      'chat.postEphemeral',
+      {
+        channel: input.channel,
+        user: input.user,
+        text: slackText(input.text),
+        ...(input.blocks ? { blocks: input.blocks } : {}),
+      },
+      z.object({ ok: z.literal(true) }),
+    )
+    return result instanceof Error ? result : undefined
+  }
+
+  /** The bot's direct-message channel with one user. */
+  async openDm(user: string) {
+    const result = await this.call(
+      'conversations.open',
+      { users: user },
+      z.object({ channel: z.object({ id: z.string() }) }),
+    )
+    return result instanceof Error ? result : result.channel.id
+  }
+
+  /**
+   * Answer through an interaction's `response_url` (slash commands and Block
+   * Kit actions). This is how an ephemeral message is replaced: Slack has no
+   * `chat.update` for ephemeral messages.
+   */
+  async respond(input: {
+    responseUrl: string
+    text: string
+    blocks?: unknown[]
+    replaceOriginal?: boolean
+  }): Promise<void | SlackApiError> {
+    if (!isTrustedResponseUrl(input.responseUrl, this.options.apiUrl))
+      return new SlackApiError({ operation: 'respond', detail: 'response URL is not a Slack hooks origin' })
+    const response = await fetch(input.responseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        response_type: 'ephemeral',
+        replace_original: input.replaceOriginal ?? false,
+        text: slackText(input.text),
+        ...(input.blocks ? { blocks: input.blocks } : {}),
+      }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+    }).catch((cause) => new SlackApiError({ operation: 'respond', detail: 'request failed', cause }))
+    if (response instanceof Error) return response
+    await response.body?.cancel().catch(() => undefined)
+    if (!response.ok) return new SlackApiError({ operation: 'respond', detail: `HTTP ${response.status}` })
+    return undefined
+  }
+
   async read(input: { channel: string; threadTs: string; ts: string }) {
     const result = await this.call(
       'conversations.replies',
@@ -207,6 +263,15 @@ export class SlackApi {
     )
     return completed instanceof Error ? completed : undefined
   }
+}
+
+/** Slack's response URLs live on hooks.slack.com (or the local API in tests). */
+export function isTrustedResponseUrl(value: string, apiUrl?: string): boolean {
+  const url = URL.canParse(value) ? new URL(value) : null
+  if (!url) return false
+  if (url.protocol === 'https:' && (url.hostname === 'hooks.slack.com' || url.hostname === 'hooks.slack-gov.com'))
+    return true
+  return Boolean(apiUrl && URL.canParse(apiUrl) && new URL(apiUrl).origin === url.origin)
 }
 
 /** Convert only prose; fenced and inline code are left byte-for-byte intact. */
