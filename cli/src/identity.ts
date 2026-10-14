@@ -125,10 +125,17 @@ const LOOKUP_FAILED: Person = Object.freeze({ ...DENIED, lookupFailed: true })
 // transient failure clears quickly.
 const FAILURE_TTL_SECONDS = 10
 
+// How long the last successful lookup may stand in for a failed one. A
+// transient failure (a slow host lookup timing out) keeps a recently verified
+// person working instead of locking them out; revocations land on the next
+// successful lookup.
+const STALE_IF_ERROR_SECONDS = MAX_TTL_SECONDS
+
 type CacheEntry = { person: Person; expiresAt: number }
 
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<Person>>()
+const lastKnown = new Map<string, { person: Person; resolvedAt: number }>()
 
 let hookCommandOverride: string | null | undefined
 
@@ -137,6 +144,7 @@ export function setIdentityHookCommand(command: string | null | undefined) {
   hookCommandOverride = command
   cache.clear()
   inflight.clear()
+  lastKnown.clear()
 }
 
 export function getIdentityHookCommand(): string | undefined {
@@ -158,9 +166,11 @@ function cacheKey(actor: IdentityActor): string {
 export function clearIdentityCache(actor?: IdentityActor) {
   if (actor) {
     cache.delete(cacheKey(actor))
+    lastKnown.delete(cacheKey(actor))
     return
   }
   cache.clear()
+  lastKnown.clear()
 }
 
 /**
@@ -205,19 +215,29 @@ export async function resolvePerson({
     .then(async ({ person, ttlSeconds }) => {
       // Plugins refine or supply the person. With an identity layer in place,
       // an actor nobody vouches for is denied (fail closed).
-      // A filter that throws leaves nobody vouching for the actor: deny, but
-      // as a lookup failure with the short failure TTL, never the full TTL
-      // that would lock an authorized person out after one slow lookup.
+      // A failed hook or a throwing filter leaves nobody vouching for the
+      // actor: fall back to the last successful lookup, else deny as a lookup
+      // failure. Either way only for the short failure TTL, so the next
+      // message retries.
       let failed = false
       const filtered = (await applyFiltersAsync('person', person, { actor, context }, {
         onError: () => { failed = true },
       })) ?? DENIED
-      const resolved = failed ? LOOKUP_FAILED : filtered
-      const ttl = failed ? FAILURE_TTL_SECONDS : ttlSeconds
-      if (ttl > 0) {
-        cache.set(key, { person: resolved, expiresAt: Date.now() + ttl * 1000 })
+      const now = Date.now()
+      if (failed || filtered.lookupFailed) {
+        const known = lastKnown.get(key)
+        const stale = known && now - known.resolvedAt <= STALE_IF_ERROR_SECONDS * 1000 ? known.person : undefined
+        if (stale) logger.warn(`[IDENTITY] lookup failed for ${key}; using the last successful lookup`)
+        const resolved = stale ?? LOOKUP_FAILED
+        cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
+        return resolved
       }
-      return resolved
+      // A hook that disables caching (ttl_seconds 0) gets no stale fallback.
+      if (ttlSeconds > 0) {
+        cache.set(key, { person: filtered, expiresAt: now + ttlSeconds * 1000 })
+        lastKnown.set(key, { person: filtered, resolvedAt: now })
+      }
+      return filtered
     })
     .finally(() => {
       inflight.delete(key)

@@ -120,6 +120,37 @@ describe('identity hook', () => {
     }
   })
 
+  test('a failed lookup falls back to the last successful lookup', async () => {
+    const actor = { platform: 'discord', id: 'known-then-flaky' }
+    let fail = false
+    const removeFilter = addFilter('person', () => {
+      if (fail) throw new Error('WordPress context lookup failed')
+      return { allowed: true, personId: 'wp:1', capabilities: new Set(['sessions'] as const), permissions: [] }
+    })
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      expect((await resolvePerson({ actor, context: { guildId: 'guild-1' } }))?.allowed).toBe(true)
+
+      // The fresh entry expires; the refresh fails, the verified person stands.
+      fail = true
+      clock.mockReturnValue(now + 301_000)
+      const stale = await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+      expect(stale?.allowed).toBe(true)
+      expect(stale?.personId).toBe('wp:1')
+
+      // Past the stale window, a failure is a lookup failure again.
+      clock.mockReturnValue(now + 3_700_000)
+      const failed = await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+      expect(failed?.allowed).toBe(false)
+      expect(failed?.lookupFailed).toBe(true)
+    } finally {
+      clock.mockRestore()
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
   test('no hook configured: resolvePerson returns null', async () => {
     setIdentityHookCommand(null)
     expect(isIdentityHookConfigured()).toBe(false)
