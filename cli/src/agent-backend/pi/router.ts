@@ -214,6 +214,20 @@ function mergedEvents(
   })()
 }
 
+/** Pi owns its sessions; every other session id belongs to the fallback. */
+function sessionBackendId({
+  sessionId,
+  fallback,
+  pi,
+}: {
+  sessionId: string
+  fallback: AgentBackendProvider
+  pi: PiBackendProvider
+}): string {
+  if (pi.owns(sessionId)) return pi.id
+  return fallback.sessionBackendId?.(sessionId) ?? fallback.id
+}
+
 export function withPiChannels({
   fallback,
   pi,
@@ -225,6 +239,7 @@ export function withPiChannels({
 }): AgentBackendProvider {
   return {
     id: `${fallback.id}+pi`,
+    sessionBackendId: (sessionId) => sessionBackendId({ sessionId, fallback, pi }),
     getBackend(directory) {
       return composite(fallback.getBackend(directory), pi, false)
     },
@@ -264,6 +279,7 @@ export function withPiDefault({
 }): AgentBackendProvider {
   return {
     id: `pi+${fallback.id}`,
+    sessionBackendId: (sessionId) => sessionBackendId({ sessionId, fallback, pi }),
     getBackend(directory) {
       return composite(fallback.getBackend(directory), pi, true)
     },

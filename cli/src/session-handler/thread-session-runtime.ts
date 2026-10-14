@@ -41,7 +41,7 @@ import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import { agentBackendLabel, getAgentBackendProvider, getSessionBackendId } from '../agent-backend/registry.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
@@ -3726,7 +3726,7 @@ export class ThreadSessionRuntime {
           }
           const previous = history.findLast((entry) => entry.message.role === 'user')?.message
           const context = getOpencodePromptContext({
-            platform: this.chat.platform, sessionId: existingSessionId, threadId: this.threadId,
+            platform: this.chat.platform, sessionId: existingSessionId, backend: agentBackendLabel(getSessionBackendId(existingSessionId)), threadId: this.threadId,
             username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
             sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
             repliedMessage: input.repliedMessage,
@@ -3944,6 +3944,7 @@ export class ThreadSessionRuntime {
       const syntheticContext = getOpencodePromptContext({
         platform: this.chat.platform,
         sessionId: session.id,
+        backend: agentBackendLabel(getSessionBackendId(session.id)),
         threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
@@ -4012,7 +4013,7 @@ export class ThreadSessionRuntime {
       }
 
       logger.log(
-        `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+        `[INGRESS] promptAsync accepted by ${getSessionBackendId(session.id)} queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
       // noReply messages don't trigger the agent loop, so don't mark as busy
@@ -4981,6 +4982,7 @@ export class ThreadSessionRuntime {
     const syntheticContext = getOpencodePromptContext({
       platform: this.chat.platform,
       sessionId: session.id,
+      backend: agentBackendLabel(getSessionBackendId(session.id)),
       threadId: this.thread.id,
       username: input.username,
       userId: input.userId,
@@ -5020,6 +5022,7 @@ export class ThreadSessionRuntime {
       const discordTag = getOpencodePromptContext({
         platform: this.chat.platform,
         sessionId: session.id,
+        backend: agentBackendLabel(getSessionBackendId(session.id)),
         threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
@@ -5122,7 +5125,7 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(
-      `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+      `[DISPATCH] promptAsync accepted by ${getSessionBackendId(session.id)} queue sessionId=${session.id} threadId=${this.threadId}`,
     )
     return true
   }

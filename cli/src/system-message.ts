@@ -161,8 +161,18 @@ export async function copySessionSystemPrompt({
   return true
 }
 
-const SESSION_ID_LINE_PREFIX = 'Your current OpenCode session ID is: '
-const PARENT_SESSION_ID_LINE_PREFIX = 'Your parent OpenCode session ID is: '
+// Backend-neutral: the same prompt serves OpenCode and Pi sessions; the
+// per-turn reminder names the backend. Prompts pinned before #222 use the
+// legacy OpenCode wording and stay recognized.
+const SESSION_ID_LINE_PREFIX = 'Your current session ID is: '
+const PARENT_SESSION_ID_LINE_PREFIX = 'Your parent session ID is: '
+const SESSION_ID_LINE_PREFIXES = [SESSION_ID_LINE_PREFIX, 'Your current OpenCode session ID is: ']
+const PARENT_SESSION_ID_LINE_PREFIXES = [PARENT_SESSION_ID_LINE_PREFIX, 'Your parent OpenCode session ID is: ']
+
+function sessionIdFromLine(line: string, prefixes: string[]): string | undefined {
+  const prefix = prefixes.find((candidate) => line.startsWith(candidate))
+  return prefix ? line.slice(prefix.length) : undefined
+}
 
 function getParentSessionInstructions(parentSessionId: string) {
   return `${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}\nYou can send a message back to the parent session with:\nroadie send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.`
@@ -176,7 +186,7 @@ export function systemPromptHasParentSession({
   system: string
   parentSessionId: string
 }) {
-  return system.split('\n').includes(`${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}`)
+  return system.split('\n').some((line) => sessionIdFromLine(line, PARENT_SESSION_ID_LINE_PREFIXES) === parentSessionId)
 }
 
 /** False when a fork reuses the source session's pinned system prompt. */
@@ -187,7 +197,7 @@ export function isSystemPromptForSession({
   system: string
   sessionId: string
 }) {
-  return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
+  return system.split('\n').some((line) => sessionIdFromLine(line, SESSION_ID_LINE_PREFIXES) === sessionId)
 }
 
 /**
@@ -202,7 +212,8 @@ export function systemPromptNamesOtherSession({
   sessionId: string
 }) {
   return system.split('\n').some((line) => {
-    return line.startsWith(SESSION_ID_LINE_PREFIX) && line !== `${SESSION_ID_LINE_PREFIX}${sessionId}`
+    const named = sessionIdFromLine(line, SESSION_ID_LINE_PREFIXES)
+    return named !== undefined && named !== sessionId
   })
 }
 
@@ -274,7 +285,7 @@ export type ThreadStartMarker = {
    */
   injectionGuardPatterns?: string[]
   /**
-   * OpenCode session ID of the parent session that spawned this thread via
+   * Session ID of the parent session that spawned this thread via
    * `roadie send --parent-session`. Exposed in the child system message so the
     * child can message the parent only when the user explicitly asks.
     */
@@ -364,6 +375,7 @@ function formatWorkingDirectoryReminder(dir: WorkingDirectoryInfo): string {
 export function getOpencodePromptContext({
   platform = 'discord',
   sessionId,
+  backend,
   threadId,
   username,
   userId,
@@ -380,6 +392,8 @@ export function getOpencodePromptContext({
 }: {
   platform?: string
   sessionId?: string
+  /** Display name of the agent backend running this session (e.g. "Pi"). */
+  backend?: string
   threadId?: string
   /** Set only when the pinned system prompt does not name this parent yet. */
   parentSessionId?: string
@@ -416,8 +430,9 @@ export function getOpencodePromptContext({
   ].join('')
   const identityLines = [
     ...(sessionId
-      ? [`Your current OpenCode session ID is: ${sessionId}`]
+      ? [`${SESSION_ID_LINE_PREFIX}${sessionId}`]
       : []),
+    ...(backend ? [`Your agent backend is: ${backend}`] : []),
     ...(threadId
       ? [`Your current ${platform === 'discord' ? 'Discord' : 'Slack'} thread ID is: ${threadId}`]
       : []),
@@ -704,7 +719,7 @@ Send a follow-up prompt to an existing thread instead of creating a new one:
 
 roadie send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
 
-Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists in the local SQLite database and OpenCode server on the computer that created it, so \`roadie send --session\` and \`roadie session read\` fail on another computer. Use \`--session\` only when you have just the OpenCode session ID and it was created on this machine:
+Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists in the local SQLite database and agent backend on the computer that created it, so \`roadie send --session\` and \`roadie session read\` fail on another computer. Use \`--session\` only when you have just the session ID and it was created on this machine:
 
 roadie send --session <session_id> --prompt 'follow-up prompt' --agent <current_agent>
 

@@ -147,6 +147,7 @@ describe('withPiDefault', () => {
   /** A PiBackendProvider stand-in: `owns` decides routing, nothing spawns. */
   function fakePi(calls: string[]): PiBackendProvider {
     return {
+      id: 'pi',
       owns: (sessionId: string) => sessionId.startsWith('pi_'),
       getBackend: () => ({
         sessions: {
@@ -209,6 +210,17 @@ describe('withPiDefault', () => {
     expect(await backend.catalog.agents({})).toEqual([{ name: 'pi-agent', mode: 'primary' }])
     expect(await backend.sessions.create({ directory: '/p' })).toEqual(PI_SESSION)
     expect(calls).toEqual(['pi.create'])
+  })
+
+  test('names the backend that runs each session without starting the fallback', () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: fakePi(calls) })
+    expect(provider.sessionBackendId?.('pi_new')).toBe('pi')
+    expect(provider.sessionBackendId?.('ses_legacy')).toBe('fake-oc')
+    const channels = withPiChannels({ fallback: lazyFallback(calls), pi: fakePi(calls), channels: new Set() })
+    expect(channels.sessionBackendId?.('pi_new')).toBe('pi')
+    expect(channels.sessionBackendId?.('ses_legacy')).toBe('fake-oc')
+    expect(calls).toEqual([])
   })
 
   test('a session id Pi does not own routes to the fallback, starting it on first use', async () => {
