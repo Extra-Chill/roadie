@@ -13,6 +13,8 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { toOpenCodeBackend } from './opencode-sessions.js'
 import { applyFilters, applyFiltersAsync } from '../hooks.js'
 import { openCodeBackendProvider } from './opencode.js'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
@@ -69,7 +71,31 @@ export function setPiPool(pool: PiPoolHandle & { agentDir: string }): void {
 
 type PiPoolHandle = NonNullable<ConstructorParameters<typeof PiBackendProvider>[0]['pool']>
 
+/**
+ * Pi's own default model, `defaultProvider`/`defaultModel` in the agent dir's
+ * settings.json, as "provider/model". Used when ROADIE_PI_MODEL is unset, so
+ * every Roadie path that needs an explicit model (titles, the catalog default,
+ * `config()`) agrees with the model Pi itself starts sessions on.
+ */
+export function piSettingsDefaultModel(agentDir: string | undefined): string | undefined {
+  if (!agentDir) return undefined
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(agentDir, 'settings.json'), 'utf8')) as Record<string, unknown>
+    const provider = settings['defaultProvider']
+    const model = settings['defaultModel']
+    return typeof provider === 'string' && provider && typeof model === 'string' && model ? `${provider}/${model}` : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The agent dir Pi reads: the pools' when they run, else PI_CODING_AGENT_DIR, else Pi's default. */
+function piAgentDir(): string | undefined {
+  return piPool?.agentDir || process.env['PI_CODING_AGENT_DIR'] || (os.homedir() ? path.join(os.homedir(), '.pi', 'agent') : undefined)
+}
+
 function buildPiProvider(): PiBackendProvider {
+  const model = process.env['ROADIE_PI_MODEL'] || piSettingsDefaultModel(piAgentDir())
   // Opt-in shell isolation (--isolate-shells): Pi's bash tool must go through
   // the same wrapper as OpenCode's, and Pi only takes a shell through
   // `shellPath` in a Roadie-owned agent dir (the pools'). Without that dir the
@@ -87,7 +113,7 @@ function buildPiProvider(): PiBackendProvider {
     shellEnvTemplates: store.getState().shellEnvTemplates,
     // Same per-session injection guard files the OpenCode plugin reads.
     injectionGuardDir: path.join(getDataDir(), 'injection-guard'),
-    ...(process.env['ROADIE_PI_MODEL'] && { model: process.env['ROADIE_PI_MODEL'] }),
+    ...(model && { model }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
     ...(isolateShellsUser && {
