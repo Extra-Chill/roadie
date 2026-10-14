@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.1] - 2026-10-14
+
+### Changed
+- run the queue e2e suites on Pi with a scripted model server
+
 ## [0.65.0] - 2026-10-14
 
 ### Added
