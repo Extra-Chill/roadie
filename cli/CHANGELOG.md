@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.67.2] - 2026-10-14
+
+### Changed
+- assert every queued thread message gets its own reply
+
 ## [0.67.1] - 2026-10-14
 
 ### Fixed
