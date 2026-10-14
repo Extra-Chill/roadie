@@ -29,9 +29,10 @@ import { Readable } from 'node:stream'
 import { markCooldown, resolveCandidates, type PoolCandidate } from './router.js'
 import { markUsed, readPoolAccounts, readPoolState, type ApiPoolAccount } from './store.js'
 import { CODEX_RESPONSES_URL, codexAccountId } from './adapters/openai-codex-oauth.js'
-import { setSessionRoute } from './routes.js'
+import { clearSessionRoute, setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
-import { poolClientSessionId, resolvePoolClient } from './pool-clients.js'
+import { POOL_CLIENT_SCOPE_PATTERN, poolClientSessionId, resolvePoolClient } from './pool-clients.js'
+import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations } from '../agent-backend/pi/pool.js'
 import { resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 import {
   cooldownUntilFromRetryAfter,
@@ -44,6 +45,23 @@ import {
 
 export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 export const PROXY_KEY_HEADER = 'x-roadie-key'
+/** Optional client session scope (#226): per-session route pins for a remote bot. */
+export const PROXY_SESSION_HEADER = 'x-roadie-session'
+/** Pool catalog for registered clients: the rotations and models their pools serve. */
+export const POOL_CATALOG_PATH = '/roadie/pool/catalog'
+/** End a client session's turn: release its route pin. */
+export const POOL_END_TURN_PATH = '/roadie/pool/end-turn'
+
+/** What a client's pools can serve, per wire format; a remote bot writes its Pi models from it. */
+export type PoolCatalog = { rotations: string[]; openaiRotations: string[]; codexModels: string[] }
+
+export function poolCatalog({ dataDir, poolIds }: { dataDir: string; poolIds: string[] }): PoolCatalog {
+  return {
+    rotations: anthropicRotations({ dataDir, poolIds }),
+    openaiRotations: openaiCompatRotations({ dataDir, poolIds }),
+    codexModels: hasCodexAccounts({ dataDir, poolIds }) ? DEFAULT_CODEX_MODELS : [],
+  }
+}
 /** Pool provider id for ChatGPT (Codex) subscription accounts. */
 export const CODEX_PROVIDER = 'openai-codex'
 /** Route-pin rotation name for Codex: accounts rotate, the model is the client's. */
@@ -65,7 +83,7 @@ function errorResponse(res: http.ServerResponse, status: number, message: string
   res.end(JSON.stringify({ type: 'error', error: { type: status === 429 ? 'rate_limit_error' : 'authentication_error', message } }))
 }
 
-async function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
+export async function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
   return Buffer.concat(chunks)
@@ -91,7 +109,7 @@ function forwardHeaders(req: http.IncomingMessage): Headers {
   return headers
 }
 
-async function pipeResponse(upstream: Response, res: http.ServerResponse) {
+export async function pipeResponse(upstream: Response, res: http.ServerResponse) {
   const headers: Record<string, string> = {}
   upstream.headers.forEach((value, name) => {
     if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(name)) headers[name] = value
@@ -152,21 +170,50 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
    * (Pi channels) take their pools from the session; registered client keys
    * (#171) carry their own pools and a stable `client:<name>` session id.
    */
-  async function authorize(req: http.IncomingMessage): Promise<{ sessionId: string; poolIds: string[] } | undefined> {
+  async function authorize(req: http.IncomingMessage): Promise<{ sessionId: string; poolIds: string[]; client: boolean } | undefined> {
     const key = req.headers[PROXY_KEY_HEADER]
     if (typeof key !== 'string' || key === '') return undefined
     const sessionId = keys.get(key)?.()
     if (sessionId) {
       const poolHeader = await options.resolvePools(sessionId)
-      return { sessionId, poolIds: poolHeader instanceof Error ? [] : parsePoolListHeader(poolHeader) }
+      return { sessionId, poolIds: poolHeader instanceof Error ? [] : parsePoolListHeader(poolHeader), client: false }
     }
     const client = resolvePoolClient({ dataDir: options.dataDir, key })
     if (!client) return undefined
-    return { sessionId: poolClientSessionId(client.name), poolIds: client.pools }
+    // A malformed scope is ignored rather than trusted: it falls back to the
+    // client's shared route, never to another client's.
+    const rawScope = req.headers[PROXY_SESSION_HEADER]
+    const scope = typeof rawScope === 'string' && POOL_CLIENT_SCOPE_PATTERN.test(rawScope) ? rawScope : undefined
+    return { sessionId: poolClientSessionId(client.name, scope), poolIds: client.pools, client: true }
+  }
+
+  function json(res: http.ServerResponse, status: number, body: unknown) {
+    res.writeHead(status, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(body))
   }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const pathname = req.url?.split('?')[0] ?? ''
+    if (pathname === POOL_CATALOG_PATH || pathname === POOL_END_TURN_PATH) {
+      // Pool-management endpoints are for registered clients only; a Pi
+      // process's session key has no business with them.
+      const authorized = await authorize(req)
+      if (!authorized?.client) {
+        errorResponse(res, 401, 'unknown or missing roadie client key')
+        return
+      }
+      if (pathname === POOL_CATALOG_PATH && req.method === 'GET') {
+        json(res, 200, poolCatalog({ dataDir: options.dataDir, poolIds: authorized.poolIds }))
+        return
+      }
+      if (pathname === POOL_END_TURN_PATH && req.method === 'POST') {
+        await clearSessionRoute({ dataDir: options.dataDir, sessionId: authorized.sessionId }).catch(() => {})
+        json(res, 200, { ok: true })
+        return
+      }
+      errorResponse(res, 405, 'method not allowed')
+      return
+    }
     if (req.method === 'POST' && pathname.endsWith('/codex/responses')) {
       await handleCodex(req, res)
       return

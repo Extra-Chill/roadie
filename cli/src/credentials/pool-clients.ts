@@ -104,6 +104,14 @@ export function resolvePoolClient({ dataDir, key }: { dataDir: string; key: stri
   })
 }
 
-export function poolClientSessionId(name: string): string {
-  return `${POOL_CLIENT_SESSION_PREFIX}${name}`
+/** A client-chosen session scope (#226): a remote bot passes its own session id. */
+export const POOL_CLIENT_SCOPE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/
+
+/**
+ * The route-pin session id for a client request. Unscoped requests share one
+ * route per client; a scoped request (a remote Roadie bot naming its session)
+ * gets its own, so each bot session keeps turn affinity independently.
+ */
+export function poolClientSessionId(name: string, scope?: string): string {
+  return scope ? `${POOL_CLIENT_SESSION_PREFIX}${name}/${scope}` : `${POOL_CLIENT_SESSION_PREFIX}${name}`
 }
