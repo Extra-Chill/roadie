@@ -64,7 +64,7 @@ describe('readRemotePoolConfig', () => {
 describe('pool host client endpoints', () => {
   test('the catalog lists what the client pools serve, for client keys only', async () => {
     const { key, host } = await poolHost()
-    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: ['claude-best'], openaiRotations: [], codexModels: [] })
+    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: ['claude-best'] })
     expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key: 'wrong' } })).toBeInstanceOf(Error)
     // A Pi process's session key is not a client key.
     const sessionKey = host.issueKey(() => 'sess')

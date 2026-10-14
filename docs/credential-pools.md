@@ -76,30 +76,33 @@ tradeoffs:
 
 ## The pool models
 
-With pools on, Roadie writes pool providers into Pi's agent directory
-(`<dataDir>/pi-agent` unless `ROADIE_PI_AGENT_DIR` is set), served by a
-loopback proxy in the bot process. Pi never sees a credential: each Pi process
-gets its own key, and the proxy maps it to the session and swaps in the pool
-account's real credentials.
+With pools on, Roadie writes one pool provider, `roadie`, into Pi's agent
+directory (`<dataDir>/pi-agent` unless `ROADIE_PI_AGENT_DIR` is set), served
+by a loopback proxy in the bot process. Pi never sees a credential: each Pi
+process gets its own key, and the proxy maps it to the session and swaps in
+the pool account's real credentials.
 
-- `roadie/<rotation>` — rotations with an `anthropic/` entry (Anthropic
-  Messages wire).
-- `roadie-openai/<rotation>` — rotations with an API-key provider entry
-  (OpenAI-compatible chat completions).
-- `roadie-codex/<model>` — ChatGPT (Codex) subscription accounts, which rotate
-  across accounts rather than through rotations.
+Each named rotation is one model, `roadie/<rotation>`, selectable with
+`/model`. A rotation is an ordered list of `provider/model` entries tried top
+to bottom, and it may mix providers freely. Pi speaks Anthropic Messages to the
+proxy; the proxy serves each entry in its own wire format:
 
-Each named rotation (for example `roadie/default`) is selectable with
-`/model`. A single Pi model speaks one wire format, so a rotation that mixes
-formats is listed under both providers and each falls through only among its
-own candidates. A rotation is an ordered list of
-`provider/model` entries tried top to bottom; a 429 rate limit cools the
-account down (honoring `retry-after`, else 60 seconds) and the next candidate
-answers. Set rotations with `roadie credentials rotation set <name> <provider/model> ...`.
-A rotation may mix providers: `anthropic/claude-sonnet-5-5` followed by
-`zai-coding-plan/glm-5.3-flash` is fine (exposed as both `roadie/<name>` and
-`roadie-openai/<name>`), and a z.ai key is never sent to any
-other provider.
+- `anthropic/*`: forwarded as Anthropic Messages (OAuth shaping, betas).
+- API-key providers (models.dev catalog providers like z.ai, or an account's
+  `--base-url`): translated to OpenAI-compatible chat completions.
+- `openai/*` on a ChatGPT subscription: translated to Codex Responses.
+
+A candidate that fails before its answer starts (a 429, an auth or quota
+failure, a 5xx, a network error) falls through to the next. A 429 also cools
+the account down (honoring `retry-after`, else 60 seconds). Other errors, such
+as a 400 for a malformed request, go back to the client. Set rotations with
+`roadie credentials rotation set <name> <provider/model> ...`. For example,
+`zai-coding-plan/glm-5.3-flash opencode-go/glm-5.3-flash openai/gpt-6-luna
+anthropic/claude-sonnet-5-5` tries each in turn behind `roadie/<name>`. A key
+is only ever sent to its own provider.
+
+Translated thinking comes back unsigned, so Pi replays it to the next request
+as plain text, the same way it treats another model's thinking.
 
 ## Managing accounts
 
@@ -219,9 +222,10 @@ sends them (system prefix, beta headers, tool-name round-trip).
 
 A ChatGPT subscription is added through `/login` on Discord (choose OpenAI,
 then the ChatGPT subscription), or imported from subrouter or OpenCode (below)
-(#198). It is stored under the `openai-codex` provider id and offered as
-`roadie-codex/<model>` models; the proxy serves them against ChatGPT's Codex
-Responses endpoint with the account's bearer token and `chatgpt-account-id`.
+(#198). It is stored under the `openai-codex` provider id and serves the
+`openai/<model>` entries of rotations; the proxy translates them to ChatGPT's
+Codex Responses endpoint with the account's bearer token and
+`chatgpt-account-id`.
 
 Only these subscriptions are supported; other providers' subscriptions are
 not (their OAuth is not public).

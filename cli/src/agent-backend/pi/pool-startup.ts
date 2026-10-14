@@ -6,7 +6,7 @@ import { startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay } from '../../credentials/remote-pool.js'
-import { anthropicRotations, codexModels as poolCodexModels, openaiCompatRotations, writePiPoolAgentDir } from './pool.js'
+import { poolRotations, writePiPoolAgentDir } from './pool.js'
 
 /** Fixed listen address for external pool clients (#171); ephemeral when unset. */
 export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { host?: string; port?: number } | Error {
@@ -34,9 +34,7 @@ export async function startPiPool(): Promise<Error | {
   if (remote) {
     const catalog = await fetchRemotePoolCatalog({ config: remote })
     if (catalog instanceof Error) return catalog
-    if (catalog.rotations.length === 0 && catalog.openaiRotations.length === 0 && catalog.codexModels.length === 0) {
-      return new Error(`the pool host ${remote.url} serves this client no rotation and no ChatGPT account`)
-    }
+    if (catalog.rotations.length === 0) return new Error(`the pool host ${remote.url} serves this client no rotation`)
     const relay = await startRemotePoolRelay({ config: remote }).catch((cause: unknown) => new Error('remote pool relay failed to start', { cause }))
     if (relay instanceof Error) return relay
     writePiPoolAgentDir({ agentDir, baseUrl: relay.baseUrl, ...catalog })
@@ -50,16 +48,14 @@ export async function startPiPool(): Promise<Error | {
       },
     }
   }
-  const rotations = anthropicRotations({ dataDir })
-  const openaiRotations = openaiCompatRotations({ dataDir })
-  const codexModels = poolCodexModels({ dataDir })
-  if (rotations.length === 0 && openaiRotations.length === 0 && codexModels.length === 0) return new Error('the shared pool has no ChatGPT account and no pool rotation')
+  const rotations = poolRotations({ dataDir })
+  if (rotations.length === 0) return new Error('the shared pool has no rotation')
   const listen = piPoolListenOptions()
   if (listen instanceof Error) return listen
   const proxy = await startMessagesProxy({ dataDir, ...listen, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
-  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, openaiRotations, codexModels, dataDir })
+  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, dataDir })
   return {
     baseUrl: proxy.baseUrl,
     agentDir,
