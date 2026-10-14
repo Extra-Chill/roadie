@@ -1,8 +1,21 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { ButtonInteraction, Client } from 'discord.js'
 import * as database from '../database.js'
-import { createOperatorRequest, expireOperatorRequest, waitForOperatorDecision } from '../operator-requests.js'
-import { handleOperatorRequestButton, subscribeToOperatorRequests } from './operator-request.js'
+import {
+  attachOperatorRequestPrompt,
+  createOperatorRequest,
+  decideOperatorRequest,
+  expireOperatorRequest,
+  finishOperatorRequest,
+  waitForOperatorDecision,
+} from '../operator-requests.js'
+import {
+  handleOperatorRequestButton,
+  outcomeContent,
+  reportInterruptedOperatorRequests,
+  subscribeToOperatorRequests,
+  summarizeOutput,
+} from './operator-request.js'
 
 function click(id: string, decision: 'approve' | 'deny', admin: boolean, content = 'Exact argv:\n```json\n["upgrade"]\n```') {
   const reply = vi.fn(async () => undefined)
@@ -22,7 +35,7 @@ function click(id: string, decision: 'approve' | 'deny', admin: boolean, content
 describe('operator request buttons', () => {
   test('posts exact argv and approval buttons in the session thread', async () => {
     const lookup = vi.spyOn(database, 'getThreadIdBySessionId').mockResolvedValue('thread')
-    const send = vi.fn(async (_payload: { content: string; components: { toJSON(): { components: { custom_id: string }[] } }[] }) => undefined)
+    const send = vi.fn(async (_payload: { content: string; components: { toJSON(): { components: { custom_id: string }[] } }[] }) => ({ id: 'prompt-msg' }))
     const client = { channels: { fetch: vi.fn(async () => ({ isSendable: () => true, send })) } } as unknown as Client
     const unsubscribe = subscribeToOperatorRequests(client)
     try {
@@ -63,6 +76,7 @@ describe('operator request buttons', () => {
     await handleOperatorRequestButton(interaction)
     expect(await result).toMatchObject({ state: 'approved', approverId: 'operator' })
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('approved by'), components: [] }))
+    await finishOperatorRequest(request.id, { exitCode: 0, output: '' })
   })
 
   test('a non-operator gets an ephemeral refusal while request stays pending', async () => {
@@ -92,5 +106,65 @@ describe('operator request buttons', () => {
     const late = click(request.id, 'approve', true, first.update.mock.calls[0]![0].content)
     await handleOperatorRequestButton(late.interaction)
     expect(late.update).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Already decided or expired'), components: [] }))
+  })
+
+  test('the outcome edit lands after the approval status, with exit code and output', async () => {
+    const lookup = vi.spyOn(database, 'getThreadIdBySessionId').mockResolvedValue('thread')
+    const edits: { id: string; content: string }[] = []
+    const channel = {
+      isSendable: () => true,
+      isTextBased: () => true,
+      send: vi.fn(async () => ({ id: 'prompt-msg' })),
+      messages: { edit: vi.fn(async (id: string, payload: { content: string }) => { edits.push({ id, content: payload.content }) }) },
+    }
+    const client = { channels: { fetch: vi.fn(async () => channel) } } as unknown as Client
+    const unsubscribe = subscribeToOperatorRequests(client)
+    try {
+      const request = createOperatorRequest({ sessionId: 'test', argv: ['credentials', 'list'] })
+      await vi.waitFor(() => expect(channel.send).toHaveBeenCalledOnce())
+      const { interaction, update } = click(request.id, 'approve', true)
+      let releaseUpdate!: () => void
+      update.mockImplementation(() => new Promise<undefined>((resolve) => { releaseUpdate = () => resolve(undefined) }))
+      const clicked = handleOperatorRequestButton(interaction)
+      await vi.waitFor(() => expect(update).toHaveBeenCalledOnce())
+      const finished = finishOperatorRequest(request.id, { exitCode: 3, output: 'line 1\nlast line\n' })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(edits).toEqual([])
+      releaseUpdate()
+      await clicked
+      await finished
+      expect(edits).toHaveLength(1)
+      expect(edits[0]!.id).toBe('prompt-msg')
+      expect(edits[0]!.content).toContain('Status: approved by <@operator>. Finished with exit 3.')
+      expect(edits[0]!.content).toContain('```\nline 1\nlast line\n```')
+    } finally {
+      unsubscribe()
+      lookup.mockRestore()
+    }
+  })
+
+  test('approved requests a previous process never finished are marked interrupted at startup', async () => {
+    const request = createOperatorRequest({ sessionId: 'test', argv: ['credentials', 'import-opencode'] })
+    attachOperatorRequestPrompt(request.id, { threadId: 'thread', messageId: 'prompt-msg' })
+    decideOperatorRequest({ id: request.id, decision: 'approve', approverId: 'operator' })
+    const edit = vi.fn(async (_id: string, _payload: { content: string; components: unknown[] }) => undefined)
+    const client = { channels: { fetch: vi.fn(async () => ({ isTextBased: () => true, messages: { edit } })) } } as unknown as Client
+    expect(await reportInterruptedOperatorRequests(client)).toBe(1)
+    expect(edit).toHaveBeenCalledWith('prompt-msg', expect.objectContaining({
+      content: expect.stringContaining('approved by <@operator>. Interrupted by a Roadie restart before it finished; it did not complete.'),
+      components: [],
+    }))
+    expect(await reportInterruptedOperatorRequests(client)).toBe(0)
+    await finishOperatorRequest(request.id, { exitCode: 0, output: '' })
+  })
+
+  test('outcome summaries keep the last lines and never claim success for an interruption', () => {
+    expect(summarizeOutput(Array.from({ length: 10 }, (_, i) => `line ${i}`).join('\n'))).toBe(
+      ['line 4', 'line 5', 'line 6', 'line 7', 'line 8', 'line 9'].join('\n'),
+    )
+    expect(summarizeOutput('x'.repeat(700))).toHaveLength(601)
+    expect(outcomeContent({ argv: ['upgrade'], approverId: 'op' }, { exitCode: 0, output: '' })).toMatch(/Finished with exit 0\.$/)
+    expect(outcomeContent({ argv: ['upgrade'], approverId: 'op' }, { exitCode: 0, output: '```' })).toContain('````\n```\n````')
+    expect(outcomeContent({ argv: ['upgrade'], approverId: 'op' }, { interrupted: true })).not.toContain('Finished')
   })
 })

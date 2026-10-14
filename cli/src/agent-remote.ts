@@ -41,7 +41,15 @@ import {
   type RemoteSendEvent,
 } from './remote-send.js'
 import { getScheduledTask, getThreadIdBySessionId } from './database.js'
-import { createOperatorRequest, expireOperatorRequest, isAllowedOperatorCommand, waitForOperatorDecision } from './operator-requests.js'
+import {
+  createOperatorRequest,
+  expireOperatorRequest,
+  finishOperatorRequest,
+  isAllowedOperatorCommand,
+  waitForOperatorDecision,
+  type OperatorRequest,
+} from './operator-requests.js'
+import { restartBot, runBotUpgrade, type BotUpgradeResult } from './commands/upgrade.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -720,6 +728,67 @@ async function runAgentChild(args: string[], res: http.ServerResponse): Promise<
   res.end()
 }
 
+// Enough of the tail to summarize the outcome on the approval prompt.
+const OPERATOR_OUTPUT_CAPTURE_CHARS = 4000
+
+/**
+ * Run an approved request, post its outcome on the approval prompt, then
+ * answer the agent. `upgrade` runs in the bot itself, so a restart it needs
+ * happens only after the result is posted and the response is complete.
+ */
+async function runApprovedOperatorRequest(request: OperatorRequest, res: http.ServerResponse): Promise<void> {
+  agentLogger.log(`Operator request ${request.id} approved: ${request.argv.join(' ')}`)
+  const emit = (event: RemoteSendEvent) => {
+    if (!res.destroyed) res.write(`${JSON.stringify(event)}\n`)
+  }
+  let output = ''
+  const capture = (event: RemoteSendEvent) => {
+    if ('stream' in event) output = (output + event.data).slice(-OPERATOR_OUTPUT_CAPTURE_CHARS)
+    emit(event)
+  }
+  const keepalive = setInterval(() => emit({ keepalive: true }), 20_000)
+  let exitCode: number
+  let restart: BotUpgradeResult['restart'] = 'none'
+  try {
+    if (request.argv[0] === 'upgrade') {
+      const result = await runBotUpgrade()
+      const skipRestart = request.argv.includes('--skip-restart')
+      restart = skipRestart && result.restart === 'self' ? 'none' : result.restart
+      const message = result.message.replaceAll('**', '')
+      const text = result.restart !== 'self' ? message
+        : skipRestart ? `${message} Not restarting (--skip-restart).`
+        : `${message} Restarting bot...`
+      capture({ stream: result.ok ? 'stdout' : 'stderr', data: `${text}\n` })
+      exitCode = result.ok ? 0 : 1
+    } else {
+      exitCode = await getRemoteSendRunner()(request.argv, capture)
+    }
+  } finally {
+    clearInterval(keepalive)
+  }
+  await finishOperatorRequest(request.id, { exitCode, output }, { restarts: restart !== 'none' })
+  emit({ exit: exitCode })
+  if (restart !== 'self') {
+    res.end()
+    return
+  }
+  // The replacement bot evicts this one: start it once the answer is flushed,
+  // or right away when the agent is already gone.
+  let restarted = false
+  const restartOnce = () => {
+    if (restarted) return
+    restarted = true
+    restartBot()
+  }
+  if (res.destroyed) {
+    restartOnce()
+    return
+  }
+  res.once('finish', restartOnce)
+  res.once('close', restartOnce)
+  res.end()
+}
+
 async function runOperatorRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -765,7 +834,7 @@ async function runOperatorRequest(
     clearInterval(keepalive)
     if (res.destroyed) return
     if (decision.state === 'approved') {
-      await runAgentChild(decision.argv, res)
+      await runApprovedOperatorRequest(decision, res)
     } else {
       res.write(`${JSON.stringify({ stream: 'stderr', data: `Operator request ${decision.state}.\n` })}\n`)
       res.write(`${JSON.stringify({ exit: 1 })}\n`)

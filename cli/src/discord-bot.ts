@@ -14,7 +14,8 @@ declare global {
 }
 
 import { doAction } from './hooks.js'
-import { recordInterruptedSessions } from './service-lifecycle.js'
+import { mergeInterruptedSessions, recordInterruptedSessions } from './service-lifecycle.js'
+import { operatorRequestContinuations } from './operator-requests.js'
 import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
@@ -90,7 +91,7 @@ import {
 import { runShellCommand } from './commands/run-command.js'
 import { getRoadieMetadata } from './discord-utils.js'
 import { registerInteractionHandler } from './interaction-handler.js'
-import { subscribeToOperatorRequests } from './commands/operator-request.js'
+import { reportInterruptedOperatorRequests, subscribeToOperatorRequests } from './commands/operator-request.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
@@ -419,6 +420,11 @@ export async function startDiscordBot({
     })
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     subscribeToOperatorRequests(c)
+    await reportInterruptedOperatorRequests(c).catch((error) => {
+      discordLogger.warn(
+        `Failed to report interrupted operator requests: ${error instanceof Error ? error.stack : String(error)}`,
+      )
+    })
     await reconcileDeletedDiscordChannels(c)
     await restorePersistedLocalQueues({
       discordClient: c,
@@ -1567,7 +1573,7 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
 
     // Before the agent server stops, so busy runs are still visible.
     try {
-      recordInterruptedSessions(snapshotBusyRuntimes())
+      recordInterruptedSessions(mergeInterruptedSessions(snapshotBusyRuntimes(), operatorRequestContinuations()))
     } catch (error) {
       discordLogger.warn(
         'Failed to record interrupted sessions:',
