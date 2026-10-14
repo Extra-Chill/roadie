@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.66.1] - 2026-10-14
+
+### Changed
+- port fork, agent-model and question e2e suites to Pi (#177 slice 3d)
+
 ## [0.66.0] - 2026-10-14
 
 ### Added
