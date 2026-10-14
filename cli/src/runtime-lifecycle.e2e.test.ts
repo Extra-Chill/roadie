@@ -252,7 +252,7 @@ describe.skipIf(!findPi())('runtime lifecycle', () => {
 
       // Every Pi process is killed and a fresh backend takes over; the
       // session resumes from its file on the next prompt.
-      ctx.restartPi!()
+      await ctx.restartPi!()
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: reconnect-beta',

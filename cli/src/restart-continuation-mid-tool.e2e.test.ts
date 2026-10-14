@@ -112,7 +112,7 @@ describe.skipIf(!findPi())('restart continuation mid-tool', () => {
     const interrupted = snapshotBusyRuntimes()
     expect(interrupted.map((entry) => entry.threadId)).toContain(thread.id)
     disposeRuntime(thread.id)
-    ctx.restartPi!()
+    await ctx.restartPi!()
 
     // Startup: the continuation pass on the fresh backend.
     const result = await resumeInterruptedSessions({

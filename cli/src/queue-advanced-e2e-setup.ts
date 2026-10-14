@@ -984,7 +984,7 @@ export type QueueAdvancedContext = {
    * every Pi process and installs a fresh provider over the same session
    * directory, so sessions resume from their files.
    */
-  restartPi?: () => void
+  restartPi?: () => Promise<void>
 }
 
 /**
@@ -1116,8 +1116,8 @@ export function setupQueueAdvancedSuite({
       ctx.pi = new PiBackendProvider(piOptions)
       restoreProvider = setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
       restartGlobalEventListener()
-      ctx.restartPi = () => {
-        ctx.pi!.dispose()
+      ctx.restartPi = async () => {
+        await ctx.pi!.dispose()
         ctx.pi = new PiBackendProvider(piOptions)
         // Replaces the suite's provider; the first restore still puts back
         // whatever was installed before the suite.
@@ -1211,7 +1211,8 @@ export function setupQueueAdvancedSuite({
     if (backend === 'pi') {
       stopIpcPolling()
       restoreProvider?.()
-      ctx.pi?.dispose()
+      // Pi writes its session file until it exits; the data dir goes next.
+      await ctx.pi?.dispose()
       await ctx.modelServer?.close()
     } else {
       await stopOpencodeServer()

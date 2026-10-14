@@ -58,7 +58,7 @@ describe.skipIf(!bin)('Pi channel', () => {
   afterAll(async () => {
     stopIpcPolling()
     restore?.()
-    pi?.dispose()
+    await pi?.dispose()
     await server?.close()
   })
 
