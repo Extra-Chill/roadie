@@ -1,6 +1,6 @@
 // Tests that simulate real bot workflows similar to what Roadie does on Discord.
 // These validate the slack-digital-twin handles the interaction patterns that
-// the discord-slack-bridge relies on: thread creation via first message,
+// Roadie's native Slack platform relies on: thread creation via first message,
 // sequential bot messages in threads, edit-then-delete flows, reactions,
 // file uploads, channel lifecycle, and concurrent operations.
 

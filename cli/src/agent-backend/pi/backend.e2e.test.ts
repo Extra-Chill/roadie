@@ -369,7 +369,7 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     editProvider.dispose()
   }, 40_000)
 
-  test('bash shells get AGENT_GRAPHICS so CLIs can emit kitty graphics (OpenCode parity)', async () => {
+  test('bash shells get AGENT_GRAPHICS so CLIs can emit kitty graphics', async () => {
     const session = await provider.getBackend().sessions.create({ directory: project })
     if (session instanceof Error) throw session
     const before = idleCount(session.id)
@@ -379,7 +379,7 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.output).toContain('AG=[kitty]')
   }, 30_000)
 
-  test('kitty graphics in bash output become image content, escapes stripped (OpenCode parity)', async () => {
+  test('kitty graphics in bash output become image content, escapes stripped', async () => {
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     const session = await provider.getBackend().sessions.create({ directory: project })
     if (session instanceof Error) throw session
@@ -400,7 +400,7 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(sent).toContain(`data:image/png;base64,${png}`)
   }, 30_000)
 
-  test('send --injection-guard patterns scan Pi tool results and replace flagged output (OpenCode parity)', async () => {
+  test('send --injection-guard patterns scan Pi tool results and replace flagged output', async () => {
     const guardDir = path.join(root, 'injection-guard')
     fs.mkdirSync(guardDir, { recursive: true })
     const guardProvider = new PiBackendProvider({

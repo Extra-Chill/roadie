@@ -590,7 +590,7 @@ export default function roadieExtension(pi: ExtensionApi) {
     if (event.toolName === 'bash' && typeof event.input.command === 'string') {
       const env = {
         ...readShellEnv(),
-        // Kitty graphics: CLIs check this env to emit images on non-TTY stdout (OpenCode parity).
+        // Kitty graphics: CLIs check this env to emit images on non-TTY stdout.
         ...(process.env['AGENT_GRAPHICS'] === undefined && { AGENT_GRAPHICS: 'kitty' }),
       }
       const prefix = shellEnvPrefix(env)

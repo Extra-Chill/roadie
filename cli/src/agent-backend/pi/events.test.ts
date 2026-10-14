@@ -267,7 +267,7 @@ describe('task delegation parts', () => {
 
 describe('decidePermission', () => {
   const cwd = '/repo'
-  test('Pi defaults to allow, like Roadie on OpenCode', () => {
+  test('Pi defaults to allow', () => {
     expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'ls' }, cwd }).action).toBe('allow')
   })
   test('session rules apply by OpenCode permission name and pattern, last match wins', () => {
@@ -289,7 +289,7 @@ describe('decidePermission', () => {
     expect(decidePermission({ rules, tool: 'bash', input: { command: 'echo hi > /etc/hosts' }, cwd })).toEqual({ action: 'deny', permission: 'external_directory', patterns: ['/etc'] })
     expect(decidePermission({ rules, tool: 'bash', input: { command: 'cat src/a.ts' }, cwd }).action).toBe('allow')
     expect(decidePermission({ rules, tool: 'bash', input: { command: `cat ${cwd}/a.ts` }, cwd }).action).toBe('allow')
-    // Without rules the permissive OpenCode default holds: no ask for external paths.
+    // Without rules the permissive default holds: no ask for external paths.
     expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'cat /etc/passwd' }, cwd })).toEqual({ action: 'allow', permission: 'bash', patterns: ['cat /etc/passwd'] })
   })
   test('checkout isolation denies bash reads of the origin checkout with the same parent-dir patterns', () => {

@@ -8,14 +8,13 @@
 // Permissions: the Roadie Pi extension (./roadie-extension.ts) turns every tool
 // call into a `confirm` UI request. The backend answers it from the session's
 // Roadie permission rules, or emits `permission.asked` and answers when the
-// person replies. Pi's own defaults allow everything, like Roadie's OpenCode
-// setup, so `allow` is the fallback and session rules override it — except
-// per-person MCP tools (PERSON_MCP_TOOL_GLOB), denied unless the session's
-// rules allow them, as the OpenCode server config does server-wide.
+// person replies. Pi's own defaults allow everything, so `allow` is the
+// fallback and session rules override it — except per-person MCP tools
+// (PERSON_MCP_TOOL_GLOB), denied unless the session's rules allow them.
 //
 // Shell isolation (--isolate-shells): Pi ignores $SHELL and picks its tool
 // shell from `shellPath` in its agent dir's settings.json, so Roadie writes
-// the OpenCode wrapper there when the pools give it a Roadie-owned agent dir,
+// the isolation wrapper there when the pools give it a Roadie-owned agent dir,
 // and refuses Pi sessions when it cannot (see prepareShellIsolation).
 //
 // Agents (./agents.ts): Pi has no agent concept, so the OpenCode-format
@@ -35,7 +34,7 @@
 // deny, so delegation is one level deep, and aborting a parent aborts its
 // running children.
 //
-// Gaps (spike): no OAuth through Roadie (sign in with `pi` itself).
+// Gap: no OAuth through Roadie (sign in with `pi` itself).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -179,15 +178,14 @@ export type PiBackendOptions = {
   /**
    * Extra tool-shell variables from --shell-env / ROADIE_SHELL_ENV
    * (turn-attribution-env.ts): variable name → template over session fields.
-   * Applied to every session's shell env file like OpenCode's shell.env hook.
+   * Applied to every session's shell env file.
    */
   shellEnvTemplates?: Record<string, string>
   /**
    * Roadie's per-session injection guard config directory: the session runtime
    * writes `<sessionId>.json` files there for `send --injection-guard`, and
    * the Roadie Pi extension reads them (via ROADIE_PI_INJECTION_GUARD_DIR in
-   * the session's env) to scan matched tool results, like the OpenCode
-   * injection guard plugin does inside the OpenCode server.
+   * the session's env) to scan matched tool results.
    */
   injectionGuardDir?: string
   /**
@@ -202,8 +200,8 @@ export type PiBackendOptions = {
   }
   /**
    * Shell isolation contract (--isolate-shells): require every session's bash
-   * tool to run through the same setpriv + `env -i` wrapper the OpenCode
-   * server's $SHELL uses (isolated-shell.ts). Pi ignores $SHELL: it picks its
+   * tool to run through the setpriv + `env -i` wrapper (isolated-shell.ts).
+   * Pi ignores $SHELL: it picks its
    * tool shell from `shellPath` in its agent dir's settings.json
    * (PI_CODING_AGENT_DIR), which Roadie owns only for the credential pools.
    * `agentDir` is that dir and gets `shellPath` written before the first
@@ -1298,7 +1296,7 @@ export class PiBackendProvider implements AgentBackendProvider {
           this.touch(session)
           return undefined
         }
-        // Branch awareness, as OpenCode's context-awareness plugin: a note when the
+        // Branch awareness: a note when the
         // checkout's branch (or detached HEAD) differs from the last one announced.
         const gitState = await resolveGitState({ directory: session.directory }).catch(() => null)
         const branch = shouldInjectBranch({ previousGitState: session.gitState, currentGitState: gitState })
