@@ -4,7 +4,6 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { setAgentBackendProvider } from './agent-backend/registry.js'
@@ -18,18 +17,9 @@ import { wakeDueSessionSleeps } from './task-runner.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 
 const TEXT_CHANNEL_ID = '200000000000001510'
-
-function findPi(): string | undefined {
-  for (const bin of [process.env['ROADIE_PI_BIN'], 'pi'].filter(Boolean) as string[]) {
-    try {
-      execFileSync(bin, ['--version'], { stdio: 'ignore' })
-      return bin
-    } catch {}
-  }
-  return undefined
-}
 
 const bin = findPi()
 

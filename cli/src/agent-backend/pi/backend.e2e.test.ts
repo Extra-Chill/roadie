@@ -10,17 +10,7 @@ import type { AgentEvent } from '../events.js'
 import { PiBackendProvider } from './backend.js'
 import { fakeModelsJson, startFakeModelServer } from './fake-model-server.js'
 import { loadFileEditEvents } from '../../file-edit-log.js'
-
-function findPi(): string | undefined {
-  const candidates = [process.env['ROADIE_PI_BIN'], 'pi'].filter(Boolean) as string[]
-  for (const bin of candidates) {
-    try {
-      execFileSync(bin, ['--version'], { stdio: 'ignore' })
-      return bin
-    } catch {}
-  }
-  return undefined
-}
+import { findPi } from './find-pi.js'
 
 const bin = findPi()
 
