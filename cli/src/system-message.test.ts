@@ -183,11 +183,11 @@ describe('system-message', () => {
       }),
     ).toMatchInlineSnapshot(`
       "<system-reminder>
-      Your current OpenCode session ID is: ses_fork
+      Your current session ID is: ses_fork
       Your current Discord thread ID is: thread_fork
       This session was forked from thread thread_source (session ses_source). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.
       The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
-      Your parent OpenCode session ID is: ses_parent_added_later
+      Your parent session ID is: ses_parent_added_later
       You can send a message back to the parent session with:
       roadie send --session ses_parent_added_later --prompt 'your update here' --agent <current_agent>
       Do NOT message the parent session unless the user explicitly asks you to.
@@ -211,7 +211,21 @@ describe('system-message', () => {
       systemPromptFromSourceSession: systemPromptNamesOtherSession({ system: managedSystem, sessionId: 'ses_any' }),
     })
     expect(context).not.toContain('forked')
-    expect(context).toContain('Your current OpenCode session ID is: ses_any')
+    expect(context).toContain('Your current session ID is: ses_any')
+  })
+
+  // Prompts pinned before #222 name the session with the OpenCode wording.
+  test('recognizes session lines in prompts pinned with the legacy OpenCode wording', () => {
+    const legacySystem = 'Your current OpenCode session ID is: ses_source\nYour parent OpenCode session ID is: ses_parent'
+    expect(systemPromptNamesOtherSession({ system: legacySystem, sessionId: 'ses_fork' })).toBe(true)
+    expect(systemPromptNamesOtherSession({ system: legacySystem, sessionId: 'ses_source' })).toBe(false)
+    expect(systemPromptHasParentSession({ system: legacySystem, parentSessionId: 'ses_parent' })).toBe(true)
+  })
+
+  test('names the agent backend running the session in the turn reminder', () => {
+    const context = getOpencodePromptContext({ sessionId: 'ses_pi', backend: 'Pi', threadId: 'thread_pi' })
+    expect(context).toContain('Your current session ID is: ses_pi\nYour agent backend is: Pi\n')
+    expect(context).not.toContain('OpenCode')
   })
 
   test('persisted fork origin adds a fork notice without a stale system prompt', () => {
@@ -293,7 +307,7 @@ describe('system-message', () => {
       channelId: 'chan_123',
       parentSessionId: 'ses_parent',
     })
-    expect(message).toContain('Your parent OpenCode session ID is: ses_parent')
+    expect(message).toContain('Your parent session ID is: ses_parent')
     expect(message).toContain(
       "roadie send --session ses_parent --prompt 'your update here' --agent <current_agent>",
     )
@@ -384,7 +398,7 @@ describe('system-message', () => {
       threadId: 'thread_123',
       guildId: 'guild_123',
     })
-    expect(message).not.toContain('Your parent OpenCode session ID is:')
+    expect(message).not.toContain('Your parent session ID is:')
     expect(message).not.toContain(
       'Do NOT message the parent session unless the user explicitly asks you to.',
     )
@@ -443,7 +457,7 @@ describe('system-message', () => {
       \`description\` is shown in Discord when the bash command is longer than 50 characters.
       \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
-      Your current OpenCode session ID is: ses_123
+      Your current session ID is: ses_123
       Your current Discord channel ID is: chan_123
       Your current Discord thread ID is: thread_123
       Your current Discord guild ID is: guild_123
@@ -579,7 +593,7 @@ describe('system-message', () => {
 
       roadie send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
 
-      Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists in the local SQLite database and OpenCode server on the computer that created it, so \`roadie send --session\` and \`roadie session read\` fail on another computer. Use \`--session\` only when you have just the OpenCode session ID and it was created on this machine:
+      Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists in the local SQLite database and agent backend on the computer that created it, so \`roadie send --session\` and \`roadie session read\` fail on another computer. Use \`--session\` only when you have just the session ID and it was created on this machine:
 
       roadie send --session <session_id> --prompt 'follow-up prompt' --agent <current_agent>
 
@@ -903,7 +917,7 @@ describe('system-message', () => {
       "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" thread-name="Fix auth bug" />
 
       <system-reminder>
-      Your current OpenCode session ID is: ses_123
+      Your current session ID is: ses_123
       Your current Discord thread ID is: thread_123
       </system-reminder>
 

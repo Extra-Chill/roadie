@@ -152,6 +152,18 @@ export function getAgentBackendProvider(): AgentBackendProvider {
   return currentProvider
 }
 
+/** Id of the backend running `sessionId` (e.g. "pi" or "opencode"). */
+export function getSessionBackendId(sessionId: string): string {
+  return currentProvider.sessionBackendId?.(sessionId) ?? currentProvider.id
+}
+
+const BACKEND_LABELS: Record<string, string> = { pi: 'Pi', opencode: 'OpenCode' }
+
+/** Human-readable backend name for prompts; unknown ids pass through. */
+export function agentBackendLabel(backendId: string): string {
+  return BACKEND_LABELS[backendId] ?? backendId
+}
+
 /** Catalog listings run through the `agent_providers` / `agent_definitions` filters. */
 export function withCatalogFilters(catalog: AgentCatalogOperations): AgentCatalogOperations {
   return {

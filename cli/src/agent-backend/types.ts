@@ -324,6 +324,11 @@ export type AgentBackendInitializeOptions = {
 export type AgentBackendProvider = {
   /** Name used in logs. */
   readonly id: string
+  /**
+   * Id of the backend that runs `sessionId`, for providers that route sessions
+   * across several backends. Single-backend providers omit it: `id` answers.
+   */
+  sessionBackendId?(sessionId: string): string
   /** Backend for a directory whose server is already running, or null. */
   getBackend(directory: string): AgentBackend | null
   /** Ensure the backend serving `directory` is running; returns a getter. */
