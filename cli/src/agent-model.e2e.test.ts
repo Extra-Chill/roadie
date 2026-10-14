@@ -7,13 +7,12 @@
 // The test sets a channel agent with a custom model, sends a message,
 // and verifies the footer contains the agent's model — not the default.
 //
-// Uses opencode-deterministic-provider (no real LLM calls).
+// Runs on real Pi against the scripted fake model server (no real LLM calls).
 // Poll timeouts: 4s max, 100ms interval.
 
 import fs from 'node:fs'
 
 import path from 'node:path'
-import url from 'node:url'
 import {
   describe,
   beforeAll,
@@ -23,10 +22,10 @@ import {
 } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
-import {
-  buildDeterministicOpencodeConfig,
-  type DeterministicMatcher,
-} from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
+import { startPiE2eBackend, type PiE2eBackend } from './pi-e2e-backend.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -50,10 +49,8 @@ import { getDb } from './db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
   chooseLockPort,
-  cleanupTestSessions,
   initTestGitRepo,
   isFooterMessage,
   waitForBotMessageContaining,
@@ -67,8 +64,8 @@ const TEXT_CHANNEL_ID = '200000000000000921'
 const AGENT_MODEL = 'agent-model-v2'
 const PLAN_AGENT_MODEL = 'plan-model-v2'
 const CHANNEL_MODEL = 'channel-model-v2'
-const DEFAULT_MODEL = 'deterministic-v2'
-const PROVIDER_NAME = 'deterministic-provider'
+const DEFAULT_MODEL = 'fake-1'
+const PROVIDER_NAME = 'fake'
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'agent-model-e2e')
@@ -107,8 +104,8 @@ const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
 const COMMAND_SYSTEM_CHECK_TEMPLATE =
   'Reply with exactly: command-system-check'
 
-function createDeterministicMatchers(): DeterministicMatcher[] {
-  const systemContextMatcher: DeterministicMatcher = {
+function createMatchers(): FakeMatcher[] {
+  const systemContextMatcher: FakeMatcher = {
     id: 'system-context-check',
     priority: 20,
     when: {
@@ -140,7 +137,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   // instruction (upload helper) so we know the real session system prompt was
   // injected — not just any string that happens to mention Roadie.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
-  const commandSystemMatcher: DeterministicMatcher = {
+  const commandSystemMatcher: FakeMatcher = {
     id: 'command-system-check',
     priority: 25,
     when: {
@@ -168,7 +165,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const replyContextMatcher: DeterministicMatcher = {
+  const replyContextMatcher: FakeMatcher = {
     id: 'reply-context-check',
     priority: 15,
     when: {
@@ -197,7 +194,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const userReplyMatcher: DeterministicMatcher = {
+  const userReplyMatcher: FakeMatcher = {
     id: 'user-reply',
     priority: 10,
     when: {
@@ -229,8 +226,8 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
 }
 
 /**
- * Create an opencode agent .md file that uses a specific model.
- * OpenCode discovers agents from .opencode/agent/*.md files.
+ * Create an OpenCode-format agent .md file that uses a specific model.
+ * Pi reads the same .opencode/agent/*.md files (agent-backend/pi/agents.ts).
  */
 function createAgentFile({
   projectDirectory,
@@ -256,15 +253,14 @@ function createAgentFile({
   fs.writeFileSync(path.join(agentDir, `${agentName}.md`), content)
 }
 
-describe('agent model resolution', () => {
+describe.skipIf(!findPi())('agent model resolution', () => {
+  let piBackend: PiE2eBackend | undefined
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
   let previousDefaultVerbosity: VerbosityLevel | null = null
-  let testStartTime = Date.now()
 
   beforeAll(async () => {
-    testStartTime = Date.now()
     directories = createRunDirectories()
     const lockPort = chooseLockPort({ key: TEXT_CHANNEL_ID })
 
@@ -301,55 +297,29 @@ describe('agent model resolution', () => {
 
     await discord.start()
 
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(
-          process.cwd(),
-          '..',
-          'opencode-deterministic-provider',
-          'src',
-          'index.ts',
-        ),
-      )
-      .toString()
-
-    // Build base config with default model
-    const opencodeConfig = {
-      ...buildDeterministicOpencodeConfig({
-        providerName: PROVIDER_NAME,
-        providerNpm,
-        model: DEFAULT_MODEL,
-        smallModel: DEFAULT_MODEL,
-        settings: {
-          strict: false,
-          matchers: createDeterministicMatchers(),
-        },
-      }),
-      // OpenCode command used to verify session.command still gets roadie system
-      command: {
-        [COMMAND_SYSTEM_CHECK_NAME]: {
-          description: 'Test command for roadie system prompt injection',
-          template: COMMAND_SYSTEM_CHECK_TEMPLATE,
-        },
-      },
-    }
-
-    // Add extra models to the provider so opencode accepts them
-    const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
-    if (!providerConfig) {
-      throw new Error(`Missing deterministic provider config for ${PROVIDER_NAME}`)
-    }
-    providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
-    providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
-    Object.assign(providerConfig.models[PLAN_AGENT_MODEL], {
-      variants: { high: {}, max: {} },
-    })
-    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
-
+    // A Pi prompt template, used to verify session.command still gets
+    // Roadie's system prompt.
+    const promptsDir = path.join(directories.projectDirectory, '.pi', 'prompts')
+    fs.mkdirSync(promptsDir, { recursive: true })
     fs.writeFileSync(
-      path.join(directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
+      path.join(promptsDir, `${COMMAND_SYSTEM_CHECK_NAME}.md`),
+      `---\ndescription: Test command for roadie system prompt injection\n---\n${COMMAND_SYSTEM_CHECK_TEMPLATE}\n`,
     )
+
+    piBackend = await startPiE2eBackend({
+      root: directories.root,
+      dataDir: directories.dataDir,
+      projectDirectory: directories.projectDirectory,
+      matchers: createMatchers(),
+      model: `${PROVIDER_NAME}/${DEFAULT_MODEL}`,
+      models: [
+        { id: DEFAULT_MODEL },
+        { id: AGENT_MODEL },
+        // Reasoning, so it offers thinking variants.
+        { id: PLAN_AGENT_MODEL, reasoning: true },
+        { id: CHANNEL_MODEL },
+      ],
+    })
 
     // Leading /command detection only rewrites when registeredUserCommands is set
     store.setState({
@@ -421,26 +391,16 @@ describe('agent model resolution', () => {
       { body: agentCommands },
     )
 
-    // Pre-warm the opencode server so agent discovery happens
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    // The bot entrypoint starts IPC polling, not startDiscordBot.
+    await startIpcPolling({ discordClient: botClient })
   }, 20_000)
 
   afterAll(async () => {
-    if (directories) {
-      await cleanupTestSessions({
-        projectDirectory: directories.projectDirectory,
-        testStartTime,
-      })
-    }
     if (botClient) {
       void botClient.destroy()
     }
-    await stopOpencodeServer()
+    stopIpcPolling()
+    await piBackend?.stop()
     await Promise.all([
       closeDatabase().catch(() => {
         return
@@ -460,6 +420,8 @@ describe('agent model resolution', () => {
     if (directories) {
       removeTestDataDir(directories.dataDir)
     }
+    // A Pi suite must never start or use OpenCode.
+    expect(piBackend?.opencodeTouched ?? []).toEqual([])
   }, 5_000)
 
   test(
@@ -504,7 +466,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
@@ -561,7 +523,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         system-context-ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
@@ -704,7 +666,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        -# *using fake/channel-model-v2*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
@@ -758,7 +720,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        -# *using fake/channel-model-v2*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
@@ -851,7 +813,7 @@ describe('agent model resolution', () => {
       `)
       expect(forkedSessionModel).toMatchInlineSnapshot(`
         {
-          "modelId": "deterministic-provider/plan-model-v2",
+          "modelId": "fake/plan-model-v2",
           "variant": null,
         }
       `)
@@ -926,7 +888,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
@@ -994,7 +956,7 @@ describe('agent model resolution', () => {
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        -# *using fake/plan-model-v2 ⋅ plan*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
@@ -1039,13 +1001,13 @@ describe('agent model resolution', () => {
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        -# *using fake/plan-model-v2 ⋅ plan*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
       expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
         {
-          "modelId": "deterministic-provider/plan-model-v2",
+          "modelId": "fake/plan-model-v2",
           "variant": "high",
         }
       `)
@@ -1064,7 +1026,7 @@ describe('agent model resolution', () => {
         .user(TEST_USER_ID)
         .runSlashCommand({
           name: 'plan-agent',
-          options: [{ name: 'variant', type: 3, value: 'max' }],
+          options: [{ name: 'variant', type: 3, value: 'high' }],
         })
 
       await discord
@@ -1078,7 +1040,7 @@ describe('agent model resolution', () => {
         const match = [...messages].reverse().find((message) => {
           return (
             message.author.id === discord.botUserId &&
-            message.content.includes('Variant: **max**')
+            message.content.includes('Variant: **high**')
           )
         })
         if (match) {
@@ -1090,15 +1052,15 @@ describe('agent model resolution', () => {
 
       expect(confirmation).toMatchInlineSnapshot(`
         "Switched to **plan** agent for this channel (was **test-agent**)
-        Model: *deterministic-provider/plan-model-v2* (agent "plan")
-        Variant: **max**
+        Model: *fake/plan-model-v2* (agent "plan")
+        Variant: **high**
         All new sessions will use this agent."
       `)
       expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('plan')
       expect(await getChannelModel(TEXT_CHANNEL_ID)).toMatchInlineSnapshot(`
         {
-          "modelId": "deterministic-provider/plan-model-v2",
-          "variant": "max",
+          "modelId": "fake/plan-model-v2",
+          "variant": "high",
         }
       `)
 
@@ -1156,7 +1118,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: inline-existing-first-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
@@ -1234,11 +1196,11 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
-        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Model: *fake/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
@@ -1314,14 +1276,14 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-switch-first-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: race-switch-follow-up
         --- from: assistant (TestBot)
         Switched to **plan** agent for this session (was **test-agent**)
-        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Model: *fake/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
@@ -1377,7 +1339,7 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-channel-follow-up
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        -# *using fake/plan-model-v2 ⋅ plan*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
@@ -1444,11 +1406,11 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: refresh-agent-model-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        -# *using fake/plan-model-v2 ⋅ plan*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***
         Using **plan** agent for this session
-        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Model: *fake/plan-model-v2* (agent "plan")
         The agent will change on the next message."
       `)
       expect(await th.text()).not.toContain('Already using')
@@ -1504,11 +1466,11 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-vs-agent-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        -# *using fake/agent-model-v2 ⋅ test-agent*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
-        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Model: *fake/plan-model-v2* (agent "plan")
         The agent will change on the next message."
       `)
       expect(threadText).toContain(
@@ -1566,11 +1528,11 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: plain-agent-override-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        -# *using fake/channel-model-v2*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*
         Switched to **plain** agent for this session
-        Model: *deterministic-provider/channel-model-v2* (channel override)
+        Model: *fake/channel-model-v2* (channel override)
         This model comes from a channel override. Use /model and press Clear override if you want this agent's model.
         The agent will change on the next message."
       `)

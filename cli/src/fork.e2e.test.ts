@@ -2,10 +2,10 @@
 // Without a prompt the fork waits for the user; `from:` forks from before an
 // earlier user message, so the fork's history ends where that message began.
 
-import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { setupQueueAdvancedSuite, warmOpencodeInstance, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
+import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { getDb, getThreadSession } from './database.js'
-import { initializeOpencodeForDirectory } from './opencode.js'
 import { waitForFooterMessage } from './test-utils.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,25 +21,20 @@ import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { clearIdentityCache, type Person } from './identity.js'
 const exec = promisify(execFile)
 import { TITLE_REQUEST_SYSTEM } from './title-request.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 
 const TEXT_CHANNEL_ID = '200000000000001074'
 
-describe('/fork', () => {
-  const previousWorkspaceFlag = process.env.OPENCODE_EXPERIMENTAL_WORKSPACES
-  beforeAll(() => { process.env.OPENCODE_EXPERIMENTAL_WORKSPACES = 'true' })
-  afterAll(() => {
-    if (previousWorkspaceFlag === undefined) delete process.env.OPENCODE_EXPERIMENTAL_WORKSPACES
-    else process.env.OPENCODE_EXPERIMENTAL_WORKSPACES = previousWorkspaceFlag
-  })
+describe.skipIf(!findPi())('/fork', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-fork-e2e',
     dirName: 'qa-fork-e2e',
     username: 'fork-tester',
     extraMatchers: [
       { id: 'site-coding-write', priority: 142, when: { latestUserTextIncludes: 'SITE_CODING_WRITE', lastMessageRole: 'user' }, then: {
-        parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'site-coding-call', toolName: 'bash', input: JSON.stringify({ command: 'printf source > site-coding.txt', workdir: path.resolve(process.cwd(), 'tmp/qa-fork-e2e/project'), description: 'Code in the repository from a site-root conversation', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
+        parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'site-coding-call', toolName: 'bash', input: JSON.stringify({ command: `cd '${path.resolve(process.cwd(), 'tmp/qa-fork-e2e/project')}' && printf source > site-coding.txt`, description: 'Code in the repository from a site-root conversation', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
       } },
       { id: 'workspace-write', priority: 140, when: { latestUserTextIncludes: 'WORKSPACE_WRITE_MARKER', lastMessageRole: 'user' }, then: {
         parts: [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'workspace-write-call', toolName: 'bash', input: JSON.stringify({ command: 'printf isolated > fork-result.txt', description: 'Write only in fork workspace', hasSideEffect: true }) }, { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }],
@@ -52,9 +47,9 @@ describe('/fork', () => {
       ['fork-permission-review', 'Permission Review'],
       ['fork-deferred-task', 'Deferred Fork Task'],
        ['fork-title-slow', 'Follow-up Investigation'],
-       ].map<DeterministicMatcher>(([marker, title]) => ({
+       ].map<FakeMatcher>(([marker, title]) => ({
       id: `generated-title-${marker}`, priority: 200,
-      when: { latestUserTextIncludes: marker, rawPromptIncludes: TITLE_REQUEST_SYSTEM, maxOutputTokens: 96, toolsEmpty: true,
+      when: { latestUserTextIncludes: marker, rawPromptIncludes: TITLE_REQUEST_SYSTEM, toolsEmpty: true,
         // The model responds only when the request has neither the parent
         // conversation nor Roadie's full coding-system instructions.
         rawPromptRegex: '^(?!.*fork-first)(?!.*The user is reading your messages)(?!.*Forked from)(?!.*current git branch)(?!.*working directory)',
@@ -107,23 +102,30 @@ describe('/fork', () => {
     throw new Error(`No session bound to fork thread ${threadId}`)
   }
 
+  const backendSessions = () => ctx.pi!.getBackend().sessions
+
   async function sessionMessages(sessionId: string) {
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
-    const response = await getClient().session.messages({
-      sessionID: sessionId,
-      directory: ctx.directories.projectDirectory,
-    })
-    return response.data ?? []
+    const messages = await backendSessions().messages({ sessionId, directory: ctx.directories.projectDirectory })
+    if (messages instanceof Error) throw messages
+    return messages
+  }
+
+  async function sessionTitle(sessionId: string): Promise<string | undefined> {
+    const session = await backendSessions().get({ sessionId })
+    if (session instanceof Error) throw session
+    return session?.title
+  }
+
+  async function sessionCount(directory: string): Promise<number> {
+    const list = await backendSessions().list({ directory })
+    if (list instanceof Error) throw list
+    return list.length
   }
 
   async function waitForGeneratedTitle(sessionId: string, expected: string): Promise<void> {
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline) {
-      const result = await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })
-      if (result.data?.title === expected) return
+      if (await sessionTitle(sessionId) === expected) return
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
     throw new Error(`Generated title did not become ${expected}`)
@@ -207,7 +209,7 @@ describe('/fork', () => {
     `)
     // The fork carries the source conversation.
     const messages = await sessionMessages(forkSession)
-    expect(messages.some((m) => m.info.role === 'assistant')).toBe(true)
+    expect(messages.some((m) => m.message.role === 'assistant')).toBe(true)
   }, 25_000)
 
   test('from: forks from before an earlier user message', async () => {
@@ -224,21 +226,18 @@ describe('/fork', () => {
 
     const sourceSession = await getThreadSession(source.id)
     const sourceMessages = await sessionMessages(sourceSession!)
-    const userMessages = sourceMessages.filter((m) => m.info.role === 'user')
+    const userMessages = sourceMessages.filter((m) => m.message.role === 'user')
     expect(userMessages.length).toBeGreaterThanOrEqual(2)
     const second = userMessages[userMessages.length - 1]!
 
-    const fork = await forkFrom(source.id, [{ name: 'from', type: 3, value: second.info.id }])
+    const fork = await forkFrom(source.id, [{ name: 'from', type: 3, value: second.message.id }])
     const forkMessages = await sessionMessages(await waitForThreadSession(fork.id))
-    const forkUserCount = forkMessages.filter((m) => m.info.role === 'user').length
+    const forkUserCount = forkMessages.filter((m) => m.message.role === 'user').length
     expect(forkUserCount).toBe(userMessages.length - 1)
   }, 30_000)
 
   test('forks execute in real isolated worktrees, including workspace-bound sources and reconstruction', async () => {
     const directory = ctx.directories.projectDirectory
-    await exec('git', ['add', 'opencode.json'], { cwd: directory })
-    const unchanged = await exec('git', ['diff', '--cached', '--quiet'], { cwd: directory }).then(() => true, () => false)
-    if (!unchanged) await exec('git', ['commit', '-m', 'Commit deterministic runtime fixture'], { cwd: directory })
     fs.writeFileSync(path.join(directory, 'source-dirty.txt'), 'keep source edits')
     fs.writeFileSync(path.join(directory, 'fork-result.txt'), 'source must stay unchanged')
     const source = await startSource()
@@ -304,10 +303,6 @@ describe('/fork', () => {
   test('a non-Git home uses active task ownership without reading the conversation for scope', async () => {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-fork-home-')))
     const repository = ctx.directories.projectDirectory
-    fs.copyFileSync(path.join(repository, 'opencode.json'), path.join(home, 'opencode.json'))
-    const original = await initializeOpencodeForDirectory(home)
-    if (original instanceof Error) throw original
-    await warmOpencodeInstance({ getClient: original, directory: home })
     await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: home, channelType: 'text' })
     const allocations: string[] = []
     const sessions: Array<{ id: string; directory: string; threadId: string }> = []
@@ -336,12 +331,12 @@ describe('/fork', () => {
       expect(await getThreadWorkingDirectory(historical.id)).toBeUndefined()
       expect(allocations).toHaveLength(0)
       taskActive = true
-      const client = original()
-      const messages = client.session.messages
-      restoreHistory = () => { client.session.messages = messages }
-      client.session.messages = new Proxy(messages, { apply(target, receiver, parameters) {
+      const ops = backendSessions()
+      const messages = ops.messages
+      restoreHistory = () => { ops.messages = messages }
+      ops.messages = new Proxy(messages, { apply(target, receiver, parameters) {
         const input = parameters[0]
-        if (input?.sessionID === sourceSession && input.limit === undefined) throw new Error('Fork scope must not fetch the conversation')
+        if (input?.sessionId === sourceSession && input.limit === undefined) throw new Error('Fork scope must not fetch the conversation')
         return Reflect.apply(target, receiver, parameters)
       } })
       disposeRuntime(source.id)
@@ -353,22 +348,21 @@ describe('/fork', () => {
       expect(fs.readFileSync(path.join(allocations[0]!, 'fork-result.txt'), 'utf8')).toBe('isolated')
       expect(fs.existsSync(path.join(allocations[0]!, 'site-coding.txt'))).toBe(false)
       expect(fs.existsSync(path.join(home, 'fork-result.txt'))).toBe(false)
-      const sourceInfo = await original().session.get({ sessionID: sourceSession, directory: home })
-      expect(sourceInfo.data?.directory).toBe(home)
-      expect(sourceInfo.data?.workspaceID).toBeUndefined()
+      const sourceInfo = await backendSessions().get({ sessionId: sourceSession })
+      expect(sourceInfo instanceof Error ? sourceInfo : sourceInfo?.directory).toBe(home)
       expect(await getThreadWorkingDirectory(source.id)).toBeUndefined()
       expect((await getThreadWorkingDirectory(fork.id))?.workingDirectory).toBe(allocations[0])
       expect((await getThreadWorkingDirectory(fork.id))?.projectDirectory).toBe(repository)
-      const copied = await original().session.messages({ sessionID: forkSession, directory: allocations[0] })
-      expect(copied.data?.some((message) => message.parts.some((part) => part.type === 'text' && part.text.includes('SITE_CODING_WRITE')))).toBe(true)
+      const copied = await backendSessions().messages({ sessionId: forkSession, directory: allocations[0] })
+      if (copied instanceof Error) throw copied
+      expect(copied.some((message) => message.parts.some((part) => part.kind === 'text' && part.text.includes('SITE_CODING_WRITE')))).toBe(true)
     } finally {
       restoreHistory()
       remove()
       await setChannelDirectory({ channelId: TEXT_CHANNEL_ID, directory: repository, channelType: 'text' })
-      for (const session of sessions) {
-        disposeRuntime(session.threadId)
-        await original().session.delete({ sessionID: session.id, directory: session.directory })
-      }
+      // Pi sessions live in the suite's data dir and go with it. Deleting them
+      // here would race the forks' pending title updates.
+      for (const session of sessions) disposeRuntime(session.threadId)
       fs.rmSync(home, { recursive: true, force: true })
     }
   }, 60_000)
@@ -387,45 +381,35 @@ describe('/fork', () => {
     } finally { remove() }
   }, 25_000)
 
-  test('an unregistered directory cannot dispatch an isolated fork into the source checkout', async () => {
+  // OpenCode could bind a fork only to a discoverable Git worktree and failed
+  // closed on a plain directory. Pi resumes a session wherever its header
+  // points, so a plain-directory workspace is a real target; what must hold on
+  // any backend is that the task never runs in the source checkout.
+  test('a plain-directory workspace runs the fork there, never in the source checkout', async () => {
     const source = await startSource()
     const sourceFile = path.join(ctx.directories.projectDirectory, 'fork-result.txt')
     const beforeFile = fs.existsSync(sourceFile) ? fs.readFileSync(sourceFile, 'utf8') : null
-    const existing = new Set((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id))
-    let invoked = false
+    let provisioned: string | undefined
     const remove = addFilter('fork_workspace', () => ({ async provision(request) {
-      invoked = true
-      const workingDirectory = path.join(ctx.directories.root, `unsupported-${request.requestId}`)
+      const workingDirectory = path.join(ctx.directories.root, `plain-${request.requestId}`)
       fs.mkdirSync(workingDirectory, { recursive: true })
-      return { workingDirectory, projectDirectory: ctx.directories.projectDirectory, label: 'unsupported', kind: 'directory' as const }
+      provisioned = workingDirectory
+      return { workingDirectory, projectDirectory: ctx.directories.projectDirectory, label: 'plain', kind: 'directory' as const }
     } }))
     try {
-      const result = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER source must not run' }] })
-      await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
-      // Wait for the handler's terminal error edit, not merely deferReply.
-      const deadline = Date.now() + 8_000
-      let settled = false
-      while (Date.now() < deadline) {
-        const threads = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
-        if (invoked && threads.every((thread) => existing.has(thread.id))) {
-          await new Promise((resolve) => setTimeout(resolve, 200))
-          settled = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).every((thread) => existing.has(thread.id))
-          if (settled) break
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50))
-      }
-      expect(settled).toBe(true)
-      expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).every((thread) => existing.has(thread.id))).toBe(true)
+      const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER plain directory' }])
+      await waitForThreadSession(fork.id)
+      await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 10_000 })
+      expect((await getThreadWorkingDirectory(fork.id))?.workingDirectory).toBe(provisioned)
+      expect(fs.readFileSync(path.join(provisioned!, 'fork-result.txt'), 'utf8')).toBe('isolated')
       expect(fs.existsSync(sourceFile) ? fs.readFileSync(sourceFile, 'utf8') : null).toBe(beforeFile)
     } finally { remove() }
   }, 25_000)
 
   test('small-model titles use only the new prompt, without replay or title turns in the fork', async () => {
     const source = await startSource()
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
     const directory = ctx.directories.projectDirectory
-    const before = await getClient().session.list({ directory })
+    const before = await sessionCount(directory)
     const prompts = ['Reply with exactly: fork-cache-investigation', 'Reply with exactly: fork-permission-review']
     const titles: string[] = []
     const expected = ['Cache Investigation', 'Permission Review']
@@ -434,8 +418,7 @@ describe('/fork', () => {
       const sessionId = await waitForThreadSession(fork.id)
       await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
       await waitForGeneratedTitle(sessionId, expected[index]!)
-      const session = await getClient().session.get({ sessionID: sessionId, directory })
-      expect(session.data?.title).toBe(expected[index])
+      expect(await sessionTitle(sessionId)).toBe(expected[index])
       const deadline = Date.now() + 4_000
       let title = ''
       while (Date.now() < deadline) {
@@ -446,8 +429,8 @@ describe('/fork', () => {
       titles.push(title)
       const sourceHistory = await sessionMessages((await getThreadSession(source.id))!)
       const history = await sessionMessages(sessionId)
-      expect(history.filter((entry) => entry.info.role === 'user')).toHaveLength(sourceHistory.filter((entry) => entry.info.role === 'user').length + 1)
-      expect(history.filter((entry) => entry.info.role === 'assistant')).toHaveLength(sourceHistory.filter((entry) => entry.info.role === 'assistant').length + 1)
+      expect(history.filter((entry) => entry.message.role === 'user')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'user').length + 1)
+      expect(history.filter((entry) => entry.message.role === 'assistant')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'assistant').length + 1)
       expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain(`Forked from <#SOURCE_THREAD>.\n${prompt}`)
     }
     expect(titles).toMatchInlineSnapshot(`
@@ -456,9 +439,8 @@ describe('/fork', () => {
         "Permission Review",
       ]
     `)
-    const after = await getClient().session.list({ directory })
-    expect((after.data?.length ?? 0) - (before.data?.length ?? 0)).toBe(2)
-    expect((await getClient().session.get({ sessionID: (await getThreadSession(source.id))!, directory })).data?.title).not.toBe(prompts[0])
+    expect(await sessionCount(directory) - before).toBe(2)
+    expect(await sessionTitle((await getThreadSession(source.id))!)).not.toBe(prompts[0])
   }, 30_000)
 
   test('a promptless fork ignores restart recovery and takes its first actual message title', async () => {
@@ -477,14 +459,12 @@ describe('/fork', () => {
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: prompt })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-deferred-task' })
     await waitForGeneratedTitle(sessionId, 'Deferred Fork Task')
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
-    const directory = ctx.directories.projectDirectory
-    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('Deferred Fork Task')
+    expect(await sessionTitle(sessionId)).toBe('Deferred Fork Task')
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: fork-later-turn' })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000, afterMessageIncludes: 'fork-later-turn' })
-    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('Deferred Fork Task')
-    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"Deferred Fork Task"`)
+    expect(await sessionTitle(sessionId)).toBe('Deferred Fork Task')
+    // The thread rename follows the backend's session.updated event.
+    await expect.poll(async () => (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toBe('Deferred Fork Task')
     expect(await getThreadSession(fork.id)).toBe(sessionId)
   }, 30_000)
 
@@ -492,15 +472,14 @@ describe('/fork', () => {
     const source = await startSource()
     const fork = await forkFrom(source.id)
     const sessionId = await waitForThreadSession(fork.id)
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
     const directory = ctx.directories.projectDirectory
-    const updated = await getClient().session.update({ sessionID: sessionId, directory, title: 'User chosen branch' })
-    if (updated.error) throw new Error('Could not set explicit fork title')
+    const updated = await backendSessions().setTitle!({ sessionId, directory, title: 'User chosen branch' })
+    if (updated instanceof Error) throw updated
     await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: keep-custom-fork-title' })
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
-    expect((await getClient().session.get({ sessionID: sessionId, directory })).data?.title).toBe('User chosen branch')
-    expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toMatchInlineSnapshot(`"User chosen branch"`)
+    expect(await sessionTitle(sessionId)).toBe('User chosen branch')
+    // The thread rename follows the backend's session.updated event.
+    await expect.poll(async () => (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).find((thread) => thread.id === fork.id)?.name).toBe('User chosen branch')
   }, 30_000)
 
   test('failed naming keeps the original task across recovery and later local-queue turns', async () => {
@@ -559,12 +538,9 @@ describe('/fork', () => {
     const fork = await forkFrom(source.id, [{ name: 'prompt', type: 3, value: 'Reply with exactly: fork-title-slow' }])
     const sessionId = await waitForThreadSession(fork.id)
     await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 8_000 })
-    const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (getClient instanceof Error) throw getClient
-    const title = await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })
-    expect(title.data?.title).not.toBe('Follow-up Investigation')
+    expect(await sessionTitle(sessionId)).not.toBe('Follow-up Investigation')
     expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain('fork-title-slow')
     await waitForGeneratedTitle(sessionId, 'Follow-up Investigation')
-    expect((await getClient().session.get({ sessionID: sessionId, directory: ctx.directories.projectDirectory })).data?.title).toMatchInlineSnapshot(`"Follow-up Investigation"`)
+    expect(await sessionTitle(sessionId)).toMatchInlineSnapshot(`"Follow-up Investigation"`)
   }, 30_000)
 })

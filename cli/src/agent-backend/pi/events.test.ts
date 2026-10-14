@@ -81,6 +81,26 @@ describe('PiEventTranslator on a recorded tool turn', () => {
   })
 })
 
+describe('PiEventTranslator turn agent', () => {
+  function assistantAgents(agent: string | undefined): Array<string | undefined> {
+    const translator = new PiEventTranslator('ses-pi')
+    translator.setTurnAgent(agent)
+    return records('pi-tool-turn.jsonl')
+      .flatMap((record) => translator.translate(record))
+      .flatMap((e) => (e.type === 'message' ? [e.message.role === 'assistant' ? e.message.agent : 'user'] : []))
+  }
+
+  test("the turn's agent is stamped on its assistant messages, not the user's", () => {
+    const agents = assistantAgents('plan')
+    expect(agents).toContain('user')
+    expect(agents.filter((agent) => agent !== 'user').every((agent) => agent === 'plan')).toBe(true)
+  })
+
+  test('a turn without an agent leaves assistant messages unattributed', () => {
+    expect(assistantAgents(undefined).filter((agent) => agent !== 'user').every((agent) => agent === undefined)).toBe(true)
+  })
+})
+
 describe('history', () => {
   test('agent_end messages translate with tool results folded into their calls, ids matching the live stream', () => {
     const end = records('pi-tool-turn.jsonl').find((r) => r.type === 'agent_end') as unknown as { messages: PiMessage[] }

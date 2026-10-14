@@ -153,29 +153,43 @@ export function projectAgents(directory: string): PiAgent[] {
   return [...agents.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/**
+ * A project definition named like a built-in customizes it, as in OpenCode:
+ * the project's fields win, and its permission rules come after the
+ * built-in's so they take precedence (last match wins).
+ */
+function overlay(builtIn: PiAgent, project: PiAgent | undefined): PiAgent {
+  if (!project) return builtIn
+  return {
+    ...builtIn,
+    ...project,
+    ...(!project.description && builtIn.description && { description: builtIn.description }),
+    permission: [...builtIn.permission, ...project.permission],
+  }
+}
+
+/** Built-ins (with project customizations) followed by the project's own agents. */
+function resolvedAgents(directory?: string): PiAgent[] {
+  const project = directory ? projectAgents(directory) : []
+  const byName = new Map(project.map((agent) => [agent.name, agent]))
+  return [
+    ...BUILT_INS.map((builtIn) => overlay(builtIn, byName.get(builtIn.name))),
+    ...project.filter((agent) => !BUILT_INS.some((builtIn) => builtIn.name === agent.name)),
+  ]
+}
+
 /** Every agent a Pi session can run as, in Roadie's catalog shape. */
 export function piAgents(directory?: string): AgentDefinition[] {
-  const builtIns = BUILT_INS.map((agent): AgentDefinition => ({
+  return resolvedAgents(directory).map((agent): AgentDefinition => ({
     name: agent.name,
     ...(agent.description && { description: agent.description }),
     mode: agent.mode,
+    ...(agent.hidden && { hidden: true }),
+    ...(agent.model && { model: agent.model }),
   }))
-  if (!directory) return builtIns
-  return [
-    ...builtIns,
-    ...projectAgents(directory).map((agent): AgentDefinition => ({
-      name: agent.name,
-      ...(agent.description && { description: agent.description }),
-      mode: agent.mode,
-      ...(agent.hidden && { hidden: true }),
-      ...(agent.model && { model: agent.model }),
-    })),
-  ]
 }
 
 /** The agent a turn runs as, or undefined when the name is unknown. */
 export function agentFor({ directory, agent }: { directory: string; agent: string }): PiAgent | undefined {
-  const builtIn = BUILT_INS.find((candidate) => candidate.name === agent)
-  if (builtIn) return builtIn
-  return projectAgents(directory).find((candidate) => candidate.name === agent)
+  return resolvedAgents(directory).find((candidate) => candidate.name === agent)
 }

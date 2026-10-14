@@ -282,14 +282,37 @@ export function shouldQuoteIntermediateTextPart({
   if (text.includes('<callout')) return false
   if (text.trim().includes('\n')) return false
   if (!quotedTextFitsOneDiscordMessage(text)) return false
-  if (
-    nextToolName === 'question'
-    || nextToolName?.endsWith('roadie_sleep')
-    || nextToolName?.endsWith('roadie_action_buttons')
-  ) {
-    return false
-  }
+  if (nextToolName && toolKeepsLeadInTextPlain(nextToolName)) return false
   return true
+}
+
+/**
+ * Tools whose preceding text is the message the user acts on (a question, a
+ * sleep reason, buttons), so it stays plain rather than quoted as narration.
+ */
+export function toolKeepsLeadInTextPlain(toolName: string): boolean {
+  return toolName === 'question'
+    || toolName.endsWith('roadie_sleep')
+    || toolName.endsWith('roadie_action_buttons')
+}
+
+/**
+ * The text part directly before a tool in the turn (only non-text parts in
+ * between), if any.
+ */
+export function leadInTextPartBefore<T extends { id: string; kind: string; text?: string }>({
+  parts,
+  toolPartId,
+}: {
+  parts: ReadonlyArray<T>
+  toolPartId: string
+}): T | undefined {
+  const index = parts.findIndex((part) => part.id === toolPartId)
+  for (const part of parts.slice(0, Math.max(index, 0)).reverse()) {
+    if (isNonEmptyTextPart(part)) return part
+    if (part.kind === 'tool') return undefined
+  }
+  return undefined
 }
 
 export type AssistantTurnFlushMode = 'progress' | 'interactive' | 'final'

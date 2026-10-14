@@ -246,8 +246,18 @@ export class PiEventTranslator {
   private assistantStartedAt: number | undefined
   private tools = new Map<string, ToolState>()
   private aborting = false
+  private agent: string | undefined
 
   constructor(readonly sessionId: string) {}
+
+  /** The agent the next turn runs as (Pi has no agent of its own). */
+  setTurnAgent(agent: string | undefined) {
+    this.agent = agent
+  }
+
+  private withAgent(message: AgentMessage): AgentMessage {
+    return this.agent && message.role === 'assistant' ? { ...message, agent: this.agent } : message
+  }
 
   /** Roadie asked Pi to abort the current run; its failure is an abort, not an error. */
   markAborting() {
@@ -359,7 +369,7 @@ export class PiEventTranslator {
       ]
     }
     if (message.role !== 'assistant') return []
-    const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: false })!
+    const agentMessage = this.withAgent(toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: false })!)
     this.assistantId = agentMessage.id
     this.assistantStartedAt = message.timestamp
     return [{ type: 'message', message: agentMessage }]
@@ -397,7 +407,7 @@ export class PiEventTranslator {
   private messageEnd(message: PiMessage): AgentEvent[] {
     if (message.role !== 'assistant') return []
     const sessionId = this.sessionId
-    const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: true })!
+    const agentMessage = this.withAgent(toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: true })!)
     const assistant = message as PiAssistantMessage
     // A run Roadie aborted can end as a request error ("This operation was
     // aborted"); report it as an abort, which the runtime treats as expected.

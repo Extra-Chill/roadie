@@ -3,20 +3,21 @@
 // the session by sending the answers back as a fresh prompt.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
 import { waitForBotMessageContaining } from './test-utils.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
-import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
 import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 const TEXT_CHANNEL_ID = '200000000000001032'
 
-describe('question answered after external abort resumes session', () => {
+describe.skipIf(!findPi())('question answered after external abort resumes session', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort-resume',
     dirName: 'qa-question-abort-resume',
@@ -24,7 +25,7 @@ describe('question answered after external abort resumes session', () => {
   })
 
   test(
-    'answering a dropdown after opencode abort resumes with the answers',
+    'answering a dropdown after an out-of-band abort resumes with the answers',
     async () => {
       const marker = 'QUESTION_ABORT_RESUME_MARKER'
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -62,24 +63,22 @@ describe('question answered after external abort resumes session', () => {
       }
       const contextHash = pendingEntry[0]
 
-      // Abort directly through opencode (simulating a different opencode client),
-      // so roadie's dropdown context stays live but the question is gone in
-      // opencode. roadie's own abort would clear the dropdown instead.
+      // Abort directly through the backend (as another client of the same
+      // session would), so roadie's dropdown context stays live while the
+      // backend no longer has the question. roadie's own abort would clear
+      // the dropdown instead.
       const sessionId = await getThreadSession(thread.id)
       if (!sessionId) {
         throw new Error('Expected session id')
       }
-      const client = getOpencodeClient(ctx.directories.projectDirectory)
-      if (!client) {
-        throw new Error('Expected opencode client')
-      }
-      await client.session.abort({
-        sessionID: sessionId,
+      const aborted = await ctx.pi!.getBackend().sessions.abort({
+        sessionId,
         directory: ctx.directories.projectDirectory,
       })
+      expect(aborted).toBeUndefined()
 
       // Wait until roadie sees the session go idle (mirrors a user answering
-      // after they aborted in another opencode).
+      // after they aborted from another client).
       const runtime = getRuntime(thread.id)
       if (!runtime) {
         throw new Error('Expected runtime')

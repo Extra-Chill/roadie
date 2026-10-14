@@ -4,6 +4,7 @@
 // answers a question whose run is already dead.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -14,8 +15,9 @@ import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 const TEXT_CHANNEL_ID = '200000000000001031'
 
-describe('abort clears pending question dropdown', () => {
+describe.skipIf(!findPi())('abort clears pending question dropdown', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort',
     dirName: 'qa-question-abort',
@@ -96,7 +98,7 @@ describe('abort clears pending question dropdown', () => {
         "--- from: user (question-abort-tester)
         QUESTION_SELECT_QUEUE_MARKER abort-test
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         **Select action**
         How to proceed?
         [user selects dropdown: 0]

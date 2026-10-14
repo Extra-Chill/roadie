@@ -95,4 +95,32 @@ describe('piAgents / projectAgents / agentFor', () => {
     expect(agentFor({ directory: dir, agent: 'nope' })).toBeUndefined()
     fs.rmSync(dir, { recursive: true, force: true })
   })
+
+  test('a project agent named like a built-in customizes it instead of being shadowed', () => {
+    const dir = projectWithAgents()
+    fs.writeFileSync(path.join(dir, '.opencode', 'agents', 'plan.md'), [
+      '---',
+      'mode: primary',
+      'model: anthropic/claude-plan',
+      'permission:',
+      '  bash:',
+      '    "git status": allow',
+      '---',
+      'Plan carefully.',
+    ].join('\n'))
+    const plan = agentFor({ directory: dir, agent: 'plan' })
+    expect(plan?.model).toEqual({ providerId: 'anthropic', modelId: 'claude-plan' })
+    expect(plan?.prompt).toBe('Plan carefully.')
+    expect(plan?.description).toBe('Planning and analysis; edits and commands ask first')
+    // The built-in's rules still apply; the project's come later and win.
+    expect(plan?.permission).toEqual([
+      { permission: 'edit', pattern: '*', action: 'ask' },
+      { permission: 'bash', pattern: '*', action: 'ask' },
+      { permission: 'bash', pattern: 'git status', action: 'allow' },
+    ])
+    const listed = piAgents(dir).filter((agent) => agent.name === 'plan')
+    expect(listed).toHaveLength(1)
+    expect(listed[0]?.model).toEqual({ providerId: 'anthropic', modelId: 'claude-plan' })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 })

@@ -11,7 +11,7 @@ import type { AgentBackendProvider } from './agent-backend/types.js'
 import { PiBackendProvider } from './agent-backend/pi/backend.js'
 import { withPiDefault } from './agent-backend/pi/router.js'
 import { findPi } from './agent-backend/pi/find-pi.js'
-import { fakeModelsJson, startFakeModelServer, type FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { fakeModelsJson, startFakeModelServer, type FakeMatcher, type FakeModel } from './agent-backend/pi/fake-model-server.js'
 import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 import { disposeRuntimesForDirectory } from './session-handler/thread-session-runtime.js'
 
@@ -50,7 +50,7 @@ export type PiE2eBackend = {
   stop(): Promise<void>
 }
 
-export async function startPiE2eBackend({ root, dataDir, projectDirectory, matchers }: {
+export async function startPiE2eBackend({ root, dataDir, projectDirectory, matchers, models, model = 'fake/fake-1' }: {
   /** Holds the Pi agent dir (models.json). */
   root: string
   /** Holds Pi's session files and the file-edit log. */
@@ -58,16 +58,20 @@ export async function startPiE2eBackend({ root, dataDir, projectDirectory, match
   /** The suite's project; its thread runtimes are disposed by stop(). */
   projectDirectory: string
   matchers: FakeMatcher[]
+  /** The fake provider's models; fake-1 and fake-2 by default. */
+  models?: FakeModel[]
+  /** Default model, `provider/id`. */
+  model?: string
 }): Promise<PiE2eBackend> {
   const modelServer = await startFakeModelServer({ matchers })
   const agentDir = path.join(root, 'pi-agent')
   fs.mkdirSync(agentDir, { recursive: true })
-  fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(modelServer.baseUrl))
+  fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(modelServer.baseUrl, { ...(models && { models }) }))
   const options = {
     bin: findPi()!,
     sessionDir: path.join(dataDir, 'pi-sessions'),
     fileEditLogDir: dataDir,
-    model: 'fake/fake-1',
+    model,
     env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
   }
   const opencodeTouched: string[] = []

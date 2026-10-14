@@ -85,6 +85,12 @@ export type AgentSessionOperations = {
       directory: string
       command: string
       arguments: string
+      /**
+       * The turn's system prompt. OpenCode ignores it (Roadie's plugin reads
+       * the pinned prompt file because its command API has no system field);
+       * backends that take a per-turn system prompt apply it.
+       */
+      system?: string
       agent?: string
       model?: AgentModelSelection
       variant?: string

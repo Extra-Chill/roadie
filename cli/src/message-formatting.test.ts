@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getStarterMessageText, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getStarterMessageText, getTextAttachments, leadInTextPartBefore, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -470,6 +470,27 @@ describe('planAssistantTurnFlush', () => {
         'progress',
       ).send.find((entry) => entry.id === 't1'),
     ).toEqual({ id: 't1', quoteText: false })
+  })
+})
+
+describe('leadInTextPartBefore', () => {
+  const text = (id: string, value = 'plan') => ({ id, kind: 'text', text: value })
+  const tool = (id: string) => ({ id, kind: 'tool' })
+
+  test('finds the text right before the tool, across non-text parts', () => {
+    const parts = [text('a'), { id: 'r', kind: 'reasoning' }, tool('q')]
+    expect(leadInTextPartBefore({ parts, toolPartId: 'q' })?.id).toBe('a')
+  })
+
+  test('another tool in between means the text leads into that one', () => {
+    const parts = [text('a'), tool('bash'), tool('q')]
+    expect(leadInTextPartBefore({ parts, toolPartId: 'q' })).toBeUndefined()
+  })
+
+  test('skips empty text and ignores parts after the tool', () => {
+    const parts = [text('a'), text('blank', '  '), tool('q'), text('after')]
+    expect(leadInTextPartBefore({ parts, toolPartId: 'q' })?.id).toBe('a')
+    expect(leadInTextPartBefore({ parts, toolPartId: 'missing' })).toBeUndefined()
   })
 })
 

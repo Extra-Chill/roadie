@@ -3,6 +3,7 @@
 // must wait so the plan is not hidden under the question UI.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -11,8 +12,9 @@ import { getMessageVisibleText, waitForBotMessageContaining } from './test-utils
 
 const TEXT_CHANNEL_ID = '200000000000001042'
 
-describe('question text before dropdown', () => {
+describe.skipIf(!findPi())('question text before dropdown', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-text-order',
     dirName: 'qa-question-text-order',
@@ -46,7 +48,7 @@ describe('question text before dropdown', () => {
         "--- from: user (question-text-tester)
         QUESTION_AFTER_TEXT_MARKER
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         PLAN_TEXT_BEFORE_QUESTION
         **Next step**
         What next?"

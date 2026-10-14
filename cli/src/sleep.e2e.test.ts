@@ -363,7 +363,7 @@ describe.skipIf(!findPi())('roadie_sleep', () => {
         SLEEP_TOOL_MARKER wait for the deploy
         --- from: assistant (TestBot)
         -# *using fake/fake-1*
-        > waiting for the deploy
+        waiting for the deploy
 
         -# ┣ roadie_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
 

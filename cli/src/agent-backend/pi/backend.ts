@@ -1268,6 +1268,8 @@ export class PiBackendProvider implements AgentBackendProvider {
         } else {
           this.turnAgentRules.delete(sessionId)
         }
+        // Pi messages carry no agent; the turn's is stamped on its replies.
+        if (!noReply) session.translator.setTurnAgent(agent)
         if (turnSystem !== undefined) fs.writeFileSync(session.systemFile, turnSystem)
         await this.writeShellEnv(session.shellEnvFile, sessionId)
         if (model && (model.providerId !== session.model?.provider || model.modelId !== session.model?.id)) {
@@ -1313,7 +1315,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.touch(session)
         return undefined
       },
-      command: async ({ sessionId, directory, command, arguments: args, agent, model, variant }) => {
+      command: async ({ sessionId, directory, command, arguments: args, system, agent, model, variant }) => {
         // Disabled skills are refused like OpenCode's permission.skill deny —
         // before the session starts, and again once pi's command list resolves
         // (pi discovers its own skill locations Roadie does not control).
@@ -1332,6 +1334,7 @@ export class PiBackendProvider implements AgentBackendProvider {
           sessionId,
           directory,
           parts: [{ kind: 'text', text: `/${piName}${args ? ` ${args}` : ''}` }],
+          ...(system !== undefined && { system }),
           ...(agent && { agent }),
           ...(model && { model }),
           ...(variant && { variant }),
