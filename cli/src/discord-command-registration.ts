@@ -408,6 +408,18 @@ export function buildStaticSlashCommands() {
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('connect')
+      .setDescription(
+        truncateCommandDescription('Connect or disconnect your own accounts on the services your agent can use'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('start')
+      .setDescription(truncateCommandDescription('Show how to use Roadie (privately)'))
+      .setDMPermission(false)
+      .toJSON(),
   ]
 }
 

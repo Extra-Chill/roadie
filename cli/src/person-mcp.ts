@@ -65,6 +65,8 @@ export function personMcpPermissions({
 // registered with, so an unchanged token does not reconnect every turn. A
 // restarted server gets a new backend object and so registers again.
 const registered = new WeakMap<object, Map<string, string>>()
+/** Marker for a server this module disconnected because its token went away. */
+const DISCONNECTED = ''
 
 function fingerprint(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex')
@@ -107,23 +109,43 @@ export async function registerPersonMcpServers({
       personKey,
       credential: server.credential,
     })
-    if (token === null) {
-      logger.warn(`[PERSON-MCP] no stored credential ${server.credential} for server ${server.name}`)
-      continue
-    }
-    if (token instanceof Error) {
-      logger.warn(`[PERSON-MCP] credential ${server.credential} unusable for server ${server.name}: ${token.message}`)
-      continue
-    }
     const name = personMcpServerName({ personKey, name: server.name })
     const key = `${directory}\0${name}`
+    if (token === null || token instanceof Error) {
+      if (token === null) {
+        logger.warn(`[PERSON-MCP] no stored credential ${server.credential} for server ${server.name}`)
+      } else {
+        logger.warn(`[PERSON-MCP] credential ${server.credential} unusable for server ${server.name}: ${token.message}`)
+      }
+      // A server registered earlier with a token that is now gone (the
+      // person disconnected) must not keep running with the old headers.
+      const previous = known.get(key)
+      if (previous !== undefined && previous !== DISCONNECTED) {
+        const disconnected = await backend.mcp.disconnect({ directory, name })
+        if (disconnected instanceof Error) {
+          logger.warn(`[PERSON-MCP] could not disconnect server ${server.name}: ${disconnected.message}`)
+        } else {
+          known.set(key, DISCONNECTED)
+        }
+      }
+      continue
+    }
     const headers = { Authorization: `Bearer ${token}` }
     const current = fingerprint(`${server.url}\n${token}`)
-    if (known.get(key) !== current) {
+    const previous = known.get(key)
+    if (previous !== current) {
       const added = await backend.mcp.addRemote({ directory, name, url: server.url, headers })
       if (added instanceof Error) {
         logger.warn(`[PERSON-MCP] could not add server ${server.name}: ${added.message}`)
         continue
+      }
+      if (previous === DISCONNECTED) {
+        // Re-enable a server this module disconnected before (reconnect).
+        const connected = await backend.mcp.connect({ directory, name })
+        if (connected instanceof Error) {
+          logger.warn(`[PERSON-MCP] could not reconnect server ${server.name}: ${connected.message}`)
+          continue
+        }
       }
       known.set(key, current)
     }

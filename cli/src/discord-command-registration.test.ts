@@ -30,3 +30,16 @@ describe('buildStaticSlashCommands', () => {
     expect(fork?.options?.map((option) => option.name)).not.toContain('workspace')
   })
 })
+
+describe('person commands', () => {
+  test('registers /connect and /start as ephemeral-reply guild commands', () => {
+    const names = buildStaticSlashCommands().map((command) => command.name)
+    expect(names).toContain('connect')
+    expect(names).toContain('start')
+    for (const name of ['connect', 'start']) {
+      const command = buildStaticSlashCommands().find((entry) => entry.name === name)
+      expect(command?.options ?? []).toEqual([])
+      expect(command?.description.length).toBeLessThanOrEqual(100)
+    }
+  })
+})

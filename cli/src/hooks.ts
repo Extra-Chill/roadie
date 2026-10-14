@@ -20,6 +20,7 @@ import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
+import type { WelcomeMessageContext } from './person-welcome.js'
 import type { ForkWorkspaceProvider, ForkWorkspaceRequest, ForkWorkspaceBinding } from './fork-workspace.js'
 import type { IntakeDecision, ConversationIntakeRequest, ConversationAdmission } from './conversation-intake.js'
 import type { HostUpgradeHandler } from './service-lifecycle.js'
@@ -35,6 +36,11 @@ export interface RoadieFilters {
   agent_backend: [AgentBackendProvider, Record<string, never>]
   /** The person behind a chat actor; null means no identity layer. */
   person: [Person | null, { actor: IdentityActor; context: IdentityContext }]
+  /**
+   * Text of the private welcome sent to a newly admitted person (and shown by
+   * /start). The value starts as Roadie's generic default; null or '' disables it.
+   */
+  welcome_message: [string | null, WelcomeMessageContext]
   /** Effective channel policy: undefined = built-in behavior, null = do not answer. */
   channel_policy: [ChannelPolicy | null | undefined, { channelId: string }]
   /** System prompt sections, in order, before host prompt config applies. */

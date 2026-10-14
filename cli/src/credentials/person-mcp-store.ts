@@ -40,6 +40,8 @@ export type PersonMcpToken = {
   tokenEndpoint?: string
   clientId?: string
   clientSecret?: string
+  /** RFC 7009 revocation endpoint, used best effort on disconnect. */
+  revocationEndpoint?: string
   updatedAt: string
 }
 
@@ -83,6 +85,7 @@ function normalizeToken(value: unknown): PersonMcpToken | null {
     ...(optionalString('tokenEndpoint') ? { tokenEndpoint: optionalString('tokenEndpoint')! } : {}),
     ...(optionalString('clientId') ? { clientId: optionalString('clientId')! } : {}),
     ...(optionalString('clientSecret') ? { clientSecret: optionalString('clientSecret')! } : {}),
+    ...(optionalString('revocationEndpoint') ? { revocationEndpoint: optionalString('revocationEndpoint')! } : {}),
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
   }
 }
@@ -121,12 +124,32 @@ export async function setPersonMcpToken({
   if (token.tokenEndpoint && !isAllowedMcpUrl(token.tokenEndpoint)) {
     return new Error('Token endpoint must be https (http only for loopback)')
   }
+  if (token.revocationEndpoint && !isAllowedMcpUrl(token.revocationEndpoint)) {
+    return new Error('Revocation endpoint must be https (http only for loopback)')
+  }
   return await withPoolLock(lockKey({ dataDir, personKey, credential }), () => {
     atomicWriteFileSync({
       filePath: tokenPath({ dataDir, personKey, credential }),
       data: JSON.stringify({ ...token, updatedAt: now.toISOString() }, null, 2),
     })
   })
+}
+
+/**
+ * A person's stored token record, or null. For revocation on disconnect only:
+ * callers must never log or display the record.
+ */
+export function readPersonMcpToken({
+  dataDir,
+  personKey,
+  credential,
+}: {
+  dataDir: string
+  personKey: string
+  credential: string
+}): PersonMcpToken | null {
+  if (validateRef({ personKey, credential })) return null
+  return readTokenFile(tokenPath({ dataDir, personKey, credential }))
 }
 
 /** Remove a person's stored token. Returns false when there was none. */

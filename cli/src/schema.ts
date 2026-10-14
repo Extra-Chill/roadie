@@ -239,6 +239,14 @@ export const credential_owners = sqliteCore.sqliteTable('credential_owners', {
 // payer first changes, the thread gets exactly one notice saying so. The row
 // is written insert-or-ignore when the notice posts, so it posts once per
 // session — across restarts too.
+// People who have been sent the first-contact welcome (issue #272), keyed by
+// person key (identity person_id, else <platform>:<actorId>). One row each, so
+// the welcome is sent once per person across restarts.
+export const person_welcomes = sqliteCore.sqliteTable('person_welcomes', {
+  person_key: sqliteCore.text('person_key').primaryKey().notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const credential_payer_notices = sqliteCore.sqliteTable('credential_payer_notices', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   // Pool billed before the change.
@@ -399,6 +407,7 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 ])
 
 export const relations = defineRelations({
+  person_welcomes,
   pending_fork_titles,
   session_fork_origins,
   conversation_admissions,

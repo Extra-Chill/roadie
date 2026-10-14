@@ -58,14 +58,21 @@ type AddCall = { directory: string; name: string; url: string; headers: Record<s
 
 function fakeBackend() {
   const calls: AddCall[] = []
+  const toggles: string[] = []
   const backend = {
     mcp: {
       async addRemote(input: AddCall) {
         calls.push(input)
       },
+      async disconnect({ name }: { name: string }) {
+        toggles.push(`off:${name}`)
+      },
+      async connect({ name }: { name: string }) {
+        toggles.push(`on:${name}`)
+      },
     },
   } as unknown as AgentBackend
-  return { backend, calls }
+  return { backend, calls, toggles }
 }
 
 async function actorPerson(id: string) {
@@ -204,6 +211,25 @@ describe('two people in one channel', () => {
     await registerFor('alice', backend)
     expect(calls).toHaveLength(3)
     expect(calls[2]?.headers.Authorization).toBe('Bearer alice-token-2')
+  })
+
+  test('a disconnected token takes the server down; reconnecting brings it back', async () => {
+    await setPersonMcpToken({ dataDir, personKey: 'wp:1', credential: 'extrachill', token: { access: 'alice-a' } })
+    const { backend, calls, toggles } = fakeBackend()
+    const name = personMcpServerName({ personKey: 'wp:1', name: 'extrachill' })
+    expect(await registerFor('alice', backend)).toEqual([name])
+
+    await removePersonMcpToken({ dataDir, personKey: 'wp:1', credential: 'extrachill' })
+    expect(await registerFor('alice', backend)).toEqual([])
+    expect(toggles).toEqual([`off:${name}`])
+    // Still disconnected: not toggled again.
+    await registerFor('alice', backend)
+    expect(toggles).toEqual([`off:${name}`])
+
+    await setPersonMcpToken({ dataDir, personKey: 'wp:1', credential: 'extrachill', token: { access: 'alice-b' } })
+    expect(await registerFor('alice', backend)).toEqual([name])
+    expect(calls.at(-1)?.headers.Authorization).toBe('Bearer alice-b')
+    expect(toggles).toEqual([`off:${name}`, `on:${name}`])
   })
 
   test('turn permissions allow only the speaker scope; the backend denies the rest', async () => {
