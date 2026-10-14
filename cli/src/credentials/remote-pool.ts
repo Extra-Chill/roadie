@@ -63,7 +63,7 @@ export async function fetchRemotePoolCatalog({ config, fetchImpl = fetch }: { co
   if (!response.ok) return new Error(`pool host ${config.url} refused the catalog request (HTTP ${response.status}); check this bot's client key`)
   const body = (await response.json().catch(() => undefined)) as Partial<PoolCatalog> | undefined
   const list = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
-  return { rotations: list(body?.rotations), openaiRotations: list(body?.openaiRotations), codexModels: list(body?.codexModels) }
+  return { rotations: list(body?.rotations) }
 }
 
 export type RemotePoolRelay = {
@@ -75,7 +75,7 @@ export type RemotePoolRelay = {
   close(): Promise<void>
 }
 
-const MODEL_PATHS = ['/v1/messages', '/chat/completions', '/codex/responses']
+const MODEL_PATH = '/v1/messages'
 const HOP_HEADERS = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding'])
 
 function sessionHeader(sessionId: string): Record<string, string> {
@@ -102,7 +102,7 @@ export async function startRemotePoolRelay({
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const pathname = req.url?.split('?')[0] ?? ''
-    if (req.method !== 'POST' || !MODEL_PATHS.some((path) => pathname.endsWith(path))) {
+    if (req.method !== 'POST' || !pathname.endsWith(MODEL_PATH)) {
       reject(res, 404, 'not found')
       return
     }
