@@ -593,7 +593,6 @@ export class NativeSlackBot {
     const sessionId = runtime.state?.sessionId
     if (options.wait && sessionId) {
       const waited = await waitForSessionComplete({
-        projectDirectory: runtime.sdkDirectory,
         sessionId,
         waitStartedAtMs,
       }).catch(

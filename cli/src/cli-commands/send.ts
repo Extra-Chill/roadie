@@ -515,12 +515,9 @@ cli
           process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
-            // channelConfig is guaranteed here: early guard above already
-            // threw if channelConfig is missing when --wait is used.
             const { waitAndOutputSession } = await import('../wait-session.js')
             await waitAndOutputSession({
               threadId: targetThreadId,
-              projectDirectory: channelConfig!.directory,
               waitStartedAtMs,
             })
           }
@@ -744,12 +741,9 @@ cli
         process.stdout.write(`${threadUrl}\n`)
 
         if (options.wait) {
-          // projectDirectory is guaranteed here: needsProjectDirectory check above
-          // already threw if channelConfig is missing when --wait is used.
           const { waitAndOutputSession } = await import('../wait-session.js')
           await waitAndOutputSession({
             threadId: threadData.id,
-            projectDirectory: projectDirectory!,
             waitStartedAtMs,
           })
         }

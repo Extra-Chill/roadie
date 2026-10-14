@@ -164,7 +164,7 @@ function timedInfo(message: AgentMessage) {
 }
 
 export class ShareMarkdown {
-  constructor(private backend: Pick<AgentBackend, 'sessions'>) {}
+  constructor(private backend: { sessions: Pick<AgentBackend['sessions'], 'get' | 'messages'> }) {}
 
   /**
    * Generate a markdown representation of a session
