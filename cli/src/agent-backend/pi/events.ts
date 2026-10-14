@@ -392,6 +392,7 @@ export class PiEventTranslator {
     const sessionId = this.sessionId
     const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: true })!
     const assistant = message as PiAssistantMessage
+    const error = toError(assistant)
     return [
       { type: 'message', message: agentMessage },
       {
@@ -406,6 +407,7 @@ export class PiEventTranslator {
           usage: toUsage(assistant.usage),
         },
       },
+      ...(error ? [{ type: 'error' as const, sessionId, error }] : []),
     ]
   }
 

@@ -130,6 +130,25 @@ describe('history', () => {
   })
 })
 
+describe('PiEventTranslator message errors', () => {
+  test('emits an APIError after a failed assistant message, but not for a normal stop', () => {
+    const translator = new PiEventTranslator('ses-pi')
+    const failed = translator.translate({
+      type: 'message_end',
+      message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Model unavailable', timestamp: 1 },
+    })
+    const error = failed.find((event) => event.type === 'error')
+    expect(error).toMatchObject({ type: 'error', sessionId: 'ses-pi', error: { name: 'APIError', message: 'Model unavailable' } })
+    expect(failed.map((event) => event.type)).toEqual(['message', 'part', 'error'])
+
+    const normal = translator.translate({
+      type: 'message_end',
+      message: { role: 'assistant', content: [], stopReason: 'stop', timestamp: 2 },
+    })
+    expect(normal.some((event) => event.type === 'error')).toBe(false)
+  })
+})
+
 describe('task delegation parts', () => {
   const args = { description: 'inspect repo', prompt: 'look around', subagent_type: 'explore' }
 
@@ -307,4 +326,3 @@ describe('MCP config for Pi', () => {
     expect(decidePermission({ rules, tool: 'mcp__roadie_pm_abc_jira__search', input: {}, cwd: '/r' }).action).toBe('deny')
   })
 })
-
