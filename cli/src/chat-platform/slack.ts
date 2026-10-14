@@ -41,6 +41,10 @@ export const slackInteractionSchema = z.object({
   channel: z.object({ id: z.string() }).optional(),
   message: z.object({ ts: z.string(), thread_ts: z.string().optional() }).optional(),
   trigger_id: z.string().optional(),
+  // Present on block_actions; replaces an ephemeral message (Slack has no
+  // chat.update for those).
+  response_url: z.string().optional(),
+  container: z.object({ is_ephemeral: z.boolean().optional() }).passthrough().optional(),
   actions: z
     .array(
       z.object({

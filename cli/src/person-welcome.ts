@@ -14,8 +14,9 @@
 // The text comes from the `welcome_message` filter (value: Roadie's generic
 // default; null or '' disables). `/start` re-shows it on demand.
 //
-// This module is platform-neutral: delivery is a callback, so Discord sends a
-// DM with buttons and other platforms can plug in their own channel.
+// This module is platform-neutral: delivery is a callback, so Discord
+// (commands/start.ts) and Slack (slack-connect.ts) each send a DM with
+// buttons in their own way.
 
 import { getDataDir } from './config.js'
 import { personKeyFrom } from './credentials/person-pool.js'
@@ -48,6 +49,23 @@ export type PersonWelcome = {
   pendingMcpServers: PersonMcpServer[]
 }
 
+/**
+ * How a person types a Roadie command on their platform: Discord registers
+ * `/connect`, Slack has one `/roadie <subcommand>` command.
+ */
+export function roadieCommandHint(platform: string, name: string): string {
+  return platform === 'slack' ? `/roadie ${name}` : `/${name}`
+}
+
+/** A channel reference both Discord and Slack render as a link. */
+function channelMention(platform: string, channelId: string | undefined): string {
+  if (!channelId) return ''
+  if (platform === 'discord') return ` (like <#${channelId}>)`
+  // Slack: public/private channel ids only; DMs (D...) are not "a channel".
+  if (platform === 'slack' && /^[CG][A-Z0-9]+$/.test(channelId)) return ` (like <#${channelId}>)`
+  return ''
+}
+
 export function defaultWelcomeText({
   actor,
   channelId,
@@ -57,17 +75,17 @@ export function defaultWelcomeText({
   channelId?: string
   pendingMcpServers: readonly string[]
 }): string {
-  const where = channelId && actor.platform === 'discord' ? ` (like <#${channelId}>)` : ''
+  const where = channelMention(actor.platform, channelId)
   const lines = [
     `Welcome${actor.name ? `, ${actor.name}` : ''}! I'm Roadie, an AI agent your team can ask for help.`,
     `Mention me in a channel${where} with a question or a task, and I'll answer in a thread.`,
   ]
   if (pendingMcpServers.length > 0) {
     lines.push(
-      `Some services need your own account first (${pendingMcpServers.join(', ')}). Use \`/connect\` or the button below to sign in.`,
+      `Some services need your own account first (${pendingMcpServers.join(', ')}). Use \`${roadieCommandHint(actor.platform, 'connect')}\` or the button below to sign in.`,
     )
   }
-  lines.push('Use `/start` any time to see this again.')
+  lines.push(`Use \`${roadieCommandHint(actor.platform, 'start')}\` any time to see this again.`)
   return lines.join('\n')
 }
 

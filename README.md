@@ -182,7 +182,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `agent_backend` | the agent backend provider (default: Pi) | — |
 | `person` | the person behind a chat user, or `null` | `{ actor, context }` |
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
-| `welcome_message` | text of the private welcome a newly admitted person gets once (DM on Discord) and `/start` re-shows; starts as Roadie's generic default, `null` or `''` disables it | `{ actor, person, personKey, channelId?, pendingMcpServers, trigger }` |
+| `welcome_message` | text of the private welcome a newly admitted person gets once (a DM on Discord and Slack) and `/start` (`/roadie start` on Slack) re-shows; starts as Roadie's generic default, `null` or `''` disables it | `{ actor, person, personKey, channelId?, pendingMcpServers, trigger }` |
 | `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |
 | `context_sections` | host context sections for a session start or turn | the context request |
 | `agent_providers` | providers and models offered to users (hide, rename, reorder) | `{ directory }` |
@@ -204,9 +204,9 @@ Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROA
 
 ### Per-person MCP servers
 
-The identity hook can name MCP servers for a person (`mcp_servers: [{ name, url, credential? }]`). Their tools are available only in that person's turns, authenticated with that person's own token. People connect their own account from chat with `/connect` (or the Connect button in their welcome): Roadie discovers the authorization server from the MCP endpoint (RFC 9728 `WWW-Authenticate`/well-known metadata, RFC 8414), registers itself as a public client (RFC 7591, cached per server in `<data dir>/mcp-clients/`), and runs the OAuth device grant (RFC 8628), showing the sign-in link only to that person. Servers without a device authorization endpoint or client registration are reported as not connectable from chat; operators can still store a token with `roadie credentials mcp set`. Disconnecting removes the token and revokes it when the server has a revocation endpoint.
+The identity hook can name MCP servers for a person (`mcp_servers: [{ name, url, credential? }]`). Their tools are available only in that person's turns, authenticated with that person's own token. People connect their own account from chat with `/connect` on Discord or `/roadie connect` on Slack (or the Connect button in their welcome): Roadie discovers the authorization server from the MCP endpoint (RFC 9728 `WWW-Authenticate`/well-known metadata, RFC 8414), registers itself as a public client (RFC 7591, cached per server in `<data dir>/mcp-clients/`), and runs the OAuth device grant (RFC 8628), showing the sign-in link only to that person. Servers without a device authorization endpoint or client registration are reported as not connectable from chat; operators can still store a token with `roadie credentials mcp set`. Disconnecting removes the token and revokes it when the server has a revocation endpoint.
 
-Newly admitted people (identity hook `allowed: true`) get a one-time private welcome (a DM on Discord) with Connect buttons for any servers they have not connected yet. Override or disable the text with the `welcome_message` filter.
+Newly admitted people (identity hook `allowed: true`) get a one-time private welcome (a DM on Discord and Slack) with Connect buttons for any servers they have not connected yet. Override or disable the text with the `welcome_message` filter.
 
 ### Shell env
 

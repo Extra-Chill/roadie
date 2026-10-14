@@ -78,6 +78,13 @@ import { markChatPlatformReady } from './hrana-server.js'
 import { doAction } from './hooks.js'
 import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import {
+  handleSlackConnectAction,
+  handleSlackConnectCommand,
+  handleSlackStartCommand,
+  isSlackConnectAction,
+  welcomeSlackUser,
+} from './slack-connect.js'
 
 const logger = createLogger('SLACK')
 const messageSchema = z.object({
@@ -109,6 +116,7 @@ const commandSchema = z.object({
   command: z.string(),
   text: z.string().default(''),
   trigger_id: z.string(),
+  response_url: z.string().optional(),
 })
 const deliverySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('message'), event: messageSchema }),
@@ -641,7 +649,7 @@ export class NativeSlackBot {
         })
       )
         return null
-      return { actor, person }
+      return { actor, person, isBot: true }
     }
     const info = await this.api.call(
       'users.info',
@@ -680,7 +688,22 @@ export class NativeSlackBot {
       })
     )
       return null
-    return { actor, person }
+    return { actor, person, isBot: info.user.is_bot ?? false }
+  }
+
+  /** First contact with an admitted person: one private welcome DM. */
+  private welcome(input: {
+    identity: { actor: { id: string; name: string }; person: Parameters<typeof welcomeSlackUser>[0]['person']; isBot: boolean }
+    channelId: string
+  }) {
+    void welcomeSlackUser({
+      api: this.api,
+      userId: input.identity.actor.id,
+      displayName: input.identity.actor.name,
+      isBot: input.identity.isBot,
+      person: input.identity.person,
+      channelId: input.channelId,
+    })
   }
 
   private async receive(request: http.IncomingMessage, response: http.ServerResponse) {
@@ -905,6 +928,26 @@ export class NativeSlackBot {
     }
     if (delivery.kind === 'command') return this.command(delivery.event)
     if (delivery.kind === 'interaction') {
+      const action = delivery.event.actions?.[0]
+      if (delivery.event.type === 'block_actions' && isSlackConnectAction(action?.action_id)) {
+        // Personal: authorized from the clicking user's own person, not from
+        // a thread or the button. Runs in the background so OAuth discovery
+        // never holds up the inbox.
+        void handleSlackConnectAction({
+          api: this.api,
+          workspaceId: this.workspaceId,
+          user: delivery.event.user,
+          actionId: action!.action_id,
+          ...(delivery.event.channel?.id ? { channelId: delivery.event.channel.id } : {}),
+          ...(delivery.event.response_url ? { responseUrl: delivery.event.response_url } : {}),
+          isEphemeral: delivery.event.container?.is_ephemeral ?? false,
+        })
+          .then((result) => {
+            if (result instanceof Error) logger.warn(`Slack connect action failed: ${result.message}`)
+          })
+          .catch((error) => logger.error('Slack connect action failed', error))
+        return
+      }
       const hash =
         delivery.event.view?.private_metadata ??
         delivery.event.actions?.[0]?.action_id.split(':')[2]
@@ -940,6 +983,7 @@ export class NativeSlackBot {
       const identity = await this.authorize(target.channelId, delivery.event.user.id)
       if (identity instanceof Error) return identity
       if (!identity) return
+      this.welcome({ identity, channelId: target.channelId })
       if (resolveChannelPolicy(target.channelId)?.intake) {
         const scope = { platform: 'slack', spaceId: this.workspaceId, threadId: row.thread_id }
         const admission = await readConversationAdmission(scope)
@@ -997,6 +1041,7 @@ export class NativeSlackBot {
     )
     if (identity instanceof Error) return identity
     if (!identity) return
+    this.welcome({ identity, channelId: message.channel })
     const mentioned = message.text.includes(`<@${this.botUserId}>`)
     const decision = decideRespond(message.channel)
     // A host-relayed root may repeat its own ts as thread_ts. That is still a
@@ -1048,10 +1093,24 @@ export class NativeSlackBot {
   // Slack slash commands do not carry a thread timestamp. Require an explicit
   // target for session operations instead of guessing which shared session.
   private async command(event: z.infer<typeof commandSchema>) {
+    const [name, target, ...words] = event.text.trim().split(/\s+/)
+    // Personal commands are answered privately from the speaker's own person;
+    // they do not need a session-capable channel.
+    if (name === 'connect' || name === 'start') {
+      const context = {
+        api: this.api,
+        workspaceId: this.workspaceId,
+        channelId: event.channel_id,
+        userId: event.user_id,
+        ...(event.user_name ? { userName: event.user_name } : {}),
+        ...(event.response_url ? { responseUrl: event.response_url } : {}),
+      }
+      return name === 'connect' ? handleSlackConnectCommand(context) : handleSlackStartCommand(context)
+    }
     const identity = await this.authorize(event.channel_id, event.user_id)
     if (identity instanceof Error) return identity
     if (!identity) return
-    const [name, target, ...words] = event.text.trim().split(/\s+/)
+    this.welcome({ identity, channelId: event.channel_id })
     if (name === 'new') {
       const intake = await resolveConversationIntake({ actor: identity.actor, spaceId: this.workspaceId, channelId: event.channel_id,
         personId: identity.person?.personId, text: event.text,
@@ -1100,7 +1159,7 @@ export class NativeSlackBot {
         })
       const result = await this.api.post({
         channel: event.channel_id,
-        text: 'Use /roadie new <prompt>, or /roadie <abort|model|agent> <thread timestamp> [value]. Session commands target an explicit thread.',
+        text: 'Use /roadie new <prompt>, or /roadie <abort|model|agent> <thread timestamp> [value]. Session commands target an explicit thread. /roadie connect lists your own services; /roadie start shows the welcome again.',
       })
       return result instanceof Error ? result : undefined
     }
