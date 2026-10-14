@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.67.3] - 2026-10-14
+
+### Changed
+- drop OpenCode-format skills/commands and the skill filter flags
+
 ## [0.67.2] - 2026-10-14
 
 ### Changed
