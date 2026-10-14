@@ -21,7 +21,7 @@ export type PoolServeOptions = {
   dataDir: string
   host?: string
   port: number
-} & Pick<MessagesProxyOptions, 'fetchImpl' | 'upstreamUrl' | 'codexUrl' | 'catalog' | 'now'>
+} & Pick<MessagesProxyOptions, 'fetchImpl' | 'upstreamUrl' | 'codexUrl' | 'catalog' | 'now' | 'shutdownGraceMs'>
 
 /** Resolve the listen address from flags, then ROADIE_POOL_PROXY_HOST/PORT. A fixed port is required. */
 export function resolvePoolServeAddress({

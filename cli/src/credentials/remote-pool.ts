@@ -31,6 +31,8 @@ import type { PoolAccountAdded, PoolAccountView, PoolAccounts, PoolListing, Pool
 
 export type RemotePoolConfig = { url: string; key: string }
 type RelayFetch = (input: string, init?: RequestInit) => Promise<Response>
+export const DEFAULT_RELAY_RETRY_WINDOW_MS = 15_000
+export const DEFAULT_RELAY_RETRY_DELAY_MS = 250
 
 /** The configured remote pool, undefined when this bot uses its local pool. */
 export function readRemotePoolConfig(
@@ -83,9 +85,13 @@ function sessionHeader(sessionId: string): Record<string, string> {
 export async function startRemotePoolRelay({
   config,
   fetchImpl = fetch,
+  retryWindowMs = DEFAULT_RELAY_RETRY_WINDOW_MS,
+  retryDelayMs = DEFAULT_RELAY_RETRY_DELAY_MS,
 }: {
   config: RemotePoolConfig
   fetchImpl?: RelayFetch
+  retryWindowMs?: number
+  retryDelayMs?: number
 }): Promise<RemotePoolRelay> {
   const keys = new Map<string, () => string | undefined>()
 
@@ -114,8 +120,14 @@ export async function startRemotePoolRelay({
     }
     Object.assign(headers, { [PROXY_KEY_HEADER]: config.key }, sessionHeader(sessionId))
     const body = await readRawBody(req)
-    const upstream = await fetchImpl(`${config.url}${req.url ?? pathname}`, { method: 'POST', headers, body })
-      .catch((cause: unknown) => new Error(cause instanceof Error ? cause.message : String(cause)))
+    const deadline = Date.now() + retryWindowMs
+    let upstream: Response | Error
+    while (true) {
+      upstream = await fetchImpl(`${config.url}${req.url ?? pathname}`, { method: 'POST', headers, body })
+        .catch((cause: unknown) => new Error(cause instanceof Error ? cause.message : String(cause)))
+      if (!(upstream instanceof Error) || Date.now() >= deadline) break
+      await new Promise((resolve) => setTimeout(resolve, Math.min(retryDelayMs, Math.max(0, deadline - Date.now()))))
+    }
     if (upstream instanceof Error) {
       reject(res, 502, `pool host ${config.url} is unreachable: ${upstream.message}`)
       return

@@ -123,8 +123,33 @@ describe('startRemotePoolRelay', () => {
   })
 
   test('an unreachable host is a 502, not a hang', async () => {
-    relay = await startRemotePoolRelay({ config: { url: 'http://127.0.0.1:9', key: 'k' } })
+    relay = await startRemotePoolRelay({ config: { url: 'http://127.0.0.1:9', key: 'k' }, retryWindowMs: 30, retryDelayMs: 5 })
     expect((await ask(relay.baseUrl, relay.issueKey(() => 'session-one'))).status).toBe(502)
+  })
+
+  test('retries connection failures until the host comes up', async () => {
+    const { createServer } = await import('node:http')
+    const probe = await import('node:net')
+    const reservation = probe.createServer()
+    await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve))
+    const { port } = reservation.address() as import('node:net').AddressInfo
+    await new Promise<void>((resolve) => reservation.close(() => resolve()))
+    relay = await startRemotePoolRelay({ config: { url: `http://127.0.0.1:${port}`, key: 'k' }, retryWindowMs: 1_000, retryDelayMs: 10 })
+    const key = relay.issueKey(() => 'session-one')
+    const pending = ask(relay.baseUrl, key)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const host = createServer((_req, res) => { res.writeHead(200); res.end('ok') })
+    await new Promise<void>((resolve) => host.listen(port, '127.0.0.1', resolve))
+    try { expect((await pending).status).toBe(200) } finally { await new Promise<void>((resolve) => host.close(() => resolve())) }
+  })
+
+  test('does not retry after receiving a response', async () => {
+    let calls = 0
+    relay = await startRemotePoolRelay({ config: { url: 'http://127.0.0.1:9', key: 'k' }, retryWindowMs: 100, retryDelayMs: 5,
+      fetchImpl: async () => { calls++; if (calls === 1) return new Response('started', { status: 503 }); throw new Error('should not retry') },
+    })
+    expect((await ask(relay.baseUrl, relay.issueKey(() => 'session-one'))).status).toBe(503)
+    expect(calls).toBe(1)
   })
 
   test('end-turn needs a client key on the host', async () => {
