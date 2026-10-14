@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.70.2] - 2026-10-14
+
+### Fixed
+- a failed identity lookup falls back to the last successful one
+
 ## [0.70.1] - 2026-10-14
 
 ### Changed
