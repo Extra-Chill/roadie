@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.63.0] - 2026-10-14
+
+### Added
+- roadie credentials serve, a headless credential pool host
+
 ## [0.62.1] - 2026-10-14
 
 ### Fixed
