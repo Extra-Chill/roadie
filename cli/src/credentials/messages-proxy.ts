@@ -360,6 +360,9 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
       }
       const body = JSON.stringify({ ...payload, model: candidate.modelId })
       const headers = forwardHeaders(req)
+      if (candidate.provider === 'opencode-go' && !headers.has('x-opencode-session')) {
+        headers.set('x-opencode-session', crypto.createHash('sha256').update(sessionId).digest('hex').slice(0, 32))
+      }
       headers.set('authorization', `Bearer ${candidate.account.key}`)
       let upstream: Response
       try {
