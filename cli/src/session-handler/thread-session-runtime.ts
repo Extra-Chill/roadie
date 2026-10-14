@@ -2181,6 +2181,49 @@ export class ThreadSessionRuntime {
     this.partBuffer.set(part.messageId, messageParts)
   }
 
+  /**
+   * A backend can learn only after streaming that a reasoning part was
+   * user-facing text (Pi narration, #288); the update reuses the part id.
+   */
+  private isReasoningPromotedToText(part: AgentPart): boolean {
+    if (part.kind !== 'text') return false
+    return this.partBuffer.get(part.messageId)?.get(part.id)?.kind === 'reasoning'
+  }
+
+  /**
+   * If the reasoning line for a promoted part was already posted, rewrite that
+   * message as the text. When there is no message to edit, the part is
+   * unmarked so the normal flush posts it.
+   */
+  private async replaceSentReasoningWithText(part: AgentPart): Promise<void> {
+    if (part.kind !== 'text' || !this.state?.sentPartIds.has(part.id)) return
+    const unmark = () => {
+      threadState.updateThread(this.threadId, (t) => {
+        const newIds = new Set(t.sentPartIds)
+        newIds.delete(part.id)
+        return { ...t, sentPartIds: newIds }
+      })
+    }
+    const db = await getDb()
+    const row = await db.query.part_messages.findFirst({
+      where: { part_id: part.id },
+      columns: { message_id: true },
+    }).catch((e) => new DiscordOperationError({ operation: 'getPartMessage', cause: e }))
+    const messageId = row instanceof Error ? undefined : row?.message_id
+    if (!messageId) {
+      unmark()
+      return
+    }
+    const edited = await this.chat.editMessageText(
+      messageId,
+      sessionPartContent({ content: formatPart(part), leadWithBlankLine: false }),
+    )
+    if (edited instanceof Error) {
+      discordLogger.error(`ERROR: Failed to replace reasoning with text ${part.id}:`, edited)
+      unmark()
+    }
+  }
+
   private getBufferedParts(messageID: string): AgentPart[] {
     return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
   }
@@ -2636,7 +2679,11 @@ export class ThreadSessionRuntime {
       return
     }
 
+    const promoted = this.isReasoningPromotedToText(part)
     this.storePart(part)
+    if (promoted) {
+      await this.replaceSentReasoningWithText(part)
+    }
 
     if (messageKind === 'unknown') {
       return

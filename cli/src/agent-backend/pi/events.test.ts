@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { AgentEvent, AgentPart } from '../events.js'
-import { PiEventTranslator, finalAssistantText, piMessageId, toAgentHistory, type PiMessage } from './events.js'
+import { PiEventTranslator, finalAssistantText, isNarrationThinking, piMessageId, toAgentHistory, type PiMessage } from './events.js'
 import { splitRecords, type PiRecord } from './rpc.js'
 import { bashCommandPaths, decidePermission, permissionForToolCall } from './backend.js'
 import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
@@ -184,6 +184,55 @@ describe('PiEventTranslator message errors', () => {
       message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Model unavailable', timestamp: 4 },
     })
     expect(failed.find((event) => event.type === 'error')).toMatchObject({ error: { name: 'APIError' } })
+  })
+})
+
+// Real signature prefixes from an Opus turn: protobuf field 8 holds the label.
+const THINKING_SIGNATURE = 'CAQS7AUKEAgSGAI4AUIIdGhpbmtpbmcSDJxqcmhCUyqYptdZwxoMIXORiriEXR7I' + 'A'.repeat(32)
+const NARRATION_SIGNATURE = 'CAQS8xQKEQgSGAI4AUIJbmFycmF0aW9uEgyjfaBgqsXd8s6D/AUaDN/W6knKkuyF' + 'A'.repeat(32)
+
+describe('narration thinking (#288)', () => {
+  const thinking = { type: 'thinking' as const, thinking: 'Views are too thin to rank.', thinkingSignature: THINKING_SIGNATURE }
+  const narration = { type: 'thinking' as const, thinking: 'I checked: views are too low. Send me 5 shows?', thinkingSignature: NARRATION_SIGNATURE }
+  const content = [thinking, narration, { type: 'toolCall' as const, id: 'call-buttons', name: 'roadie_action_buttons', arguments: {} }]
+
+  test('only a narration-labelled, non-empty, unredacted thinking block is narration', () => {
+    expect(isNarrationThinking(thinking)).toBe(false)
+    expect(isNarrationThinking(narration)).toBe(true)
+    expect(isNarrationThinking({ ...narration, thinking: '' })).toBe(false)
+    expect(isNarrationThinking({ ...narration, redacted: true })).toBe(false)
+    expect(isNarrationThinking({ ...narration, thinkingSignature: '' })).toBe(false)
+    expect(isNarrationThinking({ ...narration, thinkingSignature: '%%%not base64' })).toBe(false)
+    expect(isNarrationThinking({ type: 'text', text: 'hi' })).toBe(false)
+  })
+
+  test('message_end re-emits narration as a text part with the same id, before the step finish', () => {
+    const translator = new PiEventTranslator('ses-pi')
+    translator.translate({ type: 'message_start', message: { role: 'assistant', content: [], timestamp: 10 } })
+    const streamed = translator.translate({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_end', contentIndex: 1, content: narration.thinking },
+    })
+    expect(streamed[0]).toMatchObject({ type: 'part', part: { id: 'pi-assistant-10-1', kind: 'reasoning' } })
+
+    const ended = translator.translate({
+      type: 'message_end',
+      message: { role: 'assistant', content, stopReason: 'toolUse', timestamp: 10 },
+    })
+    const parts = ended.flatMap((event) => (event.type === 'part' ? [event.part] : []))
+    expect(parts.map((part) => [part.id, part.kind])).toEqual([
+      ['pi-assistant-10-1', 'text'],
+      ['pi-assistant-10-finish', 'step-finish'],
+    ])
+    expect(parts[0]).toMatchObject({ text: narration.thinking })
+  })
+
+  test('history maps narration to text and keeps ordinary thinking as reasoning', () => {
+    const [entry] = toAgentHistory({
+      sessionId: 'ses-pi',
+      messages: [{ role: 'assistant', content, stopReason: 'toolUse', timestamp: 11 }],
+    })
+    expect(entry!.parts.map((part) => part.kind)).toEqual(['reasoning', 'text', 'tool', 'step-finish'])
   })
 })
 
