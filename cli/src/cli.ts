@@ -617,7 +617,10 @@ cli
             if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
             else {
               setPiPool(pool)
-              cliLogger.log(`Credential pool proxy listening on ${pool.baseUrl}`)
+              const remotePool = process.env['ROADIE_POOL_URL']?.trim()
+              cliLogger.log(remotePool
+                ? `Credential pool: remote ${remotePool} (relay on ${pool.baseUrl})`
+                : `Credential pool proxy listening on ${pool.baseUrl}`)
             }
           }
         }
