@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest'
 import { addPoolAccount, addPoolOAuthAccount, setPoolRotation, SHARED_POOL_ID } from '../../credentials/store.js'
 import {
   anthropicRotations,
+  codexModels,
   openaiCompatRotations,
   piPoolModelsJson,
   PI_CODEX_POOL_PROVIDER,
@@ -31,6 +32,20 @@ async function seedRotations(dataDir: string, entries: Record<string, string[]>)
 }
 
 describe('rotation wire formats', () => {
+  test('openai/ rotation entries run on ChatGPT accounts, never as API-key rotations', async () => {
+    const dataDir = tempDataDir('pi-pool-')
+    await seedRotations(dataDir, {
+      'openai-gpt-6.1-sol': ['openai/gpt-6.1-sol'],
+      subagent: ['zai-coding-plan/glm-5.3-flash', 'openai/gpt-6-luna', 'anthropic/claude-sonnet-5-5'],
+    })
+    expect(openaiCompatRotations({ dataDir })).toEqual(['subagent'])
+    // No ChatGPT account yet: nothing to offer.
+    expect(codexModels({ dataDir })).toEqual([])
+    const chatgpt = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'openai-codex', refresh: 'refresh', access: 'access', expires: Date.now() + 3_600_000 })
+    if (chatgpt instanceof Error) throw chatgpt
+    expect(codexModels({ dataDir })).toEqual(['gpt-6-luna', 'gpt-6.1-sol'])
+  })
+
   test('api-key rotations are served OpenAI-compatible; anthropic rotations stay on Anthropic Messages', async () => {
     const dataDir = tempDataDir('pi-pool-')
     await seedRotations(dataDir, {

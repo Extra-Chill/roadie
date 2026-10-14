@@ -53,7 +53,7 @@ import {
 } from '../credentials/person-mcp-store.js'
 import { addPoolClient, readPoolClients, removePoolClient } from '../credentials/pool-clients.js'
 import { resolvePoolServeAddress, servePool } from '../credentials/serve.js'
-import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
+import { anthropicRotations, codexModels as poolCodexModels, openaiCompatRotations, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -446,7 +446,7 @@ cli
     const poolIds = resolvePoolIds(options.pools)
     const rotations = anthropicRotations({ dataDir, poolIds })
     const openaiRotations = openaiCompatRotations({ dataDir, poolIds })
-    const codexModels = hasCodexAccounts({ dataDir, poolIds }) ? DEFAULT_CODEX_MODELS : []
+    const codexModels = poolCodexModels({ dataDir, poolIds })
     if (rotations.length === 0 && openaiRotations.length === 0 && codexModels.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no ChatGPT account and no pool rotation`)
     writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, openaiRotations, codexModels, dataDir, poolIds })
     cliLogger.log(`Wrote Pi agent dir ${dir} (anthropic rotations: ${rotations.join(', ') || 'none'}; api-key rotations: ${openaiRotations.join(', ') || 'none'}; ChatGPT models: ${codexModels.join(', ') || 'none'})`)

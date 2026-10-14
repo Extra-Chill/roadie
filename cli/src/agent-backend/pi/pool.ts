@@ -9,12 +9,14 @@
 //   - `roadie-openai` (api `openai-completions`, #176): rotations with an
 //     API-key provider entry (models.dev catalog providers like z.ai), served
 //     by the proxy's `/chat/completions`.
+//   - `roadie-codex` (api `openai-codex-responses`): OpenAI models, served by
+//     ChatGPT subscription accounts. Its models are the `openai/<model>`
+//     entries of the pool's rotations; nothing is hard-coded.
 // A single Pi model speaks exactly one wire format, so a mixed rotation is
 // listed under both providers and each model falls through only among the
 // candidates of its own format.
 //
-// ChatGPT (Codex) subscription accounts don't use rotations: they get the
-// separate `roadie-codex` provider. Each Pi process gets its own key in
+// Each Pi process gets its own key in
 // ROADIE_PI_KEY; Pi sends it as a header (models.json resolves the env var)
 // and the proxy maps it to the session. Pi never sees a credential.
 
@@ -28,8 +30,8 @@ export const PI_POOL_PROVIDER = 'roadie'
 export const PI_OPENAI_POOL_PROVIDER = 'roadie-openai'
 export const PI_CODEX_POOL_PROVIDER = 'roadie-codex'
 export const PI_KEY_ENV = 'ROADIE_PI_KEY'
-/** ChatGPT-subscription models offered through the pool (Pi accepts unlisted ids too). */
-export const DEFAULT_CODEX_MODELS = ['gpt-6-luna', 'gpt-5.5']
+/** Rotation entry providers served by ChatGPT (Codex) subscription accounts, never by API keys. */
+const CODEX_ENTRY_PROVIDERS = new Set(['openai', 'openai-codex'])
 
 /**
  * Pi's Codex client reads the ChatGPT account id from its token, so it gets a
@@ -41,12 +43,26 @@ function placeholderCodexToken(): string {
   return `${part({ alg: 'none' })}.${part({ 'https://api.openai.com/auth': { chatgpt_account_id: 'roadie-pool' } })}.roadie`
 }
 
-/** Does any of these pools hold a ChatGPT (Codex) account? */
-export function hasCodexAccounts({ dataDir, poolIds = [SHARED_POOL_ID] }: { dataDir: string; poolIds?: string[] }): boolean {
-  return poolIds.some((poolId) => {
+/**
+ * OpenAI models the pools can serve through ChatGPT (Codex) accounts: the
+ * `openai/<model>` entries of their rotations, when a pool holds a ChatGPT
+ * account. Empty without one.
+ */
+export function codexModels({ dataDir, poolIds = [SHARED_POOL_ID] }: { dataDir: string; poolIds?: string[] }): string[] {
+  const models = new Set<string>()
+  for (const poolId of poolIds) {
     const accounts = readPoolAccounts({ dataDir, poolId })
-    return !(accounts instanceof Error) && accounts.some((account) => account.provider === 'openai-codex')
-  })
+    if (accounts instanceof Error || !accounts.some((account) => account.provider === 'openai-codex')) continue
+    const rotations = readPoolRotations({ dataDir, poolId })
+    if (rotations instanceof Error) continue
+    for (const entries of Object.values(rotations)) {
+      for (const entry of entries) {
+        const parsed = parseRotationEntry(entry)
+        if (parsed && CODEX_ENTRY_PROVIDERS.has(parsed.provider)) models.add(parsed.modelId)
+      }
+    }
+  }
+  return [...models].sort()
 }
 
 /** Rotation names whose candidates include an Anthropic model, in the given pools. */
@@ -66,8 +82,8 @@ export function anthropicRotations({ dataDir, poolIds = [SHARED_POOL_ID] }: { da
  * Rotation names whose candidates include an API-key provider (a models.dev
  * catalog provider like zai-coding-plan, or any provider with an account
  * --base-url), in the given pools (#176). Anthropic keys speak Anthropic
- * Messages and ChatGPT (Codex) accounts are OAuth, so their entries don't
- * count; the proxy serves these rotations on `/chat/completions`.
+ * Messages and OpenAI models run on ChatGPT (Codex) accounts, so their entries
+ * don't count; the proxy serves these rotations on `/chat/completions`.
  */
 export function openaiCompatRotations({ dataDir, poolIds = [SHARED_POOL_ID] }: { dataDir: string; poolIds?: string[] }): string[] {
   const names = new Set<string>()
@@ -77,7 +93,7 @@ export function openaiCompatRotations({ dataDir, poolIds = [SHARED_POOL_ID] }: {
     for (const [name, entries] of Object.entries(rotations)) {
       const openai = entries.some((entry) => {
         const parsed = parseRotationEntry(entry)
-        return parsed !== null && parsed.provider !== 'anthropic' && parsed.provider !== 'openai-codex'
+        return parsed !== null && parsed.provider !== 'anthropic' && !CODEX_ENTRY_PROVIDERS.has(parsed.provider)
       })
       if (openai) names.add(name)
     }
