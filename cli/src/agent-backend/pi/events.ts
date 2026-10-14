@@ -392,7 +392,9 @@ export class PiEventTranslator {
     const sessionId = this.sessionId
     const agentMessage = toAgentMessage({ message, sessionId, parentId: this.lastUserId, completed: true })!
     const assistant = message as PiAssistantMessage
-    const error = toError(assistant)
+    // Only model failures surface as session errors; aborts are deliberate
+    // (interrupts, dismissed questions) and are handled where they start.
+    const error = assistant.stopReason === 'error' ? toError(assistant) : undefined
     return [
       { type: 'message', message: agentMessage },
       {

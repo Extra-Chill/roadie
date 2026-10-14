@@ -131,7 +131,7 @@ describe('history', () => {
 })
 
 describe('PiEventTranslator message errors', () => {
-  test('emits an APIError after a failed assistant message, but not for a normal stop', () => {
+  test('emits an APIError after a failed assistant message, but not for a normal stop or an abort', () => {
     const translator = new PiEventTranslator('ses-pi')
     const failed = translator.translate({
       type: 'message_end',
@@ -146,6 +146,12 @@ describe('PiEventTranslator message errors', () => {
       message: { role: 'assistant', content: [], stopReason: 'stop', timestamp: 2 },
     })
     expect(normal.some((event) => event.type === 'error')).toBe(false)
+
+    const aborted = translator.translate({
+      type: 'message_end',
+      message: { role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'This operation was aborted', timestamp: 3 },
+    })
+    expect(aborted.some((event) => event.type === 'error')).toBe(false)
   })
 })
 
