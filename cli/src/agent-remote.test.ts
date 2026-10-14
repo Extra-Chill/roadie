@@ -25,6 +25,7 @@ import {
   AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
   AGENT_PROJECT_REMOVE_PATH,
   AGENT_SEND_PATH,
+  AGENT_OPERATOR_REQUESTS_PATH,
   AGENT_SESSIONS_PATH,
   AGENT_SESSION_ARCHIVE_PATH,
   AGENT_SESSION_EDITORS_PATH,
@@ -39,6 +40,12 @@ import {
   runAgentCommand,
   type AgentCommandRequest,
 } from './agent-remote.js'
+import {
+  createOperatorRequest,
+  decideOperatorRequest,
+  onOperatorRequestCreated,
+  waitForOperatorDecision,
+} from './operator-requests.js'
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-agent-remote-'))
 const AGENT_SESSION = 'ses_agent_test'
@@ -118,6 +125,11 @@ afterAll(async () => {
 })
 
 describe('agent token auth', () => {
+  test('operator requests require a valid session token', async () => {
+    for (const auth of ['', 'Bearer invalid', `Bearer ${mintAgentToken({ secret: 'other', sessionId: AGENT_SESSION })}`]) {
+      expect((await post(AGENT_OPERATOR_REQUESTS_PATH, auth, { argv: ['credentials', 'list'] })).status).toBe(401)
+    }
+  })
   test('an agent token is rejected on /v2 and /v2/pipeline', async () => {
     expect((await post('/v2', `Bearer ${token()}`, { requests: [] })).status).toBe(401)
     expect((await post('/v2/pipeline', `Bearer ${token()}`, { requests: [] })).status).toBe(401)
@@ -144,6 +156,136 @@ describe('agent token auth', () => {
       {},
     )
     expect(response.status).toBe(403)
+  })
+})
+
+describe('operator requests', () => {
+  test('allows operator commands and rejects other or empty argv', () => {
+    expect(createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['credentials', 'list'] }).state).toBe('pending')
+    for (const argv of [
+      ['credentials', 'remove', 'abc'],
+      ['credentials', 'import-subrouter'],
+      ['credentials', 'import-opencode'],
+      ['credentials', 'rotation', 'set', '--help'],
+      ['credentials', 'client', 'list'],
+      ['upgrade'],
+    ]) {
+      expect(createOperatorRequest({ sessionId: AGENT_SESSION, argv }).state).toBe('pending')
+    }
+    for (const argv of [
+      ['credentials', 'client', 'add', 'x'],
+      ['credentials', 'export-opencode'],
+      ['credentials', 'login', 'anthropic'],
+      ['credentials', 'add-key'],
+      ['credentials', 'mcp', 'set'],
+    ]) {
+      expect(() => createOperatorRequest({ sessionId: AGENT_SESSION, argv })).toThrow()
+    }
+    expect(() => createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['session', 'list'] })).toThrow()
+    expect(() => createOperatorRequest({ sessionId: AGENT_SESSION, argv: [] })).toThrow()
+    expect(() => createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['credentials', '\0'] })).toThrow()
+  })
+
+  test('approval runs the exact stored argv and relays child output', async () => {
+    const argv = ['credentials', 'list']
+    let createdId = ''
+    const unsubscribe = onOperatorRequestCreated((request) => {
+      createdId = request.id
+      expect(request.sessionId).toBe(AGENT_SESSION)
+      argv[1] = 'remove'
+      request.argv[1] = 'remove'
+      setTimeout(() => {
+        decideOperatorRequest({ id: request.id, decision: 'approve', approverId: 'test-operator' })
+      }, 0)
+    })
+    try {
+      const result = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv } })
+      expect(createdId).not.toBe('')
+      expect(result).toEqual({ exit: 0, out: 'stub stdout line\n', err: 'stub stderr line\n' })
+      expect(runs.at(-1)).toEqual(['credentials', 'list'])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test('denial returns a non-zero exit without running a child', async () => {
+    const before = runs.length
+    const unsubscribe = onOperatorRequestCreated(({ id }) => {
+      decideOperatorRequest({ id, decision: 'deny', approverId: 'test-operator' })
+    })
+    try {
+      const result = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['upgrade'] } })
+      expect(result.exit).not.toBe(0)
+      expect(result.err).toContain('denied')
+      expect(runs.length).toBe(before)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test('timeout expires the request and cannot run a child', async () => {
+    const before = runs.length
+    const request = createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['upgrade'] })
+    const result = await waitForOperatorDecision(request.id, { timeoutMs: 1 })
+    expect(result.state).toBe('expired')
+    expect(runs.length).toBe(before)
+    expect(() => decideOperatorRequest({ id: request.id, decision: 'approve', approverId: 'late' })).toThrow()
+  })
+
+  test('disconnect expires a pending request before a late approval can run', async () => {
+    const before = runs.length
+    const controller = new AbortController()
+    let resolveCreated!: (id: string) => void
+    const created = new Promise<string>((resolve) => {
+      resolveCreated = resolve
+    })
+    const unsubscribe = onOperatorRequestCreated(({ id }) => resolveCreated(id))
+    try {
+      const response = await fetch(`${url}${AGENT_OPERATOR_REQUESTS_PATH}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ argv: ['upgrade'] }),
+        signal: controller.signal,
+      })
+      expect(response.status).toBe(200)
+      const id = await created
+      const decision = waitForOperatorDecision(id, { timeoutMs: 1000 })
+      controller.abort()
+      expect((await decision).state).toBe('expired')
+      expect(() => decideOperatorRequest({ id, decision: 'approve', approverId: 'late' })).toThrow(
+        'Operator request not found',
+      )
+      expect(runs.length).toBe(before)
+    } finally {
+      controller.abort()
+      unsubscribe()
+    }
+  })
+
+  test('second decision errors without changing the first decision', async () => {
+    const request = createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['upgrade'] })
+    const decision = waitForOperatorDecision(request.id, { timeoutMs: 1000 })
+    const first = decideOperatorRequest({ id: request.id, decision: 'deny', approverId: 'first' })
+    expect(() => decideOperatorRequest({ id: request.id, decision: 'approve', approverId: 'second' })).toThrow(
+      'Operator request not found',
+    )
+    expect(await decision).toEqual(first)
+    await expect(waitForOperatorDecision(request.id, { timeoutMs: 1 })).rejects.toThrow('Operator request not found')
+  })
+
+  test('invalid endpoint argv is rejected before creating a request', async () => {
+    const before = runs.length
+    for (const body of [
+      { argv: [] },
+      { argv: ['session', 'list'] },
+      { argv: ['credentials', 'client', 'add', 'x'] },
+      { argv: ['credentials', 'export-opencode'] },
+      { argv: ['credentials', 'login', 'anthropic'] },
+      { argv: ['upgrade'], sessionId: 'other' },
+    ]) {
+      expect((await post(AGENT_OPERATOR_REQUESTS_PATH, `Bearer ${token()}`, body)).status).toBe(400)
+    }
+    expect(runs.length).toBe(before)
   })
 })
 

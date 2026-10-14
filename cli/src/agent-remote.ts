@@ -17,9 +17,9 @@
 // client relays byte-identical output and exit codes. Tasks (list, edit,
 // delete) are scoped to the token's session or thread; search, read, project
 // and listings stay as broad as the CLI already is for any local operator.
-// Commands that manage the bot itself (bot token/status, credentials,
-// upgrade, install URLs) and debug exports never reach an agent shell: the
-// CLI refuses them in agent mode before touching the database.
+// Operator-only CLI commands still refuse direct execution in agent mode.
+// Credentials and upgrade can instead be submitted as operator requests,
+// executed in the bot context only after an explicit decision.
 //
 // Agent tokens are never accepted on /v2 or /v2/pipeline (hrana) or by any
 // admin route — only on the /roadie/agent/* paths below.
@@ -41,10 +41,12 @@ import {
   type RemoteSendEvent,
 } from './remote-send.js'
 import { getScheduledTask, getThreadIdBySessionId } from './database.js'
+import { createOperatorRequest, expireOperatorRequest, waitForOperatorDecision } from './operator-requests.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
 export const AGENT_SEND_PATH = '/roadie/agent/send'
+export const AGENT_OPERATOR_REQUESTS_PATH = '/roadie/agent/operator-requests'
 export const AGENT_SESSION_SEARCH_PATH = '/roadie/agent/sessions/search'
 export const AGENT_SESSION_EDITORS_PATH = '/roadie/agent/sessions/editors'
 export const AGENT_SESSION_ARCHIVE_PATH = '/roadie/agent/sessions/archive'
@@ -695,7 +697,7 @@ function respondJson(
 /** Run the mapped subcommand as a child of the bot, streaming NDJSON back. */
 async function runAgentChild(args: string[], res: http.ServerResponse): Promise<void> {
   agentLogger.log(`Agent run: ${args.filter((arg) => !arg.startsWith('--prompt=')).join(' ')}`)
-  res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+  if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson' })
   const emit = (event: RemoteSendEvent) => {
     res.write(`${JSON.stringify(event)}\n`)
   }
@@ -705,6 +707,64 @@ async function runAgentChild(args: string[], res: http.ServerResponse): Promise<
   const exit = await getRemoteSendRunner()(args, emit).finally(() => clearInterval(keepalive))
   emit({ exit })
   res.end()
+}
+
+async function runOperatorRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  sessionId: string,
+): Promise<void> {
+  const body = await readJsonBody(req, res)
+  if (!body.ok) return
+  const value = body.value
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !('argv' in value) ||
+    Object.keys(value).some((key) => key !== 'argv')
+  ) {
+    respondJson(res, 400, { error: 'Body must contain only argv' })
+    return
+  }
+  let request: ReturnType<typeof createOperatorRequest>
+  try {
+    request = createOperatorRequest({ sessionId, argv: value.argv as string[] })
+  } catch (error) {
+    respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+    return
+  }
+  const onRequestClose = () => {
+    if (!req.complete) expireOperatorRequest(request.id)
+  }
+  const onResponseClose = () => {
+    if (!res.writableEnded) expireOperatorRequest(request.id)
+  }
+  req.on('close', onRequestClose)
+  res.on('close', onResponseClose)
+  if (res.destroyed || (req.destroyed && !req.complete)) {
+    expireOperatorRequest(request.id)
+    return
+  }
+  res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+  res.flushHeaders()
+  const keepalive = setInterval(() => res.write(`${JSON.stringify({ keepalive: true })}\n`), 20_000)
+  try {
+    const decision = await waitForOperatorDecision(request.id, { timeoutMs: 5 * 60_000 })
+    clearInterval(keepalive)
+    if (res.destroyed) return
+    if (decision.state === 'approved') {
+      await runAgentChild(decision.argv, res)
+    } else {
+      res.write(`${JSON.stringify({ stream: 'stderr', data: `Operator request ${decision.state}.\n` })}\n`)
+      res.write(`${JSON.stringify({ exit: 1 })}\n`)
+      res.end()
+    }
+  } finally {
+    clearInterval(keepalive)
+    req.off('close', onRequestClose)
+    res.off('close', onResponseClose)
+  }
 }
 
 async function runAgentSend(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -756,6 +816,10 @@ export async function handleAgentRequest(
   try {
     if (req.method === 'POST' && url.pathname === AGENT_SEND_PATH) {
       await runAgentSend(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === AGENT_OPERATOR_REQUESTS_PATH) {
+      await runOperatorRequest(req, res, sessionId)
       return
     }
     if (req.method === 'GET' && url.pathname === AGENT_SESSION_SEARCH_PATH) {
