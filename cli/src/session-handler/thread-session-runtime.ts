@@ -83,6 +83,8 @@ import {
   sessionPartKind,
   shouldLeadWithBlankLine,
   shouldQuoteIntermediateTextPart,
+  toolKeepsLeadInTextPlain,
+  leadInTextPartBefore,
   STATUS_PREFIX,
   type AssistantTurnFlushMode,
 } from '../message-formatting.js'
@@ -2239,7 +2241,22 @@ export class ThreadSessionRuntime {
     const parts = this.getCurrentTurnParts()
     const finalPart = parts.findLast((part) => part.kind === 'text' || part.kind === 'tool')
     if (!finalPart || finalPart.kind !== 'text') return
-    const last = finalPart
+    await this.unquoteTextPart(finalPart)
+  }
+
+  /**
+   * Text ahead of a question, sleep or action buttons stays plain. A backend
+   * that ends the text block before the tool call is known (Pi) gets it sent
+   * as quoted narration first, so it is unquoted once the tool shows up.
+   */
+  private async unquoteLeadInTextForTool(part: AgentPart): Promise<void> {
+    if (part.kind !== 'tool' || !toolKeepsLeadInTextPlain(part.tool)) return
+    const leadIn = leadInTextPartBefore({ parts: this.getCurrentTurnParts(), toolPartId: part.id })
+    if (!leadIn || leadIn.kind !== 'text' || !this.state?.sentPartIds.has(leadIn.id)) return
+    await this.unquoteTextPart(leadIn)
+  }
+
+  private async unquoteTextPart(last: Extract<AgentPart, { kind: 'text' }>): Promise<void> {
     const db = await getDb()
     const row = await db.query.part_messages.findFirst({
       where: { part_id: last.id },
@@ -2652,6 +2669,10 @@ export class ThreadSessionRuntime {
     if (part.kind === 'step-start') {
       this.ensureTypingNow()
       return
+    }
+
+    if (part.kind === 'tool') {
+      await this.unquoteLeadInTextForTool(part)
     }
 
     if (part.kind === 'tool' && part.status === 'running') {
