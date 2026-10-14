@@ -30,6 +30,8 @@ export type PoolClient = {
   keyHash: string
   pools: string[]
   createdAt: number
+  /** May manage its pools' accounts through the pool host admin API (#238). Absent = false. */
+  admin?: boolean
 }
 
 type ClientsFile = { version: 1; clients: PoolClient[] }
@@ -64,11 +66,13 @@ export function addPoolClient({
   dataDir,
   name,
   pools = [SHARED_POOL_ID],
+  admin = false,
   now = Date.now(),
 }: {
   dataDir: string
   name: string
   pools?: string[]
+  admin?: boolean
   now?: number
 }): { client: PoolClient; key: string } | Error {
   if (!POOL_CLIENT_NAME_PATTERN.test(name)) return new Error(`invalid client name "${name}"`)
@@ -79,7 +83,7 @@ export function addPoolClient({
   if (existing instanceof Error) return existing
   if (existing.some((client) => client.name === name)) return new Error(`client "${name}" already exists; remove it first`)
   const key = `rpc_${crypto.randomBytes(24).toString('hex')}`
-  const client: PoolClient = { name, keyHash: hashPoolClientKey(key), pools: [...new Set(poolIds)], createdAt: now }
+  const client: PoolClient = { name, keyHash: hashPoolClientKey(key), pools: [...new Set(poolIds)], createdAt: now, ...(admin && { admin: true }) }
   writePoolClients(dataDir, [...existing, client])
   return { client, key }
 }

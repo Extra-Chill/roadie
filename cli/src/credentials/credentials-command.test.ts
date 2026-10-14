@@ -312,12 +312,11 @@ describe('/credentials login-anthropic paste modal', () => {
     ).toEqual({ code: 'abc123', state: 'state-2' })
   })
 
-  test('expired PKCE state is dropped after the TTL', () => {
+  test('expired login context is dropped after the TTL', () => {
     const hash = createCredentialsContext({
       kind: 'oauth',
       provider: 'anthropic',
-      verifier: 'verifier-1',
-      state: 'state-1',
+      flowId: 'flow-1',
       shared: false,
     })
     const now = Date.now()
@@ -338,8 +337,7 @@ describe('/credentials login-anthropic paste modal', () => {
     const hash = createCredentialsContext({
       kind: 'oauth',
       provider: 'anthropic',
-      verifier: 'verifier-1',
-      state: 'state-1',
+      flowId: 'flow-1',
       shared: false,
     })
     const { interaction, replies } = makeOAuthModalInteraction({ hash, pasted: '   ' })

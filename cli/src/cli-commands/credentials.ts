@@ -3,7 +3,7 @@
 // per-person servers can manage other pools:
 //   roadie credentials list [--pool <id>]
 //   roadie credentials add-key --provider <anthropic|openai|...> [--label] [--pool <id>]
-//   roadie credentials login anthropic [--label] [--pool <id>]
+//   roadie credentials login <anthropic|openai-codex> [--label] [--pool <id>]
 //   roadie credentials remove <id> [--pool <id>]
 //   roadie credentials rotation set <name> <provider/model>... [--pool <id>]
 //   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
@@ -12,38 +12,31 @@
 //   roadie credentials mcp set --person <key> --credential <name>   (OAuth token JSON on stdin)
 //   roadie credentials mcp list --person <key>
 //   roadie credentials mcp remove --person <key> --credential <name>
-//   roadie credentials client add <name> [--pools <id,id>]   (prints the key once)
+//   roadie credentials client add <name> [--pools <id,id>] [--admin]   (prints the key once)
 //   roadie credentials client list
 //   roadie credentials client remove <name>
 //   roadie credentials client pi-agent-dir <dir> --base-url <url> [--pools <id,id>]
 //   roadie credentials serve [--host <addr>] [--port <n>]   (headless pool host, #226)
-// API keys are read from stdin (never argv) and never printed; only the last
-// 4 characters are shown. OAuth tokens are never printed; `list` shows the
-// access token's expiry instead.
+// list, add-key, login and remove go through the PoolAccounts seam: this
+// host's pool, or the pool host's admin API when ROADIE_POOL_URL is set
+// (#238). API keys are read from stdin (never argv); no key or token is ever
+// printed. `list` shows an OAuth account's access expiry instead.
 import { goke } from 'goke'
 import fs from 'node:fs'
 import { createInterface } from 'node:readline/promises'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getDataDir } from '../config.js'
 import {
-  addPoolAccount,
-  addPoolOAuthAccount,
   isValidPoolId,
-  readPoolAccounts,
-  readPoolRotations,
-  readPoolState,
-  removePoolAccount,
   setPoolRotation,
   SHARED_POOL_ID,
-  type PoolAccount,
 } from '../credentials/store.js'
 import {
-  buildAuthorizeUrl,
-  exchangeAuthorizationCode,
-  generatePKCE,
-  parseManualInput,
-  ANTHROPIC_OAUTH_REDIRECT_URI,
-} from '../credentials/adapters/anthropic-oauth.js'
+  isPoolOAuthProvider,
+  resolvePoolAccounts,
+  type PoolAccountView,
+  type PoolAccounts,
+} from '../credentials/pool-accounts.js'
 import { EXIT_NO_RESTART } from '../cli-runner.js'
 import { isAgentMode, runAgentOperatorRequest } from '../agent-remote.js'
 import {
@@ -63,7 +56,6 @@ import {
   removePersonMcpToken,
   setPersonMcpToken,
 } from '../credentials/person-mcp-store.js'
-import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
 import { addPoolClient, readPoolClients, removePoolClient } from '../credentials/pool-clients.js'
 import { resolvePoolServeAddress, servePool } from '../credentials/serve.js'
 import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
@@ -71,18 +63,20 @@ import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompa
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
 
-/** Keys are never printed in full; `…last4` is enough to tell accounts apart. */
-function maskKey(key: string): string {
-  return `…${key.slice(-4)}`
-}
-
-/** One-line credential summary per account type. Never shows tokens. */
-function describeAccountCredential(account: PoolAccount, now: number): string {
-  if (account.type === 'oauth') {
-    const expiresAt = new Date(account.expires).toISOString()
-    return account.expires <= now ? `expires ${expiresAt} (expired)` : `expires ${expiresAt}`
+/** One-line summary of a secret-free account view. */
+function describeAccount(account: PoolAccountView, now: number): string {
+  const parts: string[] = [account.id, account.provider, account.type]
+  if (account.expiresAt) {
+    parts.push(Date.parse(account.expiresAt) <= now ? `expires ${account.expiresAt} (expired)` : `expires ${account.expiresAt}`)
   }
-  return maskKey(account.key)
+  if (account.baseURL) parts.push(account.baseURL)
+  if (account.label) parts.push(account.label)
+  parts.push(`added ${account.addedAt}`)
+  if (account.lastUsed) parts.push(`last used ${account.lastUsed}`)
+  if (typeof account.coolingUntil === 'number' && account.coolingUntil > now) {
+    parts.push(`cooling ${Math.ceil((account.coolingUntil - now) / 1000)}s`)
+  }
+  return parts.join(' | ')
 }
 
 function exitWithError(message: string): never {
@@ -93,6 +87,16 @@ function exitWithError(message: string): never {
 /** Credential pool management is operator-only: agent shells never read pool files. */
 async function refuseAgentMode(): Promise<void> {
   if (isAgentMode()) process.exit(await runAgentOperatorRequest(process.argv.slice(2)))
+}
+
+/**
+ * The account seam: this host's pool, or the pool host's admin API when
+ * ROADIE_POOL_URL is set (ROADIE_POOL_ADMIN_KEY_FILE holds an admin key, #238).
+ */
+function poolAccounts(): PoolAccounts {
+  const accounts = resolvePoolAccounts({ env: process.env, dataDir: getDataDir() })
+  if (accounts instanceof Error) exitWithError(accounts.message)
+  return accounts
 }
 
 /** Resolve --pool (default `shared`), exiting when the id is malformed. */
@@ -112,32 +116,19 @@ cli
   .action(async (options) => {
     await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
-    const dataDir = getDataDir()
-    const accounts = readPoolAccounts({ dataDir, poolId })
-    if (accounts instanceof Error) exitWithError(accounts.message)
-    const state = readPoolState({ dataDir, poolId })
-    if (state instanceof Error) exitWithError(state.message)
-    const rotations = readPoolRotations({ dataDir, poolId })
-    if (rotations instanceof Error) exitWithError(rotations.message)
-
+    const accounts = poolAccounts()
+    const listing = await accounts.list({ poolId })
+    if (listing instanceof Error) exitWithError(listing.message)
+    const where = accounts.location === 'local' ? '' : ` on ${accounts.location}`
     const now = Date.now()
-    if (accounts.length === 0) {
-      cliLogger.log(`Pool ${poolId} has no accounts`)
+    if (listing.accounts.length === 0) {
+      cliLogger.log(`Pool ${poolId}${where} has no accounts`)
     } else {
-      cliLogger.log(`Pool ${poolId} accounts:`)
-      for (const account of accounts) {
-        const cooldownUntil = state.cooldowns[account.id]
-        const cooling =
-          typeof cooldownUntil === 'number' && cooldownUntil > now
-            ? ` | cooling ${Math.ceil((cooldownUntil - now) / 1000)}s`
-            : ''
-        const lastUsed = account.lastUsed ? ` | last used ${account.lastUsed}` : ''
-        cliLogger.log(
-          `${account.id} | ${account.provider} | ${account.type} | ${describeAccountCredential(account, now)}${account.label ? ` | ${account.label}` : ''} | added ${account.addedAt}${lastUsed}${cooling}`,
-        )
-      }
+      cliLogger.log(`Pool ${poolId}${where} accounts:`)
+      for (const account of listing.accounts) cliLogger.log(describeAccount(account, now))
     }
 
+    const rotations = listing.rotations
     const rotationNames = Object.keys(rotations).sort()
     if (rotationNames.length === 0) {
       cliLogger.log(`Pool ${poolId} has no rotations`)
@@ -181,86 +172,53 @@ cli
       exitWithError('No API key received on stdin')
     }
 
-    // Free text provider, checked against the models.dev catalog; an explicit
-    // --base-url bypasses the check (custom endpoints are exactly the case the
-    // catalog cannot know).
-    if (!options.baseUrl) {
-      const catalog = await resolveCatalog({ dataDir: getDataDir() })
-      if (catalog instanceof Error) {
-        cliLogger.warn(`[CLI] Could not load the models.dev catalog; skipping provider validation: ${catalog.message}`)
-      } else {
-        const invalid = validateCatalogProvider({ catalog, provider })
-        if (invalid) exitWithError(invalid.message)
-      }
-    }
-
-    const account = await addPoolAccount({
-      dataDir: getDataDir(),
+    // The seam checks the free-text provider against the models.dev catalog;
+    // an explicit --base-url bypasses the check (custom endpoints are exactly
+    // the case the catalog cannot know).
+    const added = await poolAccounts().addApiKey({
       poolId,
       provider,
       key,
       ...(options.baseUrl && { baseURL: options.baseUrl }),
       ...(options.label && { label: options.label }),
     })
-    if (account instanceof Error) exitWithError(account.message)
-    cliLogger.log(`Added ${account.provider} account ${account.id} (${maskKey(account.key)}) to pool ${poolId}`)
+    if (added instanceof Error) exitWithError(added.message)
+    cliLogger.log(`Added ${added.account.provider} account ${added.account.id} to pool ${poolId}`)
+    if (added.note) cliLogger.warn(added.note)
     process.exit(0)
   })
 
 cli
   .command(
     'credentials login <provider>',
-    'Log in an OAuth subscription account and add it to a credential pool (default: shared). Only anthropic (Claude Pro/Max) is supported.',
+    'Log in an OAuth subscription account and add it to a credential pool (default: shared): anthropic (Claude Pro/Max) or openai-codex (ChatGPT).',
   )
   .option('--label <label>', 'Optional human-readable label for the account')
   .option('--pool <id>', 'Pool to add the account to (default: shared)')
   .action(async (provider: string, options) => {
     await refuseAgentMode()
-    if (provider !== 'anthropic') {
-      exitWithError(`Unsupported OAuth provider: ${provider}. Only anthropic is supported.`)
+    if (!isPoolOAuthProvider(provider)) {
+      exitWithError(`Unsupported OAuth provider: ${provider}. Use anthropic or openai-codex.`)
     }
     const poolId = resolvePoolId(options.pool)
-    const dataDir = getDataDir()
-    const pkce = await generatePKCE()
-    if (pkce instanceof Error) exitWithError(pkce.message)
-    // The browser redirects to localhost (nothing listens there); the code and
-    // state stay visible in the address bar for pasting.
-    const state = pkce.verifier
-    const authorizeUrl = buildAuthorizeUrl({
-      challenge: pkce.challenge,
-      state,
-      redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-    })
+    const accounts = poolAccounts()
+    const flow = await accounts.startOAuth({ poolId, provider, ...(options.label && { label: options.label }) })
+    if (flow instanceof Error) exitWithError(flow.message)
+    // The browser redirects to a localhost page nothing listens on; the code
+    // and state stay visible in the address bar for pasting.
     cliLogger.log('Open this URL in your browser and sign in with the account to add:')
-    cliLogger.log(authorizeUrl)
-    cliLogger.log('Then paste the code#state from the redirect (the full redirect URL also works):')
+    cliLogger.log(flow.authorizeUrl)
+    cliLogger.log('Then paste the code#state or the full redirect URL:')
     const readline = createInterface({ input: process.stdin })
     const pasted = await readline.question('')
     readline.close()
-    const { code, state: pastedState } = parseManualInput(pasted)
-    if (!code.trim()) {
-      exitWithError('No authorization code received')
-    }
-    const tokens = await exchangeAuthorizationCode({
-      code,
-      state: pastedState || state,
-      verifier: pkce.verifier,
-      redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-    })
-    if (tokens instanceof Error) exitWithError(tokens.message)
-    const account = await addPoolOAuthAccount({
-      dataDir,
-      poolId,
-      provider: 'anthropic',
-      refresh: tokens.refresh,
-      access: tokens.access,
-      expires: tokens.expires,
-      ...(options.label && { label: options.label }),
-    })
-    if (account instanceof Error) exitWithError(account.message)
+    if (!pasted.trim()) exitWithError('No authorization code received')
+    const added = await accounts.completeOAuth({ poolId, flowId: flow.flowId, input: pasted })
+    if (added instanceof Error) exitWithError(added.message)
     cliLogger.log(
-      `Added anthropic oauth account ${account.id} (access expires ${new Date(tokens.expires).toISOString()}) to pool ${poolId}`,
+      `Added ${added.account.provider} oauth account ${added.account.id}${added.account.expiresAt ? ` (access expires ${added.account.expiresAt})` : ''} to pool ${poolId}`,
     )
+    if (added.note) cliLogger.warn(added.note)
     process.exit(0)
   })
 
@@ -344,11 +302,7 @@ cli
   .action(async (id: string, options) => {
     await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
-    const removed = await removePoolAccount({
-      dataDir: getDataDir(),
-      poolId,
-      accountId: id,
-    })
+    const removed = await poolAccounts().remove({ poolId, accountId: id })
     if (removed instanceof Error) exitWithError(removed.message)
     if (!removed) exitWithError(`Account ${id} not found in pool ${poolId}`)
     cliLogger.log(`Removed account ${id} from pool ${poolId}`)
@@ -470,11 +424,12 @@ cli
     'Register an external pool client (e.g. a Homeboy Pi runner). Prints its key once; Roadie stores only a hash. The client sends it as x-roadie-key to the pool proxy (ROADIE_POOL_PROXY_PORT).',
   )
   .option('--pools <ids>', 'Comma-separated pools the client bills to (default: shared)')
+  .option('--admin', "Also let the client manage its pools' accounts through the pool host admin API (a remote bot's ROADIE_POOL_ADMIN_KEY_FILE)")
   .action(async (name: string, options) => {
     await refuseAgentMode()
-    const added = addPoolClient({ dataDir: getDataDir(), name, pools: resolvePoolIds(options.pools) })
+    const added = addPoolClient({ dataDir: getDataDir(), name, pools: resolvePoolIds(options.pools), admin: options.admin === true })
     if (added instanceof Error) exitWithError(added.message)
-    cliLogger.log(`Registered pool client ${added.client.name} (pools: ${added.client.pools.join(', ')})`)
+    cliLogger.log(`Registered ${added.client.admin ? 'admin ' : ''}pool client ${added.client.name} (pools: ${added.client.pools.join(', ')})`)
     cliLogger.log('Key (shown once; store it with the client, e.g. as ROADIE_PI_KEY):')
     process.stdout.write(`${added.key}\n`)
     cliLogger.log('Restart Roadie so the pool proxy starts for registered clients.')
@@ -489,7 +444,7 @@ cli
     if (clients instanceof Error) exitWithError(clients.message)
     if (clients.length === 0) cliLogger.log('No pool clients registered.')
     for (const client of clients) {
-      cliLogger.log(`${client.name}  pools: ${client.pools.join(', ')}  created ${new Date(client.createdAt).toISOString()}`)
+      cliLogger.log(`${client.name}  pools: ${client.pools.join(', ')}${client.admin ? '  admin' : ''}  created ${new Date(client.createdAt).toISOString()}`)
     }
     process.exit(0)
   })

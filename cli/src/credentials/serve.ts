@@ -7,9 +7,12 @@
 // in this one place, so each refresh token has exactly one holder.
 //
 // A headless host has no Roadie sessions, so only registered client keys
-// authorize; session keys never exist here.
+// authorize; session keys never exist here. Admin clients (--admin) also
+// manage the accounts through the admin API (pool-admin.ts, #238).
 
 import { readPoolClients } from './pool-clients.js'
+import { localPoolAccounts } from './pool-accounts.js'
+import { createPoolAdminHandler } from './pool-admin.js'
 import { startMessagesProxy, type MessagesProxy, type MessagesProxyOptions } from './messages-proxy.js'
 
 export const DEFAULT_POOL_SERVE_HOST = '127.0.0.1'
@@ -54,6 +57,11 @@ export async function servePool(options: PoolServeOptions): Promise<MessagesProx
     host: host ?? DEFAULT_POOL_SERVE_HOST,
     port,
     ...rest,
+    // Admin clients manage this host's accounts remotely (#238).
+    admin: createPoolAdminHandler({
+      dataDir,
+      accounts: localPoolAccounts({ dataDir, ...(rest.catalog && { catalog: rest.catalog }) }),
+    }),
     // No sessions on a headless host: only registered client keys resolve,
     // and they carry their own pools. This is never consulted for them.
     resolvePools: async () => new Error('a headless pool host has no Roadie sessions'),

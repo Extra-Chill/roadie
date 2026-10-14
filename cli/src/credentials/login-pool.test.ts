@@ -262,8 +262,7 @@ describe('/login with credential pools on', () => {
       kind: 'oauth',
       provider: 'anthropic',
       shared: false,
-      state: expect.any(String),
-      verifier: expect.any(String),
+      flowId: expect.any(String),
     })
     expect(readPoolAccounts({ dataDir, poolId: OWN_POOL })).toEqual([])
   })

@@ -20,10 +20,16 @@
 //   credentials_oauth_code_btn:<hash> — button that opens the OAuth paste modal
 //   credentials_oauth_code:<hash>   — OAuth paste modal submission
 //
+// Accounts are read and written through the PoolAccounts seam
+// (credentials/pool-accounts.ts): the local pool, or the pool host's admin API
+// when this bot uses a remote pool (ROADIE_POOL_URL, #238).
+//
 // Every reply is ephemeral (MessageFlags.Ephemeral): nothing about credentials
 // is ever posted in a channel, and no key, token or key fragment is ever
 // included in a reply. Pending state lives in memory keyed by a random hash
-// with a 10-minute TTL (same pattern as pendingLoginContexts in login.ts).
+// with a 10-minute TTL (same pattern as pendingLoginContexts in login.ts); the
+// OAuth PKCE verifier stays inside the PoolAccounts flow, on the pool host
+// when the pool is remote.
 // Modal-submit handlers re-resolve the target pool and re-check permissions
 // from the interaction; the click only carries intent, never authority.
 
@@ -43,37 +49,20 @@ import {
 import crypto from 'node:crypto'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
-import { createLogger, LogPrefix } from '../logger.js'
 import { resolvePerson, type Person } from '../identity.js'
 import { hasCredentialPoolAdminPermission } from '../discord-utils.js'
 import {
   resolvePersonBillingPool,
   type CredentialsMode,
 } from '../credentials/person-pool.js'
+import { SHARED_POOL_ID } from '../credentials/store.js'
 import {
-  DuplicatePoolAccountError,
-  SHARED_POOL_ID,
-  addPoolAccount,
-  addPoolOAuthAccount,
-  movePoolAccount,
-  readPoolAccounts,
-  readPoolRotations,
-  readPoolState,
-  removePoolAccount,
-  seedPoolRotations,
-  type PoolAccount,
-} from '../credentials/store.js'
-import {
-  ANTHROPIC_OAUTH_REDIRECT_URI,
-  buildAuthorizeUrl,
-  exchangeAuthorizationCode,
-  generatePKCE,
-  parseManualInput,
-} from '../credentials/adapters/anthropic-oauth.js'
-import { buildCodexAuthorizeUrl, codexAccountId, exchangeCodexAuthorizationCode } from '../credentials/adapters/openai-codex-oauth.js'
-import { resolveCatalog, validateCatalogProvider } from '../credentials/provider-catalog.js'
-
-const credentialsLogger = createLogger(LogPrefix.CREDENTIALS)
+  resolvePoolAccounts,
+  type PoolAccountAdded,
+  type PoolAccountView,
+  type PoolAccounts,
+  type PoolOAuthProvider,
+} from '../credentials/pool-accounts.js'
 
 // ── Target pool resolution ──────────────────────────────────────
 
@@ -167,9 +156,9 @@ export type CredentialsPendingContext =
   | { kind: 'apikey'; provider: string; shared: boolean }
   | {
       kind: 'oauth'
-      provider: 'anthropic' | 'openai-codex'
-      verifier: string
-      state: string
+      provider: PoolOAuthProvider
+      /** The PoolAccounts OAuth flow holding the PKCE verifier and state. */
+      flowId: string
       shared: boolean
     }
 
@@ -212,47 +201,35 @@ export const CREDENTIALS_OAUTH_MODAL_PREFIX = 'credentials_oauth_code:'
 
 // ── Listing (never shows keys or tokens) ────────────────────────
 
-function describeAccount({
-  account,
-  cooldownUntil,
-  now,
-}: {
-  account: PoolAccount
-  cooldownUntil: number | undefined
-  now: number
-}): string {
-  const parts = [account.provider, account.type]
+function describeAccount({ account, now }: { account: PoolAccountView; now: number }): string {
+  const parts: string[] = [account.provider, account.type]
   if (account.label) parts.push(account.label)
-  if (account.type === 'oauth') {
-    parts.push(`access expires ${new Date(account.expires).toISOString()}`)
-  }
-  if (typeof cooldownUntil === 'number' && cooldownUntil > now) {
-    parts.push(`cooling ${Math.ceil((cooldownUntil - now) / 1000)}s`)
+  if (account.expiresAt) parts.push(`access expires ${account.expiresAt}`)
+  if (typeof account.coolingUntil === 'number' && account.coolingUntil > now) {
+    parts.push(`cooling ${Math.ceil((account.coolingUntil - now) / 1000)}s`)
   }
   return parts.join(' | ')
 }
 
 function buildListContent({
   poolId,
+  location,
   accounts,
-  cooldowns,
   rotations,
   now,
 }: {
   poolId: string
-  accounts: PoolAccount[]
-  cooldowns: Record<string, number>
+  location: string
+  accounts: PoolAccountView[]
   rotations: Record<string, string[]>
   now: number
 }): string {
-  const lines: string[] = [`Credentials pool ${poolId}`]
+  const lines: string[] = [`Credentials pool ${poolId}${location === 'local' ? '' : ` on ${location}`}`]
   if (accounts.length === 0) {
     lines.push('No accounts yet. Use /credentials add-key or /credentials login-anthropic.')
   } else {
-    for (const [index, account] of accounts.entries()) {
-      lines.push(
-        `${index + 1}. ${account.id} | ${describeAccount({ account, cooldownUntil: cooldowns[account.id], now })}`,
-      )
+    for (const account of accounts) {
+      lines.push(`${account.position}. ${account.id} | ${describeAccount({ account, now })}`)
     }
   }
   const rotationNames = Object.keys(rotations).sort()
@@ -267,28 +244,16 @@ function buildListContent({
   return lines.join('\n')
 }
 
-// ── Seeding helper ──────────────────────────────────────────────
-// A person pool with accounts but no rotation would 401 every request (the
-// roadie/<rotation> models are named after the shared pool's rotations), so
-// the first account added to a rotationless pool copies the shared rotations
-// under the pool lock, never overwriting what is already there.
+/** The account seam for this bot: local pool, or the pool host (#238). */
+function poolAccounts(): PoolAccounts | Error {
+  return resolvePoolAccounts({ env: process.env, dataDir: getDataDir() })
+}
 
-async function seedRotationsForPersonalPool({
-  poolId,
-  shared,
-}: {
-  poolId: string
-  shared: boolean
-}): Promise<string | undefined> {
-  if (shared) return undefined
-  const seeded = await seedPoolRotations({ dataDir: getDataDir(), poolId })
-  if (seeded instanceof Error) {
-    credentialsLogger.warn(
-      `[CREDENTIALS] Failed to seed rotations into pool ${poolId}: ${seeded.message}`,
-    )
-    return `Could not copy the shared rotations into pool ${poolId}: ${seeded.message}`
-  }
-  return undefined
+function addedContent({ added, poolId }: { added: PoolAccountAdded; poolId: string }): string {
+  return (
+    `Added ${added.account.provider} account ${added.account.id} to pool ${poolId}.` +
+    (added.note ? `\n${added.note}` : '')
+  )
 }
 
 // ── /credentials command ────────────────────────────────────────
@@ -339,28 +304,22 @@ async function handleCredentialsList(
     await command.editReply({ content: target.message })
     return
   }
-  const dataDir = getDataDir()
-  const accounts = readPoolAccounts({ dataDir, poolId: target.poolId })
+  const accounts = poolAccounts()
   if (accounts instanceof Error) {
     await command.editReply({ content: accounts.message })
     return
   }
-  const state = readPoolState({ dataDir, poolId: target.poolId })
-  if (state instanceof Error) {
-    await command.editReply({ content: state.message })
-    return
-  }
-  const rotations = readPoolRotations({ dataDir, poolId: target.poolId })
-  if (rotations instanceof Error) {
-    await command.editReply({ content: rotations.message })
+  const listing = await accounts.list({ poolId: target.poolId })
+  if (listing instanceof Error) {
+    await command.editReply({ content: listing.message })
     return
   }
   await command.editReply({
     content: buildListContent({
       poolId: target.poolId,
-      accounts,
-      cooldowns: state.cooldowns,
-      rotations,
+      location: accounts.location,
+      accounts: listing.accounts,
+      rotations: listing.rotations,
       now: Date.now(),
     }),
   })
@@ -464,50 +423,23 @@ export async function handleCredentialsApiKeyModalSubmit(
     await interaction.editReply({ content: target.message })
     return
   }
-  // The provider stays free text; unknown names get close matches from the
-  // models.dev catalog. When the catalog cannot be loaded, adding proceeds —
-  // the account simply routes once the catalog is available.
-  if (!baseURL) {
-    const catalog = await resolveCatalog({ dataDir: getDataDir() })
-    if (catalog instanceof Error) {
-      credentialsLogger.warn(
-        `[CREDENTIALS] Could not load the models.dev catalog; skipping provider validation: ${catalog.message}`,
-      )
-    } else {
-      const invalid = validateCatalogProvider({ catalog, provider: context.provider })
-      if (invalid) {
-        deleteCredentialsContext(hash)
-        await interaction.editReply({ content: invalid.message })
-        return
-      }
-    }
+  // The seam validates the provider against the models.dev catalog (unknown
+  // names get close matches) unless a base URL is given.
+  const accounts = poolAccounts()
+  if (accounts instanceof Error) {
+    deleteCredentialsContext(hash)
+    await interaction.editReply({ content: accounts.message })
+    return
   }
-  const account = await addPoolAccount({
-    dataDir: getDataDir(),
+  const added = await accounts.addApiKey({
     poolId: target.poolId,
     provider: context.provider,
     key,
     ...(baseURL && { baseURL }),
   })
-  if (account instanceof DuplicatePoolAccountError) {
-    await interaction.editReply({
-      content: `That ${context.provider} account is already in pool ${target.poolId} (${account.existing.id}).`,
-    })
-    return
-  }
-  if (account instanceof Error) {
-    await interaction.editReply({ content: account.message })
-    return
-  }
-  const seedNote = await seedRotationsForPersonalPool({
-    poolId: target.poolId,
-    shared: target.shared,
-  })
   deleteCredentialsContext(hash)
   await interaction.editReply({
-    content:
-      `Added ${account.provider} account ${account.id} to pool ${target.poolId}.` +
-      (seedNote ? `\n${seedNote}` : ''),
+    content: added instanceof Error ? added.message : addedContent({ added, poolId: target.poolId }),
   })
 }
 
@@ -536,7 +468,7 @@ export async function startCredentialsAnthropicOAuth({
   command: ChatInputCommandInteraction | StringSelectMenuInteraction
   requestShared: boolean
   /** `openai-codex` adds a ChatGPT subscription through the same paste flow. */
-  provider?: 'anthropic' | 'openai-codex'
+  provider?: PoolOAuthProvider
 }): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   const target = await resolveTargetPoolForInteraction({
@@ -547,26 +479,21 @@ export async function startCredentialsAnthropicOAuth({
     await command.editReply({ content: target.message })
     return
   }
-  const pkce = await generatePKCE()
-  if (pkce instanceof Error) {
-    await command.editReply({ content: pkce.message })
+  const accounts = poolAccounts()
+  if (accounts instanceof Error) {
+    await command.editReply({ content: accounts.message })
     return
   }
-  // The browser redirects to localhost (nothing listens there); the code and
-  // state stay visible in the address bar for pasting.
-  const state = provider === 'openai-codex' ? crypto.randomBytes(16).toString('hex') : pkce.verifier
-  const authorizeUrl = provider === 'openai-codex'
-    ? buildCodexAuthorizeUrl({ challenge: pkce.challenge, state })
-    : buildAuthorizeUrl({
-        challenge: pkce.challenge,
-        state,
-        redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-      })
+  const flow = await accounts.startOAuth({ poolId: target.poolId, provider })
+  if (flow instanceof Error) {
+    await command.editReply({ content: flow.message })
+    return
+  }
+  const { authorizeUrl } = flow
   const hash = createCredentialsContext({
     kind: 'oauth',
     provider,
-    verifier: pkce.verifier,
-    state,
+    flowId: flow.flowId,
     shared: target.shared,
   })
   const button = new ButtonBuilder()
@@ -638,11 +565,6 @@ export async function handleCredentialsOAuthCodeModalSubmit(
     await interaction.editReply({ content: 'Authorization code is required.' })
     return
   }
-  const { code, state: pastedState } = parseManualInput(pasted)
-  if (!code.trim()) {
-    await interaction.editReply({ content: 'Authorization code is required.' })
-    return
-  }
   // Re-check the target pool and permissions at submit time.
   const target = await resolveTargetPoolForInteraction({
     interaction,
@@ -653,57 +575,16 @@ export async function handleCredentialsOAuthCodeModalSubmit(
     await interaction.editReply({ content: target.message })
     return
   }
-  if (context.provider === 'openai-codex' && pastedState && pastedState !== context.state) {
+  const accounts = poolAccounts()
+  if (accounts instanceof Error) {
     deleteCredentialsContext(hash)
-    await interaction.editReply({ content: 'Authorization failed: state mismatch. Start the login again.' })
+    await interaction.editReply({ content: accounts.message })
     return
   }
-  const tokens = context.provider === 'openai-codex'
-    ? await exchangeCodexAuthorizationCode({ code, verifier: context.verifier })
-    : await exchangeAuthorizationCode({
-        code,
-        state: pastedState || context.state,
-        verifier: context.verifier,
-        redirectUri: ANTHROPIC_OAUTH_REDIRECT_URI,
-      })
-  if (tokens instanceof Error) {
-    deleteCredentialsContext(hash)
-    await interaction.editReply({
-      content: `Authorization failed: ${tokens.message}`,
-    })
-    return
-  }
-  const account = await addPoolOAuthAccount({
-    dataDir: getDataDir(),
-    poolId: target.poolId,
-    provider: context.provider,
-    refresh: tokens.refresh,
-    access: tokens.access,
-    expires: tokens.expires,
-    ...(context.provider === 'openai-codex' && {
-      isDuplicate: (existing: { provider: string; type: string; access?: string }) =>
-        existing.provider === 'openai-codex' && existing.type === 'oauth' && !!existing.access && codexAccountId(existing.access) === codexAccountId(tokens.access),
-    }),
-  })
-  if (account instanceof DuplicatePoolAccountError) {
-    await interaction.editReply({
-      content: `That ${context.provider} account is already in pool ${target.poolId} (${account.existing.id}).`,
-    })
-    return
-  }
-  if (account instanceof Error) {
-    await interaction.editReply({ content: account.message })
-    return
-  }
-  const seedNote = await seedRotationsForPersonalPool({
-    poolId: target.poolId,
-    shared: target.shared,
-  })
+  const added = await accounts.completeOAuth({ poolId: target.poolId, flowId: context.flowId, input: pasted })
   deleteCredentialsContext(hash)
   await interaction.editReply({
-    content:
-      `Added ${account.provider} account ${account.id} to pool ${target.poolId}.` +
-      (seedNote ? `\n${seedNote}` : ''),
+    content: added instanceof Error ? added.message : addedContent({ added, poolId: target.poolId }),
   })
 }
 
@@ -722,11 +603,12 @@ async function handleCredentialsRemove(
     await command.editReply({ content: target.message })
     return
   }
-  const removed = await removePoolAccount({
-    dataDir: getDataDir(),
-    poolId: target.poolId,
-    accountId,
-  })
+  const accounts = poolAccounts()
+  if (accounts instanceof Error) {
+    await command.editReply({ content: accounts.message })
+    return
+  }
+  const removed = await accounts.remove({ poolId: target.poolId, accountId })
   if (removed instanceof Error) {
     await command.editReply({ content: removed.message })
     return
@@ -758,12 +640,12 @@ async function handleCredentialsReorder(
     await command.editReply({ content: target.message })
     return
   }
-  const ordered = await movePoolAccount({
-    dataDir: getDataDir(),
-    poolId: target.poolId,
-    accountId,
-    position,
-  })
+  const accounts = poolAccounts()
+  if (accounts instanceof Error) {
+    await command.editReply({ content: accounts.message })
+    return
+  }
+  const ordered = await accounts.move({ poolId: target.poolId, accountId, position })
   if (ordered instanceof Error) {
     await command.editReply({ content: ordered.message })
     return

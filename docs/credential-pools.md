@@ -8,24 +8,27 @@ subscriptions with per-person rotation. When pools are on, they replace the
 routing; `roadie credentials import-subrouter` moves existing subrouter
 accounts over.
 
-Pools are **opt-in**. Without the flags below nothing changes: `/login` writes
-OpenCode's `auth.json` and every session uses it, exactly as before.
+Pools are **on by default**. `--no-credential-pools` or
+`ROADIE_CREDENTIAL_POOLS=0` turns them off; then `/login` writes OpenCode's
+`auth.json` and every session uses it.
 
 ## Enabling pools
 
 ```bash
-roadie --credential-pools                      # pools on, shared pool only
-roadie --credential-pools --credentials per-person --thread-billing speaker
+roadie                                         # pools on, shared pool only
+roadie --credentials per-person --thread-billing speaker
+roadie --no-credential-pools                   # pools off
 ```
 
 | setting | values | default |
 | --- | --- | --- |
-| `--credential-pools` / `ROADIE_CREDENTIAL_POOLS=1` | turn the pool store, the `roadie/<rotation>` models and the Discord `/credentials` command on | off |
+| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the `roadie/<rotation>` models and the Discord `/credentials` command off | on |
 | `--credentials` / `ROADIE_CREDENTIALS` | `global`, `per-person`, `per-person-fallback` | `global` |
 | `--thread-billing` / `ROADIE_THREAD_BILLING` | `owner`, `speaker` | `owner` |
 
-A `--credentials per-person` or `per-person-fallback` value implies
-`--credential-pools`, so per-person servers only need one flag.
+A `--credentials per-person` or `per-person-fallback` value keeps pools on
+even when `ROADIE_CREDENTIAL_POOLS=0`; only an explicit `--no-credential-pools`
+wins over it.
 
 ## Modes
 
@@ -125,11 +128,62 @@ With pools off, `/login` is unchanged.
 ```bash
 roadie credentials list --pool <poolId>
 echo <key> | roadie credentials add-key --provider <provider> [--pool <poolId>] [--base-url <url>]
-roadie credentials login anthropic --pool <poolId>
+roadie credentials login <anthropic|openai-codex> --pool <poolId>
 roadie credentials remove <id> --pool <poolId>
 roadie credentials rotation set <name> <provider/model> ... --pool <poolId>
 roadie credentials import-subrouter
 ```
+
+`list`, `add-key`, `login` and `remove` manage the pool host's accounts when
+this Roadie uses a remote pool (see below).
+
+## Remote pool
+
+One pool can serve many machines. A **pool host** runs the pool with no chat
+platform and no agent backend:
+
+```bash
+roadie credentials client add mac-bot                # prints the client key once
+roadie credentials client add mac-bot-admin --admin  # a key that may also manage accounts
+roadie credentials serve --host 100.64.0.5 --port 47120
+```
+
+Accounts, OAuth refresh, rotation and 429 cooldowns live only on the host, so
+each refresh token has exactly one holder. Every client is registered with
+`roadie credentials client add <name> [--pools <id,id>]`; the host stores only
+a hash of the key.
+
+A Roadie bot uses the host instead of its local pool with:
+
+| variable | value |
+| --- | --- |
+| `ROADIE_POOL_URL` | the host's base URL, e.g. `http://100.64.0.5:47120` |
+| `ROADIE_POOL_KEY_FILE` | file holding the bot's client key; model requests use it |
+| `ROADIE_POOL_ADMIN_KEY_FILE` | optional: file holding an `--admin` client key; `/credentials`, `/login` and the `roadie credentials` account verbs use it |
+
+With `ROADIE_POOL_ADMIN_KEY_FILE` set, `/credentials` and `/login` on the bot
+add, list, reorder and remove the host's accounts. The OAuth code exchange
+runs on the host, so the token never reaches the bot. Without it those
+commands report the host and the `client add <name> --admin` fix, and write
+nothing locally.
+
+An admin client manages only the pools in its own `pools` list. The host
+serves the admin API under `/roadie/pool/admin/`, authenticated by
+`x-roadie-key`:
+
+| route | body / query |
+| --- | --- |
+| `GET accounts?pool=<id>` | accounts (no secrets) and rotations |
+| `POST accounts/api-key` | `{pool, provider, key, label?, baseURL?}` |
+| `POST oauth/start` | `{pool, provider: anthropic \| openai-codex, label?}` → `{flowId, authorizeUrl}` |
+| `POST oauth/complete` | `{pool, flowId, input}` (the pasted `code#state` or redirect URL) |
+| `DELETE accounts/<id>?pool=<id>` | `{removed}` |
+| `POST accounts/reorder` | `{pool, accountId, position}` |
+
+Every request on one client key bills to that client's pools, so a remote
+pool serves one person or one team. Per-person routing (`--credentials
+per-person`) is a local-pool feature: a multi-person server keeps its own
+pool.
 
 ## Any-provider API keys and the models.dev catalog
 

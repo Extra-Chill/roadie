@@ -51,6 +51,8 @@ export const PROXY_SESSION_HEADER = 'x-roadie-session'
 export const POOL_CATALOG_PATH = '/roadie/pool/catalog'
 /** End a client session's turn: release its route pin. */
 export const POOL_END_TURN_PATH = '/roadie/pool/end-turn'
+/** Account management on a pool host, for admin clients (#238, credentials/pool-admin.ts). */
+export const POOL_ADMIN_PATH = '/roadie/pool/admin/'
 
 /** What a client's pools can serve, per wire format; a remote bot writes its Pi models from it. */
 export type PoolCatalog = { rotations: string[]; openaiRotations: string[]; codexModels: string[] }
@@ -143,6 +145,8 @@ export type MessagesProxyOptions = {
   /** Pre-resolved models.dev catalog for API-key base URLs (tests). Default: resolveCatalog. */
   catalog?: ModelsDevCatalog
   now?: () => number
+  /** Serves POOL_ADMIN_PATH; only a pool host mounts it (credentials/serve.ts). */
+  admin?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>
   /** Listen address. Defaults to 127.0.0.1 on an ephemeral port. */
   host?: string
   port?: number
@@ -194,6 +198,10 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const pathname = req.url?.split('?')[0] ?? ''
+    if (options.admin && pathname.startsWith(POOL_ADMIN_PATH)) {
+      await options.admin(req, res)
+      return
+    }
     if (pathname === POOL_CATALOG_PATH || pathname === POOL_END_TURN_PATH) {
       // Pool-management endpoints are for registered clients only; a Pi
       // process's session key has no business with them.
