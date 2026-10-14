@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.4] - 2026-10-14
+
+### Fixed
+- give pool-billed title requests their own session key
+
 ## [0.68.3] - 2026-10-14
 
 ### Fixed
