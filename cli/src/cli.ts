@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Main CLI entrypoint for the Roadie Discord bot.
 // Handles interactive setup, Discord OAuth, slash command registration,
-// project channel creation, and launching the bot with opencode integration.
+// project channel creation, and launching the bot on the Pi agent backend.
 import { loadPlugins, resolvePluginSpecs } from './plugins.js'
-import { resolveAgentBackendProvider, setPiPool } from './agent-backend/registry.js'
+import { assertConfiguredBackend, resolveAgentBackendProvider, setPiPool } from './agent-backend/registry.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import path from 'node:path'
@@ -15,7 +15,6 @@ import {
 } from './config.js'
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
-import { publicOpencodeBindRequiresPassword } from './opencode.js'
 import botCommands from './cli-commands/bot.js'
 import credentialsCommands from './cli-commands/credentials.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
@@ -63,14 +62,10 @@ process.title = 'roadie'
 cli
   .command('', 'Set up and run the Roadie Discord bot')
   .option('--platform <name>', 'Chat platform: discord (default) or slack. Also ROADIE_PLATFORM')
-  .option(
-    '--backend <name>',
-    'Agent backend for new sessions: pi (default) or opencode. Existing OpenCode sessions keep running on OpenCode either way. Also ROADIE_BACKEND',
-  )
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
-    'Select OpenCode projects to create Discord channels before starting',
+    'Run Discord channel setup before starting',
   )
   .option(
     '--data-dir <path>',
@@ -127,7 +122,7 @@ cli
   )
   .option(
     '--restrict-directories',
-    'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed and you protect folders with deny/ask rules in opencode.json',
+    'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed',
   )
   .option(
     '--isolate-shells <user>',
@@ -142,16 +137,12 @@ cli
     'Deprecated no-op: Roadie no longer mirrors external sessions into Discord',
   )
   .option(
-    '--no-subrouter',
-    'Do not load subrouter account rotation into the OpenCode backend. Same as ROADIE_SUBROUTER=0',
-  )
-  .option(
     '--credential-pools',
     'No-op: credential pools are enabled by default (the shared pool rotations are exposed as roadie/<rotation> models). Kept for compatibility with earlier invocations',
   )
   .option(
     '--no-credential-pools',
-    'Disable credential pools entirely: OpenCode\'s own auth.json applies and /credentials is not registered. Same as ROADIE_CREDENTIAL_POOLS=0',
+    'Disable credential pools entirely: Pi\'s own auth (its agent dir auth.json) applies and /credentials is not registered. Same as ROADIE_CREDENTIAL_POOLS=0',
   )
   .option(
     '--credentials <mode>',
@@ -166,14 +157,6 @@ cli
     'Deprecated no-op: Roadie no longer sends product analytics',
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
-  .option(
-    '--opencode-hostname <host>',
-    'Hostname the OpenCode server listens on (default: 127.0.0.1). Use 0.0.0.0 to expose it on a VPS',
-  )
-  .option(
-    '--opencode-port <port>',
-    'Port the OpenCode server listens on (default: a random free port)',
-  )
   .option(
     '--gateway',
     'Removed: Roadie only runs your own Discord bot (hosted gateway mode is not supported)',
@@ -202,7 +185,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Allow only the named skills. Skills come from your OpenCode setup (skills directories and plugins); all others are hidden from the model and are not registered as slash commands. Repeatable. Mutually exclusive with --disable-skill.',
+        'Allow only the named skills. Skills come from your Pi setup and the project skills directories; all others are hidden from the model and are not registered as slash commands. Repeatable. Mutually exclusive with --disable-skill.',
       ),
   )
   .option(
@@ -211,7 +194,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Hide the named skills from the model and from slash commands. Skills come from your OpenCode setup (skills directories and plugins). Repeatable. Mutually exclusive with --enable-skill.',
+        'Hide the named skills from the model and from slash commands. Skills come from your Pi setup and the project skills directories. Repeatable. Mutually exclusive with --enable-skill.',
       ),
   )
   .option(
@@ -225,7 +208,6 @@ cli
   )
   .action(
     async (options: {
-      backend?: string
       restartOnboarding?: boolean
       addChannels?: boolean
       dataDir?: string
@@ -245,7 +227,6 @@ cli
       isolateShells?: string
       permissionTimeoutMinutes?: string
       disableSync?: boolean
-      subrouter?: boolean
       credentialPools?: boolean
       credentials?: string
       threadBilling?: string
@@ -258,8 +239,6 @@ cli
       plugin?: string[]
       disableSkill?: string[]
       shellEnv?: string[]
-      opencodeHostname?: string
-      opencodePort?: string
       platform?: string
     }) => {
       // Guard: only one roadie bot process can run per lock port. Agents may run
@@ -268,16 +247,16 @@ cli
       const currentLockPort = process.env.ROADIE_LOCK_PORT
       const usesDifferentLockPort = currentLockPort !== parentLockPort
 
-      if (process.env.ROADIE_OPENCODE_PROCESS && !usesDifferentLockPort) {
+      if (process.env.ROADIE_AGENT_SHELL && !usesDifferentLockPort) {
         cliLogger.error(
-          'Cannot run `roadie` inside an OpenCode session — it would kill the already-running bot process.\n' +
+          'Cannot run `roadie` inside an agent session — it would kill the already-running bot process.\n' +
           'Only one roadie bot can run at a time (they share a lock port).\n' +
           'Set ROADIE_LOCK_PORT to a different port for an isolated dev process, or use `roadie send`, `roadie session`, and other subcommands instead.',
         )
         process.exit(EXIT_NO_RESTART)
       }
 
-      if (process.env.ROADIE_OPENCODE_PROCESS && usesDifferentLockPort) {
+      if (process.env.ROADIE_AGENT_SHELL && usesDifferentLockPort) {
         delete process.env['ROADIE_DB_URL']
         delete process.env['ROADIE_DB_AUTH_TOKEN']
       }
@@ -292,16 +271,12 @@ cli
         // Initialize file logging to <dataDir>/roadie.log
         initLogFile(getDataDir())
 
-        // Agent backend selection (--backend / ROADIE_BACKEND, #177). The
-        // flag wins over the env, matching the other ROADIE_* flags. The
-        // registry re-reads this when it resolves the provider below.
-        if (options.backend) {
-          const value = options.backend.trim().toLowerCase()
-          if (value !== 'pi' && value !== 'opencode') {
-            cliLogger.error(`Invalid --backend: ${options.backend}. Use "pi" or "opencode".`)
-            process.exit(EXIT_NO_RESTART)
-          }
-          process.env['ROADIE_BACKEND'] = value
+        // ROADIE_BACKEND only accepts `pi` (#177): fail before any setup.
+        try {
+          assertConfiguredBackend()
+        } catch (error) {
+          cliLogger.error(error instanceof Error ? error.message : String(error))
+          process.exit(EXIT_NO_RESTART)
         }
 
         // Batch all CLI flag store updates into a single setState call.
@@ -326,8 +301,7 @@ cli
 
         // --enable-skill and --disable-skill are mutually exclusive: the user
         // either whitelists a small allowlist or blacklists a few unwanted
-        // skills, never both. Applied later in opencode.ts as permission.skill
-        // rules via computeSkillPermission().
+        // skills, never both. The Pi backend applies them via isSkillAllowed().
         const enabledSkills = options.enableSkill ?? []
         const disabledSkills = options.disableSkill ?? []
         if (enabledSkills.length > 0 && disabledSkills.length > 0) {
@@ -349,19 +323,6 @@ cli
             process.exit(EXIT_NO_RESTART)
           }
           return parsed * 60_000
-        })()
-
-        const opencodeHostname = options.opencodeHostname?.trim() || undefined
-        const opencodePort = (() => {
-          if (!options.opencodePort) return undefined
-          const parsed = Number(options.opencodePort)
-          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-            cliLogger.error(
-              `Invalid --opencode-port: ${options.opencodePort}. Must be an integer between 1 and 65535.`,
-            )
-            process.exit(EXIT_NO_RESTART)
-          }
-          return parsed
         })()
 
         // Credential pool routing (phase 2a). Strict on the flag (a typo must
@@ -421,16 +382,6 @@ cli
           return parsed
         })()
 
-        if (
-          publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
-          !process.env.OPENCODE_SERVER_PASSWORD
-        ) {
-          cliLogger.error(
-            `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${opencodeHostname}. Binding the OpenCode server on a public address without a password lets anyone control the agent.`,
-          )
-          process.exit(EXIT_NO_RESTART)
-        }
-
         store.setState({
           ...(defaultVerbosity && {
             defaultVerbosity,
@@ -442,7 +393,6 @@ cli
           ...(isolateShellsUser && { isolateShellsUser }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
-          ...(options.subrouter === false && { subrouterEnabled: false }),
           // An explicit --no-credential-pools wins even over a per-person
           // --credentials mode: the user asked to turn pools off entirely.
           ...(perPersonCredentials && { credentialPoolsEnabled: true }),
@@ -452,14 +402,12 @@ cli
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
-          ...(opencodeHostname && { opencodeHostname }),
-          ...(opencodePort !== undefined && { opencodePort }),
           ...(Object.keys(shellEnvTemplates).length > 0 && { shellEnvTemplates }),
         })
 
         // Fail fast on shell isolation before any Discord connection: wrong
         // privileges, a missing agent user or missing binaries must stop the
-        // bot here, not when the first session starts the OpenCode server.
+        // bot here, not when the first session starts.
         if (isolateShellsUser) {
           const isolation = await ensureIsolatedShellWrapper({
             dataDir: getDataDir(),
@@ -482,7 +430,7 @@ cli
           }
           if (accessProblems.length === 0) {
             cliLogger.log(
-              'Shell isolation check: project directories are agent-writable; the data dir and OpenCode home are not agent-readable',
+              'Shell isolation check: project directories are agent-writable; the data dir and Pi agent dir are not agent-readable',
             )
           }
         }
@@ -572,7 +520,7 @@ cli
           )
         } else {
           cliLogger.log(
-            'Credential pools disabled: OpenCode auth.json applies (subrouter account rotation still loads unless --no-subrouter)',
+            'Credential pools disabled: Pi\'s own auth applies',
           )
         }
         if (perPersonCredentials) {
@@ -583,13 +531,6 @@ cli
         if (options.noAnalytics) {
           cliLogger.log('--no-analytics is a no-op: Roadie no longer sends product analytics')
         }
-        if (opencodeHostname) {
-          cliLogger.log(`OpenCode server hostname: ${opencodeHostname}`)
-        }
-        if (opencodePort !== undefined) {
-          cliLogger.log(`OpenCode server port: ${opencodePort}`)
-        }
-
         if (options.gateway) {
           cliLogger.error(
             '--gateway is not supported: Roadie runs your own Discord bot. Remove the flag and set ROADIE_BOT_TOKEN or run the setup wizard.',
@@ -607,28 +548,25 @@ cli
           cliLogger.error(plugins.message)
           process.exit(EXIT_NO_RESTART)
         }
-        // Pi channels (#51) bill to the credential pools through a loopback
-        // proxy, so their requests carry the same account routing as OpenCode's.
+        // Pi bills to the credential pools through a loopback proxy.
         // Registered external pool clients (#171) use the same proxy.
         if (store.getState().credentialPoolsEnabled) {
-          const { shouldStartPiPool, startPiPool } = await import('./agent-backend/pi/pool-startup.js')
-          if (shouldStartPiPool({ dataDir: getDataDir() })) {
-            const pool = await startPiPool()
-            if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
-            else {
-              setPiPool(pool)
-              const remotePool = process.env['ROADIE_POOL_URL']?.trim()
-              cliLogger.log(remotePool
-                ? `Credential pool: remote ${remotePool} (relay on ${pool.baseUrl})`
-                : `Credential pool proxy listening on ${pool.baseUrl}`)
-            }
+          const { startPiPool } = await import('./agent-backend/pi/pool-startup.js')
+          const pool = await startPiPool()
+          if (pool instanceof Error) cliLogger.warn(`Pi credential pool proxy not started: ${pool.message}`)
+          else {
+            setPiPool(pool)
+            const remotePool = process.env['ROADIE_POOL_URL']?.trim()
+            cliLogger.log(remotePool
+              ? `Credential pool: remote ${remotePool} (relay on ${pool.baseUrl})`
+              : `Credential pool proxy listening on ${pool.baseUrl}`)
           }
         }
         let backend
         try {
           backend = resolveAgentBackendProvider()
         } catch (error) {
-          // e.g. Pi is the default backend but the pi binary is missing or too old.
+          // e.g. the pi binary is missing or too old.
           cliLogger.error(error instanceof Error ? error.message : String(error))
           process.exit(EXIT_NO_RESTART)
         }

@@ -11,7 +11,7 @@ import {
   getChannelAgent,
 } from '../database.js'
 import { createLogger } from '../logger.js'
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 import type { AgentCatalogGetter } from '../agent-backend/types.js'
 import { type AgentInfo } from '../system-message.js'
 

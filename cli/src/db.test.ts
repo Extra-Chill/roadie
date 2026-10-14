@@ -50,7 +50,7 @@ import { createClient } from '@libsql/client'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
 import { copySessionPreferences } from './commands/model.js'
-import type { initializeOpencodeForDirectory } from './opencode.js'
+import type { AgentBackend } from './agent-backend/types.js'
 import {
   canRewriteSubrouterModel,
   formatSubrouterStartupMigration,
@@ -919,7 +919,7 @@ describe('getDb', () => {
     const targetSessionId = `test-target-session-${crypto.randomUUID()}`
     const getClient = (() => {
       throw new Error('provider lookup should not run for explicit session models')
-    }) satisfies Exclude<Awaited<ReturnType<typeof initializeOpencodeForDirectory>>, Error>
+    }) satisfies () => Pick<AgentBackend, 'catalog' | 'sessions'>
 
     await setSessionModel({
       sessionId: sourceSessionId,
@@ -1055,32 +1055,21 @@ describe('getDb', () => {
 describe('subrouter startup migration', () => {
   let migrationDataDir: string
   let subrouterHome: string
-  let originalXdgCacheHome: string | undefined
 
-  // Fixture catalog through $XDG_CACHE_HOME so the account import resolves
+  // Fixture catalog preset in the catalog memo so the account import resolves
   // providers without network and without ever touching the real home.
   const TEST_CATALOG = {
-    anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
-    openai: { id: 'openai', npm: '@ai-sdk/openai' },
+    anthropic: { id: 'anthropic' },
+    openai: { id: 'openai' },
   }
 
   beforeEach(() => {
     migrationDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-subrouter-migration-'))
     subrouterHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subrouter-home-migration-'))
-    originalXdgCacheHome = process.env.XDG_CACHE_HOME
-    const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-migration-cache-'))
-    fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
-    fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
-    process.env.XDG_CACHE_HOME = cacheHome
-    resetCatalogCacheForTests()
+    resetCatalogCacheForTests(TEST_CATALOG)
   })
 
   afterEach(() => {
-    if (originalXdgCacheHome === undefined) {
-      delete process.env.XDG_CACHE_HOME
-    } else {
-      process.env.XDG_CACHE_HOME = originalXdgCacheHome
-    }
     resetCatalogCacheForTests()
     fs.rmSync(migrationDataDir, { recursive: true, force: true })
     fs.rmSync(subrouterHome, { recursive: true, force: true })

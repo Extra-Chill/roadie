@@ -17,7 +17,6 @@ const TEXT_CHANNEL_ID = '200000000000001031'
 
 describe.skipIf(!findPi())('abort clears pending question dropdown', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort',
     dirName: 'qa-question-abort',

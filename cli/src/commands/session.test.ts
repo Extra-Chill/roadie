@@ -7,14 +7,6 @@ import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ChannelType, type AutocompleteInteraction, type ChatInputCommandInteraction, type TextChannel, type ThreadChannel } from 'discord.js'
 
-vi.mock('../opencode.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../opencode.js')>()
-  return {
-    ...original,
-    initializeOpencodeForDirectory: vi.fn(async () => new Error('opencode initializer must not run')),
-  }
-})
-
 vi.mock('../session-handler/thread-session-runtime.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../session-handler/thread-session-runtime.js')>()
   return {
@@ -26,7 +18,6 @@ vi.mock('../session-handler/thread-session-runtime.js', async (importOriginal) =
   }
 })
 
-const { initializeOpencodeForDirectory } = await import('../opencode.js')
 const { handleSessionAutocomplete, handleSessionCommand } = await import('./session.js')
 const { setAgentBackendProvider } = await import('../agent-backend/registry.js')
 const { closeDb } = await import('../db.js')
@@ -68,6 +59,7 @@ function createPiRoutingProviderStub(): { provider: AgentBackendProvider; calls:
   } as unknown as AgentBackend
   const provider: AgentBackendProvider = {
     id: 'pi-stub',
+    owns: () => true,
     getBackend: () => null,
     initializeForDirectory: async (directory, options) => {
       calls.push({ directory, options })
@@ -100,7 +92,7 @@ beforeEach(() => {
 })
 
 describe('handleSessionCommand backend routing', () => {
-  test('/new-session in a Pi channel initializes through the backend provider, never the OpenCode initializer', async () => {
+  test('/new-session in a Pi channel initializes through the backend provider', async () => {
     const projectDirectory = fs.mkdtempSync(path.join(tempRoot, 'project-'))
     const createdThread = {
       id: 'created-thread-1',
@@ -158,7 +150,6 @@ describe('handleSessionCommand backend routing', () => {
 
       await handleSessionCommand({ command, appId: "test-app" })
 
-      expect(vi.mocked(initializeOpencodeForDirectory)).not.toHaveBeenCalled()
       expect(calls).toEqual([{ directory: projectDirectory, options: { channelId: PARENT_CHANNEL_ID } }])
       expect(command.editReply).toHaveBeenCalledWith(expect.stringContaining('Created new session'))
     })
@@ -199,7 +190,6 @@ describe('handleSessionAutocomplete files', () => {
 
       await handleSessionAutocomplete({ interaction, appId: "test-app" })
 
-      expect(vi.mocked(initializeOpencodeForDirectory)).not.toHaveBeenCalled()
       expect(calls).toEqual([])
       expect(respond).toHaveBeenCalledTimes(1)
       const choices = vi.mocked(respond).mock.calls[0]![0] as Array<{ name: string; value: string }>

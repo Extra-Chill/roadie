@@ -289,7 +289,6 @@ function createSleepMatchers(): FakeMatcher[] {
 
 describe.skipIf(!findPi())('roadie_sleep', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'sleep-e2e',
     dirName: 'sleep-e2e',

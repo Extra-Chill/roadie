@@ -84,7 +84,6 @@ const highUsageToolMatchers: FakeMatcher[] = [
 
 describe.skipIf(!findPi())('runtime lifecycle', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'lifecycle-e2e',
     dirName: 'runtime-lifecycle-e2e',

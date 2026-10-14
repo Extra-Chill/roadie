@@ -80,10 +80,9 @@ function formatSourceLabel(info: CurrentModelInfo): string {
       return 'channel override'
     case 'global':
       return 'global default'
-    case 'opencode-config':
-    case 'opencode-recent':
-    case 'opencode-provider-default':
-      return 'opencode default'
+    case 'backend-config':
+    case 'provider-default':
+      return 'backend default'
     case 'none':
       return 'none'
   }

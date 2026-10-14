@@ -3,16 +3,14 @@
 Credential pools are Roadie's own account rotation: ordered pools of API keys
 and provider subscriptions that LLM requests are billed through. One mechanism
 covers a single shared subscription, a rotating shared pool, and per-person
-subscriptions with per-person rotation. When pools are on, they replace the
-[@subrouter](https://www.npmjs.com/package/@subrouter/opencode) dependency for
-routing; `roadie credentials import-subrouter` moves existing subrouter
-accounts over.
+subscriptions with per-person rotation. `roadie credentials import-subrouter`
+moves existing subrouter accounts over.
 
-Pools are **on by default**. `--no-credential-pools` or
-`ROADIE_CREDENTIAL_POOLS=0` turns them off; then `/login` writes OpenCode's
-`auth.json` and every session uses it.
+Pools are **on by default**. `--no-credential-pools` (or
+`ROADIE_CREDENTIAL_POOLS=0`) turns them off: Pi's own auth (its agent dir
+`auth.json`) applies and `/credentials` is not registered.
 
-## Enabling pools
+## Configuring pools
 
 ```bash
 roadie                                         # pools on, shared pool only
@@ -22,7 +20,7 @@ roadie --no-credential-pools                   # pools off
 
 | setting | values | default |
 | --- | --- | --- |
-| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the `roadie/<rotation>` models and the Discord `/credentials` command off | on |
+| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the pool models and the Discord `/credentials` command off | on |
 | `--credentials` / `ROADIE_CREDENTIALS` | `global`, `per-person`, `per-person-fallback` | `global` |
 | `--thread-billing` / `ROADIE_THREAD_BILLING` | `owner`, `speaker` | `owner` |
 
@@ -60,7 +58,7 @@ In per-person modes `--thread-billing` decides who pays a thread:
 
 ### What a speaker-billing hand-off costs
 
-History is stored by OpenCode, not by the provider, so continuity holds: every
+History is stored by the agent backend (Pi), not by the provider, so continuity holds: every
 turn receives the full prior conversation, even across providers. The
 tradeoffs:
 
@@ -70,27 +68,37 @@ tradeoffs:
 - **Reasoning does not cross providers.** Claude thinking blocks and OpenAI
   reasoning items cannot be replayed to the other provider; the next model
   sees answers and tool results, not the reasoning behind them.
-- **Context windows differ.** The router skips a candidate whose model's
-  context window (from the models.dev catalog) is smaller than the
-  conversation's estimated input, so a thread that fits one model rolls to a
-  larger one instead of failing mid-hand-off. A request whose candidates are
-  all too small fails with a message asking for compaction.
 - **Privacy.** Bob's turn sends the earlier conversation — including other
   people's messages — to bob's provider account. The thread says so once,
   with a notice when the payer first changes.
 - **Turn granularity.** A turn never splits across accounts: tool follow-ups
   stay on the account that started the turn (see [Turn affinity](#turn-affinity)).
 
-## The `roadie/<rotation>` models
+## The pool models
 
-With pools on, Roadie loads a `roadie` provider into OpenCode. Each named
-rotation in a pool becomes a model `roadie/<rotation>` (for example
-`roadie/default`), selectable with `/model`. A rotation is an ordered list of
+With pools on, Roadie writes pool providers into Pi's agent directory
+(`<dataDir>/pi-agent` unless `ROADIE_PI_AGENT_DIR` is set), served by a
+loopback proxy in the bot process. Pi never sees a credential: each Pi process
+gets its own key, and the proxy maps it to the session and swaps in the pool
+account's real credentials.
+
+- `roadie/<rotation>` — rotations with an `anthropic/` entry (Anthropic
+  Messages wire).
+- `roadie-openai/<rotation>` — rotations with an API-key provider entry
+  (OpenAI-compatible chat completions).
+- `roadie-codex/<model>` — ChatGPT (Codex) subscription accounts, which rotate
+  across accounts rather than through rotations.
+
+Each named rotation (for example `roadie/default`) is selectable with
+`/model`. A single Pi model speaks one wire format, so a rotation that mixes
+formats is listed under both providers and each falls through only among its
+own candidates. A rotation is an ordered list of
 `provider/model` entries tried top to bottom; a 429 rate limit cools the
 account down (honoring `retry-after`, else 60 seconds) and the next candidate
 answers. Set rotations with `roadie credentials rotation set <name> <provider/model> ...`.
 A rotation may mix providers: `anthropic/claude-sonnet-5-5` followed by
-`zai-coding-plan/glm-5.3-flash` is fine, and a z.ai key is never sent to any
+`zai-coding-plan/glm-5.3-flash` is fine (exposed as both `roadie/<name>` and
+`roadie-openai/<name>`), and a z.ai key is never sent to any
 other provider.
 
 ## Managing accounts
@@ -116,12 +124,11 @@ hook's `admin`).
 
 ### `/login` with pools on
 
-With pools on, `/login` never touches OpenCode's `auth.json`. The provider
+With pools on, `/login` never touches Pi's `auth.json`. The provider
 picker lists the models.dev catalog, and Anthropic offers both a subscription
 login and an API key. The writes go through the same handlers as
 `/credentials`: in `global` mode accounts land in `shared` (admin only), in
 per-person modes they land in the caller's pool. Every reply is ephemeral.
-With pools off, `/login` is unchanged.
 
 ### CLI (operators)
 
@@ -189,25 +196,18 @@ pool.
 
 API keys are not limited to a hardcoded provider list. When you add a key, the
 free-text provider id is validated against the [models.dev](https://models.dev)
-catalog — the same data OpenCode already caches
-(`~/.cache/opencode/models.json`; when missing it is fetched from
-`models.dev/api.json` once and cached under
-`<dataDir>/credentials/models-dev.json`). Resolution order for a key:
+catalog (fetched from `models.dev/api.json` once and cached under
+`<dataDir>/credentials/models-dev.json`). How a key is served:
 
-1. a bundled AI SDK package (`@ai-sdk/anthropic`, `@ai-sdk/openai`,
-   `@ai-sdk/google`, `@ai-sdk/groq`, `@ai-sdk/xai`, `@ai-sdk/mistral`,
-   `@openrouter/ai-sdk-provider`), else
-2. OpenAI-compatible against the catalog's `api` URL (185+ providers), else
-3. OpenAI-compatible against the account's `baseURL` override — for custom
-   endpoints, self-hosted gateways, and providers declared only in your
-   OpenCode config, else
-4. unsupported, with a clear error.
+1. Anthropic keys on the Anthropic Messages wire;
+2. any other provider as OpenAI-compatible against the account's `baseURL`
+   override — for custom endpoints and self-hosted gateways — else the
+   catalog's `api` URL;
+3. a provider with neither is unsupported, with a clear error.
 
 Typos get the closest catalog names as suggestions. The `baseURL` override
 always wins over the catalog, and a `baseURL` bypasses catalog validation —
-a custom endpoint is exactly the case the catalog cannot know. The catalog
-also supplies each model's context-window limit for the speaker-billing check
-above.
+a custom endpoint is exactly the case the catalog cannot know.
 
 ## Subscriptions: Anthropic and ChatGPT
 
@@ -219,14 +219,9 @@ sends them (system prefix, beta headers, tool-name round-trip).
 
 A ChatGPT subscription is added through `/login` on Discord (choose OpenAI,
 then the ChatGPT subscription), or imported from subrouter or OpenCode (below)
-(#198). It is stored under the `openai-codex` provider id and served against
-ChatGPT's Codex Responses endpoint with the account's bearer token and
-`chatgpt-account-id` — the same wire the Pi proxy (`roadie-codex`) uses. A
-rotation entry `openai/<model>` is served by a ChatGPT subscription as well as
-by an OpenAI API key, so `openai/gpt-6.1-sol` works on a subscription-only
-pool. Requests are reshaped for the Codex backend: the system prompt goes in
-`instructions`, nothing is stored (`store: false`, reasoning returned
-encrypted), no output limit is sent, and every call streams.
+(#198). It is stored under the `openai-codex` provider id and offered as
+`roadie-codex/<model>` models; the proxy serves them against ChatGPT's Codex
+Responses endpoint with the account's bearer token and `chatgpt-account-id`.
 
 Only these subscriptions are supported; other providers' subscriptions are
 not (their OAuth is not public).
@@ -244,9 +239,9 @@ catalog-resolvable provider, and each preset as a same-named rotation
 (`#variant` suffixes stripped; `openai/<model>` entries are kept as they are
 and served by the imported subscription). The run is idempotent —
 accounts already present are reported and skipped — and strictly read-only on
-subrouter files. `roadie credentials import-opencode` imports OpenCode's own
-`auth.json` and `<provider>-oauth-accounts.json` rotation files with the same
-rules, and `export-opencode` writes them back under OpenCode's own keys.
+subrouter files. `roadie credentials import-opencode --opencode-data <dir>`
+imports an OpenCode install's `auth.json` and `<provider>-oauth-accounts.json`
+rotation files with the same rules, read-only on OpenCode files.
 
 ## Turn affinity
 
@@ -285,40 +280,41 @@ as before; an invalid pool id is ignored.
 **Read this before enabling per-person modes.**
 
 In phases 1–2, credentials live as files under `<dataDir>/credentials/`
-(mode 0600, one directory per pool) and the OpenCode server runs as the bot's
-OS user. That means **an agent with shell access can read every pool's keys
-and tokens** — theirs and everyone else's. The file permissions protect
+(mode 0600, one directory per pool) and, by default, agent tool shells run as
+the bot's OS user. That means **an agent with shell access can read every
+pool's keys and tokens** — theirs and everyone else's. The file permissions protect
 against other OS users, not against the agent your bot runs.
 
 - `global` mode is unaffected in practice: the credentials are the operator's
-  own, the same exposure as plain OpenCode with `auth.json`.
+  own, the same exposure as Pi's own `auth.json`.
 - **Per-person servers should deny the `shell` capability to non-admins
   through the identity hook** (`capabilities: ["sessions"]`, no `"shell"`),
   and keep `!` shell-prefixed messages and similar power tools admin-only.
 
-Phase 3 removes the exposure: the bot process brokers short-lived access
-tokens to the OpenCode server per session (#144), refresh tokens and API keys
-never enter the agent's process, and tool shells can be run as an unprivileged
-user (below). Until both are on, treat shell access as credential access.
+Phase 3 removes the exposure: the bot process's pool proxy holds every
+credential, Pi processes only get a per-process proxy key, so refresh tokens
+and API keys never enter the agent's process (#144), and tool shells can be
+run as an unprivileged user (below). Until both are on, treat shell access as credential access.
 
 ### `--isolate-shells <user>` (opt-in OS isolation)
 
 Step 2 of phase 3. `roadie --isolate-shells <user>` (or
 `ROADIE_ISOLATE_SHELLS=<user>`) makes every agent tool shell run as the given
 unprivileged user instead of the bot's own OS user. Off by default: with the
-flag unset, `SHELL` and the generated OpenCode config are unchanged.
+flag unset, Pi runs its default shell.
 
 Roadie writes a shell wrapper to `<dataDir>/bin/isolated-shell/bash` (mode
-0755, root-owned) and starts `opencode serve` with `SHELL` pointing at it —
-OpenCode picks its tool shell from `$SHELL`, so every bash tool call goes
-through the wrapper. The wrapper uses util-linux `setpriv`
+0755, root-owned). Pi takes its tool shell from `shellPath` in its agent dir's
+`settings.json`, so Roadie writes the wrapper path there when it owns that dir
+(and refuses Pi sessions when it does not); every bash tool call goes through
+the wrapper. The wrapper uses util-linux `setpriv`
 (`--reuid`/`--regid`/`--init-groups`/`--no-new-privs`) to drop to the agent
 user and `env -i` to replace the environment with a fixed allowlist:
 `PATH` (a fixed value, not inherited), `HOME` (the agent user's home),
 `TERM`, `LANG`, and the `ROADIE_*` attribution vars, `ROADIE_SESSION_ID` and
 `ROADIE_AGENT_TOKEN` from #144. Nothing else is inherited — `ROADIE_DB_*`,
 `ROADIE_SERVICE_TOKEN_FILE`, `ROADIE_AGENT_TOKEN_SECRET` and provider keys
-never reach a tool shell, and the OpenCode server's `/proc/<pid>/environ` is
+never reach a tool shell, and the Pi process's `/proc/<pid>/environ` is
 unreadable for the agent user.
 
 Requirements, checked at startup (the bot fails fast with a clear message):
@@ -333,14 +329,12 @@ Directory layout the startup check (and an operator should) confirm:
 - Project directories are readable **and writable** by the agent user — a
   shared group plus setgid directories:
   `chgrp <agent-group> <project> && chmod 2770 <project>`.
-- `<dataDir>`, `~/.local/share/opencode` and the pool files under
-  `<dataDir>/credentials/` are **not** readable by the agent user (root-owned,
+- `<dataDir>` (including Pi's agent dir and the pool files under
+  `<dataDir>/credentials/`) are **not** readable by the agent user (root-owned,
   mode 0700).
 
 What isolation costs: root-owned tools and credentials — `gh auth`, ssh keys,
 cloud CLIs — are gone from tool shells unless they are provisioned for the
 agent user too. That is the point (per-person servers no longer expose the
 operator's identity to every session), and it is why this is opt-in per
-server. Note the `~/.roadie/bin/roadie` shim is inside the private data dir,
-so agent-mode `roadie` subcommands need their own agent-user-accessible
-provisioning under this flag.
+server.

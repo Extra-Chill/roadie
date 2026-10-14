@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { createDiscordClient, initDatabase, getChannelDirectory, createProjectChannels } from '../discord-bot.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -34,7 +34,6 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
-import { resolveUploadToDiscordSessionId } from '../bash-tool-schema-plugin.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -45,12 +44,11 @@ cli
     'Upload files to a Discord thread for a session',
   )
   .alias('upload-to-chat')
-  .option('-s, --session <sessionId>', 'OpenCode session ID')
+  .option('-s, --session <sessionId>', 'Session ID')
   .action(async (files: string[], options: { session?: string }) => {
     try {
-      const sessionId = resolveUploadToDiscordSessionId({
-        flagSessionId: options.session,
-      })
+      // Inside an agent tool shell the live session wins over --session.
+      const sessionId = process.env['ROADIE_SESSION_ID'] || options.session
 
       if (!sessionId) {
         cliLogger.error('Session ID is required. Use --session <sessionId>')

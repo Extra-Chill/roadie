@@ -85,11 +85,7 @@ export type AgentSessionOperations = {
       directory: string
       command: string
       arguments: string
-      /**
-       * The turn's system prompt. OpenCode ignores it (Roadie's plugin reads
-       * the pinned prompt file because its command API has no system field);
-       * backends that take a per-turn system prompt apply it.
-       */
+      /** The turn's system prompt, as for `prompt`. */
       system?: string
       agent?: string
       model?: AgentModelSelection
@@ -331,17 +327,12 @@ export type AgentBackendProvider = {
   /** Name used in logs. */
   readonly id: string
   /**
-   * Id of the backend that runs `sessionId`, for providers that route sessions
-   * across several backends. Single-backend providers omit it: `id` answers.
+   * Whether this provider runs or can resume `sessionId`. A thread bound to a
+   * session no provider owns (e.g. one from the removed OpenCode backend,
+   * #177) is retired: it starts a new session, seeded from the thread, on its
+   * next prompt.
    */
-  sessionBackendId?(sessionId: string): string
-  /**
-   * True for a session on a backend Roadie no longer runs new work on. Its
-   * thread starts a new session (seeded from the thread) on the next prompt
-   * instead of reaching the retired backend. Providers that retire nothing
-   * omit it.
-   */
-  isRetiredSession?(sessionId: string): boolean
+  owns(sessionId: string): boolean
   /** Backend for a directory whose server is already running, or null. */
   getBackend(directory: string): AgentBackend | null
   /** Ensure the backend serving `directory` is running; returns a getter. */
@@ -359,4 +350,6 @@ export type AgentBackendProvider = {
   }): null | Promise<Error | AsyncIterable<AgentBackendEvent>>
   /** Called whenever the backend (re)starts, so event consumers reconnect. */
   onStarted(listener: (info: { description: string }) => void): void
+  /** Stop every agent process this provider started (bot shutdown). */
+  dispose?(): Promise<void>
 }

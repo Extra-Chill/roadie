@@ -1,50 +1,43 @@
 // The session runtime resolves its agent backend through the registry, so an
-// injected provider receives the calls instead of OpenCode, and the default
-// backend comes from ROADIE_BACKEND (--backend): Pi unless OpenCode is asked
-// for explicitly (#177).
+// injected provider receives the calls, and the default backend is Pi: the
+// only backend Roadie runs (#177).
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   piSettingsDefaultModel,
   clearResolvedDefaultProvider,
   getAgentBackendProvider,
+  isRetiredSession,
   resolveAgentBackendProvider,
   setAgentBackendProvider,
 } from './registry.js'
-import { openCodeBackendProvider } from './opencode.js'
-import type { AgentBackendProvider } from './types.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
-import { toOpenCodeBackend } from './opencode-sessions.js'
+import type { AgentBackend, AgentBackendProvider } from './types.js'
 import {
   clearModelListCache,
   validateCliModelOption,
 } from '../session-handler/model-utils.js'
 
 function fakeProvider(calls: string[]): AgentBackendProvider {
-  const backend = toOpenCodeBackend({
-    config: {
+  const backend = {
+    catalog: {
       providers: async ({ directory }: { directory?: string }) => {
-        calls.push(`config.providers:${directory}`)
+        calls.push(`catalog.providers:${directory}`)
         return {
-          data: {
-            providers: [
-              {
-                id: 'fake',
-                name: 'Fake',
-                models: { 'model-1': { id: 'model-1', name: 'Model 1' } },
-              },
-            ],
-            default: {},
-          },
+          providers: [{ id: 'fake', name: 'Fake', models: { 'model-1': { id: 'model-1', name: 'Model 1' } } }],
+          connected: ['fake'],
+          defaults: {},
         }
       },
+      config: async () => ({}),
+      agents: async () => [],
     },
-  } as unknown as OpencodeClient)
+  } as unknown as AgentBackend
   return {
     id: 'fake',
+    owns: (sessionId) => sessionId.startsWith('fake-'),
     getBackend: () => backend,
     initializeForDirectory: async (directory) => {
       calls.push(`initialize:${directory}`)
@@ -64,8 +57,9 @@ describe('agent backend registry', () => {
     clearModelListCache()
   })
 
-  test('before resolution the runtime placeholder provider is OpenCode', () => {
-    expect(getAgentBackendProvider().id).toBe(openCodeBackendProvider.id)
+  test('before resolution the placeholder provider owns no session', () => {
+    expect(getAgentBackendProvider().id).toBe('unresolved')
+    expect(isRetiredSession('anything')).toBe(true)
   })
 
   test('session runtime model validation goes through the injected backend', async () => {
@@ -80,15 +74,21 @@ describe('agent backend registry', () => {
     expect(result).toEqual({ providerID: 'fake', modelID: 'model-1' })
     expect(calls).toEqual([
       'initialize:/tmp/roadie-backend-seam',
-      'config.providers:/tmp/roadie-backend-seam',
+      'catalog.providers:/tmp/roadie-backend-seam',
     ])
+  })
+
+  test('sessions the backend does not own are retired', () => {
+    restore = setAgentBackendProvider(fakeProvider([]))
+    expect(isRetiredSession('fake-1')).toBe(false)
+    expect(isRetiredSession('ses_legacy')).toBe(true)
   })
 
   test('restore function reinstates the previous provider', () => {
     const undo = setAgentBackendProvider(fakeProvider([]))
     expect(getAgentBackendProvider().id).toBe('fake')
     undo()
-    expect(getAgentBackendProvider().id).toBe(openCodeBackendProvider.id)
+    expect(getAgentBackendProvider().id).toBe('unresolved')
   })
 })
 
@@ -119,66 +119,34 @@ describe('default backend resolution (#177)', () => {
     }
     savedEnv.length = 0
     clearResolvedDefaultProvider()
-    vi.restoreAllMocks()
   })
 
-  test('Pi is the default backend', () => {
+  test('Pi is the backend', () => {
     const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-pi-default-'))
     withEnv('ROADIE_BACKEND', undefined)
-    withEnv('ROADIE_PI_CHANNELS', undefined)
     withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
     withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
-    expect(resolveAgentBackendProvider().id).toBe('pi+opencode')
-    expect(getAgentBackendProvider().id).toBe('pi+opencode')
+    expect(resolveAgentBackendProvider().id).toBe('pi')
+    expect(getAgentBackendProvider().id).toBe('pi')
   })
 
-  test('ROADIE_BACKEND=opencode restores the OpenCode default without the Pi composition', () => {
-    const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-oc-default-'))
-    withEnv('ROADIE_BACKEND', 'opencode')
-    withEnv('ROADIE_PI_CHANNELS', undefined)
-    withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
-    expect(resolveAgentBackendProvider().id).toBe('opencode')
-  })
-
-  test('under ROADIE_BACKEND=opencode, ROADIE_PI_CHANNELS keeps opting channels into Pi (deprecated)', () => {
-    const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-oc-channels-'))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    withEnv('ROADIE_BACKEND', 'opencode')
-    withEnv('ROADIE_PI_CHANNELS', 'ch-pi')
-    withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
-    withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
-    expect(resolveAgentBackendProvider().id).toBe('opencode+pi')
-    expect(warn.mock.calls.some(([line]) => String(line).includes('deprecated'))).toBe(true)
-  })
-
-  test('ROADIE_PI_CHANNELS is ignored while Pi is the default', () => {
-    const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-pi-channels-'))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    withEnv('ROADIE_BACKEND', undefined)
-    withEnv('ROADIE_PI_CHANNELS', 'ch-pi')
-    withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
-    withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
-    expect(resolveAgentBackendProvider().id).toBe('pi+opencode')
-    expect(warn.mock.calls.some(([line]) => String(line).includes('ignored'))).toBe(true)
-  })
-
-  test('a missing or outdated pi binary fails startup when Pi is the default, unless ROADIE_BACKEND=opencode', () => {
+  test('a missing or outdated pi binary fails startup', () => {
     const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-pi-missing-'))
     withEnv('ROADIE_BACKEND', undefined)
-    withEnv('ROADIE_PI_CHANNELS', undefined)
     withEnv('ROADIE_PI_BIN', path.join(tmp, 'no-such-pi'))
     withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
-    expect(() => resolveAgentBackendProvider()).toThrow(/ROADIE_BACKEND=opencode/)
-
-    // Opting back into OpenCode must not require Pi at all.
+    expect(() => resolveAgentBackendProvider()).toThrow(/install Pi/)
     clearResolvedDefaultProvider()
-    withEnv('ROADIE_BACKEND', 'opencode')
-    expect(resolveAgentBackendProvider().id).toBe('opencode')
+    withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp, '0.9.0'))
+    expect(() => resolveAgentBackendProvider()).toThrow(/Pi 1.x or newer/)
   })
 
-  test('an invalid ROADIE_BACKEND value is a startup error, never a fallback', () => {
-    withEnv('ROADIE_BACKEND', 'claude')
-    expect(() => resolveAgentBackendProvider()).toThrow(/ROADIE_BACKEND must be/)
+  test('ROADIE_BACKEND only accepts pi', () => {
+    for (const value of ['opencode', 'claude']) {
+      clearResolvedDefaultProvider()
+      withEnv('ROADIE_BACKEND', value)
+      expect(() => resolveAgentBackendProvider()).toThrow(/ROADIE_BACKEND must be "pi"/)
+    }
   })
 })
 

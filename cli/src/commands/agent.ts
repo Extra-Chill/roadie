@@ -54,7 +54,7 @@ import {
   resolveRequestedThinkingVariant,
 } from '../thinking-utils.js'
 import type { AutocompleteContext } from './types.js'
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -300,7 +300,7 @@ async function applyQuickAgentVariant({
 
   const catalog = await getClient()
     .catalog.providers({ directory: context.workingDirectory })
-    .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+    .catch((e: unknown) => new AgentBackendError({ operation: 'provider.list', cause: e }))
   if (catalog instanceof Error) {
     agentLogger.warn(`[AGENT] Skipping variant ${variant}: provider list failed`)
     return undefined
@@ -727,7 +727,7 @@ async function handleQuickAgentWithPrompt({
       username: command.user.displayName,
       agent: resolvedAgentName,
       appId,
-      mode: 'opencode',
+      mode: 'direct',
       variant,
     })
   } else if (channel.type === ChannelType.GuildText) {
@@ -784,7 +784,7 @@ async function handleQuickAgentWithPrompt({
       username: command.user.displayName,
       agent: resolvedAgentName,
       appId,
-      mode: 'opencode',
+      mode: 'direct',
       variant,
     })
   } else {
@@ -819,10 +819,10 @@ export async function handleQuickAgentAutocomplete({
   const [catalog, agentList] = await Promise.all([
     getClient()
       .catalog.providers({ directory: projectDirectory })
-      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+      .catch((e: unknown) => new AgentBackendError({ operation: 'provider.list', cause: e })),
     getClient()
       .catalog.agents({ directory: projectDirectory })
-      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'app.agents', cause: e })),
+      .catch((e: unknown) => new AgentBackendError({ operation: 'app.agents', cause: e })),
   ])
   if (catalog instanceof Error || agentList instanceof Error) {
     agentLogger.warn('[AUTOCOMPLETE] Failed to fetch variant choices')

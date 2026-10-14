@@ -8,27 +8,11 @@ import * as errore from 'errore'
 // INFRASTRUCTURE ERRORS - Server, filesystem, external services
 // ═══════════════════════════════════════════════════════════════════════════
 
-export class DirectoryNotAccessibleError extends errore.createTaggedError({
-  name: 'DirectoryNotAccessibleError',
-  message: 'Directory does not exist or is not accessible: $directory',
-}) {}
-
 export class ServerStartError extends errore.createTaggedError({
   name: 'ServerStartError',
   message: 'Server failed to start on port $port: $reason',
 }) {}
 
-export class ServerNotReadyError extends errore.createTaggedError({
-  name: 'ServerNotReadyError',
-  message:
-    'OpenCode client for directory "$directory" is not available because the shared server is not ready',
-}) {}
-
-export class OpencodeIncompatibleVersionError extends errore.createTaggedError({
-  name: 'OpencodeIncompatibleVersionError',
-  message:
-    'Roadie is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
-}) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABORT ERRORS - Session cancellation with typed reasons
@@ -88,9 +72,9 @@ export class DiscordOperationError extends errore.createTaggedError({
   message: 'Discord operation failed: $operation',
 }) {}
 
-export class OpenCodeSdkError extends errore.createTaggedError({
-  name: 'OpenCodeSdkError',
-  message: 'OpenCode SDK call failed: $operation',
+export class AgentBackendError extends errore.createTaggedError({
+  name: 'AgentBackendError',
+  message: 'Agent backend call failed: $operation',
 }) {}
 
 export class InvalidModelError extends errore.createTaggedError({
@@ -121,11 +105,6 @@ export class DiscordApiError extends errore.createTaggedError({
   message: 'Discord API error: $status $body',
 }) {}
 
-export class OpenCodeApiError extends errore.createTaggedError({
-  name: 'OpenCodeApiError',
-  message: 'OpenCode API error ($status): $body',
-}) {}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // GIT ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -134,19 +113,3 @@ export class GitCommandError extends errore.createTaggedError({
   name: 'GitCommandError',
   message: 'Git command failed: $command',
 }) {}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UNION TYPES - For function signatures
-// ═══════════════════════════════════════════════════════════════════════════
-
-export type OpenCodeErrors =
-  | DirectoryNotAccessibleError
-  | ServerStartError
-  | ServerNotReadyError
-  | OpencodeIncompatibleVersionError
-
-export type SessionErrors =
-  | SessionNotFoundError
-  | MessagesNotFoundError
-  | OpenCodeApiError
-

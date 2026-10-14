@@ -1,13 +1,7 @@
-import type {
-  Event as OpenCodeEvent,
-  Message as OpenCodeMessage,
-  Part,
-} from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
 import type { EventBufferEntry, EventBufferEvent } from './event-stream-state.js'
 import { ThreadSessionRuntime } from './thread-session-runtime.js'
-import { toAgentEvent, toAgentMessage, toAgentPart } from '../agent-backend/opencode-events.js'
-import type { AgentMessage, AgentPart } from '../agent-backend/events.js'
+import type { AgentEvent, AgentMessage, AgentPart } from '../agent-backend/events.js'
 
 type RuntimeInternals = {
   state?: { sessionId: string }
@@ -22,41 +16,31 @@ type RuntimeInternals = {
   handleSubtaskPart: (part: AgentPart) => Promise<void>
 }
 
-function summaryMessageEvent({
+function summaryMessage({
   sessionId,
   messageId,
 }: {
   sessionId: string
   messageId: string
-}): OpenCodeEvent {
+}): AgentMessage {
   return {
-    id: `evt_${messageId}`,
-    type: 'message.updated',
-    properties: {
-      sessionID: sessionId,
-      info: {
-        id: messageId,
-        sessionID: sessionId,
-        role: 'assistant',
-        parentID: 'msg_user',
-        time: { created: 2, completed: 3 },
-        modelID: 'compaction-model',
-        providerID: 'test-provider',
-        mode: 'compaction',
-        agent: 'compaction',
-        path: { cwd: '/test', root: '/test' },
-        cost: 1,
-        tokens: {
-          input: 10,
-          output: 1,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        finish: 'stop',
-        summary: true,
-      },
-    },
+    id: messageId,
+    sessionId,
+    role: 'assistant',
+    parentId: 'msg_user',
+    createdAt: 2,
+    completedAt: 3,
+    model: { providerId: 'test-provider', modelId: 'compaction-model' },
+    agent: 'compaction',
+    cost: 1,
+    usage: { input: 10, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+    finish: 'stop',
+    summary: true,
   }
+}
+
+function summaryMessageEvent(input: { sessionId: string; messageId: string }): AgentEvent {
+  return { type: 'message', message: summaryMessage(input) }
 }
 
 function summaryTextPart({
@@ -65,14 +49,15 @@ function summaryTextPart({
 }: {
   sessionId: string
   messageId: string
-}): Part {
+}): AgentPart {
   return {
     id: `prt_${messageId}`,
-    sessionID: sessionId,
-    messageID: messageId,
-    type: 'text',
+    sessionId,
+    messageId,
+    kind: 'text',
     text: 'internal compaction summary must not reach Discord',
-    time: { start: 2, end: 3 },
+    startedAt: 2,
+    endedAt: 3,
   }
 }
 
@@ -80,20 +65,12 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
   test('drops summary message parts before fallback buffering or completion', async () => {
     const sessionId = 'ses_main'
     const messageId = 'msg_summary_embedded_parts'
-    const event = summaryMessageEvent({ sessionId, messageId })
-    if (event.type !== 'message.updated') {
-      throw new Error('Expected summary message event')
-    }
-    const message = {
-      ...event.properties.info,
-      parts: [summaryTextPart({ sessionId, messageId })],
-    } as unknown as OpenCodeMessage
     const runtime = Object.create(ThreadSessionRuntime.prototype) as RuntimeInternals
     Object.defineProperty(runtime, 'state', {
       value: { sessionId },
       configurable: true,
     })
-    runtime.eventBuffer = [{ event: toAgentEvent(event)!, timestamp: 1 }]
+    runtime.eventBuffer = [{ event: summaryMessageEvent({ sessionId, messageId }), timestamp: 1 }]
     runtime.partBuffer = new Map()
     runtime.flushBufferedParts = async () => {
       throw new Error('Summary message must not flush parts')
@@ -102,7 +79,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
       throw new Error('Summary message must not complete the Discord turn')
     }
 
-    await runtime.handleMessageUpdated(toAgentMessage(message as Extract<OpenCodeMessage, { role: 'assistant' }>))
+    await runtime.handleMessageUpdated(summaryMessage({ sessionId, messageId }))
 
     expect(runtime.partBuffer.size).toBe(0)
   })
@@ -114,7 +91,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     const messageId = `msg_summary_${sessionId}`
     const runtime = Object.create(ThreadSessionRuntime.prototype) as RuntimeInternals
     const compacted = runtime.compactEventForEventBuffer(
-      toAgentEvent(summaryMessageEvent({ sessionId, messageId }))!,
+      summaryMessageEvent({ sessionId, messageId }),
     )
 
     expect(compacted?.type).toBe('message')
@@ -126,7 +103,7 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     runtime.eventBuffer = [{ event: compacted, timestamp: 1 }]
     runtime.partBuffer = new Map()
 
-    await runtime.handlePartUpdated(toAgentPart(summaryTextPart({ sessionId, messageId })))
+    await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
 
     expect(runtime.partBuffer.size).toBe(0)
   })
@@ -156,15 +133,11 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
       throw new Error('Summary message must not complete the Discord turn')
     }
 
-    await runtime.handlePartUpdated(toAgentPart(summaryTextPart({ sessionId, messageId })))
+    await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
 
     expect(runtime.partBuffer.get(messageId)?.size).toBe(1)
 
-    const event = summaryMessageEvent({ sessionId, messageId })
-    if (event.type !== 'message.updated') {
-      throw new Error('Expected summary message event')
-    }
-    await runtime.handleMessageUpdated(toAgentMessage(event.properties.info))
+    await runtime.handleMessageUpdated(summaryMessage({ sessionId, messageId }))
 
     expect(runtime.partBuffer.size).toBe(0)
   })

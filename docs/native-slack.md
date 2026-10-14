@@ -184,7 +184,7 @@ pnpm --dir cli run test --run
 ```
 
 Native scenarios run a Slack digital twin, signed real HTTP deliveries, the
-shared Roadie runtime, and the real OpenCode deterministic provider. They verify
+shared Roadie runtime, and a real Pi backend against a scripted model server. They verify
 visible responses, stable session identity after restart, shared host context,
 speaker attribution in an actual guarded shell, Block Kit replies, actual file
 bytes and scheduled delivery. The twin's file routes retain uploaded bytes;

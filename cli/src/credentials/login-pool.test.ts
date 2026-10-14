@@ -36,20 +36,18 @@ import { store } from '../store.js'
 import { setIdentityHookCommand } from '../identity.js'
 
 let dataDir: string
-let originalXdgCacheHome: string | undefined
 
-// Fixture models.dev catalog served through $XDG_CACHE_HOME/opencode/models.json
+// Fixture models.dev catalog preset in the catalog memo
 // so the picker stays hermetic (no network).
 const TEST_CATALOG = {
   'zai-coding-plan': {
     id: 'zai-coding-plan',
     name: 'z.ai',
-    npm: '@ai-sdk/openai-compatible',
     api: 'https://api.z.ai/api/coding/paas/v4',
   },
-  groq: { id: 'groq', npm: '@ai-sdk/groq' },
-  anthropic: { id: 'anthropic', name: 'Anthropic', npm: '@ai-sdk/anthropic' },
-  openai: { id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai' },
+  groq: { id: 'groq' },
+  anthropic: { id: 'anthropic', name: 'Anthropic' },
+  openai: { id: 'openai', name: 'OpenAI' },
 }
 
 const USER_ID = '777000111222333444'
@@ -167,22 +165,12 @@ beforeEach(() => {
   setDataDir(dataDir)
   setIdentityHookCommand(null)
   store.setState({ credentialPoolsEnabled: true, credentialsMode: 'per-person' })
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-login-pool-cache-'))
-  fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
-  fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
-  process.env.XDG_CACHE_HOME = cacheHome
-  resetCatalogCacheForTests()
+  resetCatalogCacheForTests(TEST_CATALOG)
 })
 
 afterEach(() => {
   store.setState({ credentialPoolsEnabled: false, credentialsMode: 'global' })
   setIdentityHookCommand(null)
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome
-  }
   resetCatalogCacheForTests()
 })
 

@@ -44,7 +44,6 @@ async function waitFor<T>(
 
 describe.skipIf(!findPi())('restart continuation mid-tool', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-mid-tool-e2e',
     dirName: 'qa-restart-mid-tool-e2e',
@@ -86,7 +85,7 @@ describe.skipIf(!findPi())('restart continuation mid-tool', () => {
     const toolRunning = (async () => {
       for await (const { events: batch } of events) {
         const running = batch.some((event) =>
-          event.type === 'part' && event.part.kind === 'tool' && event.part.callId === 'midtool-sleep' && event.part.status === 'running',
+          event.type === 'part' && event.part.kind === 'tool' && event.part.callId.startsWith('midtool-sleep') && event.part.status === 'running',
         )
         if (running) return listening.abort()
       }

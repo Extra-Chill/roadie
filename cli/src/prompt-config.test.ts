@@ -11,7 +11,7 @@ import {
   parsePromptConfig,
   setPromptConfigPath,
 } from './prompt-config.js'
-import { getOpencodeSystemMessage } from './system-message.js'
+import { getSystemMessage } from './system-message.js'
 
 let dir: string
 beforeAll(() => {
@@ -79,7 +79,7 @@ describe('system prompt with a config file', () => {
     const file = path.join(dir, 'prompt.yaml')
     fs.writeFileSync(file, 'disable: [permissions, upgrading]\nappend:\n  - id: host\n    content: "## host section\\nhello"\n')
     setPromptConfigPath(file)
-    const message = getOpencodeSystemMessage({ sessionId: 'ses_1' })
+    const message = getSystemMessage({ sessionId: 'ses_1' })
     expect(message).not.toContain('## permissions')
     expect(message).not.toContain('## upgrading roadie')
     expect(message).toContain('## host section\nhello')
@@ -89,12 +89,12 @@ describe('system prompt with a config file', () => {
     const t = new Date(Date.now() + 10_000)
     fs.utimesSync(file, t, t)
     expect(getPromptConfig()).toBeNull()
-    expect(getOpencodeSystemMessage({ sessionId: 'ses_1' })).toContain('## permissions')
+    expect(getSystemMessage({ sessionId: 'ses_1' })).toContain('## permissions')
   })
 
   test('no config file leaves the built-in prompt and drops removed features', () => {
     setPromptConfigPath(null)
-    const message = getOpencodeSystemMessage({ sessionId: 'ses_1' })
+    const message = getSystemMessage({ sessionId: 'ses_1' })
     expect(message).toContain('## permissions')
     expect(message).not.toContain('roadie tts')
   })

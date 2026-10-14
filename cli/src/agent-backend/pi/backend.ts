@@ -63,7 +63,7 @@ import { ROADIE_APPEND_COMMAND } from './roadie-extension.js'
 import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { openCodeResourceArgs } from './resources.js'
 import { isSkillAllowed } from '../../skill-filter.js'
-import { appendFileEditEvents, extractEditedFiles } from '../../file-edit-log.js'
+import { appendFileEditEvents, isFileEditTool } from '../../file-edit-log.js'
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
 import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
@@ -800,15 +800,14 @@ export class PiBackendProvider implements AgentBackendProvider {
     this.emit(session.translator.translate(record), record)
   }
 
-  /** `roadie session editors` reads this log; Pi's edit/write take `path`, OpenCode's `filePath`. */
+  /** `roadie session editors` reads this log; Pi's edit/write take `path`. */
   private recordFileEdit(session: RunningSession, tool: string, rawArgs: unknown) {
     const dataDir = this.options.fileEditLogDir
-    if (!dataDir || (tool !== 'edit' && tool !== 'write')) return
+    if (!dataDir || !isFileEditTool(tool)) return
     const args = (rawArgs ?? {}) as { path?: unknown; file_path?: unknown }
     const filePath = typeof args.path === 'string' ? args.path : typeof args.file_path === 'string' ? args.file_path : undefined
     if (!filePath) return
-    const files = extractEditedFiles({ tool, args: { filePath }, directory: session.directory })
-    appendFileEditEvents({ dataDir, events: files.map((file) => ({ v: 1 as const, at: Date.now(), sessionId: session.id, file, tool })) })
+    appendFileEditEvents({ dataDir, events: [{ v: 1, at: Date.now(), sessionId: session.id, file: path.resolve(session.directory, filePath), tool }] })
   }
 
   private onUiRequest(session: RunningSession, record: PiRecord) {

@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { createDiscordClient, initDatabase, getChannelDirectory, createProjectChannels } from '../discord-bot.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -51,7 +51,7 @@ cli
   .option('--all', 'Include terminal tasks (completed, cancelled, failed)')
   .option(
     '--session <sessionId>',
-    'Only list tasks tied to this OpenCode session or its thread (set automatically inside agent tool shells)',
+    'Only list tasks tied to this agent session or its thread (set automatically inside agent tool shells)',
   )
   .action(async (options: { all?: boolean; session?: string }) => {
     try {

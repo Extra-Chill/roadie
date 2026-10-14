@@ -78,7 +78,6 @@ const steerReplyMatcher: FakeMatcher = {
 
 describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'boundary-delivery-e2e',
     dirName: 'boundary-delivery-e2e',
@@ -136,7 +135,7 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
 
       // The run was never aborted (an abort is a MessageAbortedError and a
       // replay of the message, even though the shell command still finished).
-      const eventsDir = path.join(ctx.directories.root, 'opencode-session-events')
+      const eventsDir = path.join(ctx.directories.root, 'session-events')
       const threadEvents = fs
         .readdirSync(eventsDir)
         .map((file) => fs.readFileSync(path.join(eventsDir, file), 'utf8'))

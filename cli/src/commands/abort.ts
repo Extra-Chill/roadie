@@ -1,4 +1,4 @@
-// /abort command - Abort the current OpenCode request in this thread.
+// /abort command - Abort the current agent request in this thread.
 
 import { channelUsesChannelConversation } from '../channel-policy.js'
 import {

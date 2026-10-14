@@ -10,7 +10,7 @@ import { startMessagesProxy, type MessagesProxy } from './messages-proxy.js'
 import { addPoolClient, poolClientsPath, readPoolClients, removePoolClient, resolvePoolClient } from './pool-clients.js'
 import { addPoolOAuthAccount, setPoolRotation, SHARED_POOL_ID } from './store.js'
 import { readSessionRoute } from './routes.js'
-import { piPoolListenOptions, shouldStartPiPool } from '../agent-backend/pi/pool-startup.js'
+import { piPoolListenOptions } from '../agent-backend/pi/pool-startup.js'
 
 const tempDir = () => fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pool-clients-'))
 
@@ -116,15 +116,5 @@ describe('pool proxy address', () => {
     expect(piPoolListenOptions({ ROADIE_POOL_PROXY_PORT: '47120' })).toEqual({ host: undefined, port: 47120 })
     expect(piPoolListenOptions({ ROADIE_POOL_PROXY_PORT: '47120', ROADIE_POOL_PROXY_HOST: '127.0.0.2' })).toEqual({ host: '127.0.0.2', port: 47120 })
     expect(piPoolListenOptions({ ROADIE_POOL_PROXY_PORT: 'abc' })).toBeInstanceOf(Error)
-  })
-
-  test('starts whenever Pi runs sessions (the default), for Pi channels under opencode, or for registered clients', () => {
-    const dataDir = tempDir()
-    // Pi is the default backend (#177): the proxy always starts for it.
-    expect(shouldStartPiPool({ dataDir, env: {} })).toBe(true)
-    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode' } })).toBe(false)
-    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode', ROADIE_PI_CHANNELS: '123' } })).toBe(true)
-    addPoolClient({ dataDir, name: 'lab' })
-    expect(shouldStartPiPool({ dataDir, env: { ROADIE_BACKEND: 'opencode' } })).toBe(true)
   })
 })

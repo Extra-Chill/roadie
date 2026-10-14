@@ -24,16 +24,7 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install opencode CLI
-        run: curl -fsSL https://opencode.ai/install | bash
-
-      - name: Add opencode to PATH
-        run: echo "$HOME/.opencode/bin" >> $GITHUB_PATH
-
-      - name: Verify opencode
-        run: opencode --version
-
-      # Pi is the default backend; its e2e suites drive a real pi against the
+      # Pi is the agent backend; its e2e suites drive a real pi against the
       # scripted model server. Pinned to the version wp-coding-agents installs.
       - name: Install Pi
         run: npm install -g @earendil-works/pi-coding-agent@1.2.0

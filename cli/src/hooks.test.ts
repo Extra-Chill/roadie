@@ -13,24 +13,16 @@ import {
   resetHooks,
 } from './hooks.js'
 import { loadPlugins, resolvePluginSpecs } from './plugins.js'
-import { getAgentBackendProvider, resolveAgentBackendProvider, withCatalogFilters } from './agent-backend/registry.js'
-import { openCodeBackendProvider } from './agent-backend/opencode.js'
+import { clearResolvedDefaultProvider, getAgentBackendProvider, resolveAgentBackendProvider, setAgentBackendProvider, withCatalogFilters } from './agent-backend/registry.js'
 import type { AgentBackendProvider } from './agent-backend/types.js'
 import { isChannelPolicyConfigured, resolveChannelPolicy, setChannelsConfigPath } from './channel-policy.js'
 import { isContextProviderConfigured, requestContext, setContextProviderCommand } from './context-provider.js'
 import { clearIdentityCache, getCachedPerson, isIdentityHookConfigured, resolvePerson, setIdentityHookCommand } from './identity.js'
-import { getOpencodeSystemMessage } from './system-message.js'
+import { getSystemMessage } from './system-message.js'
 
 const savedPlugins = process.env.ROADIE_PLUGINS
-const savedBackend = process.env.ROADIE_BACKEND
 afterEach(() => {
   resetHooks()
-  // Re-resolve on the legacy OpenCode default: these tests do not exercise the
-  // Pi default, and this must not require a pi binary (see registry.test.ts).
-  process.env.ROADIE_BACKEND = 'opencode'
-  resolveAgentBackendProvider()
-  if (savedBackend === undefined) delete process.env.ROADIE_BACKEND
-  else process.env.ROADIE_BACKEND = savedBackend
   clearIdentityCache()
   if (savedPlugins === undefined) delete process.env.ROADIE_PLUGINS
   else process.env.ROADIE_PLUGINS = savedPlugins
@@ -118,13 +110,32 @@ describe('plugins', () => {
 
 describe('built-in seams honor their filters', () => {
   test('agent_backend replaces the provider once resolved', () => {
-    const fake = { ...openCodeBackendProvider, id: 'fake' } as AgentBackendProvider
-    addFilter('agent_backend', () => fake)
-    expect(getAgentBackendProvider().id).toBe('opencode')
-    // The filter is what is under test, not the Pi default (which needs a pi binary).
-    process.env.ROADIE_BACKEND = 'opencode'
-    resolveAgentBackendProvider()
-    expect(getAgentBackendProvider().id).toBe('fake')
+    const fake: AgentBackendProvider = {
+      id: 'fake',
+      owns: () => false,
+      getBackend: () => null,
+      initializeForDirectory: async () => new Error('unused'),
+      subscribeEvents: () => null,
+      onStarted: () => {},
+    }
+    // A `pi` stand-in for the default provider's version check.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-pi-'))
+    const shim = path.join(dir, 'pi')
+    fs.writeFileSync(shim, '#!/bin/sh\necho 1.2.3\n', { mode: 0o755 })
+    const savedBin = process.env.ROADIE_PI_BIN
+    process.env.ROADIE_PI_BIN = shim
+    const restore = setAgentBackendProvider(fake)
+    try {
+      addFilter('agent_backend', () => fake)
+      clearResolvedDefaultProvider()
+      resolveAgentBackendProvider()
+      expect(getAgentBackendProvider().id).toBe('fake')
+    } finally {
+      restore()
+      clearResolvedDefaultProvider()
+      if (savedBin === undefined) delete process.env.ROADIE_PI_BIN
+      else process.env.ROADIE_PI_BIN = savedBin
+    }
   })
 
   test('channel_policy can supply a policy without a config file', () => {
@@ -169,13 +180,13 @@ describe('built-in seams honor their filters', () => {
   })
 
   test('system_prompt_sections can drop and add sections', () => {
-    const before = getOpencodeSystemMessage({ sessionId: 's1' })
+    const before = getSystemMessage({ sessionId: 's1' })
     expect(before).toContain('## diagrams')
     addFilter('system_prompt_sections', (sections) => [
       ...sections.filter((s) => s.id !== 'diagrams'),
       { id: 'house-rules', text: '\n## house rules\nBe kind.\n' },
     ])
-    const after = getOpencodeSystemMessage({ sessionId: 's1' })
+    const after = getSystemMessage({ sessionId: 's1' })
     expect(after).not.toContain('## diagrams')
     expect(after).toContain('## house rules')
   })

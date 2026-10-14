@@ -1,18 +1,11 @@
 // Process-wide agent backend provider used by the session runtime.
 //
-// Pi is the default backend (#177): every new session starts in Pi, sessions
-// OpenCode already owns keep routing to OpenCode by session id, and the
-// OpenCode server starts lazily on their first use. ROADIE_BACKEND=opencode
-// (or --backend opencode) restores the old OpenCode default, including the
-// deprecated per-channel Pi opt-in via ROADIE_PI_CHANNELS. Plugins replace the
-// provider through the `agent_backend` filter, resolved once at startup by
+// Pi is Roadie's agent backend (#177). Plugins replace the provider through
+// the `agent_backend` filter, resolved once at startup by
 // `resolveAgentBackendProvider()`. Tests swap it with `setAgentBackendProvider`,
 // which returns a function restoring the previous provider.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
-import { toOpenCodeBackend } from './opencode-sessions.js'
 import { applyFilters, applyFiltersAsync } from '../hooks.js'
-import { openCodeBackendProvider } from './opencode.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -20,29 +13,21 @@ import { execFileSync } from 'node:child_process'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
 import { PiBackendProvider } from './pi/backend.js'
-import { withPiChannels, withPiDefault } from './pi/router.js'
-import type { AgentBackend, AgentBackendProvider, AgentCatalogOperations } from './types.js'
+import { getInjectionGuardDir } from '../injection-guard-config.js'
+import { AgentRequestError, type AgentBackend, type AgentBackendProvider, type AgentCatalogOperations } from './types.js'
 
 /**
- * The ROADIE_BACKEND choice: `pi` (the default) or `opencode` (the previous
- * default, including the ROADIE_PI_CHANNELS per-channel opt-in). The same
- * values are accepted by the bot command's --backend flag, which wins over the
- * environment variable. Anything else is a startup error, never a fallback.
+ * ROADIE_BACKEND, when set, must be `pi`: the bot command's --backend flag
+ * and the variable only accept the backend Roadie runs. Anything else is a
+ * startup error, never a fallback.
  */
-export function configuredBackend(): 'pi' | 'opencode' {
+export function assertConfiguredBackend(): void {
   const raw = process.env['ROADIE_BACKEND']
   const value = raw?.trim().toLowerCase()
-  if (!value || value === 'pi') return 'pi'
-  if (value === 'opencode') return 'opencode'
-  throw new Error(`ROADIE_BACKEND must be "pi" or "opencode", got "${raw}"`)
+  if (!value || value === 'pi') return
+  throw new Error(`ROADIE_BACKEND must be "pi", got "${raw}"`)
 }
 
-/**
- * The built-in default: Pi for every new session, with OpenCode serving the
- * sessions it already owns. ROADIE_BACKEND=opencode restores the previous
- * default (OpenCode, plus Pi for the channels listed in ROADIE_PI_CHANNELS,
- * comma-separated ids, #51 spike).
- */
 let resolvedDefault: AgentBackendProvider | undefined
 
 /** Pi 1.x is required: built-in MCP, `--approve`, and the 1.x RPC stream. */
@@ -96,8 +81,8 @@ function piAgentDir(): string | undefined {
 
 function buildPiProvider(): PiBackendProvider {
   const model = process.env['ROADIE_PI_MODEL'] || piSettingsDefaultModel(piAgentDir())
-  // Opt-in shell isolation (--isolate-shells): Pi's bash tool must go through
-  // the same wrapper as OpenCode's, and Pi only takes a shell through
+  // Opt-in shell isolation (--isolate-shells): Pi's bash tool goes through
+  // the isolated-shell wrapper, and Pi only takes a shell through
   // `shellPath` in a Roadie-owned agent dir (the pools'). Without that dir the
   // backend refuses Pi sessions instead of running them unisolated.
   const isolateShellsUser = store.getState().isolateShellsUser
@@ -105,14 +90,13 @@ function buildPiProvider(): PiBackendProvider {
     bin: process.env['ROADIE_PI_BIN'] || 'pi',
     sessionDir: process.env['ROADIE_PI_SESSION_DIR'] || path.join(getDataDir(), 'pi-sessions'),
     fileEditLogDir: getDataDir(),
-    // Same --enable-skill / --disable-skill filter the OpenCode backend applies.
+    // --enable-skill / --disable-skill.
     enabledSkills: store.getState().enabledSkills,
     disabledSkills: store.getState().disabledSkills,
-    // Same configured --shell-env / ROADIE_SHELL_ENV templates the OpenCode
-    // backend's shell.env hook applies to tool shells.
+    // Configured --shell-env / ROADIE_SHELL_ENV templates for tool shells.
     shellEnvTemplates: store.getState().shellEnvTemplates,
-    // Same per-session injection guard files the OpenCode plugin reads.
-    injectionGuardDir: path.join(getDataDir(), 'injection-guard'),
+    // Per-session injection guard files.
+    injectionGuardDir: getInjectionGuardDir(),
     ...(model && { model }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
     ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
@@ -124,34 +108,13 @@ function buildPiProvider(): PiBackendProvider {
 
 function defaultProvider(): AgentBackendProvider {
   if (resolvedDefault) return resolvedDefault
-  const backend = configuredBackend()
-  const channels = (process.env['ROADIE_PI_CHANNELS'] ?? '').split(',').map((id) => id.trim()).filter(Boolean)
-  if (backend === 'opencode') {
-    // The previous default. ROADIE_PI_CHANNELS still works here but is
-    // deprecated: use the Pi default instead of per-channel opt-in.
-    if (channels.length === 0) return openCodeBackendProvider
-    console.warn('[agent-backend] ROADIE_PI_CHANNELS is deprecated and will be removed: set ROADIE_BACKEND=pi (the default) to run every new session on Pi')
-    const pi = buildPiProvider()
-    const version = checkPiVersion(pi.options.bin)
-    if (version instanceof Error) {
-      console.warn(`[agent-backend] Pi channels disabled, staying on OpenCode: ${version.message}`)
-      return openCodeBackendProvider
-    }
-    resolvedDefault = withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set(channels) })
-    return resolvedDefault
-  }
-  // Pi is the default (#177). Per-channel opt-in has no effect here.
-  if (channels.length > 0) {
-    console.warn('[agent-backend] ROADIE_PI_CHANNELS is ignored: Pi is already the default backend (set ROADIE_BACKEND=opencode to restore the old per-channel behaviour)')
-  }
+  assertConfiguredBackend()
   const pi = buildPiProvider()
   const version = checkPiVersion(pi.options.bin)
   if (version instanceof Error) {
-    // No silent fallback: a Pi default with a missing or outdated binary must
-    // fail startup with a clear error (opt back into OpenCode explicitly).
-    throw new Error(`${version.message}. Pi is the default agent backend; install Pi ${MIN_PI_MAJOR}.x or newer, or set ROADIE_BACKEND=opencode to keep OpenCode as the default`)
+    throw new Error(`${version.message}. Roadie runs its agent sessions on Pi; install Pi ${MIN_PI_MAJOR}.x or newer`)
   }
-  resolvedDefault = withPiDefault({ fallback: openCodeBackendProvider, pi })
+  resolvedDefault = pi
   return resolvedDefault
 }
 
@@ -160,10 +123,21 @@ export function clearResolvedDefaultProvider(): void {
   resolvedDefault = undefined
 }
 
-// The default (Pi over OpenCode) is built only in resolveAgentBackendProvider(),
-// after the data dir is set. Until then the runtime holds the OpenCode
-// placeholder, same as before.
-let currentProvider: AgentBackendProvider = withProviderFilters(openCodeBackendProvider)
+/**
+ * Placeholder until resolveAgentBackendProvider() runs (after the data dir is
+ * set): no backend yet, so every session operation fails clearly and no
+ * session is owned.
+ */
+const unresolvedProvider: AgentBackendProvider = {
+  id: 'unresolved',
+  owns: () => false,
+  getBackend: () => null,
+  initializeForDirectory: async () => new AgentRequestError({ detail: 'Agent backend is not started yet' }),
+  subscribeEvents: () => null,
+  onStarted: () => {},
+}
+
+let currentProvider: AgentBackendProvider = withProviderFilters(unresolvedProvider)
 
 /**
  * The channel a backend choice is keyed on: a thread's parent, else the channel
@@ -178,21 +152,20 @@ export function getAgentBackendProvider(): AgentBackendProvider {
   return currentProvider
 }
 
-/** Whether `sessionId` is on a retired backend (see `AgentBackendProvider.isRetiredSession`). */
+/**
+ * Whether `sessionId` is retired: the backend does not own it (e.g. a session
+ * from the removed OpenCode backend, #177). Its thread starts a new session,
+ * seeded from the thread, on the next prompt.
+ */
 export function isRetiredSession(sessionId: string): boolean {
-  return currentProvider.isRetiredSession?.(sessionId) ?? false
+  return !currentProvider.owns(sessionId)
 }
 
-/** Id of the backend running `sessionId` (e.g. "pi" or "opencode"). */
-export function getSessionBackendId(sessionId: string): string {
-  return currentProvider.sessionBackendId?.(sessionId) ?? currentProvider.id
-}
+const BACKEND_LABELS: Record<string, string> = { pi: 'Pi' }
 
-const BACKEND_LABELS: Record<string, string> = { pi: 'Pi', opencode: 'OpenCode' }
-
-/** Human-readable backend name for prompts; unknown ids pass through. */
-export function agentBackendLabel(backendId: string): string {
-  return BACKEND_LABELS[backendId] ?? backendId
+/** Human-readable name of the running backend for prompts; unknown ids pass through. */
+export function agentBackendLabel(): string {
+  return BACKEND_LABELS[currentProvider.id] ?? currentProvider.id
 }
 
 /** Catalog listings run through the `agent_providers` / `agent_definitions` filters. */
@@ -223,8 +196,11 @@ function withFilters(backend: AgentBackend): AgentBackend {
 
 /** The provider with catalog filters applied, whichever backend it is. */
 function withProviderFilters(provider: AgentBackendProvider): AgentBackendProvider {
+  // Explicit delegation: providers are often class instances, whose methods a
+  // spread would drop.
   return {
-    ...provider,
+    id: provider.id,
+    owns: (sessionId) => provider.owns(sessionId),
     getBackend(directory) {
       const backend = provider.getBackend(directory)
       return backend ? withFilters(backend) : null
@@ -234,15 +210,15 @@ function withProviderFilters(provider: AgentBackendProvider): AgentBackendProvid
       if (getBackend instanceof Error) return getBackend
       return () => withFilters(getBackend())
     },
+    subscribeEvents: (options) => provider.subscribeEvents(options),
+    onStarted: (listener) => provider.onStarted(listener),
+    ...(provider.dispose && { dispose: () => provider.dispose!() }),
   }
 }
 
-/**
- * Catalog getter for code that still holds a raw OpenCode client (some
- * commands). Same Roadie types and filters as the runtime sees.
- */
-export function openCodeCatalogGetter(getClient: () => OpencodeClient): () => AgentBackend {
-  return () => withFilters(toOpenCodeBackend(getClient()))
+/** Stop the running backend's agent processes (bot shutdown). */
+export async function stopAgentBackend(): Promise<void> {
+  await currentProvider.dispose?.()
 }
 
 /** Apply the `agent_backend` filter. Call after plugins load, before the bot starts. */

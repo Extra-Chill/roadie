@@ -1,8 +1,8 @@
 // CLI subcommands must resolve the same agent backend provider the bot does.
 // Only the bot command used to call resolveAgentBackendProvider(), so
 // `roadie session ...` (and the agent-remote child, which execs cli.ts with a
-// subcommand) kept the module-default OpenCode-only provider and could not see
-// Pi sessions or plugin-provided backends. The shared bootstrap in
+// subcommand) kept the module-default provider and could not see Pi
+// sessions or plugin-provided backends. The shared bootstrap in
 // cli-runner.ts, registered once as a goke middleware in cli.ts, closes that.
 
 import fs from 'node:fs'
@@ -73,7 +73,6 @@ afterEach(() => {
 
 describe('subcommand agent backend bootstrap', () => {
   test('the default bot command invocation does not resolve (the bot action does it itself)', async () => {
-    withEnv('ROADIE_PI_CHANNELS', undefined)
     withEnv('ROADIE_PLUGINS', undefined)
     const before = getAgentBackendProvider()
     process.argv = ['node', 'roadie', '--data-dir', '/tmp/roadie-somewhere']
@@ -85,24 +84,21 @@ describe('subcommand agent backend bootstrap', () => {
   test('a subcommand resolves the same provider as the bot, and a Pi-owned session id routes to Pi', async () => {
     keepProvider()
     const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'subcommand-backend-'))
-    // The legacy per-channel opt-in: ROADIE_BACKEND=opencode keeps ROADIE_PI_CHANNELS working.
-    withEnv('ROADIE_BACKEND', 'opencode')
-    withEnv('ROADIE_PI_CHANNELS', 'ch-pi')
+    withEnv('ROADIE_BACKEND', undefined)
     withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
     withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
     withEnv('ROADIE_PLUGINS', undefined)
     writePiSessionFile(path.join(tmp, 'pi-sessions'), PI_SESSION_ID)
 
+    clearResolvedDefaultProvider()
+
     process.argv = ['node', 'roadie', 'session', 'list']
     await resolveSubcommandAgentBackendProvider()
 
-    // The bot resolves to the same provider family: `opencode+pi`.
-    expect(getAgentBackendProvider().id).toBe('opencode+pi')
-    expect(resolveAgentBackendProvider().id).toBe('opencode+pi')
+    // The bot resolves to the same provider: Pi.
+    expect(getAgentBackendProvider().id).toBe('pi')
+    expect(resolveAgentBackendProvider().id).toBe('pi')
 
-    // No OpenCode server is running here, so the routed backend composes Pi
-    // over a null fallback: only a provider that knows the Pi channels can
-    // serve this session id.
     const backend = getAgentBackendProvider().getBackend('/tmp/pi-project')
     expect(backend).not.toBeNull()
     const session = await backend!.sessions.get({ sessionId: PI_SESSION_ID })
@@ -112,8 +108,7 @@ describe('subcommand agent backend bootstrap', () => {
 
   test('a plugin-provided backend reaches the subcommand through the agent_backend filter', async () => {
     keepProvider()
-    withEnv('ROADIE_BACKEND', 'opencode')
-    withEnv('ROADIE_PI_CHANNELS', undefined)
+    withEnv('ROADIE_BACKEND', undefined)
     withEnv('ROADIE_PLUGINS', undefined)
     // Whatever the registry default currently is (the Pi resolution above is
     // cached per process), the filter must be applied on top of it.
@@ -136,7 +131,6 @@ describe('subcommand agent backend bootstrap', () => {
   test('a missing pi binary does not fail a subcommand that may never reach an agent', async () => {
     keepProvider()
     withEnv('ROADIE_PLUGINS', undefined)
-    withEnv('ROADIE_PI_CHANNELS', undefined)
     withEnv('ROADIE_BACKEND', undefined)
     withEnv('ROADIE_PI_BIN', '/nonexistent/pi')
     clearResolvedDefaultProvider()
@@ -157,7 +151,6 @@ describe('subcommand agent backend bootstrap', () => {
     const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'subcommand-broken-plugin-'))
     fs.writeFileSync(path.join(tmp, 'broken-plugin.mjs'), 'throw new Error("boom")\n')
     withEnv('ROADIE_PLUGINS', path.join(tmp, 'broken-plugin.mjs'))
-    withEnv('ROADIE_PI_CHANNELS', undefined)
 
     const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`)
@@ -189,12 +182,11 @@ describe('subcommand agent backend bootstrap', () => {
     ].join('\n'))
 
     const env: NodeJS.ProcessEnv = { ...process.env }
-    delete env.ROADIE_OPENCODE_PROCESS
+    delete env.ROADIE_AGENT_SHELL
     delete env.AGENT_TOKEN
     env.ROADIE_PLUGINS = plugin
-    // The legacy OpenCode default, so the marker is deterministic without a pi shim.
-    env.ROADIE_BACKEND = 'opencode'
-    env.ROADIE_PI_CHANNELS = ''
+    delete env.ROADIE_BACKEND
+    env.ROADIE_PI_BIN = writePiVersionShim(tmp)
     env.MARKER_FILE = marker
     env.ROADIE_TEST_LOGS = '1'
     env.TMPDIR = '/tmp'
@@ -206,6 +198,6 @@ describe('subcommand agent backend bootstrap', () => {
       { env, cwd: cliRoot, timeout: 60_000 },
     ).catch(() => undefined)
 
-    expect(fs.readFileSync(marker, 'utf8')).toContain('opencode')
+    expect(fs.readFileSync(marker, 'utf8')).toContain('pi')
   })
 })

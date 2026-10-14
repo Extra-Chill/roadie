@@ -12,11 +12,10 @@ describe('buildRetiredSessionSeed', () => {
   test('carries the thread oldest first, minus the triggering message and blanks', () => {
     expect(buildRetiredSessionSeed({
       retiredSessionId: 'ses_old',
-      retiredBackend: 'OpenCode',
       history,
       excludeMessageId: '4',
     })).toMatchInlineSnapshot(`
-      "[Session moved] This thread was running on OpenCode (session ses_old), which Roadie no longer uses. This is a new session.
+      "[Session moved] This thread was running session ses_old, which the current agent backend cannot resume. This is a new session.
       Files, tool results, todos and the earlier session's full transcript did not carry over; only the chat messages below did. Re-read files before relying on them.
       Recent thread messages, oldest first:
 
@@ -26,18 +25,18 @@ describe('buildRetiredSessionSeed', () => {
   })
 
   test('keeps the newest messages within the budget and says older ones were dropped', () => {
-    const seed = buildRetiredSessionSeed({ retiredSessionId: 'ses_old', retiredBackend: 'OpenCode', history, maxChars: 30 })
+    const seed = buildRetiredSessionSeed({ retiredSessionId: 'ses_old', history, maxChars: 30 })
     expect(seed).toContain('(older ones omitted)')
     expect(seed).toContain('chubes: now ship it')
     expect(seed).not.toContain('fix the footer')
   })
 
   test('says when the history could not be read', () => {
-    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', retiredBackend: 'OpenCode', history: new Error('x') }))
+    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', history: new Error('x') }))
       .toContain('could not be read')
-    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', retiredBackend: 'OpenCode', history: undefined }))
+    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', history: undefined }))
       .toContain('could not be read')
-    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', retiredBackend: 'OpenCode', history: [] }))
+    expect(buildRetiredSessionSeed({ retiredSessionId: 'ses_old', history: [] }))
       .toContain('no earlier messages')
   })
 })

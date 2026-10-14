@@ -245,7 +245,6 @@ async function settledText(th: { text: () => Promise<string> }, timeout = 4_000)
 
 describe.skipIf(!findPi())('thread message queue ordering', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'queue-e2e',
     dirName: 'thread-queue-e2e',

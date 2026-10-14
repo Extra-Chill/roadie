@@ -1,17 +1,16 @@
 // The same scenario drives both real adapter runtimes and the real
-// deterministic backend. Assertions observe chat and backend history.
+// a real Pi against the scripted model server. Assertions observe chat and
+// backend history.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import url from 'node:url'
 import { beforeAll, afterAll, expect } from 'vitest'
 import { ChannelType, type Client } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import { SlackDigitalTwin, sendSlashCommand } from 'slack-digital-twin/src'
-import { buildDeterministicOpencodeConfig } from 'opencode-deterministic-provider'
 import { NativeSlackBot } from './slack-bot.js'
 import { startDiscordBot } from './discord-bot.js'
-import { createDiscordJsClient, warmOpencodeInstance } from './queue-advanced-e2e-setup.js'
+import { createDiscordJsClient } from './queue-advanced-e2e-setup.js'
 import { setDataDir } from './config.js'
 import { setChannelsConfigPath } from './channel-policy.js'
 import {
@@ -26,7 +25,6 @@ import {
   getSessionTurnAttribution,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { stopOpencodeServer, initializeOpencodeForDirectory } from './opencode.js'
 import { disposeGlobalEventListener } from './session-handler/global-event-listener.js'
 import { disposeRuntime, getRuntime } from './session-handler/thread-session-runtime.js'
 import { addFilter } from './hooks.js'
@@ -34,7 +32,8 @@ import type { ContextRequest } from './context-provider.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { readConversationAdmission } from './conversation-intake.js'
 import { slackThreadId } from './chat-platform/slack-api.js'
-import { initTestGitRepo, chooseLockPort, cleanupTestSessions } from './test-utils.js'
+import { initTestGitRepo, chooseLockPort } from './test-utils.js'
+import { startPiTestBackend, type PiTestBackend } from './pi-test-backend.js'
 import { store } from './store.js'
 import type { ConversationIntakeRequest } from './conversation-intake.js'
 
@@ -54,7 +53,7 @@ export function setupConversationIntakeSuite(platform: Platform) {
   const channelId = platform === 'discord' ? '200000000000001105' : 'CINTAKE'
   let root: string
   let project: string
-  let startedAt: number
+  let pi: PiTestBackend | undefined
   let discord: DigitalDiscord
   let slack: SlackDigitalTwin
   let bot: NativeSlackBot
@@ -70,7 +69,6 @@ export function setupConversationIntakeSuite(platform: Platform) {
   let previousAllowAllUsers: boolean
 
   beforeAll(async () => {
-    startedAt = Date.now()
     previousAllowAllUsers = store.getState().allowAllUsers
     store.setState({ allowAllUsers: true })
     root = fs.mkdtempSync(path.join(os.tmpdir(), `roadie-intake-${platform}-`))
@@ -117,45 +115,33 @@ export function setupConversationIntakeSuite(platform: Platform) {
         },
       ]
     })
-    fs.writeFileSync(
-      path.join(project, 'opencode.json'),
-      JSON.stringify(
-        buildDeterministicOpencodeConfig({
-          providerName: 'deterministic-provider',
-          model: 'deterministic-v2',
-          smallModel: 'deterministic-v3',
-          providerNpm: url
-            .pathToFileURL(path.resolve('..', 'opencode-deterministic-provider/src/index.ts'))
-            .toString(),
-          settings: {
-            strict: false,
-            matchers: [
+    pi = await startPiTestBackend({
+      root,
+      dataDir: path.join(root, 'data'),
+      matchers: [
+        {
+          id: 'intake-answer',
+          priority: 150,
+          when: {
+            latestUserTextIncludes: 'INTAKE_ANSWER',
+            rawPromptIncludes: 'INTAKE_SHARED',
+          },
+          then: {
+            parts: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 'reply' },
+              { type: 'text-delta', id: 'reply', delta: 'intake-answer' },
+              { type: 'text-end', id: 'reply' },
               {
-                id: 'intake-answer',
-                priority: 150,
-                when: {
-                  latestUserTextIncludes: 'INTAKE_ANSWER',
-                  rawPromptIncludes: 'INTAKE_SHARED',
-                },
-                then: {
-                  parts: [
-                    { type: 'stream-start', warnings: [] },
-                    { type: 'text-start', id: 'reply' },
-                    { type: 'text-delta', id: 'reply', delta: 'intake-answer' },
-                    { type: 'text-end', id: 'reply' },
-                    {
-                      type: 'finish',
-                      finishReason: 'stop',
-                      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                    },
-                  ],
-                },
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
               },
             ],
           },
-        }),
-      ),
-    )
+        },
+      ],
+    })
     const hrana = await startHranaServer({ dbPath: path.join(root, 'data/discord-sessions.db') })
     if (hrana instanceof Error) throw hrana
     process.env.ROADIE_DB_URL = hrana
@@ -205,9 +191,6 @@ export function setupConversationIntakeSuite(platform: Platform) {
         discordClient: client,
       })
     }
-    const backend = await initializeOpencodeForDirectory(project)
-    if (backend instanceof Error) throw backend
-    await warmOpencodeInstance({ getClient: backend, directory: project })
   }, 60_000)
 
   afterAll(async () => {
@@ -217,8 +200,7 @@ export function setupConversationIntakeSuite(platform: Platform) {
       await client?.destroy()
     }
     disposeGlobalEventListener()
-    if (project) await cleanupTestSessions({ projectDirectory: project, testStartTime: startedAt })
-    await stopOpencodeServer()
+    await pi?.dispose()
     await closeDatabase()
     await stopHranaServer()
     if (platform === 'slack') await slack?.stop()
@@ -383,7 +365,7 @@ export function setupConversationIntakeSuite(platform: Platform) {
     } else {
       disposeRuntime(threadId)
       await client.destroy()
-      await stopOpencodeServer()
+      await pi!.restart()
       client = createDiscordJsClient({ restUrl: discord.restUrl })
       await startDiscordBot({
         token: discord.botToken,
@@ -492,7 +474,7 @@ export function setupConversationIntakeSuite(platform: Platform) {
           privateMetadata: metadata,
           values: {
             choice: {
-              choice: { selected_option: { value: 'deterministic-provider/deterministic-v3' } },
+              choice: { selected_option: { value: 'fake/fake-2' } },
             },
           },
         })

@@ -1,4 +1,4 @@
-// Tests for file-edit event extraction, derivation, and JSONL persistence.
+// Tests for file-edit event derivation, and JSONL persistence.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -6,9 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   appendFileEditEvents,
-  createFileEditHooks,
   editorsForFile,
-  extractEditedFiles,
   loadFileEditEvents,
   type FileEditEvent,
 } from './file-edit-log.js'
@@ -35,81 +33,6 @@ function event(partial: Partial<FileEditEvent> & Pick<FileEditEvent, 'sessionId'
     ...partial,
   }
 }
-
-describe('extractEditedFiles', () => {
-  test('extracts edit and write filePath and ignores other tools', () => {
-    expect(
-      extractEditedFiles({
-        tool: 'edit',
-        args: { filePath: 'src/foo.ts' },
-        directory: '/repo',
-      }),
-    ).toMatchInlineSnapshot(`
-      [
-        "/repo/src/foo.ts",
-      ]
-    `)
-    expect(
-      extractEditedFiles({
-        tool: 'write',
-        args: { filePath: '/abs/bar.ts' },
-        directory: '/repo',
-      }),
-    ).toMatchInlineSnapshot(`
-      [
-        "/abs/bar.ts",
-      ]
-    `)
-    expect(
-      extractEditedFiles({
-        tool: 'read',
-        args: { filePath: 'src/foo.ts' },
-        directory: '/repo',
-      }),
-    ).toMatchInlineSnapshot(`
-      []
-    `)
-    expect(
-      extractEditedFiles({
-        tool: 'bash',
-        args: {},
-        directory: '/repo',
-      }),
-    ).toMatchInlineSnapshot(`
-      []
-    `)
-  })
-
-  test('extracts apply_patch paths and resolves them against directory', () => {
-    const patchText = [
-      '*** Begin Patch',
-      '*** Update File: src/foo.ts',
-      '@@',
-      '-a',
-      '+b',
-      '*** Add File: src/bar.ts',
-      '+hello',
-      '*** Delete File: src/old.ts',
-      '*** Move to: src/renamed.ts',
-      '*** End Patch',
-    ].join('\n')
-
-    expect(
-      extractEditedFiles({
-        tool: 'apply_patch',
-        args: { patchText },
-        directory: '/repo',
-      }),
-    ).toMatchInlineSnapshot(`
-      [
-        "/repo/src/foo.ts",
-        "/repo/src/bar.ts",
-        "/repo/src/old.ts",
-        "/repo/src/renamed.ts",
-      ]
-    `)
-  })
-})
 
 describe('editorsForFile', () => {
   test('orders unique sessions by last edit and matches relative paths', () => {
@@ -240,46 +163,6 @@ describe('file edit jsonl log', () => {
           "sessionId": "ses_a",
           "tool": "edit",
           "v": 1,
-        },
-      ]
-    `)
-  })
-})
-
-describe('fileEditTrackerPlugin', () => {
-  test('records edit and apply_patch and ignores bash', async () => {
-    const dataDir = makeDataDir()
-    const hooks = createFileEditHooks({ dataDir, directory: '/repo' })
-    await hooks['tool.execute.after']({
-      tool: 'edit',
-      sessionID: 'ses_x',
-      args: { filePath: 'src/a.ts' },
-    })
-    await hooks['tool.execute.after']({
-      tool: 'apply_patch',
-      sessionID: 'ses_x',
-      args: { patchText: '*** Update File: src/b.ts\n' },
-    })
-    await hooks['tool.execute.after']({
-      tool: 'bash',
-      sessionID: 'ses_x',
-      args: {},
-    })
-    const loaded = loadFileEditEvents({ dataDir })
-    if (loaded instanceof Error) throw loaded
-    expect(loaded.map((entry) => {
-      return { sessionId: entry.sessionId, file: entry.file, tool: entry.tool }
-    })).toMatchInlineSnapshot(`
-      [
-        {
-          "file": "/repo/src/a.ts",
-          "sessionId": "ses_x",
-          "tool": "edit",
-        },
-        {
-          "file": "/repo/src/b.ts",
-          "sessionId": "ses_x",
-          "tool": "apply_patch",
         },
       ]
     `)

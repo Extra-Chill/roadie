@@ -1,6 +1,6 @@
 // E2e: host context provider output reaches the model.
-// The deterministic provider only answers "context-seen" when the provider's
-// marker is in the raw prompt OpenCode sends, so a reply proves the
+// The scripted model only answers "context-seen" when the provider's
+// marker is in the raw prompt Pi sends, so a reply proves the
 // session_start context was pinned into the system prompt.
 
 import fs from 'node:fs'
@@ -10,11 +10,12 @@ import { afterAll, beforeAll, describe, test, expect } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { setContextProviderCommand } from './context-provider.js'
 import { waitForBotMessageContaining } from './test-utils.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 
 const TEXT_CHANNEL_ID = '200000000000001050'
 const MARKER = 'HOST_CONTEXT_MARKER_7f3a'
 
-describe('context provider', () => {
+describe.skipIf(!findPi())('context provider', () => {
   let dir: string
   beforeAll(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-context-e2e-'))

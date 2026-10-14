@@ -7,7 +7,7 @@
     <br/>
 </div>
 
-Roadie is a **chat-to-agent bridge**. It connects a team chat (**Discord** or **Slack**) to a coding agent ([OpenCode](https://opencode.ai)) running on your machine or server. Each **channel is a project**, each **thread is a session**: send a message and an agent works in that project, streaming its progress back into the thread.
+Roadie is a **chat-to-agent bridge**. It connects a team chat (**Discord** or **Slack**) to a coding agent ([Pi](https://github.com/badlogic/pi-mono)) running on your machine or server. Each **channel is a project**, each **thread is a session**: send a message and an agent works in that project, streaming its progress back into the thread.
 
 Roadie is built to be run by a host. Everything a deployment needs to decide (who may talk to the bot, which channels map to which directories, what context and permissions each session gets, how the install is upgraded) is configurable through files, environment variables and plugins, without patching Roadie.
 
@@ -31,7 +31,7 @@ Roadie is a fork of [Kimaki](https://github.com/remorses/kimaki).
 
 - **Channels are projects.** A channel is bound to a project directory. Several channels can share one project and still keep their own audience, response rules and sessions.
 - **Threads are sessions.** A message in a project channel starts a thread and an agent session; replies continue it. Search, resume and fork any session later.
-- **Two seams keep it generic.** The session runtime talks to an *agent backend* (Pi by default; OpenCode for the sessions it already owns) and a *chat platform* (Discord, Slack) through interfaces, so neither is hard-wired into the core. See [Agent backend](docs/agent-backend.md).
+- **Two seams keep it generic.** The session runtime talks to an *agent backend* (Pi) and a *chat platform* (Discord, Slack) through interfaces, so neither is hard-wired into the core. See [Agent backend](docs/agent-backend.md).
 
 ## Quick start
 
@@ -41,7 +41,7 @@ Install the latest release (Node 22+). Replace `<version>` with the version on t
 npm i -g https://github.com/Extra-Chill/roadie/releases/latest/download/extrachill-roadie-<version>.tgz
 ```
 
-**Discord:** create a bot at [discord.com/developers](https://discord.com/developers/applications), then run `roadie`. The CLI walks you through connecting the bot and picking projects. Keep it running; it is the bridge between Discord and your machine.
+**Discord:** create a bot at [discord.com/developers](https://discord.com/developers/applications), then run `roadie`. The CLI walks you through connecting the bot; bind channels to project directories with a [channel configuration file](#channels-and-projects). Roadie runs sessions on [Pi](#agent-backend), so install the `pi` binary first. Keep it running; it is the bridge between Discord and your machine.
 
 **Slack:** run `roadie --platform slack` with a Slack app's credentials. See [Native Slack](docs/native-slack.md) for the app setup, scopes and receiver.
 
@@ -49,7 +49,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 
 ## Features
 
-- **All your models, including subscriptions.** Every model OpenCode supports. Run `/login` to authenticate a provider with an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription. Add several accounts and Roadie rotates between them on rate limits (via [subrouter](https://www.npmjs.com/package/@subrouter/opencode); disable with `--no-subrouter` or `ROADIE_SUBROUTER=0`).
+- **All your models, including subscriptions.** Run `/login` to add an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription to a credential pool. Add several accounts and Roadie rotates between them on rate limits.
 - **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the identity hook's `credential_pool`, and the security limits.
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
 - **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
@@ -59,7 +59,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 - **Scheduled tasks.** Run a prompt at a future time or on a cron schedule with `roadie send --send-at`; manage them with `/tasks` or `roadie task list`. Sessions can also sleep and wake themselves later.
 - **Thread working directories.** `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree, and the thread keeps that folder across restarts. Creating and merging checkouts is left to your own tooling.
 - **Images and files** in both directions.
-- **OpenCode commands, skills and MCP prompts** become slash commands. Switch agents with `/<name>-agent`.
+- **Project commands, skills and MCP prompts** become slash commands (Pi's own, plus OpenCode-format `opencode.json` / `.opencode/` config; see [Agent backend](docs/agent-backend.md)). Switch agents with `/<name>-agent`.
 - **Shell commands.** Prefix a message with `!` to run it in the thread's working directory.
 
 ### How messages reach a busy session
@@ -113,17 +113,9 @@ Channels can also set `directory`, `agent`, `model`, `verbosity`, `capabilities`
 
 ## Agent backend
 
-New sessions run on **Pi**. Roadie needs the `pi` binary (1.x or newer) on `PATH` or in `ROADIE_PI_BIN`; if it is missing or too old, startup fails with an error instead of falling back silently. Sessions that OpenCode already owns keep running on OpenCode: they are routed by session id wherever Roadie reaches them (permission buttons, `/abort`, `roadie send`), and the OpenCode server starts on their first use — it is **not** started at bot startup anymore.
+Sessions run on **Pi**. Roadie needs the `pi` binary (1.x or newer) on `PATH` or in `ROADIE_PI_BIN`; if it is missing or too old, startup fails with an error. Pi-related variables: `ROADIE_PI_BIN` (executable, default `pi`), `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
 
-| Selection | How |
-|---|---|
-| Pi (default) | nothing to do |
-| OpenCode (the previous default) | `--backend opencode` or `ROADIE_BACKEND=opencode` |
-| Per-channel Pi opt-in (deprecated) | `ROADIE_BACKEND=opencode` plus `ROADIE_PI_CHANNELS=<ids>` |
-
-`--backend` wins over `ROADIE_BACKEND`, which accepts `pi` (default) or `opencode`. `ROADIE_PI_CHANNELS` — the comma-separated channel ids that used to opt channels into Pi — still works under `ROADIE_BACKEND=opencode` (with a deprecation warning) and has no effect otherwise. Pi-related variables: `ROADIE_PI_BIN` (executable, default `pi`), `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
-
-Listings that merge across backends — `roadie session list`, `/last-sessions`, session status, questions, MCP, slash-command registration — work while the OpenCode server is down and never start it just to list. See [Agent backend](docs/agent-backend.md) for the details.
+A thread bound to a session Pi does not own (for example one started on the removed OpenCode backend) continues in a new Pi session on its next message, seeded with the thread's recent chat history. See [Agent backend](docs/agent-backend.md) for the details.
 
 ## Running as a service
 
@@ -134,7 +126,6 @@ Service installs configure Roadie through the environment; nothing needs to touc
 | Variable | Purpose |
 |---|---|
 | `ROADIE_PLATFORM` | `discord` (default) or `slack`. Same as `--platform`. |
-| `ROADIE_BACKEND` | Agent backend for new sessions: `pi` (default) or `opencode`. Existing OpenCode sessions keep running on OpenCode. Same as `--backend`. See [Agent backend](docs/agent-backend.md). |
 | `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
@@ -188,7 +179,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 
 | Filter | Value | Context |
 |---|---|---|
-| `agent_backend` | the agent backend provider (default: Pi over OpenCode) | — |
+| `agent_backend` | the agent backend provider (default: Pi) | — |
 | `person` | the person behind a chat user, or `null` | `{ actor, context }` |
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
 | `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |
@@ -212,7 +203,7 @@ Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROA
 
 ### Shell env
 
-Hosts can export extra environment variables into every agent tool shell, on both the OpenCode and Pi backends, with `--shell-env <NAME=template>` (repeatable) or `ROADIE_SHELL_ENV` as a JSON object. A template can mix literal text with `{field}` placeholders:
+Hosts can export extra environment variables into every agent tool shell, with `--shell-env <NAME=template>` (repeatable) or `ROADIE_SHELL_ENV` as a JSON object. A template can mix literal text with `{field}` placeholders:
 
 ```bash
 roadie --shell-env 'ROADIE_DEPLOY_HOOK=https://ops.example/hook/{session_id}' \
@@ -238,7 +229,7 @@ There is no `{thread_url}`: building one needs platform-specific context (a Disc
 
 ### Subagents
 
-A session can delegate to a child session (in OpenCode, the task tool). The agent backend reports this as `child_session_started` / `child_session_finished` (`status` is `completed` or `error`). `parentSessionId` on `session_idle` and `session_error` is the session that spawned this one: the main session for a delegated child, or the session passed to `roadie send --parent-session` for a thread started that way. Together these let an orchestrator plugin track delegated work without knowing which backend runs it.
+A session can delegate to a child session (the task tool). The agent backend reports this as `child_session_started` / `child_session_finished` (`status` is `completed` or `error`). `parentSessionId` on `session_idle` and `session_error` is the session that spawned this one: the main session for a delegated child, or the session passed to `roadie send --parent-session` for a thread started that way. Together these let an orchestrator plugin track delegated work without knowing which backend runs it.
 
 ## Commands
 
@@ -254,12 +245,9 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/compact`, `/context-usage` | Compact the context; show how much is in use |
 | `/run-shell-command` | Run a shell command in the thread's working directory |
 | `/mcp` | List and manage MCP servers for this project |
-| `/restart-opencode-server` | Restart the agent backend while staying connected to chat |
 
 The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
 
 ## Troubleshooting
 
-If sessions stop responding or fail to start, run `/restart-opencode-server`. It restarts the agent backend while keeping the bot connected, which fixes most transient issues.
-
-If the bot itself misbehaves (crashes, messages not picked up, threads not created), restart it: `/upgrade-and-restart` on a self-managed install, or the service manager on a managed one. Check `roadie.log` in the data directory for the cause.
+If sessions stop responding or the bot misbehaves (crashes, messages not picked up, threads not created), restart it: `/upgrade-and-restart` on a self-managed install, or the service manager on a managed one. Check `roadie.log` in the data directory for the cause.

@@ -1,8 +1,7 @@
-// Bot startup must not start the OpenCode server when Pi is the default agent
-// backend (#177): backgroundInit registers slash commands straight from the
-// resolved backend's catalog and leaves OpenCode to its lazy first use.
+// backgroundInit registers slash commands straight from the agent backend's
+// catalog; a catalog failure still registers the built-in commands.
 
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { REST } from 'discord.js'
 import {
   backgroundInit,
@@ -11,43 +10,20 @@ import {
   isTransientNetworkError,
   resolveDiscordUserOption,
 } from './cli-runner.js'
-import { initializeOpencodeForDirectory } from './discord-bot.js'
 import { registerCommands } from './discord-command-registration.js'
-
-vi.mock('./discord-bot.js', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  initializeOpencodeForDirectory: vi.fn(async () => new Error('opencode initializer must not run')),
-}))
 
 vi.mock('./discord-command-registration.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   registerCommands: vi.fn(async () => {}),
 }))
 
-const savedBackend = process.env.ROADIE_BACKEND
-
 beforeEach(() => {
   vi.mocked(registerCommands).mockClear()
-  vi.mocked(initializeOpencodeForDirectory).mockClear()
 })
 
-afterEach(() => {
-  if (savedBackend === undefined) delete process.env.ROADIE_BACKEND
-  else process.env.ROADIE_BACKEND = savedBackend
-})
-
-describe('backgroundInit OpenCode startup', () => {
-  test('with Pi as the default backend, bot startup does not start the OpenCode server', async () => {
-    delete process.env.ROADIE_BACKEND
-    await backgroundInit({ currentDir: '/tmp/roadie-pi-default', token: 't', appId: 'a', guildIds: [] })
-    expect(initializeOpencodeForDirectory).not.toHaveBeenCalled()
-    expect(registerCommands).toHaveBeenCalledTimes(1)
-  })
-
-  test('ROADIE_BACKEND=opencode keeps the eager OpenCode init at startup', async () => {
-    process.env.ROADIE_BACKEND = 'opencode'
-    await backgroundInit({ currentDir: '/tmp/roadie-oc-default', token: 't', appId: 'a', guildIds: [] })
-    expect(initializeOpencodeForDirectory).toHaveBeenCalledTimes(1)
+describe('backgroundInit', () => {
+  test('registers commands even when the backend catalog is unavailable', async () => {
+    await backgroundInit({ currentDir: '/tmp/roadie-background-init', token: 't', appId: 'a', guildIds: [] })
     expect(registerCommands).toHaveBeenCalledTimes(1)
   })
 })

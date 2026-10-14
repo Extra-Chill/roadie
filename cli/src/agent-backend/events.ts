@@ -1,12 +1,11 @@
 // Roadie's agent events: what the session runtime needs to hear from an agent
 // backend, in Roadie's own terms. Each backend translates its native stream
-// into these (OpenCode: ./opencode-events.ts).
+// into these (Pi: ./pi/events.ts).
 //
 // Derived from what the runtime and event-stream-state actually read today.
 // Add a field only when a consumer needs it.
 //
-// How each event maps to a Pi RPC backend (earendil-works/pi, docs/rpc.md),
-// checked on paper so gaps show up before a Pi backend exists (#51):
+// How each event maps to the Pi RPC stream (earendil-works/pi, docs/rpc.md):
 //
 //   session.created/updated   new_session / set_session_name responses, get_state
 //   message                   message_start / message_end (role, usage on end)
@@ -14,7 +13,7 @@
 //   part (tool)               tool_execution_start / _update / _end
 //   part (step-finish)        turn_end (usage per turn)
 //   part.delta                message_update assistantMessageEvent text_delta
-//   child_session_*           task tool part updates (OpenCode: ./opencode-events.ts)
+//   child_session_*           task tool part updates (childSessionEventsForPart)
 //   status busy/idle          agent_start / agent_end
 //   status retry              auto_retry_start / auto_retry_end
 //   idle                      agent_end

@@ -25,7 +25,7 @@ import { DigitalDiscord } from 'discord-digital-twin/src'
 import { findPi } from './agent-backend/pi/find-pi.js'
 import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
-import { startPiE2eBackend, type PiE2eBackend } from './pi-e2e-backend.js'
+import { startPiTestBackend, type PiTestBackend } from './pi-test-backend.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -254,7 +254,7 @@ function createAgentFile({
 }
 
 describe.skipIf(!findPi())('agent model resolution', () => {
-  let piBackend: PiE2eBackend | undefined
+  let piBackend: PiTestBackend | undefined
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client
@@ -306,7 +306,7 @@ describe.skipIf(!findPi())('agent model resolution', () => {
       `---\ndescription: Test command for roadie system prompt injection\n---\n${COMMAND_SYSTEM_CHECK_TEMPLATE}\n`,
     )
 
-    piBackend = await startPiE2eBackend({
+    piBackend = await startPiTestBackend({
       root: directories.root,
       dataDir: directories.dataDir,
       projectDirectory: directories.projectDirectory,
@@ -400,7 +400,7 @@ describe.skipIf(!findPi())('agent model resolution', () => {
       void botClient.destroy()
     }
     stopIpcPolling()
-    await piBackend?.stop()
+    await piBackend?.dispose()
     await Promise.all([
       closeDatabase().catch(() => {
         return
@@ -420,8 +420,6 @@ describe.skipIf(!findPi())('agent model resolution', () => {
     if (directories) {
       removeTestDataDir(directories.dataDir)
     }
-    // A Pi suite must never start or use OpenCode.
-    expect(piBackend?.opencodeTouched ?? []).toEqual([])
   }, 5_000)
 
   test(

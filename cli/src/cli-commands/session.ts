@@ -17,11 +17,11 @@ import { AgentRequestError, type AgentBackend, type AgentBackendGetter } from '.
 import type { AgentSession } from '../agent-backend/events.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorkingDirectory, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
-import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch, toSearchableMessage } from '../session-search.js'
+import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
 import { formatTimeAgo } from '../time-format.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine, persistedEventProjectDirectory, isOpenCodeEvent } from '../session-handler/opencode-session-event-log.js'
+import { buildSessionEventLogLine, persistedEventProjectDirectory } from '../session-handler/session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, getDataDir } from '../config.js'
@@ -861,7 +861,7 @@ cli
               sessionId: session.id,
             })
             if (messages instanceof Error && !(messages instanceof AgentRequestError)) throw messages
-            return messages instanceof Error ? [] : messages.map(toSearchableMessage)
+            return messages instanceof Error ? [] : messages
           },
         })
 
@@ -950,10 +950,8 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    // Persisted rows hold Roadie agent events (any backend) or, from before
-    // the agent event seam, raw OpenCode events. Nothing here may assume the
-    // OpenCode shape: an agent event row has no `properties`, and reading
-    // `properties.info.directory` on one used to throw.
+    // Persisted rows hold Roadie agent events; rows written by an older
+    // backend may hold other shapes, so nothing here assumes one.
     const parsedRows = rows.flatMap((row) => {
       const parsed = errore.try(
         { try: () => {
@@ -987,11 +985,10 @@ cli
 
     const lines = parsedRows.map(({ row, event }) => {
       return JSON.stringify(
-        buildOpencodeEventLogLine({
+        buildSessionEventLogLine({
           timestamp: Number(row.timestamp),
           threadId: row.thread_id,
           projectDirectory,
-          backend: isOpenCodeEvent(event) ? 'opencode' : undefined,
           event,
         }),
       )
@@ -1157,8 +1154,8 @@ cli
       }
 
       const client = serverResult()
-      // Don't pass directory — the backend resolves sessions by ID regardless
-      // of the x-opencode-directory header, matching archiveThread's pattern.
+      // Don't pass directory — the backend resolves sessions by ID,
+      // matching archiveThread's pattern.
       // This avoids issues when --cwd was used (session directory != project directory).
       // A rejection was not treated as failure before; only a transport error.
       const abortResult = await client.sessions.abort({ sessionId })

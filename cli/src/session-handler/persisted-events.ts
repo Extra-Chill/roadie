@@ -1,37 +1,23 @@
 // Turn a persisted session event (session_events.event_json) back into event
 // buffer entries.
 //
-// Rows written by the runtime hold Roadie agent events. Rows written before the
-// agent event seam hold raw OpenCode events, recognizable by their
-// `properties` envelope; those are translated so older sessions still hydrate.
-//
-// One row can expand into several events: a delegation tool part persisted
-// before child-session events existed also implies its child_session_* events.
+// Rows hold Roadie agent events. Rows in any other shape (e.g. a retired
+// backend's raw `{ type, properties }` events) are skipped: their sessions
+// are retired and never resumed, so nothing reads their history.
 
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-import type { AgentEvent } from '../agent-backend/events.js'
-import { toAgentEvents, upgradeLegacyAgentEvent } from '../agent-backend/opencode-events.js'
 import type { EventBufferEvent } from './event-stream-state.js'
 
 export function toBufferEvents(raw: unknown): EventBufferEvent[] {
   if (!raw || typeof raw !== 'object' || typeof (raw as { type?: unknown }).type !== 'string') {
     return []
   }
-  const candidate = raw as { type: string; properties?: { sessionID?: unknown } }
-  if (!candidate.properties) {
-    if (candidate.type === 'part') {
-      return upgradeLegacyAgentEvent(candidate as AgentEvent)
-    }
-    return [candidate as EventBufferEvent]
+  if ('properties' in raw) {
+    return []
   }
-  if (candidate.type === 'queue.question-handoff-started') {
-    const sessionId = candidate.properties.sessionID
-    return typeof sessionId === 'string' ? [{ type: candidate.type, sessionId }] : []
-  }
-  return toAgentEvents(candidate as OpenCodeEvent)
+  return [raw as EventBufferEvent]
 }
 
-/** The primary event of a persisted row, without implied child-session events. */
+/** The primary event of a persisted row. */
 export function toBufferEvent(raw: unknown): EventBufferEvent | undefined {
   return toBufferEvents(raw)[0]
 }

@@ -10,7 +10,7 @@ import type { AgentUsage } from '../agent-backend/events.js'
 import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError, type AgentSessionMessage } from '../agent-backend/types.js'
 import type { CommandContext } from './types.js'
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 import { getThreadSession } from '../database.js'
 import {
   resolveWorkingDirectory,
@@ -190,7 +190,7 @@ export async function handleContextUsageCommand({
     // Fetch model context limit from provider API
     let contextLimit: number | undefined
     const providersResult = await backend.catalog.providers({ directory: workingDirectory })
-      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+      .catch((e: unknown) => new AgentBackendError({ operation: 'provider.list', cause: e }))
     if (providersResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',

@@ -23,11 +23,7 @@
     "roadie": "bin.js"
   },
   "exports": {
-    "./package.json": "./package.json",
-    "./anthropic-auth-plugin": {
-      "types": "./dist/anthropic-auth-plugin.d.ts",
-      "default": "./dist/anthropic-auth-plugin.js"
-    }
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -46,29 +42,15 @@
     "drizzle-kit": "1.0.0-beta.22",
     "eventsource-parser": "^3.0.6",
     "lintcn": "^0.7.1",
-    "opencode-cached-provider": "workspace:^",
-    "opencode-deterministic-provider": "workspace:^",
     "slack-digital-twin": "workspace:^",
     "tsx": "^4.20.5",
     "undici": "^8.0.2"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.82",
-    "@ai-sdk/google": "3.0.131",
-    "@ai-sdk/groq": "3.0.72",
-    "@ai-sdk/mistral": "3.0.70",
-    "@ai-sdk/openai": "3.0.53",
-    "@ai-sdk/openai-compatible": "2.0.41",
-    "@ai-sdk/provider": "3.0.10",
-    "@ai-sdk/xai": "3.0.82",
     "@clack/prompts": "^1.3.0",
     "@libsql/client": "^0.17.2",
-    "@opencode-ai/plugin": "^1.16.2",
-    "@opencode-ai/sdk": "^1.16.2",
-    "@openrouter/ai-sdk-provider": "2.10.0",
     "@slack/web-api": "^7.17.0",
     "@subrouter/cli": "0.6.1",
-    "@subrouter/opencode": "0.5.1",
     "cron-parser": "^5.5.0",
     "diff": "^8.0.4",
     "discord.js": "^14.26.3",
@@ -82,7 +64,6 @@
     "libsqlproxy": "^0.1.0",
     "marked": "^17.0.5",
     "mime": "^4.1.0",
-    "opencode-injection-guard": "^0.2.1",
     "picocolors": "^1.1.1",
     "pretty-ms": "^9.3.0",
     "proper-lockfile": "^4.1.2",

@@ -153,7 +153,7 @@ esac`,
     setIdentityHookCommand(poolHook)
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     expect(
-      applyPersonToIngress({ prompt: 'hi', userId: 'team', username: 'Team Member', mode: 'opencode' }),
+      applyPersonToIngress({ prompt: 'hi', userId: 'team', username: 'Team Member', mode: 'direct' }),
     ).toMatchObject({ personId: 'host:38', credentialPool: 'team-pool' })
   })
 
@@ -245,7 +245,7 @@ describe('applyPersonToIngress', () => {
     prompt: 'hi',
     userId: 'team',
     username: 'Team Member',
-    mode: 'opencode',
+    mode: 'direct',
   }
 
   test('adds person id, agent, model and permission rules for chat speakers', async () => {

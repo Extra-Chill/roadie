@@ -93,7 +93,7 @@ export const SHELL_ENV_TEMPLATES_ENV = 'ROADIE_SHELL_ENV'
 
 /**
  * Template fields available at shell-env time, and where each comes from:
- *   {session_id}  the agent session id (OpenCode session id / Pi session id)
+ *   {session_id}  the agent session id (Pi session id)
  *   {thread_id}   the chat thread bound to the session (turn attribution or
  *                 thread binding)
  *   {channel_id}  the parent channel of that thread (turn attribution)

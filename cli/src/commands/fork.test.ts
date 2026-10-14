@@ -1,19 +1,11 @@
 // /fork must reach sessions through the agent backend provider so Pi channels
-// work: the OpenCode server initializer must never run for a fork.
+// work.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ChannelType, type ChatInputCommandInteraction, type TextChannel, type ThreadChannel } from 'discord.js'
-
-vi.mock('../opencode.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../opencode.js')>()
-  return {
-    ...original,
-    initializeOpencodeForDirectory: vi.fn(async () => new Error('opencode initializer must not run')),
-  }
-})
 
 vi.mock('../session-handler/thread-session-runtime.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../session-handler/thread-session-runtime.js')>()
@@ -26,7 +18,6 @@ vi.mock('../session-handler/thread-session-runtime.js', async (importOriginal) =
   }
 })
 
-const { initializeOpencodeForDirectory } = await import('../opencode.js')
 const { handleForkCommand } = await import('./fork.js')
 const { setAgentBackendProvider } = await import('../agent-backend/registry.js')
 const { closeDb } = await import('../db.js')
@@ -79,6 +70,7 @@ function createPiRoutingProviderStub({
   const calls: InitializeCall[] = []
   const provider: AgentBackendProvider = {
     id: 'pi-stub',
+    owns: () => true,
     getBackend: () => null,
     initializeForDirectory: async (directory, options) => {
       calls.push({ directory, options })
@@ -161,7 +153,7 @@ beforeEach(() => {
 })
 
 describe('handleForkCommand backend routing', () => {
-  test('in a Pi channel the fork initializes through the backend provider, never the OpenCode initializer', async () => {
+  test('in a Pi channel the fork initializes through the backend provider', async () => {
     const projectDirectory = fs.mkdtempSync(path.join(tempRoot, 'project-'))
     const parent = createParentChannel()
     const thread = createThread({ parent })
@@ -184,7 +176,6 @@ describe('handleForkCommand backend routing', () => {
       const interaction = createInteraction({ channel: thread })
       await handleForkCommand({ interaction, appId: "test-app" })
 
-      expect(vi.mocked(initializeOpencodeForDirectory)).not.toHaveBeenCalled()
       expect(calls).toEqual([{ directory: projectDirectory, options: { channelId: PARENT_CHANNEL_ID } }])
       expect(forkSpy).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'source-session-1',
@@ -194,7 +185,7 @@ describe('handleForkCommand backend routing', () => {
     })
   })
 
-  test('a provider initialization failure fails the fork without touching OpenCode', async () => {
+  test('a provider initialization failure fails the fork', async () => {
     const projectDirectory = fs.mkdtempSync(path.join(tempRoot, 'project-'))
     const parent = createParentChannel()
     const thread = createThread({ parent })
@@ -217,7 +208,6 @@ describe('handleForkCommand backend routing', () => {
       const interaction = createInteraction({ channel: thread })
       await handleForkCommand({ interaction, appId: "test-app" })
 
-      expect(vi.mocked(initializeOpencodeForDirectory)).not.toHaveBeenCalled()
       expect(calls).toEqual([{ directory: projectDirectory, options: { channelId: PARENT_CHANNEL_ID } }])
       expect(backend.sessions.fork).not.toHaveBeenCalled()
       expect(interaction.editReply).toHaveBeenCalledWith(

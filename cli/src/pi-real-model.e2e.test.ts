@@ -1,4 +1,4 @@
-// Real-model trial of a Pi channel (#51). Opt-in (spends real model calls);
+// Real-model trial of Roadie on Pi (#51). Opt-in (spends real model calls);
 // needs a `pi` binary (ROADIE_PI_BIN) and one of:
 // - ROADIE_PI_REAL_AGENT_DIR: a Pi agent dir with its own login (e.g. a
 //   ChatGPT/Codex subscription), model ROADIE_PI_REAL_MODEL (default
@@ -11,9 +11,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { setAgentBackendProvider } from './agent-backend/registry.js'
-import { openCodeBackendProvider } from './agent-backend/opencode.js'
 import { PiBackendProvider } from './agent-backend/pi/backend.js'
-import { withPiChannels } from './agent-backend/pi/router.js'
 import { writePiPoolAgentDir } from './agent-backend/pi/pool.js'
 import { startMessagesProxy, type MessagesProxy } from './credentials/messages-proxy.js'
 import { SHARED_POOL_ID } from './credentials/store.js'
@@ -87,7 +85,7 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
         }
       }
     })()
-    restore = setAgentBackendProvider(withPiChannels({ fallback: openCodeBackendProvider, pi, channels: new Set([TEXT_CHANNEL_ID]) }))
+    restore = setAgentBackendProvider(pi)
     restartGlobalEventListener()
     await startIpcPolling({ discordClient: ctx.botClient })
   })

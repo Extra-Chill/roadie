@@ -15,10 +15,11 @@ import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
+import { findPi } from './agent-backend/pi/find-pi.js'
 
 const TEXT_CHANNEL_ID = '200000000000001021'
 
-describe('external directory permissions', () => {
+describe.skipIf(!findPi())('external directory permissions', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-external-directory-e2e',
@@ -81,13 +82,13 @@ describe('external directory permissions', () => {
       "--- from: user (external-directory-tester)
       EXTERNAL_DIRECTORY_PROBE_MARKER first
       --- from: assistant (TestBot)
-      -# *using deterministic-provider/deterministic-v2*
+      -# *using fake/fake-1*
       > reading external directory
 
       -# ┣ read *probe.txt*
 
       external-directory-probe-done
-      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
       --- from: user (external-directory-tester)
       EXTERNAL_DIRECTORY_PROBE_MARKER followup
       --- from: assistant (TestBot)
@@ -96,7 +97,7 @@ describe('external directory permissions', () => {
       -# ┣ read *probe.txt*
 
       external-directory-probe-done
-      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
     `)
     expect(text).not.toContain('Permission Required')
   })

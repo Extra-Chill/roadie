@@ -152,7 +152,7 @@ export async function showPermissionButtons({
   }
 
   pendingPermissionContexts.set(contextHash, context)
-  // Auto-reject on TTL expiry so the OpenCode session doesn't hang forever
+  // Auto-reject on TTL expiry so the agent session doesn't hang forever
   // waiting for a permission reply that will never come. Uses atomic take
   // so only one of TTL-expiry or button-click can win.
   // With continue_loop_on_deny enabled in opencode config, the model sees

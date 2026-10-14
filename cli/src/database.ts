@@ -911,7 +911,7 @@ export async function getThreadSessionSource(threadId: string) {
 }
 
 /**
- * Reverse lookup of the Discord thread that currently owns an OpenCode session.
+ * Reverse lookup of the Discord thread that currently owns an agent session.
  *
  * `thread_sessions.session_id` is NOT unique: /resume binds an existing session
  * to a brand new thread without clearing the old row. An unordered findFirst

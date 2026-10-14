@@ -15,6 +15,11 @@ prompt: |
 
 # E2E Testing Learnings
 
+> E2E suites now run real `pi` processes against the scripted fake model
+> server (`cli/src/pi-test-backend.ts`); there is no provider cache. The
+> caching section below describes the retired OpenCode harness and is kept
+> for history.
+
 ## CachedOpencodeProviderProxy and caching
 
 Tests use `CachedOpencodeProviderProxy` which sits between the bot and
@@ -88,20 +93,20 @@ there is no interruption or abort involved.
 ## Timeout guidelines
 
 - **Individual test timeout**: 360_000 (6 minutes). LLM responses +
-  opencode server startup + cache misses can be slow. Never go below
+  agent startup can be slow. Never go below
   120s for e2e tests that involve LLM calls.
 - **Polling timeouts**: 120_000 (2 minutes) for waiting on bot replies.
-  This covers cold starts where the opencode server needs to spin up.
+  This covers cold agent starts.
 - **beforeAll timeout**: 60_000 (1 minute) for test setup (starting
   proxy, discord-digital-twin, hrana server, bot client).
 - **Never use short timeouts** (5-10s) in e2e tests. Even cached
-  responses take time due to Discord message routing, opencode session
+  responses take time due to Discord message routing, agent session
   creation, and tool execution.
 
 ## Messages to a busy session
 
 Roadie no longer interrupts a busy session (#83). A message sent during a run
-reaches OpenCode, which takes it at the next step boundary; only `/abort`
+reaches the agent, which takes it at the next step boundary; only `/abort`
 stops a run. `busy-thread-boundary-delivery.e2e.test.ts` covers this: a
 message sent during a slow bash tool must not produce a `MessageAbortedError`
 in the session event log, and the step after the tool must already answer it.
@@ -113,7 +118,7 @@ run completes.
 ## Bot replies can be error messages
 
 Bot replies are not always LLM content. They can be error messages like
-"opencode session error: Not Found" if the session fails or the provider
+a session error ("Not Found") if the session fails or the provider
 returns an error. Tests should verify ordering by message position, not
 by content matching (unless the test specifically asks for exact content
 like "Reply with exactly: foxtrot").

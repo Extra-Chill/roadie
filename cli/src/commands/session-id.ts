@@ -1,4 +1,4 @@
-// /session-id command - Show current session ID, Discord thread ID, and an opencode attach command.
+// /session-id command - Show the current session ID, Discord thread ID and working directory.
 
 import {
   ChannelType,
@@ -12,20 +12,9 @@ import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import {
-  getOpencodeServerPort,
-  initializeOpencodeForDirectory,
-} from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
-
-function shellQuote(value: string): string {
-  if (!value) {
-    return "''"
-  }
-  return `'${value.replaceAll("'", `'"'"'`)}'`
-}
 
 export async function handleSessionIdCommand({
   command,
@@ -67,7 +56,7 @@ export async function handleSessionIdCommand({
     return
   }
 
-  const { projectDirectory, workingDirectory } = resolved
+  const { workingDirectory } = resolved
   const sessionId = await getThreadSession(channel.id)
 
   if (!sessionId) {
@@ -78,32 +67,9 @@ export async function handleSessionIdCommand({
     return
   }
 
-  await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
-
-  let port = getOpencodeServerPort(projectDirectory)
-  if (!port) {
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (getClient instanceof Error) {
-      await command.editReply({
-        content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\nFailed to resolve OpenCode server port: ${getClient.message}`,
-      })
-      return
-    }
-    port = getOpencodeServerPort(projectDirectory)
-  }
-
-  if (!port) {
-    await command.editReply({
-      content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\nCould not determine OpenCode server port`,
-    })
-    return
-  }
-
-  const attachUrl = `http://127.0.0.1:${port}`
-  const attachCommand = `opencode attach ${attachUrl} --session ${sessionId} --dir ${shellQuote(workingDirectory)}`
-
-  await command.editReply({
-    content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\n**Attach command:**\n\`\`\`bash\n${attachCommand}\n\`\`\``,
+  await command.reply({
+    content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\n**Directory:** \`${workingDirectory}\``,
+    flags: SILENT_MESSAGE_FLAGS,
   })
   logger.log(`Session ID shown for thread ${channel.id}: ${sessionId}`)
 }

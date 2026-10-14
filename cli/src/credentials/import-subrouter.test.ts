@@ -24,15 +24,14 @@ import { resetCatalogCacheForTests } from './provider-catalog.js'
 let dataDir: string
 let subrouterHome: string
 let originalSubrouterHomeEnv: string | undefined
-let originalXdgCacheHome: string | undefined
 
-// Fixture catalog served through $XDG_CACHE_HOME/opencode/models.json, so the
+// Fixture catalog preset in the catalog memo, so the
 // import resolves providers without any network. `zai` resolves (the #136
 // example); `github-copilot` deliberately does not.
 const TEST_CATALOG = {
-  anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
-  openai: { id: 'openai', npm: '@ai-sdk/openai' },
-  zai: { id: 'zai', npm: '@ai-sdk/openai-compatible', api: 'https://api.z.ai/api/paas/v4' },
+  anthropic: { id: 'anthropic' },
+  openai: { id: 'openai' },
+  zai: { id: 'zai', api: 'https://api.z.ai/api/paas/v4' },
 }
 
 // Fixture shaped like a real subrouter home: anthropic with 5 oauth accounts
@@ -109,12 +108,7 @@ beforeEach(() => {
   subrouterHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subrouter-home-'))
   originalSubrouterHomeEnv = process.env.SUBROUTER_HOME
   process.env.SUBROUTER_HOME = subrouterHome
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-cache-'))
-  fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
-  fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
-  process.env.XDG_CACHE_HOME = cacheHome
-  resetCatalogCacheForTests()
+  resetCatalogCacheForTests(TEST_CATALOG)
 })
 
 afterEach(() => {
@@ -122,11 +116,6 @@ afterEach(() => {
     delete process.env.SUBROUTER_HOME
   } else {
     process.env.SUBROUTER_HOME = originalSubrouterHomeEnv
-  }
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome
   }
   resetCatalogCacheForTests()
 })

@@ -1,8 +1,8 @@
 // Detect a /commandname token on its own line in a user prompt and resolve it
-// to a registered opencode command. Mirrors the Discord slash command flow
+// to a registered agent command. Mirrors the Discord slash command flow
 // (commands/user-command.ts) so users can type `/build foo` or `/build-cmd foo`
 // in chat, via `/new-session`, through `roadie send --prompt`, or scheduled
-// tasks and have it routed to opencode's session.command API instead of going
+// tasks and have it routed to the backend's session.command API instead of going
 // to the model as plain text.
 //
 // Detection is line-based: we scan each line and return the first one whose
@@ -55,7 +55,7 @@ function resolveCommandName({
   return undefined
 }
 
-export function extractLeadingOpencodeCommand(
+export function extractLeadingCommand(
   prompt: string,
   registered: RegisteredUserCommand[] = store.getState().registeredUserCommands,
 ): { command: { name: string; arguments: string } } | null {

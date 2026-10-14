@@ -41,7 +41,7 @@ import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
-import { agentBackendLabel, getAgentBackendProvider, getSessionBackendId, isRetiredSession } from '../agent-backend/registry.js'
+import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
@@ -52,11 +52,7 @@ import {
   requestContext,
   speakerKey,
 } from '../context-provider.js'
-import {
-  writeInjectionGuardConfig,
-  extractSdkErrorMessage,
-  OPENCODE_SERVER_LOG_FILE,
-} from '../opencode.js'
+import { writeInjectionGuardConfig } from '../injection-guard-config.js'
 import { isAbortError } from '../utils.js'
 import {
   registerEventListener,
@@ -157,8 +153,8 @@ import {
   validateModelId,
 } from './model-utils.js'
 import {
-  getOpencodePromptContext,
-  getOpencodeSystemMessage,
+  getPromptContext,
+  getSystemMessage,
   systemPromptNamesOtherSession,
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
@@ -172,9 +168,9 @@ import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { store } from '../store.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
-  appendOpencodeSessionEventLog,
-  isOpencodeSessionEventLogEnabled,
-} from './opencode-session-event-log.js'
+  appendSessionEventLog,
+  isSessionEventLogEnabled,
+} from './session-event-log.js'
 import {
   doesLatestUserTurnHaveNaturalCompletion,
   getContinuationTurnOutcome,
@@ -229,7 +225,7 @@ import {
 import { execAsync } from '../git-utils.js'
 import {
   DiscordOperationError,
-  OpenCodeSdkError,
+  AgentBackendError,
   FilesystemOperationError,
 } from '../errors.js'
 
@@ -237,7 +233,7 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
-import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
+import { extractLeadingCommand } from '../leading-command-detection.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
@@ -852,7 +848,7 @@ export type PreprocessResult = {
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
   /** Resolved ingress mode (queue suffix or forced queue). */
-  mode: 'opencode' | 'local-queue'
+  mode: 'direct' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
   skip?: boolean
   /** Agent requested during preprocessing. Applied to the session if set. */
@@ -935,11 +931,11 @@ export type IngressInput = {
   appId?: string
   command?: { name: string; arguments: string }
   /**
-   * `opencode` (default): send via session.promptAsync and let opencode
-   * serialize pending user turns internally.
+   * `direct` (default): send straight to the backend, which serializes
+   * pending user turns itself.
    * `local-queue`: keep in roadie's local queue (used by slash commands).
    */
-  mode?: 'opencode' | 'local-queue'
+  mode?: 'direct' | 'local-queue'
   // Force a new assistant-part routing window by resetting run-state to
   // running before enqueue. Used by model-switch retry flows where old
   // assistant IDs can linger briefly after abort.
@@ -962,7 +958,7 @@ export type IngressInput = {
   permissions?: string[]
   injectionGuardPatterns?: string[]
   /**
-   * Parent OpenCode session ID from explicit `roadie send --parent-session` only.
+   * Parent session ID from explicit `roadie send --parent-session` only.
    * Stored once on first ingress and injected into the child system message.
    * Never set for /fork or task/subagent children (keeps system prompt cache).
    */
@@ -1042,7 +1038,7 @@ function parseQueuedMessagePayload({
 function maybeConvertLeadingCommand(input: IngressInput): IngressInput {
   if (input.command) return input
   if (!input.prompt) return input
-  const extracted = extractLeadingOpencodeCommand(input.prompt)
+  const extracted = extractLeadingCommand(input.prompt)
   if (!extracted) return input
   return {
     ...input,
@@ -1101,7 +1097,7 @@ export class ThreadSessionRuntime {
   private lastRateLimitDisplayTime = 0
   private userSystemByMessageId = new Map<string, string>()
 
-  // Last OpenCode session title we applied to Discord. Dedupes session.updated
+  // Last agent session title we applied to Discord. Dedupes session.updated
   // so we only call setName once per distinct title. Not persisted.
   private appliedOpencodeTitle: string | undefined
 
@@ -1868,13 +1864,11 @@ export class ThreadSessionRuntime {
       }
     }
 
-    if (rawBackendEvent !== undefined && isOpencodeSessionEventLogEnabled()) {
-      const eventLogResult = await appendOpencodeSessionEventLog({
+    if (rawBackendEvent !== undefined && isSessionEventLogEnabled()) {
+      const eventLogResult = await appendSessionEventLog({
         threadId: this.threadId,
         projectDirectory: this.projectDirectory,
         backend,
-        // Raw records of backends that do not name a session (e.g. Pi) file
-        // under the agent event's own session id.
         sessionId: eventSessionId,
         event: rawBackendEvent,
       })
@@ -1993,7 +1987,7 @@ export class ThreadSessionRuntime {
           resolve()
           return
         }
-        const result = await action().catch((e) => new OpenCodeSdkError({ operation: 'dispatchAction', cause: e }))
+        const result = await action().catch((e) => new AgentBackendError({ operation: 'dispatchAction', cause: e }))
         if (result instanceof Error) {
           reject(result)
           return
@@ -2021,7 +2015,7 @@ export class ThreadSessionRuntime {
         // Each queued action already wraps itself with .catch()
         // and calls resolve/reject, so this should not throw. But if it
         // does, the try/finally ensures we don't deadlock.
-        const result = await next().catch((e) => new OpenCodeSdkError({ operation: 'processAction', cause: e }))
+        const result = await next().catch((e) => new AgentBackendError({ operation: 'processAction', cause: e }))
         if (result instanceof Error) {
           logger.error('[ACTION QUEUE] Unexpected action failure:', result)
         }
@@ -3105,7 +3099,7 @@ export class ThreadSessionRuntime {
         )
       } else {
         logger.warn(
-          `[SESSION ERROR] Run aborted by the agent backend, not by Roadie sessionId=${sessionId} ${this.formatRunStateForLog()}; the backend's reason is in ${OPENCODE_SERVER_LOG_FILE}`,
+          `[SESSION ERROR] Run aborted by the agent backend, not by Roadie sessionId=${sessionId} ${this.formatRunStateForLog()}`,
         )
       }
       await this.persistEventBufferDebounced.flush()
@@ -3533,7 +3527,7 @@ export class ThreadSessionRuntime {
       return
     }
     logger.log(
-      `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from OpenCode session title`,
+      `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from agent session title`,
     )
   }
 
@@ -3735,10 +3729,11 @@ export class ThreadSessionRuntime {
           )
           return
         }
-        // Never wake a retired backend for context: the next real prompt
-        // moves the thread, and its seed reads this message from the chat.
+        // A retired session (one the backend does not own) takes no context:
+        // the next real prompt moves the thread, and its seed reads this
+        // message from the chat.
         if (isRetiredSession(existingSessionId)) {
-          logger.log(`[INGRESS] Skipping noReply message for thread ${this.threadId}: session ${existingSessionId} is on a retired backend`)
+          logger.log(`[INGRESS] Skipping noReply message for thread ${this.threadId}: session ${existingSessionId} is retired`)
           return
         }
         if (input.contextOnly) {
@@ -3753,8 +3748,8 @@ export class ThreadSessionRuntime {
             return
           }
           const previous = history.findLast((entry) => entry.message.role === 'user')?.message
-          const context = getOpencodePromptContext({
-            platform: this.chat.platform, sessionId: existingSessionId, backend: agentBackendLabel(getSessionBackendId(existingSessionId)), threadId: this.threadId,
+          const context = getPromptContext({
+            platform: this.chat.platform, sessionId: existingSessionId, backend: agentBackendLabel(), threadId: this.threadId,
             username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
             sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
             repliedMessage: input.repliedMessage,
@@ -3850,7 +3845,7 @@ export class ThreadSessionRuntime {
         channelId,
         getClient,
         directory: this.sdkDirectory,
-      }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
+      }).catch((e) => new AgentBackendError({ operation: 'resolveAgent', cause: e }))
       if (agentResult instanceof Error) {
         await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
         return
@@ -3889,7 +3884,7 @@ export class ThreadSessionRuntime {
             return undefined
           }
           return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-        })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
+        })().catch((e) => new AgentBackendError({ operation: 'resolveModelPreference', cause: e })),
         getVariantCascade({
           sessionId: session.id,
           channelId,
@@ -3970,10 +3965,10 @@ export class ThreadSessionRuntime {
         return
       }
       const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
-      const syntheticContext = getOpencodePromptContext({
+      const syntheticContext = getPromptContext({
         platform: this.chat.platform,
         sessionId: session.id,
-        backend: agentBackendLabel(getSessionBackendId(session.id)),
+        backend: agentBackendLabel(),
         threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
@@ -4036,7 +4031,7 @@ export class ThreadSessionRuntime {
           void this.setPendingReaction(pendingMessageId, false)
         }
         void notifyError(promptResult, 'promptAsync failed in submitViaOpencodeQueue')
-        await cleanupOnError(`✗ OpenCode API error: ${promptResult.message}`)
+        await cleanupOnError(`✗ Agent error: ${promptResult.message}`)
         return
       }
 
@@ -4049,7 +4044,7 @@ export class ThreadSessionRuntime {
       }
 
       logger.log(
-        `[INGRESS] promptAsync accepted by ${getSessionBackendId(session.id)} queue sessionId=${session.id} threadId=${this.threadId}`,
+        `[INGRESS] promptAsync accepted by ${getAgentBackendProvider().id} queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
       // noReply messages don't trigger the agent loop, so don't mark as busy
@@ -4309,7 +4304,7 @@ export class ThreadSessionRuntime {
         const enqueueResult = resolvedInput.noReply
           ? await this.submitViaOpencodeQueue({
               ...resolvedInput,
-              mode: 'opencode',
+              mode: 'direct',
               command: undefined,
             })
           : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
@@ -4450,7 +4445,7 @@ export class ThreadSessionRuntime {
       if (outcome.apiAbortPromise) {
         void outcome.apiAbortPromise
       }
-    }).catch((e) => new OpenCodeSdkError({ operation: 'abortSession', cause: e }))
+    }).catch((e) => new AgentBackendError({ operation: 'abortSession', cause: e }))
     if (abortResult instanceof Error) {
       logger.error(`[ABORT WAIT] Failed to abort active run: ${abortResult.message}`)
       return
@@ -4740,7 +4735,7 @@ export class ThreadSessionRuntime {
     }
     // Interactive UI (action buttons, questions, permissions) does NOT block
     // queue drain. The isSessionBusy check is sufficient: questions and
-    // permissions keep the OpenCode session busy, so drain is naturally
+    // permissions keep the agent session busy, so drain is naturally
     // blocked. Action buttons are fire-and-forget (session already idle),
     // so queued messages should dispatch immediately.
 
@@ -4885,7 +4880,7 @@ export class ThreadSessionRuntime {
       channelId,
       getClient,
       directory: this.sdkDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
+    }).catch((e) => new AgentBackendError({ operation: 'resolveAgent', cause: e }))
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
       await this.chat.sendMessage(`Failed to resolve agent: ${earlyAgentResult.message}`, { notify: true })
@@ -4924,7 +4919,7 @@ export class ThreadSessionRuntime {
           return undefined
         }
         return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-      })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
+      })().catch((e) => new AgentBackendError({ operation: 'resolveModelPreference', cause: e })),
       getVariantCascade({
         sessionId: session.id,
         channelId,
@@ -5016,10 +5011,10 @@ export class ThreadSessionRuntime {
     const systemPromptFromSourceSession = systemPromptNamesOtherSession({ system, sessionId: session.id })
     const forkOrigin = await getSessionForkOrigin(session.id)
     const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
-    const syntheticContext = getOpencodePromptContext({
+    const syntheticContext = getPromptContext({
       platform: this.chat.platform,
       sessionId: session.id,
-      backend: agentBackendLabel(getSessionBackendId(session.id)),
+      backend: agentBackendLabel(),
       threadId: this.thread.id,
       username: input.username,
       userId: input.userId,
@@ -5056,10 +5051,10 @@ export class ThreadSessionRuntime {
       // session.command() only accepts FilePart in parts, not text parts.
       // Append the <discord-user /> tag to the arguments, same as promptAsync,
       // so the model sees who sent the command.
-      const discordTag = getOpencodePromptContext({
+      const discordTag = getPromptContext({
         platform: this.chat.platform,
         sessionId: session.id,
-        backend: agentBackendLabel(getSessionBackendId(session.id)),
+        backend: agentBackendLabel(),
         threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
@@ -5099,9 +5094,9 @@ export class ThreadSessionRuntime {
           this.stopTyping()
           return true
         }
-        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
+        const apiError = new Error(`Agent error: ${errorMessage}`)
         logger.error(`[DISPATCH] ${apiError.message}`)
-        void notifyError(apiError, 'OpenCode API error during command')
+        void notifyError(apiError, 'Agent error during command')
         this.stopTyping()
         await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
         return false
@@ -5134,7 +5129,7 @@ export class ThreadSessionRuntime {
         logger.error(
           `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
         )
-        void notifyError(commandResponse, 'Failed to send command to OpenCode')
+        void notifyError(commandResponse, 'Failed to send command to the agent')
         this.stopTyping()
         await this.chat.sendMessage(`✗ Unexpected bot Error: ${commandResponse.message}`, { notify: true })
         return false
@@ -5164,20 +5159,20 @@ export class ThreadSessionRuntime {
       const errorMessage = promptResponse.message
       const errorObject = promptResponse
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
-      void notifyError(errorObject, 'OpenCode API error during local queue prompt')
+      void notifyError(errorObject, 'Agent error during local queue prompt')
       this.stopTyping()
-      await this.chat.sendMessage(`✗ OpenCode API error: ${errorMessage}`, { notify: true })
+      await this.chat.sendMessage(`✗ Agent error: ${errorMessage}`, { notify: true })
       return false
     }
 
     logger.log(
-      `[DISPATCH] promptAsync accepted by ${getSessionBackendId(session.id)} queue sessionId=${session.id} threadId=${this.threadId}`,
+      `[DISPATCH] promptAsync accepted by ${getAgentBackendProvider().id} queue sessionId=${session.id} threadId=${this.threadId}`,
     )
     return true
   }
 
   // ── Session Ensure ──────────────────────────────────────────
-  // Creates or reuses the OpenCode session for this thread.
+  // Creates or reuses the agent session for this thread.
 
   /** Cached per-session scheduled task info for the system message. */
   private scheduledTaskContextCache = new Map<
@@ -5297,7 +5292,7 @@ export class ThreadSessionRuntime {
     return resolveSessionSystemPrompt({
       sessionId,
       generate: async () => {
-        const base = getOpencodeSystemMessage({
+        const base = getSystemMessage({
           platform: this.chat.platform,
           sessionId,
           channelId: this.channelId,
@@ -5420,8 +5415,7 @@ export class ThreadSessionRuntime {
     retiredSessionId: string
     sourceMessageId?: string
   }): Promise<void> {
-    const retiredBackend = agentBackendLabel(getSessionBackendId(retiredSessionId))
-    const newBackend = agentBackendLabel(getSessionBackendId(sessionId))
+    const backend = agentBackendLabel()
     const history = await this.chat.readRecentMessages?.(RETIRED_SEED_HISTORY_LIMIT)
     if (history instanceof Error) {
       logger.warn(`[RETIRED SESSION] Cannot read thread ${this.thread.id} history: ${history.message}`)
@@ -5432,16 +5426,16 @@ export class ThreadSessionRuntime {
       parts: [{
         kind: 'text',
         synthetic: true,
-        text: buildRetiredSessionSeed({ retiredSessionId, retiredBackend, history, excludeMessageId: sourceMessageId }),
+        text: buildRetiredSessionSeed({ retiredSessionId, history, excludeMessageId: sourceMessageId }),
       }],
       noReply: true,
     })
     if (seeded instanceof Error) {
       logger.warn(`[RETIRED SESSION] Cannot seed ${sessionId} from thread ${this.thread.id}: ${seeded.message}`)
     }
-    logger.log(`[RETIRED SESSION] Thread ${this.thread.id} moved from ${retiredBackend} session ${retiredSessionId} to ${newBackend} session ${sessionId}`)
+    logger.log(`[RETIRED SESSION] Thread ${this.thread.id} moved from retired session ${retiredSessionId} to ${backend} session ${sessionId}`)
     await this.chat.sendNotice(asSubtext(
-      `This thread moved from ${retiredBackend} to ${newBackend}. It's a new session that starts from this thread's recent messages.`,
+      `This thread's earlier session can't be resumed, so it moved to a new ${backend} session that starts from this thread's recent messages.`,
     ))
   }
 
@@ -5493,8 +5487,8 @@ export class ThreadSessionRuntime {
       // Fallback to DB
       sessionId = await getThreadSession(this.thread.id) || undefined
     }
-    // A session on a retired backend is not resumed: the thread moves to a
-    // new session, seeded from its chat history below.
+    // A session the backend does not own is retired, not resumed: the thread
+    // moves to a new session, seeded from its chat history below.
     let retiredSessionId: string | undefined
     if (sessionId && isRetiredSession(sessionId)) {
       retiredSessionId = sessionId
@@ -5598,7 +5592,7 @@ export class ThreadSessionRuntime {
         scheduleKind: sessionStartScheduleKind,
         scheduledTaskId: sessionStartScheduledTaskId,
       }).catch((e) =>
-        new OpenCodeSdkError({ operation: 'setSessionStartSource', cause: e }),
+        new AgentBackendError({ operation: 'setSessionStartSource', cause: e }),
       )
       if (sessionStartSourceResult instanceof Error) {
         logger.warn(
@@ -5742,7 +5736,7 @@ export class ThreadSessionRuntime {
           contextInfo = ` ⋅ ${percentage}%`
         }
         return providers
-      })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
+      })().catch((e) => new AgentBackendError({ operation: 'resolveModelPreference', cause: e })),
     ])
     const branchName =
       branchResult instanceof Error ? '' : branchResult.stdout.trim()
@@ -5912,7 +5906,7 @@ export class ThreadSessionRuntime {
       if (outcome.apiAbortPromise) {
         void outcome.apiAbortPromise
       }
-    }).catch((e) => new OpenCodeSdkError({ operation: 'abortSession', cause: e }))
+    }).catch((e) => new AgentBackendError({ operation: 'abortSession', cause: e }))
     if (abortResult instanceof Error) {
       logger.error('[RETRY] Failed to abort active run before retry:', abortResult)
       return false
@@ -5950,7 +5944,7 @@ export class ThreadSessionRuntime {
       userId: '',
       username: '',
       appId: this.appId,
-      mode: 'opencode',
+      mode: 'direct',
       resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
     })
@@ -5983,7 +5977,7 @@ export class ThreadSessionRuntime {
       userId: '',
       username: '',
       appId: this.appId,
-      mode: 'opencode',
+      mode: 'direct',
       resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
     })

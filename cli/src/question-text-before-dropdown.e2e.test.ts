@@ -14,7 +14,6 @@ const TEXT_CHANNEL_ID = '200000000000001042'
 
 describe.skipIf(!findPi())('question text before dropdown', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-text-order',
     dirName: 'qa-question-text-order',

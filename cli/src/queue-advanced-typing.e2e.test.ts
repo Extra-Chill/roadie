@@ -20,7 +20,6 @@ const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: typing lifecycle', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-typing-e2e',
     dirName: 'qa-typing-e2e',

@@ -1,74 +1,27 @@
 // Model resolution utilities.
-// getDefaultModel resolves the default model from OpenCode when no user preference is set.
+// getDefaultModel resolves the backend's default model when no user preference is set.
 // listModels wraps provider.list() with a per-directory memoized cache.
 
-import fs from 'node:fs'
-import path from 'node:path'
-import { xdgState } from 'xdg-basedir'
-import * as errore from 'errore'
 import type { AgentProviderInfo } from '../agent-backend/types.js'
 import type { AgentCatalogGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
-import {
-  formatCandidateRef,
-  PROVIDER_ID as SUBROUTER_PROVIDER_ID,
-  resolveLiveModel,
-} from '@subrouter/cli'
-import { InvalidModelError, OpenCodeSdkError } from '../errors.js'
-import {
-  subscribeOpencodeServerLifecycle,
-} from '../opencode.js'
+import { InvalidModelError, AgentBackendError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
 import { hasSubrouterHandoff } from '../credentials/migrate-subrouter.js'
-import { ROADIE_PROVIDER_ID } from '../credentials/provider.js'
+import { ROADIE_PROVIDER_ID, SUBROUTER_ALIAS_PROVIDER_ID } from '../credentials/pool-routing.js'
 import { readSessionRoute } from '../credentials/routes.js'
 import type { ScheduledTaskScheduleKind } from '../database.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 
-export type DefaultModelSource =
-  | 'opencode-config'
-  | 'opencode-recent'
-  | 'opencode-provider-default'
+export type DefaultModelSource = 'backend-config' | 'provider-default'
 
 export type SessionStartSourceContext = {
   scheduleKind: ScheduledTaskScheduleKind
   scheduledTaskId?: number
   scheduledTaskRunId?: number
-}
-
-/**
- * Read user's recent models from OpenCode TUI's state file.
- * Uses same path as OpenCode: path.join(xdgState, "opencode", "model.json")
- * Returns all recent models so we can iterate until finding a valid one.
- * See: opensrc/repos/github.com/sst/opencode/packages/opencode/src/global/index.ts
- */
-function getRecentModelsFromTuiState(): Array<{
-  providerID: string
-  modelID: string
-}> {
-  if (!xdgState) {
-    return []
-  }
-  // Same path as OpenCode TUI: path.join(Global.Path.state, "model.json")
-  const modelJsonPath = path.join(xdgState, 'opencode', 'model.json')
-
-  const result = errore.tryFn(() => {
-    const content = fs.readFileSync(modelJsonPath, 'utf-8')
-    const data = JSON.parse(content) as {
-      recent?: Array<{ providerID: string; modelID: string }>
-    }
-    return data.recent ?? []
-  })
-
-  if (result instanceof Error) {
-    // File doesn't exist or is invalid - this is normal for fresh installs
-    return []
-  }
-
-  return result
 }
 
 /**
@@ -83,28 +36,6 @@ export function parseModelId(
     return undefined
   }
   return { providerID, modelID }
-}
-
-function getModelFromProjectConfig({
-  directory,
-}: {
-  directory?: string
-}): { providerID: string; modelID: string } | undefined {
-  if (!directory) {
-    return undefined
-  }
-
-  const result = errore.tryFn(() => {
-    const configPath = path.join(directory, 'opencode.json')
-    const raw = fs.readFileSync(configPath, 'utf-8')
-    const parsed = JSON.parse(raw) as { model?: string }
-    if (!parsed.model) {
-      return undefined
-    }
-    return parseModelId(parsed.model)
-  })
-  if (result instanceof Error) return undefined
-  return result
 }
 
 /**
@@ -214,7 +145,7 @@ export function resolveRoadieRouteDisplayName({
   return `${rotation} (${route.provider}/${route.modelId})`
 }
 
-/** Subrouter presets and roadie rotations resolve to the live candidate. */
+/** Roadie rotations (and pool-served subrouter presets) resolve to the live candidate. */
 export async function resolveDisplayedModelName({
   providers,
   providerID,
@@ -227,21 +158,11 @@ export async function resolveDisplayedModelName({
   sessionID?: string
 }): Promise<string | undefined> {
   // After the subrouter handoff `subrouter/<preset>` is served by the pool, so
-  // it resolves like `roadie/<rotation>` and subrouter's own store is never read.
+  // it resolves like `roadie/<rotation>`.
   const subrouterServedByPool =
-    providerID === SUBROUTER_PROVIDER_ID &&
+    providerID === SUBROUTER_ALIAS_PROVIDER_ID &&
     store.getState().credentialPoolsEnabled &&
     hasSubrouterHandoff({ dataDir: getDataDir() })
-  if (providerID === SUBROUTER_PROVIDER_ID && modelID && !subrouterServedByPool) {
-    const candidate = await resolveLiveModel({ preset: modelID, sessionID }).catch((e) => {
-      sessionLogger.warn(
-        `[MODEL] Failed to resolve subrouter candidate for ${modelID}:`,
-        e instanceof Error ? e.message : e,
-      )
-      return null
-    })
-    if (candidate) return `${modelID} (${formatCandidateRef(candidate)})`
-  }
   if ((providerID === ROADIE_PROVIDER_ID || subrouterServedByPool) && modelID) {
     const live = resolveRoadieRouteDisplayName({
       dataDir: getDataDir(),
@@ -272,7 +193,7 @@ export async function resolveDisplayedModelId({
 }
 
 type ModelListCacheEntry =
-  | { status: 'pending'; promise: Promise<ListedModel[] | OpenCodeSdkError> }
+  | { status: 'pending'; promise: Promise<ListedModel[] | AgentBackendError> }
   | { status: 'ready'; value: ListedModel[] }
 
 const modelListCache = new Map<string, ModelListCacheEntry>()
@@ -280,10 +201,6 @@ const modelListCache = new Map<string, ModelListCacheEntry>()
 export function clearModelListCache() {
   modelListCache.clear()
 }
-
-subscribeOpencodeServerLifecycle(() => {
-  clearModelListCache()
-})
 
 function flattenProviderModels({
   providers,
@@ -314,7 +231,7 @@ export async function listModels({
 }: {
   getClient: AgentCatalogGetter
   directory?: string
-}): Promise<ListedModel[] | OpenCodeSdkError> {
+}): Promise<ListedModel[] | AgentBackendError> {
   const cacheKey = directory ?? ''
   const cached = modelListCache.get(cacheKey)
   if (cached?.status === 'ready') return cached.value
@@ -322,7 +239,7 @@ export async function listModels({
 
   const promise = (async () => {
     const catalog = await getClient().catalog.providers({ directory })
-    if (catalog instanceof Error) return new OpenCodeSdkError({ operation: 'provider.list', cause: catalog })
+    if (catalog instanceof Error) return new AgentBackendError({ operation: 'provider.list', cause: catalog })
     return flattenProviderModels({
       providers: catalog.providers,
       connected: catalog.connected,
@@ -405,7 +322,7 @@ export async function validateModelId({
   getClient: AgentCatalogGetter
   directory?: string
 }): Promise<
-  { providerID: string; modelID: string } | InvalidModelError | OpenCodeSdkError
+  { providerID: string; modelID: string } | InvalidModelError | AgentBackendError
 > {
   const models = await listModels({ getClient, directory })
   if (models instanceof Error) return models
@@ -435,12 +352,9 @@ export async function validateCliModelOption({
 }
 
 /**
- * Get the default model from OpenCode when no user preference is set.
- * Priority (matches OpenCode TUI behavior):
- * 1. OpenCode config.model setting
- * 2. User's recent models from TUI state (~/.local/state/opencode/model.json)
- * 3. First connected provider's default model from API
- * Returns the model and its source.
+ * The backend's default model when no user preference is set:
+ * 1. The backend's configured model (e.g. Pi's default model)
+ * 2. The first connected provider's default model
  */
 export async function getDefaultModel({
   getClient,
@@ -453,21 +367,6 @@ export async function getDefaultModel({
   | undefined
 > {
   if (getClient instanceof Error) return undefined
-
-  // Fast path: the project's opencode.json model, read from disk. Only when the
-  // backend reports the same model, so a non-OpenCode backend (Pi, #51) is not
-  // handed a model it does not have.
-  const configModel = getModelFromProjectConfig({ directory })
-  if (configModel) {
-    const backendConfig = await getClient().catalog.config({ directory })
-    const backendModel = backendConfig instanceof Error ? undefined : backendConfig.model
-    if (!backendModel || backendModel === `${configModel.providerID}/${configModel.modelID}`) {
-      sessionLogger.log(
-        `[MODEL] Using project config model: ${configModel.providerID}/${configModel.modelID}`,
-      )
-      return { ...configModel, source: 'opencode-config' }
-    }
-  }
 
   // Fetch connected providers to validate any model we return
   const catalog = await getClient().catalog.providers({ directory })
@@ -485,7 +384,6 @@ export async function getDefaultModel({
     return undefined
   }
 
-  // 1. Check OpenCode config.model setting (highest priority after user preference)
   const configResponse = await getClient().catalog.config({ directory })
   if (!(configResponse instanceof Error) && configResponse.model) {
     const configModel = parseModelId(configResponse.model)
@@ -493,30 +391,15 @@ export async function getDefaultModel({
       sessionLogger.log(
         `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,
       )
-      return { ...configModel, source: 'opencode-config' }
+      return { ...configModel, source: 'backend-config' }
     }
     if (configModel) {
       sessionLogger.log(
-        `[MODEL] Config model ${configResponse.model} not available, checking recent`,
+        `[MODEL] Config model ${configResponse.model} not available, using provider default`,
       )
     }
   }
 
-  // 2. Try to use user's recent models from TUI state (iterate until finding valid one)
-  const recentModels = getRecentModelsFromTuiState()
-  for (const recentModel of recentModels) {
-    if (isModelValid(recentModel, connected, providers)) {
-      sessionLogger.log(
-        `[MODEL] Using recent TUI model: ${recentModel.providerID}/${recentModel.modelID}`,
-      )
-      return { ...recentModel, source: 'opencode-recent' }
-    }
-  }
-  if (recentModels.length > 0) {
-    sessionLogger.log(`[MODEL] No valid recent TUI models found`)
-  }
-
-  // 3. Fall back to first connected provider's default model
   const firstConnected = connected[0]
   if (!firstConnected) {
     return undefined
@@ -533,6 +416,6 @@ export async function getDefaultModel({
   return {
     providerID: firstConnected,
     modelID: defaultModelId,
-    source: 'opencode-provider-default',
+    source: 'provider-default',
   }
 }

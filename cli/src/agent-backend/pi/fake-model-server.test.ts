@@ -65,7 +65,7 @@ describe('fake model server', () => {
     expect(deltas).toEqual([
       [{ role: 'assistant' }, null],
       [{ content: 'working' }, null],
-      [{ tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'bash', arguments: '{"command":"true"}' } }] }, null],
+      [{ tool_calls: [{ index: 0, id: 'call-1_1_0', type: 'function', function: { name: 'bash', arguments: '{"command":"true"}' } }] }, null],
       [{}, 'tool_calls'],
     ])
     expect(chunks[0].model).toBe('fake-2')

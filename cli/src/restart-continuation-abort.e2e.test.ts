@@ -40,7 +40,6 @@ async function waitFor<T>(
 
 describe.skipIf(!findPi())('restart continuation aborted by the backend', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-abort-e2e',
     dirName: 'qa-restart-abort-e2e',

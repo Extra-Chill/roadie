@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -76,7 +76,7 @@ async function globalRoadieSupportsAgentEndpoints(): Promise<boolean> {
       env: {
         PATH: ISOLATED_SHELL_PATH,
         HOME: '/tmp',
-        ROADIE_OPENCODE_PROCESS: '1',
+        ROADIE_AGENT_SHELL: '1',
         ROADIE_AGENT_TOKEN: 'probe-token',
         ROADIE_LOCK_PORT: '1',
         ROADIE_DATA_DIR: '/tmp/roadie-isolated-shell-endpoint-probe',
@@ -112,7 +112,7 @@ const ROADIE_ENDPOINT_PROBE_COMMAND = [
   'echo roadie-endpoint-probe-done',
 ].join('; ')
 
-function createIsolationMatchers(): DeterministicMatcher[] {
+function createIsolationMatchers(): FakeMatcher[] {
   return [
     {
       id: 'isolated-shell-probe',

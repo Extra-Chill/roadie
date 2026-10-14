@@ -41,16 +41,14 @@ import { store } from '../store.js'
 import { setIdentityHookCommand } from '../identity.js'
 
 let dataDir: string
-let originalXdgCacheHome: string | undefined
 
-// Fixture models.dev catalog served through $XDG_CACHE_HOME/opencode/models.json
+// Fixture models.dev catalog preset in the catalog memo
 // so the add-key modal's provider validation stays hermetic (no network).
 const TEST_CATALOG = {
-  anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
-  openai: { id: 'openai', npm: '@ai-sdk/openai' },
+  anthropic: { id: 'anthropic' },
+  openai: { id: 'openai' },
   'zai-coding-plan': {
     id: 'zai-coding-plan',
-    npm: '@ai-sdk/openai-compatible',
     api: 'https://api.z.ai/api/coding/paas/v4',
   },
 }
@@ -60,22 +58,12 @@ beforeEach(() => {
   setDataDir(dataDir)
   setIdentityHookCommand(null)
   store.setState({ credentialsMode: 'per-person' })
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-cache-'))
-  fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
-  fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
-  process.env.XDG_CACHE_HOME = cacheHome
-  resetCatalogCacheForTests()
+  resetCatalogCacheForTests(TEST_CATALOG)
 })
 
 afterEach(() => {
   store.setState({ credentialsMode: 'global' })
   setIdentityHookCommand(null)
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome
-  }
   resetCatalogCacheForTests()
 })
 

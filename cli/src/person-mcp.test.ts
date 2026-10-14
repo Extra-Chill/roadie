@@ -7,7 +7,6 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import type { AgentBackend } from './agent-backend/types.js'
 import { evaluatePermission, parsePermissionRules } from './permission-policy.js'
-import { buildOpencodeServerConfig } from './opencode.js'
 import { getIdentityHookCommand, resolvePerson, setIdentityHookCommand } from './identity.js'
 import {
   getPersonMcpAccessToken,
@@ -207,16 +206,8 @@ describe('two people in one channel', () => {
     expect(calls[2]?.headers.Authorization).toBe('Bearer alice-token-2')
   })
 
-  test('turn permissions allow only the speaker scope; the server config denies the rest', async () => {
-    const serverPermission = buildOpencodeServerConfig({
-      externalDirectoryPermissions: {},
-      skillPermission: undefined,
-      pluginList: [],
-      roadiePoolProvider: null,
-    }).permission
-    expect(serverPermission[PERSON_MCP_TOOL_GLOB]).toBe('deny')
-
-    const base: IngressInput = { prompt: 'hi', userId: 'alice', username: 'Alice', mode: 'opencode' }
+  test('turn permissions allow only the speaker scope; the backend denies the rest', async () => {
+    const base: IngressInput = { prompt: 'hi', userId: 'alice', username: 'Alice', mode: 'direct' }
     await actorPerson('alice')
     await actorPerson('bob')
     await actorPerson('carol')
@@ -226,7 +217,7 @@ describe('two people in one channel', () => {
     const bobTool = `${personMcpServerName({ personKey: 'wp:2', name: 'extrachill' })}_ability-call`
     const decide = (userId: string, tool: string) =>
       evaluatePermission({
-        // Server config first, then the speaker's session rules.
+        // The backend's default deny first, then the speaker's session rules.
         rules: [{ permission: PERSON_MCP_TOOL_GLOB, pattern: '*', action: 'deny' }, ...rulesFor(userId)],
         permission: tool,
         targets: ['*'],
@@ -272,7 +263,7 @@ describe('people without config or access', () => {
     const { backend, calls } = fakeBackend()
     expect(await registerFor('mallory', backend)).toEqual([])
     expect(calls).toEqual([])
-    const base: IngressInput = { prompt: 'hi', userId: 'mallory', username: 'Mallory', mode: 'opencode' }
+    const base: IngressInput = { prompt: 'hi', userId: 'mallory', username: 'Mallory', mode: 'direct' }
     expect(applyPersonToIngress(base)).toEqual(base)
   })
 

@@ -302,7 +302,7 @@ describe('reload and failure', () => {
 })
 
 describe('applyChannelPolicyToIngress', () => {
-  const base: IngressInput = { prompt: 'hi', userId: 'u1', username: 'U', mode: 'opencode' }
+  const base: IngressInput = { prompt: 'hi', userId: 'u1', username: 'U', mode: 'direct' }
 
   test('adds the channel permission rules to the turn', () => {
     write(CONFIG)

@@ -194,14 +194,14 @@ describe('agent mode detection', () => {
     useTempDataDir()
     await closeDb()
 
-    delete process.env.ROADIE_OPENCODE_PROCESS
+    delete process.env.ROADIE_AGENT_SHELL
     delete process.env.ROADIE_DB_URL
     delete process.env.ROADIE_DB_AUTH_TOKEN
     delete process.env.ROADIE_DB_AUTH_TOKEN_FILE
     process.env[AGENT_TOKEN_ENV] = 'ses_x.token'
     expect(resolveAgentCredentials()).toBeInstanceOf(Error)
 
-    process.env.ROADIE_OPENCODE_PROCESS = '1'
+    process.env.ROADIE_AGENT_SHELL = '1'
     expect(resolveAgentCredentials()).toEqual({ token: 'ses_x.token', port: expect.any(Number) })
 
     // A usable database credential keeps the shell in operator mode.

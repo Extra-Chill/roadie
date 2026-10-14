@@ -190,7 +190,7 @@ async function sendClickedActionToModel({
     prompt,
     userId: interaction.user.id,
     username,
-    mode: 'opencode',
+    mode: 'direct',
   })
 }
 

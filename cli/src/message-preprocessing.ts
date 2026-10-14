@@ -61,7 +61,7 @@ export async function resolveMessagePrompt({
   return {
     prompt,
     images: images.length > 0 ? images : undefined,
-    mode: 'opencode',
+    mode: 'direct',
   }
 }
 
@@ -151,7 +151,7 @@ export async function preprocessExistingThreadMessage({
     includeExtras: !isCliInjected,
   })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
-    return { prompt: '', mode: 'opencode', skip: true }
+    return { prompt: '', mode: 'direct', skip: true }
   }
   return { ...resolved, repliedMessage }
 }
@@ -195,7 +195,7 @@ export async function preprocessNewSessionMessage({
 
   const resolved = await resolveMessagePrompt({ message, text: prompt })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
-    return { prompt: '', mode: 'opencode', skip: true }
+    return { prompt: '', mode: 'direct', skip: true }
   }
   return { ...resolved, repliedMessage }
 }
@@ -221,7 +221,7 @@ export async function preprocessChannelMessage({
     includeExtras: !isCliInjected,
   })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
-    return { prompt: '', mode: 'opencode', skip: true }
+    return { prompt: '', mode: 'direct', skip: true }
   }
   return { ...resolved, repliedMessage }
 }
@@ -239,7 +239,7 @@ export async function preprocessNewThreadMessage({
   const repliedMessage = await getRepliedMessageContext({ message })
   const resolved = await resolveMessagePrompt({ message, text: messageContent })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
-    return { prompt: '', mode: 'opencode', skip: true }
+    return { prompt: '', mode: 'direct', skip: true }
   }
   return { ...resolved, repliedMessage }
 }

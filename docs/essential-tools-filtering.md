@@ -5,7 +5,7 @@ description: How Roadie determines which tools are "essential" and filters them 
 
 # Essential Tools Filtering in Roadie
 
-This document explains how Roadie determines which OpenCode tools are "essential" and how verbosity filtering works to show/hide tool parts in Discord messages.
+This document explains how Roadie determines which agent tools are "essential" and how verbosity filtering works to show/hide tool parts in Discord messages.
 
 ## Overview
 
@@ -45,7 +45,7 @@ function isEssentialToolName(toolName: string): boolean {
 ### Non-Essential Tool Categories
 
 - **Read-only navigation:** `read`, `list`, `glob`, `grep` - file discovery/viewing
-- **Skill tools:** `skill` - reusable OpenCode skills (loaded from `skills/` in the repo, copied into `cli/skills/` for publishing)
+- **Skill tools:** `skill` - reusable agent skills
 - **Question/Input:** `question` - user interaction tools
 - **Documentation:** `webfetch` - web content fetching
 - **Todo inspection:** `todoread` - reading todo state (but `todowrite` is essential)
@@ -156,17 +156,9 @@ Example Discord output:
 
 ## Skill Tool Configuration
 
-**File:** `cli/src/opencode.ts`, lines 182-183
+**File:** `cli/src/agent-backend/pi/resources.ts`
 
-Skills are loaded from the local filesystem:
-
-```typescript
-skills: {
-  paths: [path.resolve(__dirname, '..', 'skills')],
-}
-```
-
-Skills are synced into the repository root `skills/` directory and the packaged `cli/skills/` copy. Runtime lookup assumes `cli/skills/` is available.
+Pi discovers its own skills; Roadie adds the project and user skill directories (`.opencode/skill[s]`, `.claude/skills`, `~/.config/opencode/skill[s]`, `~/.claude/skills`), filtered by `--enable-skill` / `--disable-skill`. See [Agent backend](agent-backend.md#project-configuration).
 
 ## Other Verbosity Filtering Uses
 

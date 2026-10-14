@@ -45,7 +45,7 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
@@ -125,9 +125,8 @@ export type ModelSource =
   | 'agent'
   | 'channel'
   | 'global'
-  | 'opencode-config'
-  | 'opencode-recent'
-  | 'opencode-provider-default'
+  | 'backend-config'
+  | 'provider-default'
 
 export type CurrentModelInfo =
   | { type: 'session'; model: string; providerID: string; modelID: string }
@@ -141,19 +140,7 @@ export type CurrentModelInfo =
   | { type: 'channel'; model: string; providerID: string; modelID: string }
   | { type: 'global'; model: string; providerID: string; modelID: string }
   | {
-      type: 'opencode-config'
-      model: string
-      providerID: string
-      modelID: string
-    }
-  | {
-      type: 'opencode-recent'
-      model: string
-      providerID: string
-      modelID: string
-    }
-  | {
-      type: 'opencode-provider-default'
+      type: 'backend-config' | 'provider-default'
       model: string
       providerID: string
       modelID: string
@@ -176,10 +163,9 @@ export function formatModelSource({
       return 'channel override'
     case 'global':
       return 'global default'
-    case 'opencode-config':
-    case 'opencode-recent':
-    case 'opencode-provider-default':
-      return 'opencode default'
+    case 'backend-config':
+    case 'provider-default':
+      return 'backend default'
     default:
       return 'none'
   }
@@ -309,7 +295,7 @@ async function getLastUserMessageAgent({
   directory?: string
   before?: string
   page?: number
-}): Promise<OpenCodeSdkError | string | undefined> {
+}): Promise<AgentBackendError | string | undefined> {
   if (page >= LAST_USER_AGENT_MAX_PAGES) return undefined
   const result = await (async () => {
     const sessions = getClient().sessions
@@ -319,11 +305,11 @@ async function getLastUserMessageAgent({
     // A backend that cannot page returns the whole history as one page.
     const all = await sessions.messages({ sessionId, directory })
     return all instanceof Error ? all : { messages: all }
-  })().catch((cause: unknown) => new OpenCodeSdkError({ operation: 'session.messages', cause }))
+  })().catch((cause: unknown) => new AgentBackendError({ operation: 'session.messages', cause }))
   if (result instanceof Error) {
-    return result instanceof OpenCodeSdkError
+    return result instanceof AgentBackendError
       ? result
-      : new OpenCodeSdkError({ operation: 'session.messages', cause: result })
+      : new AgentBackendError({ operation: 'session.messages', cause: result })
   }
   const newestUser = result.messages
     .map((entry) => entry.message)
@@ -397,7 +383,7 @@ export async function copySessionPreferences({
 
 /**
  * Get the current model info for a channel/session, including where it comes from.
- * Priority: session > agent > channel > global > opencode default
+ * Priority: session > agent > channel > global > backend default
  */
 export async function getCurrentModelInfo({
   sessionId,
@@ -477,7 +463,7 @@ export async function getCurrentModelInfo({
     }
   }
 
-  // 5. Get opencode default (config > recent > provider default)
+  // 5. The backend default (configured model, then provider default)
   const defaultModel = await getDefaultModel({ getClient, directory })
   if (defaultModel) {
     const model = `${defaultModel.providerID}/${defaultModel.modelID}`
@@ -629,10 +615,9 @@ export async function handleModelCommand({
           return `**Current (channel override):** \`${displayed}\``
         case 'global':
           return `**Current (global default):** \`${displayed}\``
-        case 'opencode-config':
-        case 'opencode-recent':
-        case 'opencode-provider-default':
-          return `**Current (opencode default):** \`${displayed}\``
+        case 'backend-config':
+        case 'provider-default':
+          return `**Current (backend default):** \`${displayed}\``
       }
     })()
 

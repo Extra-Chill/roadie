@@ -2,7 +2,6 @@
 // Parses string/regex queries and builds readable snippets from matched content.
 
 import type { AgentPart } from './agent-backend/events.js'
-import type { AgentSessionMessage } from './agent-backend/types.js'
 
 export type SessionSearchPattern =
   | {
@@ -21,55 +20,10 @@ export type SessionSearchHit = {
   length: number
 }
 
-export type SessionSearchPart = {
-  type: string
-  synthetic?: boolean
-  text?: string
-  tool?: string
-  filename?: string
-  url?: string
-  state?: {
-    input?: unknown
-    status?: string
-    output?: unknown
-    error?: string
-  }
-}
-
-/** A Roadie part in the shape search reads (the shape OpenCode parts already had). */
-export function toSearchPart(part: AgentPart): SessionSearchPart {
-  switch (part.kind) {
-    case 'text':
-      return { type: 'text', text: part.text, ...(part.synthetic && { synthetic: true }) }
-    case 'reasoning':
-      return { type: 'reasoning', text: part.text }
-    case 'tool':
-      return {
-        type: 'tool',
-        tool: part.tool,
-        state: {
-          input: part.input,
-          status: part.status,
-          ...(part.output !== undefined && { output: part.output }),
-          ...(part.error !== undefined && { error: part.error }),
-        },
-      }
-    case 'file':
-      return { type: 'file', url: part.url, ...(part.filename && { filename: part.filename }) }
-    case 'other':
-      return { type: part.type }
-    default:
-      return { type: part.kind }
-  }
-}
-
-export function toSearchableMessage({ message, parts }: AgentSessionMessage): SessionSearchableMessage {
-  return { info: { role: message.role }, parts: parts.map(toSearchPart) }
-}
-
+/** What search reads from a session message: its role and Roadie parts. */
 export type SessionSearchableMessage = {
-  info: { role: string }
-  parts: SessionSearchPart[]
+  message: { role: string }
+  parts: AgentPart[]
 }
 
 export type SessionSearchableSession = {
@@ -89,7 +43,7 @@ export type SessionSearchMatch = {
   title: string
   directory: string
   updated: string
-  source: 'roadie' | 'opencode'
+  source: 'roadie' | 'agent'
   threadId: string | null
   snippets: string[]
 }
@@ -194,21 +148,20 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
-export function getPartSearchTexts(part: SessionSearchPart): string[] {
-  switch (part.type) {
+export function getPartSearchTexts(part: AgentPart): string[] {
+  switch (part.kind) {
     case 'text':
-      return part.text ? [part.text] : []
     case 'reasoning':
       return part.text ? [part.text] : []
     case 'tool': {
-      const inputText = stringifyUnknown(part.state?.input)
+      const inputText = stringifyUnknown(part.input)
       const outputText =
-        part.state?.status === 'completed'
-          ? stringifyUnknown(part.state.output)
-          : part.state?.status === 'error'
-            ? part.state.error || ''
+        part.status === 'completed'
+          ? stringifyUnknown(part.output)
+          : part.status === 'error'
+            ? part.error || ''
             : ''
-      return [`tool:${part.tool || ''}`, inputText, outputText].filter((entry) => {
+      return [`tool:${part.tool}`, inputText, outputText].filter((entry) => {
         return entry.trim().length > 0
       })
     }
@@ -301,14 +254,14 @@ export function getSessionSearchSnippets({
   return messages
     .flatMap((message) => {
       const rolePrefix =
-        message.info.role === 'assistant'
+        message.message.role === 'assistant'
           ? 'assistant'
-          : message.info.role === 'user'
+          : message.message.role === 'user'
             ? 'user'
             : 'message'
 
       return message.parts
-        .filter((part) => !(part.type === 'text' && part.synthetic))
+        .filter((part) => !(part.kind === 'text' && part.synthetic))
         .flatMap((part) => {
           return getPartSearchTexts(part).flatMap((text) => {
             const hit = findFirstSessionSearchHit({
@@ -403,7 +356,7 @@ export async function collectSessionSearchMatches({
         title: session.title || 'Untitled Session',
         directory: session.directory,
         updated: new Date(session.updated).toISOString(),
-        source: threadId ? 'roadie' : 'opencode',
+        source: threadId ? 'roadie' : 'agent',
         threadId: threadId || null,
         snippets,
       }

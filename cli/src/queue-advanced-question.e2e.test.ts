@@ -17,7 +17,6 @@ const TEXT_CHANNEL_ID = '200000000000001007'
 
 describe.skipIf(!findPi())('queue advanced: question tool answer', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-e2e',
     dirName: 'qa-question-e2e',

@@ -22,7 +22,7 @@ export type QueuedMessage = ForkTitleTurn & {
   // Stable id for this queue entry. Used by Discord remove-queue buttons so
   // position shifts after earlier drains do not remove the wrong item.
   queueId?: string
-  // The text content to send to the OpenCode session (user message or
+  // The text content to send to the agent session (user message or
   // transcribed voice message). Always present.
   prompt: string
   // Discord user ID of the message author. Used for permission checks
@@ -58,7 +58,7 @@ export type QueuedMessage = ForkTitleTurn & {
   // Written to a temp config file after session creation so the plugin
   // can check per-session whether to scan tool outputs.
   injectionGuardPatterns?: string[]
-  // Parent OpenCode session ID from `roadie send --parent-session`.
+  // Parent session ID from `roadie send --parent-session`.
   // Applied once on first session create so the child system message can
   // expose how to message the parent when the user asks.
   parentSessionId?: string
@@ -82,7 +82,7 @@ export type QueuedMessage = ForkTitleTurn & {
 // ── Per-thread state (value inside the Map) ──────────────────────
 
 export type ThreadRunState = {
-  // OpenCode session ID for this thread. Set lazily by ensureSession()
+  // Agent session ID for this thread. Set lazily by ensureSession()
   // on first dispatch (not on thread creation). Persists across multiple
   // prompt runs — the same session is reused for the thread's lifetime.
   // Also stored in the DB (thread_sessions table) for recovery after restart.
@@ -97,7 +97,7 @@ export type ThreadRunState = {
   sessionUsername: string | undefined
   sessionUserId: string | undefined
 
-  // Parent OpenCode session that spawned this thread via
+  // Parent agent session that spawned this thread via
   // `roadie send --parent-session`. Set once on first ingress and reused for
   // the session-stable system prompt.
   parentSessionId: string | undefined

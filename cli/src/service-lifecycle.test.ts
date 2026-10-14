@@ -4,15 +4,11 @@ import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
-  cleanupOrphanedAgentServer,
-  clearAgentServerPid,
   consumeInterruptedSessions,
   hostUpgradeHandler,
   INTERRUPTED_TTL_MS,
   isManagedInstall,
-  looksLikeAgentServer,
   mergeInterruptedSessions,
-  recordAgentServerPid,
   RESTART_CONTINUATION_PROMPT,
   restartContinuationPrompt,
   recordInterruptedSessions,
@@ -103,53 +99,6 @@ describe('host upgrade', () => {
   })
 })
 
-describe('orphan cleanup', () => {
-  test('matches agent server command lines only', () => {
-    expect(looksLikeAgentServer('/usr/bin/node /x/opencode-ai/bin/opencode serve --port 4096')).toBe(true)
-    expect(looksLikeAgentServer('sleep 100')).toBe(false)
-    expect(looksLikeAgentServer(undefined)).toBe(false)
-  })
-
-  test('stops a recorded agent server left by a previous run', async () => {
-    const dataDir = tempDir()
-    const orphan = spawnIdle(['opencode', 'serve'])
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    recordAgentServerPid(orphan.pid!, dataDir)
-
-    const stopped = await cleanupOrphanedAgentServer({ dataDir, graceMs: 2000 })
-    expect(stopped).toBe(orphan.pid)
-    expect(alive(orphan.pid!)).toBe(false)
-    expect(fs.existsSync(path.join(dataDir, 'agent-server.pid'))).toBe(false)
-  })
-
-  test('leaves a reused pid that is not an agent server alone', async () => {
-    const dataDir = tempDir()
-    const unrelated = spawnIdle(['something-else'])
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    recordAgentServerPid(unrelated.pid!, dataDir)
-
-    expect(await cleanupOrphanedAgentServer({ dataDir })).toBeUndefined()
-    expect(alive(unrelated.pid!)).toBe(true)
-    expect(fs.existsSync(path.join(dataDir, 'agent-server.pid'))).toBe(false)
-  })
-
-  test('a dead or missing pid is a no-op', async () => {
-    const dataDir = tempDir()
-    expect(await cleanupOrphanedAgentServer({ dataDir })).toBeUndefined()
-    fs.writeFileSync(path.join(dataDir, 'agent-server.pid'), '999999999\n')
-    expect(await cleanupOrphanedAgentServer({ dataDir })).toBeUndefined()
-    expect(fs.existsSync(path.join(dataDir, 'agent-server.pid'))).toBe(false)
-  })
-
-  test('a clean exit clears only its own pid', () => {
-    const dataDir = tempDir()
-    recordAgentServerPid(1234, dataDir)
-    clearAgentServerPid(5678, dataDir)
-    expect(fs.readFileSync(path.join(dataDir, 'agent-server.pid'), 'utf8').trim()).toBe('1234')
-    clearAgentServerPid(1234, dataDir)
-    expect(fs.existsSync(path.join(dataDir, 'agent-server.pid'))).toBe(false)
-  })
-})
 
 describe('restart continuation record', () => {
   const session = { threadId: 't1', sessionId: 's1', userId: 'u1', username: 'Team Member' }

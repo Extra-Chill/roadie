@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { extractLeadingOpencodeCommand } from './opencode-command-detection.js'
+import { extractLeadingCommand } from './leading-command-detection.js'
 import type { RegisteredUserCommand } from './store.js'
 
 const fixtures: RegisteredUserCommand[] = [
@@ -29,10 +29,10 @@ const fixtures: RegisteredUserCommand[] = [
   },
 ]
 
-describe('extractLeadingOpencodeCommand', () => {
+describe('extractLeadingCommand', () => {
   test('plain /build with args', () => {
     expect(
-      extractLeadingOpencodeCommand('/build foo bar', fixtures),
+      extractLeadingCommand('/build foo bar', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -44,7 +44,7 @@ describe('extractLeadingOpencodeCommand', () => {
   })
 
   test('plain /build no args', () => {
-    expect(extractLeadingOpencodeCommand('/build', fixtures))
+    expect(extractLeadingCommand('/build', fixtures))
       .toMatchInlineSnapshot(`
       {
         "command": {
@@ -57,7 +57,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('/build-cmd suffix resolves to build', () => {
     expect(
-      extractLeadingOpencodeCommand('/build-cmd hello world', fixtures),
+      extractLeadingCommand('/build-cmd hello world', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -70,7 +70,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('-skill suffix', () => {
     expect(
-      extractLeadingOpencodeCommand('/review-skill a b', fixtures),
+      extractLeadingCommand('/review-skill a b', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -83,7 +83,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('-mcp-prompt suffix', () => {
     expect(
-      extractLeadingOpencodeCommand('/plan-mcp-prompt go', fixtures),
+      extractLeadingCommand('/plan-mcp-prompt go', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -96,7 +96,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('original namespaced name with colon', () => {
     expect(
-      extractLeadingOpencodeCommand('/namespace:foo arg', fixtures),
+      extractLeadingCommand('/namespace:foo arg', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -109,7 +109,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('discord-sanitized namespaced name', () => {
     expect(
-      extractLeadingOpencodeCommand('/namespace-foo-cmd arg', fixtures),
+      extractLeadingCommand('/namespace-foo-cmd arg', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -122,7 +122,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('roadie-cli prefix on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand(
+      extractLeadingCommand(
         '» **roadie-cli:**\n/build foo bar',
         fixtures,
       ),
@@ -138,7 +138,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('queue-style user prefix on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **Tommy:**\n/build hey', fixtures),
+      extractLeadingCommand('» **Tommy:**\n/build hey', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -151,7 +151,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('username containing asterisk on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **A*B:**\n/build hi', fixtures),
+      extractLeadingCommand('» **A*B:**\n/build hi', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -165,7 +165,7 @@ describe('extractLeadingOpencodeCommand', () => {
   test('Context from thread wrapping still detects command', () => {
     const wrapped =
       'Context from thread:\nsome starter text\n\nUser request:\n/build foo'
-    expect(extractLeadingOpencodeCommand(wrapped, fixtures))
+    expect(extractLeadingCommand(wrapped, fixtures))
       .toMatchInlineSnapshot(`
       {
         "command": {
@@ -178,37 +178,37 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('unknown command returns null', () => {
     expect(
-      extractLeadingOpencodeCommand('/nothing here', fixtures),
+      extractLeadingCommand('/nothing here', fixtures),
     ).toMatchInlineSnapshot(`null`)
   })
 
   test('no leading slash on any line returns null', () => {
     expect(
-      extractLeadingOpencodeCommand('hello /build\nmore text', fixtures),
+      extractLeadingCommand('hello /build\nmore text', fixtures),
     ).toMatchInlineSnapshot(`null`)
   })
 
   test('just slash returns null', () => {
-    expect(extractLeadingOpencodeCommand('/', fixtures)).toMatchInlineSnapshot(
+    expect(extractLeadingCommand('/', fixtures)).toMatchInlineSnapshot(
       `null`,
     )
   })
 
   test('empty string returns null', () => {
-    expect(extractLeadingOpencodeCommand('', fixtures)).toMatchInlineSnapshot(
+    expect(extractLeadingCommand('', fixtures)).toMatchInlineSnapshot(
       `null`,
     )
   })
 
   test('empty registry returns null for tokens without Discord suffix', () => {
-    expect(extractLeadingOpencodeCommand('/build foo', [])).toMatchInlineSnapshot(
+    expect(extractLeadingCommand('/build foo', [])).toMatchInlineSnapshot(
       `null`,
     )
   })
 
   test('empty registry fallback: -cmd suffix strips and returns base name', () => {
     expect(
-      extractLeadingOpencodeCommand('/hello-test-cmd', []),
+      extractLeadingCommand('/hello-test-cmd', []),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -221,7 +221,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('empty registry fallback: -skill suffix with args', () => {
     expect(
-      extractLeadingOpencodeCommand('/review-skill check auth', []),
+      extractLeadingCommand('/review-skill check auth', []),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -234,7 +234,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('empty registry fallback skips non-suffixed, matches suffixed on next line', () => {
     expect(
-      extractLeadingOpencodeCommand('/unknown\n/deploy-cmd now', []),
+      extractLeadingCommand('/unknown\n/deploy-cmd now', []),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -247,7 +247,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('leading whitespace before slash still matches', () => {
     expect(
-      extractLeadingOpencodeCommand('   /build foo', fixtures),
+      extractLeadingCommand('   /build foo', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -260,7 +260,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('first matching line wins', () => {
     const prompt = 'noise line\n/build first args\n/review second args'
-    expect(extractLeadingOpencodeCommand(prompt, fixtures))
+    expect(extractLeadingCommand(prompt, fixtures))
       .toMatchInlineSnapshot(`
       {
         "command": {
@@ -273,7 +273,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('unknown command on one line, known on next', () => {
     const prompt = '/unknown foo\n/build bar'
-    expect(extractLeadingOpencodeCommand(prompt, fixtures))
+    expect(extractLeadingCommand(prompt, fixtures))
       .toMatchInlineSnapshot(`
       {
         "command": {
@@ -294,7 +294,7 @@ describe('extractLeadingOpencodeCommand', () => {
       },
     ]
     expect(
-      extractLeadingOpencodeCommand('/deploy-cmd now', custom),
+      extractLeadingCommand('/deploy-cmd now', custom),
     ).toMatchInlineSnapshot(`
       {
         "command": {
