@@ -3110,7 +3110,7 @@ export class ThreadSessionRuntime {
       formatSessionErrorFromProps(event.error),
     )
     logger.error(`Sending error to thread: ${errorMessage}`)
-    await this.chat.sendMessage(`✗ opencode session error: ${errorMessage}`, { notify: true })
+    await this.chat.sendMessage(`✗ session error: ${errorMessage}`, { notify: true })
     await this.persistEventBufferDebounced.flush()
 
     // Inject synthetic idle so isSessionBusy() returns false and queued
