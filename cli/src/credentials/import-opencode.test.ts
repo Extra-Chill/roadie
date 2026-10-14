@@ -1,7 +1,6 @@
-// Tests for `roadie credentials import-opencode` and `export-opencode`
-// (issue #150): OpenCode auth.json + Kimaki's <provider>-oauth-accounts.json
-// rotation files in and out of a pool. Read-only on the source for imports,
-// explicit-target-only writes for exports, and never a secret in any report.
+// Tests for `roadie credentials import-opencode` (issue #150): OpenCode
+// auth.json + Kimaki's <provider>-oauth-accounts.json rotation files into a
+// pool. Read-only on the source and never a secret in any report.
 
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
@@ -16,10 +15,6 @@ import {
   type OpencodeImportResult,
 } from './import-opencode.js'
 import {
-  exportOpencodeCredentials,
-  formatOpencodeExportReport,
-} from './export-opencode.js'
-import {
   readPoolAccounts,
   readPoolRotations,
   SHARED_POOL_ID,
@@ -29,15 +24,14 @@ import { resetCatalogCacheForTests } from './provider-catalog.js'
 
 let dataDir: string
 let opencodeData: string
-let originalXdgCacheHome: string | undefined
 
-// Fixture catalog served through $XDG_CACHE_HOME/opencode/models.json, so the
+// Fixture catalog preset in the catalog memo, so the
 // import resolves providers without any network. `zai` resolves; the rest of
 // the routing rules come from the shared subrouter planner.
 const TEST_CATALOG = {
-  anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
-  openai: { id: 'openai', npm: '@ai-sdk/openai' },
-  zai: { id: 'zai', npm: '@ai-sdk/openai-compatible', api: 'https://api.z.ai/api/paas/v4' },
+  anthropic: { id: 'anthropic' },
+  openai: { id: 'openai' },
+  zai: { id: 'zai', api: 'https://api.z.ai/api/paas/v4' },
 }
 
 const ALL_SECRETS = [
@@ -115,20 +109,10 @@ function writeOpencodeFixture({
 beforeEach(() => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-opencode-import-'))
   opencodeData = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-data-'))
-  originalXdgCacheHome = process.env.XDG_CACHE_HOME
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-opencode-cache-'))
-  fs.mkdirSync(path.join(cacheHome, 'opencode'), { recursive: true })
-  fs.writeFileSync(path.join(cacheHome, 'opencode', 'models.json'), JSON.stringify(TEST_CATALOG))
-  process.env.XDG_CACHE_HOME = cacheHome
-  resetCatalogCacheForTests()
+  resetCatalogCacheForTests(TEST_CATALOG)
 })
 
 afterEach(() => {
-  if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME
-  } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome
-  }
   resetCatalogCacheForTests()
 })
 
@@ -317,128 +301,5 @@ describe('importOpencodeCredentials', () => {
     writeOpencodeFixture()
     const result = await importOpencodeCredentials({ dataDir, opencodeData, poolId: 'Not A Pool!' })
     expect(result).toBeInstanceOf(Error)
-  })
-})
-
-describe('exportOpencodeCredentials', () => {
-  test('writes the first account per provider to auth.json and all accounts to rotation files', async () => {
-    writeOpencodeFixture()
-    importResult(await importOpencodeCredentials({ dataDir, opencodeData }))
-    // Refresh tokens rotate on use; the export must write the newest ones.
-    const accounts = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
-    if (accounts instanceof Error) throw accounts
-    const firstOauth = accounts.find((account) => account.type === 'oauth')
-    if (firstOauth?.type !== 'oauth') throw new Error('expected an oauth account')
-    const updated = await updatePoolAccount({
-      dataDir,
-      poolId: SHARED_POOL_ID,
-      accountId: firstOauth.id,
-      refresh: 'rotated-rt',
-      access: 'rotated-at',
-      expires: 1893456999999,
-    })
-    expect(updated).not.toBeInstanceOf(Error)
-
-    // Unrelated provider entries in auth.json must survive the export; the
-    // openai entry is not one of them — the pool's ChatGPT subscription
-    // exports under it (#198).
-    fs.writeFileSync(
-      path.join(opencodeData, 'auth.json'),
-      JSON.stringify({ openai: { type: 'api', key: 'sk-unrelated' }, zai: { type: 'api', key: 'zai-live-key-8888' } }, null, 2),
-    )
-
-    const result = await exportOpencodeCredentials({ dataDir, opencodeData })
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
-    // The pool holds one anthropic rotation (3 accounts after the refresh),
-    // one zai api key, and one openai-codex ChatGPT subscription. Only oauth
-    // accounts export: anthropic under its own key, and the ChatGPT
-    // subscription under OpenCode's own `openai` key so an import maps it
-    // back (#198). The zai api key stays pool-managed.
-    expect(result.providers.map((provider) => provider.provider)).toEqual(['anthropic', 'openai'])
-    expect(result.providers[0]).toMatchObject({ count: 3, first: 'acct-777' })
-    expect(result.providers[1]).toMatchObject({ count: 1, first: '…et-9' })
-    expect(result.written).toHaveLength(3)
-
-    const auth = JSON.parse(fs.readFileSync(path.join(opencodeData, 'auth.json'), 'utf8')) as Record<string, unknown>
-    expect(auth.anthropic).toEqual({ type: 'oauth', refresh: 'rotated-rt', access: 'rotated-at', expires: 1893456999999 })
-    expect(auth.openai).toEqual({ type: 'oauth', refresh: 'ok-rt-secret-9', access: 'ok-at-secret-9', expires: 1893456000004 })
-    expect(auth.zai).toEqual({ type: 'api', key: 'zai-live-key-8888' })
-
-    const rotation = JSON.parse(
-      fs.readFileSync(path.join(opencodeData, 'anthropic-oauth-accounts.json'), 'utf8'),
-    ) as Array<Record<string, unknown>>
-    expect(rotation).toHaveLength(3)
-    expect(rotation[0]).toMatchObject({ type: 'oauth', refresh: 'rotated-rt' })
-
-    const codexRotation = JSON.parse(
-      fs.readFileSync(path.join(opencodeData, 'openai-oauth-accounts.json'), 'utf8'),
-    ) as Array<Record<string, unknown>>
-    expect(codexRotation).toHaveLength(1)
-    expect(codexRotation[0]).toMatchObject({ type: 'oauth', refresh: 'ok-rt-secret-9' })
-
-    const text = formatOpencodeExportReport(result).join('\n')
-    expect(text).toContain('anthropic: 3 accounts')
-    expect(text).toContain('openai: 1 account')
-    for (const secret of ALL_SECRETS) {
-      expect(text).not.toContain(secret)
-    }
-  })
-
-  test('a pool with no oauth accounts writes nothing', async () => {
-    const result = await exportOpencodeCredentials({ dataDir, opencodeData })
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
-    expect(result.providers).toEqual([])
-    expect(result.written).toEqual([])
-    expect(fs.readdirSync(opencodeData)).toEqual([])
-    expect(formatOpencodeExportReport(result).join('\n')).toContain('no oauth accounts')
-  })
-
-  test('api-key accounts are never exported', async () => {
-    writeOpencodeFixture({ rotations: false })
-    importResult(await importOpencodeCredentials({ dataDir, opencodeData }))
-    const result = await exportOpencodeCredentials({ dataDir, opencodeData })
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
-    // Only the anthropic oauth account exports; the zai api key stays
-    // pool-managed, and unrelated auth.json entries (the zai api key and the
-    // github-copilot oauth opencode holds) are preserved as they were.
-    expect(result.providers.map((provider) => provider.provider)).toEqual(['anthropic'])
-    const auth = JSON.parse(fs.readFileSync(path.join(opencodeData, 'auth.json'), 'utf8')) as Record<string, unknown>
-    expect(Object.keys(auth).sort()).toEqual(['$schema', 'anthropic', 'github-copilot', 'zai'])
-    expect(auth.zai).toEqual({ type: 'api', key: 'zai-live-key-8888' })
-    expect(auth.anthropic).toMatchObject({ type: 'oauth' })
-  })
-
-  test('round-trips through a fresh pool without duplicating', async () => {
-    writeOpencodeFixture()
-    importResult(await importOpencodeCredentials({ dataDir, opencodeData }))
-    const exported = await exportOpencodeCredentials({ dataDir, opencodeData })
-    expect(exported).not.toBeInstanceOf(Error)
-
-    // Import back into a second pool from the exported files: same accounts.
-    // The ChatGPT subscription exports under `openai` and imports back as
-    // openai-codex (#198).
-    const second = importResult(
-      await importOpencodeCredentials({ dataDir, poolId: 'rollback', opencodeData }),
-    )
-    expect(second.accounts.imported).toBe(5)
-    expect(second.accounts.alreadyPresent).toBe(2)
-    const rollback = readPoolAccounts({ dataDir, poolId: 'rollback' })
-    if (rollback instanceof Error) throw rollback
-    const original = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
-    if (original instanceof Error) throw original
-    expect(rollback.length).toBe(original.length)
-    expect(rollback.map((account) => account.provider).sort()).toEqual(
-      original.map((account) => account.provider).sort(),
-    )
-  })
-
-  test('leaves pool rotations untouched', async () => {
-    writeOpencodeFixture({ rotations: false })
-    importResult(await importOpencodeCredentials({ dataDir, opencodeData }))
-    await exportOpencodeCredentials({ dataDir, opencodeData })
-    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
   })
 })

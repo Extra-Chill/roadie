@@ -1,11 +1,10 @@
 ---
 title: Debugging and profiling roadie
 description: >
-  Recipes for debugging the roadie bot: the log file, OpenCode session event
+  Recipes for debugging the roadie bot: the log file, agent session event
   JSONL (env vars, sqlite export, compacted buffer shape, jq queries), heap
-  snapshots, live CPU profiling, CPU profiling tests, and the
-  ~/.roadie/bin/roadie command shim. Read when debugging session state, event
-  ordering, memory, CPU, slow tests, or agents failing to run `roadie` commands.
+  snapshots, live CPU profiling, and CPU profiling tests. Read when debugging
+  session state, event ordering, memory, CPU, or slow tests.
 ---
 
 # Debugging and profiling roadie
@@ -17,18 +16,15 @@ description: >
 | memory growth                                  | heap snapshot (`kill -SIGUSR1 <PID>`)       |
 | high CPU in the running bot                    | `cpuprof` in the bot terminal               |
 | slow test file                                 | `VITEST_CPU_PROF=1`                         |
-| agent cannot run `roadie send` from bash       | command shim in `~/.roadie/bin`             |
 
 ## logs
 
 roadie writes logs to `<dataDir>/roadie.log` (default `~/.roadie/roadie.log`). The log file is reset on every bot startup, so it only contains logs from the current run. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
 
-The OpenCode server's own log goes to `<dataDir>/opencode-server.log`, kept across restarts and capped at 10 MB (the previous file is kept as `opencode-server.log.1`). It runs at INFO by default; set `ROADIE_OPENCODE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARN`, `ERROR`) to change that. WARN and ERROR lines also appear in `roadie.log`. When a run ends in `MessageAbortedError` without an `[ABORT]` line in `roadie.log`, roadie logs `Run aborted by the agent backend`; look in `opencode-server.log` at that time for `message=cancel session.id=...` (someone called the abort API) or `message="disposing instance"` (the instance was torn down).
-
 ## IPC database authentication after restart
 
 The local database service keeps its default credential in
-`<dataDir>/secrets/db-auth-token` with owner-only permissions. OpenCode children
+`<dataDir>/secrets/db-auth-token` with owner-only permissions. Agent child processes
 inherit `ROADIE_DB_AUTH_TOKEN_FILE`, and authenticated HTTP requests read the
 current credential at dispatch time. Configured inline or file credentials use
 the existing `ROADIE_DB_AUTH_TOKEN` / `ROADIE_DB_AUTH_TOKEN_FILE` contract.
@@ -44,14 +40,14 @@ a response lost after a committed write to verify single-dispatch behavior.
 
 ## session event JSONL
 
-To debug agent backend event ordering, set `ROADIE_LOG_OPENCODE_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). Use `ROADIE_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
+To debug agent backend event ordering, set `ROADIE_LOG_SESSION_EVENTS=1`. This writes JSONL files under `<dataDir>/session-events/` (one file per session id). Use `ROADIE_SESSION_EVENTS_DIR` to override the output directory.
 
-Each line holds the backend's raw payload tagged with the backend that produced it (`"backend": "opencode"` or `"pi"`; older files have no tag and hold OpenCode events only). OpenCode entries keep the `{ type, properties }` event envelope; other backends store their native records as-is.
+Each line holds the backend's native record as-is, tagged with the backend that produced it (`"backend": "pi"`).
 
 Example when running a test to debug events:
 
 ```bash
-ROADIE_OPENCODE_SESSION_EVENTS_DIR=./tmp/roadie-test-3423 ROADIE_LOG_OPENCODE_SESSION_EVENTS=1 pnpm run test --run src/test-file.test.ts -t test-name
+ROADIE_SESSION_EVENTS_DIR=./tmp/roadie-test-3423 ROADIE_LOG_SESSION_EVENTS=1 pnpm run test --run src/test-file.test.ts -t test-name
 ```
 
 For live user-session debugging (without restarting with env vars), export the persisted session event buffer from sqlite:
@@ -64,15 +60,12 @@ Use this for session-state regressions (for example a footer appearing after abo
 
 ### compacted buffer shape
 
-`ThreadSessionRuntime` keeps the last 1000 OpenCode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. The buffer stores a compacted event shape to avoid memory spikes. It strips or truncates these large fields:
+`ThreadSessionRuntime` keeps the last 1000 agent events (`cli/src/agent-backend/events.ts`) in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. The buffer stores a compacted event shape to avoid memory spikes:
 
-- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
-- `message.part.updated` text/reasoning/snapshot: truncate long text fields
-- `message.part.updated` `step-start.snapshot`: truncate
-- `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output`
-- `message.part.updated` completed tool attachments: strip `state.attachments`
-- `message.part.updated` pending `state.raw` and error `state.error`: truncate
+- `session.diff` events: dropped
+- `message` user events: strip `message.system`
+- `part` text/reasoning: truncate long `text`
+- `part` tool: replace `input` with `{}`, truncate `output` and `error`
 
 Each JSONL line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
 
@@ -80,19 +73,16 @@ Each JSONL line is intentionally minimal: `{ timestamp, threadId, projectDirecto
 
 ```bash
 # list event type counts for one session file
-jq -r '.event.type' ~/.roadie/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
-
-# show only session lifecycle events (status/idle/error)
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.roadie/opencode-session-events/ses_xxx.jsonl
-
-# filter by a specific event type (example: message.part.updated)
-jq -r 'select(.event.type=="message.part.updated")' ~/.roadie/opencode-session-events/ses_xxx.jsonl
-
-# filter by event subtype (example: session.status idle)
-jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.roadie/opencode-session-events/ses_xxx.jsonl
+jq -r '.event.type' ~/.roadie/session-events/<session_id>.jsonl | sort | uniq -c
 
 # show timestamps + event types
-jq -r '[.timestamp, .event.type] | @tsv' ~/.roadie/opencode-session-events/ses_xxx.jsonl
+jq -r '[.timestamp, .event.type] | @tsv' ~/.roadie/session-events/<session_id>.jsonl
+
+# exported agent events: lifecycle only (status/idle/error)
+jq -r 'select(.event.type=="status" or .event.type=="idle" or .event.type=="error") | [.timestamp, .event.type, (.event.status.state // ""), (.event.error.name // "")] | @tsv' ./tmp/session-events.jsonl
+
+# exported agent events: parts only
+jq -r 'select(.event.type=="part")' ./tmp/session-events.jsonl
 ```
 
 ## heap snapshots and memory debugging
@@ -142,11 +132,3 @@ bunx profano tmp/cpu-profiles/CPU.*.cpuprofile
 # interactive flame chart in the browser
 npx cpupro tmp/cpu-profiles/CPU.*.cpuprofile
 ```
-
-## roadie command shim (`~/.roadie/bin/roadie`)
-
-`ensureRoadieCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.roadie/bin/roadie` (or `roadie.cmd` on Windows) every time the bot starts. It captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner, so the shim always mirrors the current process.
-
-The shim directory is prepended to `PATH` in the env passed to the OpenCode server process (`cli/src/opencode.ts`). This lets agent sessions run `roadie send`, `roadie upload-to-discord`, `roadie tunnel`, etc. as regular shell commands via the bash tool, however roadie was installed (npx, global install, local dev).
-
-In local dev the shim contains tsx loader flags (`--require` / `--import`) because the bot was launched with tsx against the raw `.ts` entry point. In production (npm package) there are no tsx flags and the entry script is the compiled `bin.js`. The shim reflects how the current process was started; there is no special-casing.

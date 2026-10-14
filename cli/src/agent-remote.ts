@@ -88,13 +88,13 @@ export function isAgentMode(): boolean {
 export type AgentCredentials = { token: string; port: number }
 
 /**
- * Agent mode: running inside an OpenCode tool shell that holds a per-session
+ * Agent mode: running inside an agent tool shell that holds a per-session
  * agent token and no usable database credential. Operator shells never have
- * ROADIE_OPENCODE_PROCESS set and keep opening the database directly.
+ * ROADIE_AGENT_SHELL set and keep opening the database directly.
  */
 export function resolveAgentCredentials(): AgentCredentials | Error {
-  if (!process.env.ROADIE_OPENCODE_PROCESS) {
-    return new Error('Not running inside an OpenCode tool shell')
+  if (!process.env.ROADIE_AGENT_SHELL) {
+    return new Error('Not running inside an agent tool shell')
   }
   const token = process.env[AGENT_TOKEN_ENV]?.trim()
   if (!token) {

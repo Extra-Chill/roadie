@@ -68,7 +68,6 @@ async function waitForNoPendingActionButtons({
 
 describe.skipIf(!findPi())('queue advanced: action buttons', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-action-buttons-e2e',
     dirName: 'qa-action-buttons-e2e',

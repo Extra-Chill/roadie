@@ -25,7 +25,6 @@ const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: abort and retry', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-abort-e2e',
     dirName: 'qa-abort-e2e',

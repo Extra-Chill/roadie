@@ -1,7 +1,7 @@
 // Host configuration for Roadie's system prompt.
 //
 // Roadie's built-in guidance is a list of named sections (see
-// getOpencodeSystemMessage). A host can trim, replace or extend it with a
+// getSystemMessage). A host can trim, replace or extend it with a
 // file (ROADIE_PROMPT_CONFIG or --prompt-config), YAML or JSON:
 //
 //   disable: [permissions, upgrading]        # drop built-in sections by id

@@ -42,11 +42,11 @@ function childEnv(mode: 'agent' | 'operator'): NodeJS.ProcessEnv {
   if (mode === 'agent') {
     env[AGENT_TOKEN_ENV] = token
     env[AGENT_TOKEN_SECRET_ENV] = ''
-    env.ROADIE_OPENCODE_PROCESS = '1'
+    env.ROADIE_AGENT_SHELL = '1'
     env.ROADIE_LOCK_PORT = String(chooseLockPort({ key: 'agent-operator-only-test' }))
   } else {
     delete env[AGENT_TOKEN_ENV]
-    delete env.ROADIE_OPENCODE_PROCESS
+    delete env.ROADIE_AGENT_SHELL
   }
   return env
 }

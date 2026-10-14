@@ -1,5 +1,5 @@
 // Core Discord bot module that handles message events and bot lifecycle.
-// Bridges Discord messages to OpenCode sessions, manages voice connections,
+// Bridges Discord messages to agent sessions, manages voice connections,
 // and orchestrates the main event loop for the Roadie bot.
 //
 // Shutdown resilience: during self-restart (gateway reconnect limit, SIGUSR2),
@@ -33,9 +33,7 @@ import {
   isCurrentThreadSessionBinding,
   setThreadWorkingDirectory,
 } from './database.js'
-import {
-  stopOpencodeServer,
-} from './opencode.js'
+import { stopAgentBackend } from './agent-backend/registry.js'
 import { resolveSessionWorkingDirectory, git } from './git-utils.js'
 import {
   escapeBackticksInCodeBlocks,
@@ -51,7 +49,7 @@ import {
   resolveGuildMessageMember,
 } from './discord-utils.js'
 import {
-  getOpencodeSystemMessage,
+  getSystemMessage,
   isInjectedPromptMarker,
   type ThreadStartMarker,
 } from './system-message.js'
@@ -107,12 +105,11 @@ export {
   closeDatabase,
   getChannelDirectory,
 } from './database.js'
-export { initializeOpencodeForDirectory, assertCompatibleOpencodeVersion } from './opencode.js'
 export {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
 } from './discord-utils.js'
-export { getOpencodeSystemMessage } from './system-message.js'
+export { getSystemMessage } from './system-message.js'
 export {
   ensureRoadieCategory,
   createProjectChannels,
@@ -1011,7 +1008,7 @@ export async function startDiscordBot({
             // the channel is linked to a project.
             await message.reply({
               content:
-                'This channel is not connected to an OpenCode project.\nSend your message in a project channel, or ask the host to bind this channel to a directory in the channels config (ROADIE_CHANNELS_CONFIG).',
+                'This channel is not connected to a project.\nSend your message in a project channel, or ask the host to bind this channel to a directory in the channels config (ROADIE_CHANNELS_CONFIG).',
               flags: SILENT_MESSAGE_FLAGS,
             })
             return
@@ -1581,8 +1578,8 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
       )
     }
 
-    voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
-    await stopOpencodeServer()
+    voiceLogger.log('[SHUTDOWN] Stopping agent backend')
+    await stopAgentBackend()
 
     discordLogger.log('Closing database...')
     await closeDatabase()

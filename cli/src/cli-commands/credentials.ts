@@ -8,7 +8,6 @@
 //   roadie credentials rotation set <name> <provider/model>... [--pool <id>]
 //   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
 //   roadie credentials import-opencode --opencode-data <dir> [--pool <id>] [--dry-run]
-//   roadie credentials export-opencode --opencode-data <dir> [--pool <id>]
 //   roadie credentials mcp set --person <key> --credential <name>   (OAuth token JSON on stdin)
 //   roadie credentials mcp list --person <key>
 //   roadie credentials mcp remove --person <key> --credential <name>
@@ -47,10 +46,6 @@ import {
   formatOpencodeImportReport,
   importOpencodeCredentials,
 } from '../credentials/import-opencode.js'
-import {
-  exportOpencodeCredentials,
-  formatOpencodeExportReport,
-} from '../credentials/export-opencode.js'
 import {
   listPersonMcpCredentials,
   removePersonMcpToken,
@@ -249,7 +244,7 @@ cli
 cli
   .command(
     'credentials import-opencode',
-    'Import OpenCode-managed credentials (auth.json and <provider>-oauth-accounts.json rotation files) into a credential pool (default: shared). Read-only on OpenCode files: they are never written, moved or deleted.',
+    'Import credentials from an OpenCode install (auth.json and <provider>-oauth-accounts.json rotation files) into a credential pool (default: shared), so existing logins carry over without signing in again. Read-only on OpenCode files: they are never written, moved or deleted.',
   )
   .option(
     '--opencode-data <dir>',
@@ -267,30 +262,6 @@ cli
     })
     if (result instanceof Error) exitWithError(result.message)
     for (const line of formatOpencodeImportReport(result)) {
-      cliLogger.log(line)
-    }
-    process.exit(0)
-  })
-
-cli
-  .command(
-    'credentials export-opencode',
-    'Export a credential pool\'s (default: shared) OAuth accounts back to OpenCode\'s auth.json (the first account per provider) and <provider>-oauth-accounts.json rotation files. The rollback direction of import-opencode: refresh tokens rotate on use, so a pre-migration copy of auth.json goes stale.',
-  )
-  .option(
-    '--opencode-data <dir>',
-    'OpenCode data directory to write auth.json and the rotation files into (e.g. ~/.local/share/opencode)',
-  )
-  .option('--pool <id>', 'Pool to export the accounts from (default: shared)')
-  .action(async (options) => {
-    await refuseAgentMode()
-    const result = await exportOpencodeCredentials({
-      dataDir: getDataDir(),
-      poolId: resolvePoolId(options.pool),
-      opencodeData: options.opencodeData,
-    })
-    if (result instanceof Error) exitWithError(result.message)
-    for (const line of formatOpencodeExportReport(result)) {
       cliLogger.log(line)
     }
     process.exit(0)

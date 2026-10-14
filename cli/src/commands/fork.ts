@@ -39,7 +39,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
 import { markPendingForkTitle } from '../fork-title.js'
@@ -213,7 +213,7 @@ export async function forkSessionToThread({
   if (!forkedSession) {
     await cleanup()
     const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkResult
-    return cause instanceof Error ? cause : new OpenCodeSdkError({ operation: 'session.fork', cause })
+    return cause instanceof Error ? cause : new AgentBackendError({ operation: 'session.fork', cause })
   }
   if (!createdThread) {
     await cleanup()
@@ -287,7 +287,7 @@ export async function forkSessionToThread({
         ? `Forked from ${sourceThreadLink}.\n${trimmedPrompt}`
         : `Forked from ${sourceThreadLink}. Continue the conversation here.`,
     ),
-  ]).catch((cause) => new OpenCodeSdkError({ operation: 'fork workspace binding', cause }))
+  ]).catch((cause) => new AgentBackendError({ operation: 'fork workspace binding', cause }))
   if (bindingResult instanceof Error) {
     await cleanup()
     return bindingResult
@@ -341,7 +341,7 @@ export async function forkSessionToThread({
       actorVia,
       username,
       appId,
-      mode: 'opencode',
+      mode: 'direct',
     }).then(() => {
       forkLogger.log(`[FORK TIMING] ${forkedSession.id} promptAccepted=${Date.now() - startedAt}ms`)
     }, async (error) => {

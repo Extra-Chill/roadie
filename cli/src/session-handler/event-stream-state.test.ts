@@ -1,134 +1,59 @@
 // Fixture-driven tests for pure event-stream derivation helpers.
 // Focuses on assistant message completion boundaries instead of session.idle.
+//
+// Fixtures in ./event-stream-fixtures are recorded real session streams, held
+// as Roadie agent events ({ timestamp, event } per line) — what the runtime
+// buffers whatever backend produced them. Inline events use the builders
+// below, which take Roadie field names.
 
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { describe, expect, test } from 'vitest'
-import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
+import { childSessionEventsForPart, type AgentError, type AgentMessage, type AgentPart, type AgentUsage } from '../agent-backend/events.js'
 import * as state from './event-stream-state.js'
 import { formatPromptCacheClearMessage } from './event-stream-state.js'
-import { toAgentEvents } from '../agent-backend/opencode-events.js'
-import { toAgentMessage } from '../agent-backend/opencode-events.js'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 
-// These tests describe derivation in terms of what OpenCode actually sends.
-// The derivations consume Roadie agent events, so every call goes through the
-// real OpenCode translator first: the assertions cover translator + derivation
-// end to end, exactly as the runtime runs them. One backend event can imply
-// several agent events (task tool updates also carry child-session lifecycle).
-type EventBufferEntry = {
-  event: OpenCodeEvent | { type: 'queue.question-handoff-started'; properties: { sessionID: string } }
-  timestamp: number
-  eventIndex?: number
-}
+type EventBufferEntry = state.EventBufferEntry
 
-// Events Roadie does not consume translate to nothing. A session-less delta
-// keeps indices aligned for upToIndex arguments and is never buffered.
-const INERT_EVENT: state.EventBufferEvent = {
-  type: 'part.delta', sessionId: '', messageId: '', partId: '', field: 'text', delta: '',
-}
-
-function translateEvents(event: EventBufferEntry['event']): state.EventBufferEvent[] {
-  if (event.type === 'queue.question-handoff-started') {
-    const sessionId = event.properties.sessionID
-    return typeof sessionId === 'string' ? [{ type: event.type, sessionId }] : []
-  }
-  return toAgentEvents(event as OpenCodeEvent)
-}
-
-function translateEntries(entries: EventBufferEntry[]): {
-  translated: state.EventBufferEntry[]
-  original: Map<state.EventBufferEntry, EventBufferEntry>
-} {
-  const original = new Map<state.EventBufferEntry, EventBufferEntry>()
-  const translated: state.EventBufferEntry[] = []
-  for (const entry of entries) {
-    const events = translateEvents(entry.event)
-    const mapped = events.length > 0
-      ? events
-      : [INERT_EVENT]
-    for (const event of mapped) {
-      const next = { ...entry, event }
-      original.set(next, entry)
-      translated.push(next)
-    }
-  }
-  return { translated, original }
-}
-
-function adaptArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...args }
-  if (Array.isArray(args.events)) out.events = translateEntries(args.events as EventBufferEntry[]).translated
-  if (args.event) {
-    const [first] = translateEvents(args.event as EventBufferEntry['event'])
-    out.event = first ?? INERT_EVENT
-  }
-  if (args.message) out.message = toAgentMessage(args.message as AssistantMessage)
-  return out
-}
-
-type OpenCodeArgs<A> = {
-  [K in keyof A]: K extends 'events'
-    ? EventBufferEntry[]
-    : K extends 'event'
-      ? EventBufferEntry['event']
-      : K extends 'message'
-        ? AssistantMessage
-        : A[K]
-}
-
-function adapt<A, R>(fn: (args: A) => R): (args: OpenCodeArgs<A>) => R {
-  return (args) => fn(adaptArgs(args as Record<string, unknown>) as A)
-}
-
-function getEventBufferSessionId(event: EventBufferEntry['event']): string | undefined {
-  return state.getEventBufferSessionId(translateEvents(event)[0] ?? INERT_EVENT)
-}
-
-function trimEventBuffer(args: Omit<Parameters<typeof state.trimEventBuffer>[0], 'events'> & { events: EventBufferEntry[] }): EventBufferEntry[] {
-  const { translated, original } = translateEntries(args.events)
-  return state.trimEventBuffer({ ...args, events: translated }).map((entry) => original.get(entry)!)
-}
-
-const derivePendingPermissionRequests = adapt(state.derivePendingPermissionRequests)
-const getAssistantMessageIdsForLatestUserTurn = adapt(state.getAssistantMessageIdsForLatestUserTurn)
-const getDerivedSubagentSessions = adapt(state.getDerivedSubagentSessions)
-const getCurrentTurnStartTime = adapt(state.getCurrentTurnStartTime)
-const getDerivedSubtaskIndex = adapt(state.getDerivedSubtaskIndex)
-const getDerivedSubtaskLabel = adapt(state.getDerivedSubtaskLabel)
-const getLatestAssistantMessageIdForLatestUserTurn = adapt(state.getLatestAssistantMessageIdForLatestUserTurn)
-const getLatestRunInfo = adapt(state.getLatestRunInfo)
-const getLatestTurnTokenUsage = adapt(state.getLatestTurnTokenUsage)
-const getPromptCacheClear = adapt(state.getPromptCacheClear)
-const getIdleTokenUsageDelta = adapt(state.getIdleTokenUsageDelta)
-const getTokenUsageSessionIdsForIdle = adapt(state.getTokenUsageSessionIdsForIdle)
-const isDerivedChildSession = adapt(state.isDerivedChildSession)
-const hasAssistantMessageCompletedBefore = adapt(state.hasAssistantMessageCompletedBefore)
-const doesLatestUserTurnHaveNaturalCompletion = adapt(state.doesLatestUserTurnHaveNaturalCompletion)
-const isAssistantMessageInLatestUserTurn = adapt(state.isAssistantMessageInLatestUserTurn)
-const isAssistantMessageNaturalCompletion = adapt(state.isAssistantMessageNaturalCompletion)
-const getAssistantMessageKind = adapt(state.getAssistantMessageKind)
-const getLatestUserMessage = adapt(state.getLatestUserMessage)
-const isSummaryAssistantMessage = adapt(state.isSummaryAssistantMessage)
-const isSessionBusy = adapt(state.isSessionBusy)
-const isAssistantTextReadyForQuestion = adapt(state.isAssistantTextReadyForQuestion)
-const deriveLatestUnansweredQuestion = adapt(state.deriveLatestUnansweredQuestion)
-const shouldBufferSessionEvent = adapt(state.shouldBufferSessionEvent)
-const shouldRetainSessionEvent = adapt(state.shouldRetainSessionEvent)
+const {
+  derivePendingPermissionRequests,
+  getAssistantMessageIdsForLatestUserTurn,
+  getDerivedSubagentSessions,
+  getCurrentTurnStartTime,
+  getDerivedSubtaskIndex,
+  getDerivedSubtaskLabel,
+  getLatestAssistantMessageIdForLatestUserTurn,
+  getLatestRunInfo,
+  getLatestTurnTokenUsage,
+  getPromptCacheClear,
+  getIdleTokenUsageDelta,
+  getTokenUsageSessionIdsForIdle,
+  isDerivedChildSession,
+  hasAssistantMessageCompletedBefore,
+  doesLatestUserTurnHaveNaturalCompletion,
+  isAssistantMessageInLatestUserTurn,
+  isAssistantMessageNaturalCompletion,
+  getAssistantMessageKind,
+  getLatestUserMessage,
+  isSummaryAssistantMessage,
+  isSessionBusy,
+  isAssistantTextReadyForQuestion,
+  deriveLatestUnansweredQuestion,
+  shouldBufferSessionEvent,
+  shouldRetainSessionEvent,
+  trimEventBuffer,
+  getEventBufferSessionId,
+} = state
 
 const fixturesDir = path.join(import.meta.dirname, 'event-stream-fixtures')
-type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
+type AssistantMessage = AgentMessage & { role: 'assistant' }
 
 function loadFixture(filename: string): EventBufferEntry[] {
   const content = fs.readFileSync(path.join(fixturesDir, filename), 'utf8')
   return content
     .split('\n')
     .filter(Boolean)
-    .map((line) => {
-      const parsed = JSON.parse(line) as OpencodeEventLogEntry
-      return { event: parsed.event as EventBufferEntry['event'], timestamp: parsed.timestamp }
-    })
+    .map((line) => JSON.parse(line) as EventBufferEntry)
 }
 
 function getSessionId(events: EventBufferEntry[]): string {
@@ -144,14 +69,14 @@ function getSessionId(events: EventBufferEntry[]): string {
 function getAssistantMessages(events: EventBufferEntry[], sessionId: string) {
   const messagesById = new Map<string, AssistantMessage>()
   events.forEach((entry) => {
-    if (entry.event.type !== 'message.updated') {
+    if (entry.event.type !== 'message') {
       return
     }
-    const info = entry.event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+    const message = entry.event.message
+    if (message.sessionId !== sessionId || message.role !== 'assistant') {
       return
     }
-    messagesById.set(info.id, info)
+    messagesById.set(message.id, message as AssistantMessage)
   })
   return [...messagesById.values()]
 }
@@ -174,17 +99,44 @@ function getAssistantMessageById({
   return message
 }
 
-// Test fixtures omit the top-level event `id` for brevity. The SDK event types
-// require it, so inject a synthetic id when missing. Derivation never reads the
-// top-level id (only properties.id / info.id), so the value is irrelevant.
-let syntheticEventIdCounter = 0
-function eventEntry(
-  event: Omit<EventBufferEntry['event'], 'id'> & { id?: string },
-): EventBufferEntry {
-  const withId = ('id' in event && event.id
-    ? event
-    : { ...event, id: `evt_${++syntheticEventIdCounter}` }) as EventBufferEntry['event']
-  return { event: withId, timestamp: 1 }
+function eventEntry(event: state.EventBufferEvent, timestamp = 1): EventBufferEntry {
+  return { event, timestamp }
+}
+
+function usage(partial: Partial<AgentUsage> = {}): AgentUsage {
+  return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, ...partial }
+}
+
+function userMessage(message: Omit<AgentMessage, 'role'>): EventBufferEntry {
+  return eventEntry({ type: 'message', message: { ...message, role: 'user' } })
+}
+
+function assistantMessage(message: Omit<AgentMessage, 'role'>): EventBufferEntry {
+  return eventEntry({ type: 'message', message: { ...message, role: 'assistant' } })
+}
+
+function partEvent(part: AgentPart): EventBufferEntry {
+  return eventEntry({ type: 'part', part })
+}
+
+type ToolPart = Extract<AgentPart, { kind: 'tool' }>
+
+/** A task tool part event plus the child-session events it implies, as a backend emits them. */
+function delegation(part: ToolPart, timestamp = 1): EventBufferEntry[] {
+  return [
+    eventEntry({ type: 'part', part }, timestamp),
+    ...childSessionEventsForPart(part).map((event) => eventEntry(event, timestamp)),
+  ]
+}
+
+function findTaskPart(events: EventBufferEntry[], predicate: (part: ToolPart) => boolean): ToolPart {
+  for (const entry of events) {
+    const part = entry.event.type === 'part' ? entry.event.part : undefined
+    if (part?.kind === 'tool' && part.tool === 'task' && predicate(part)) {
+      return structuredClone(part)
+    }
+  }
+  throw new Error('Expected to find task tool event in fixture')
 }
 
 function findAssistantCompletionEventIndex({
@@ -197,14 +149,14 @@ function findAssistantCompletionEventIndex({
   messageId: string
 }): number {
   const index = events.findIndex((entry) => {
-    if (entry.event.type !== 'message.updated') {
+    if (entry.event.type !== 'message') {
       return false
     }
-    const info = entry.event.properties.info
-    return info.sessionID === sessionId
-      && info.role === 'assistant'
-      && info.id === messageId
-      && typeof info.time.completed === 'number'
+    const message = entry.event.message
+    return message.sessionId === sessionId
+      && message.role === 'assistant'
+      && message.id === messageId
+      && typeof message.completedAt === 'number'
   })
   if (index === -1) {
     throw new Error(`Completed assistant message ${messageId} not found`)
@@ -260,52 +212,29 @@ describe('session-normal-completion', () => {
 
   test('completion history survives later non-completed duplicate updates', () => {
     const messageId = 'msg_duplicate_completion'
+    const model = { providerId: 'deterministic-provider', modelId: 'deterministic-v2' }
     const duplicateEvents: EventBufferEntry[] = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: messageId,
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 1, completed: 2 },
-            parentID: 'msg_user',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 1,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
+      assistantMessage({
+        id: messageId,
+        sessionId,
+        createdAt: 1,
+        completedAt: 2,
+        parentId: 'msg_user',
+        agent: 'build',
+        model,
+        cost: 0,
+        usage: usage({ input: 1, output: 1 }),
+        finish: 'stop',
       }),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: messageId,
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 1 },
-            parentID: 'msg_user',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            finish: 'stop',
-          },
-        },
+      assistantMessage({
+        id: messageId,
+        sessionId,
+        createdAt: 1,
+        parentId: 'msg_user',
+        agent: 'build',
+        model,
+        cost: 0,
+        finish: 'stop',
       }),
     ]
 
@@ -332,34 +261,13 @@ describe('derivePendingPermissionRequests', () => {
     const events = [
       eventEntry({
         type: 'permission.asked',
-        properties: {
-          id: 'perm_1',
-          sessionID: sessionId,
-          permission: 'bash',
-          patterns: ['*'],
-          always: [],
-          metadata: {},
-        },
+        request: { id: 'perm_1', sessionId, permission: 'bash', patterns: ['*'], always: [], metadata: {} },
       }),
       eventEntry({
         type: 'permission.asked',
-        properties: {
-          id: 'perm_2',
-          sessionID: sessionId,
-          permission: 'edit',
-          patterns: ['src/**'],
-          always: [],
-          metadata: {},
-        },
+        request: { id: 'perm_2', sessionId, permission: 'edit', patterns: ['src/**'], always: [], metadata: {} },
       }),
-      eventEntry({
-        type: 'permission.replied',
-        properties: {
-          requestID: 'perm_1',
-          sessionID: sessionId,
-          reply: 'once',
-        },
-      }),
+      eventEntry({ type: 'permission.replied', sessionId, requestId: 'perm_1', reply: 'once' }),
     ]
 
     expect(derivePendingPermissionRequests({ events, sessionId })).toMatchInlineSnapshot(`
@@ -431,47 +339,33 @@ describe('compaction summary during an active user turn', () => {
     completed?: number
     summary?: true
   }): EventBufferEntry {
-    return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: userMessageId,
-          time: { created, completed },
-          modelID: summary ? 'compaction-model' : 'reply-model',
-          providerID: 'test-provider',
-          mode: summary ? 'compaction' : 'build',
-          agent: summary ? 'compaction' : 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: summary ? 2 : 1,
-          tokens: {
-            input: summary ? 20 : 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          finish: completed ? 'stop' : undefined,
-          summary,
-        },
-      },
+    return assistantMessage({
+      id: messageId,
+      sessionId,
+      parentId: userMessageId,
+      createdAt: created,
+      ...(completed !== undefined && { completedAt: completed }),
+      agent: summary ? 'compaction' : 'build',
+      model: { providerId: 'test-provider', modelId: summary ? 'compaction-model' : 'reply-model' },
+      cost: summary ? 2 : 1,
+      usage: usage({ input: summary ? 20 : 10, output: 1 }),
+      ...(completed && { finish: 'stop' }),
+      ...(summary && { summary: true }),
     })
   }
 
   const activeEvents = [
     eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: userMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: { providerID: 'test-provider', modelID: 'reply-model' },
+      type: 'message',
+      message: {
+        id: userMessageId,
+        sessionId,
+        role: 'user',
+        createdAt: 1,
+        agent: 'build',
+        model: {
+          providerId: 'test-provider',
+          modelId: 'reply-model',
         },
       },
     }),
@@ -561,30 +455,27 @@ describe('compaction summary during an active user turn', () => {
     const events = [
       ...activeEvents,
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: compactionUserId,
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 6 },
-            agent: 'build',
-            model: { providerID: 'test-provider', modelID: 'reply-model' },
+        type: 'message',
+        message: {
+          id: compactionUserId,
+          sessionId,
+          role: 'user',
+          createdAt: 6,
+          agent: 'build',
+          model: {
+            providerId: 'test-provider',
+            modelId: 'reply-model',
           },
         },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_compaction',
-            sessionID: sessionId,
-            messageID: compactionUserId,
-            type: 'compaction',
-            auto: true,
-          },
+        type: 'part',
+        part: {
+          id: 'prt_compaction',
+          sessionId,
+          messageId: compactionUserId,
+          kind: 'other',
+          type: 'compaction',
         },
       }),
     ]
@@ -657,123 +548,111 @@ describe('ignored plugin notices do not steal the current Discord turn', () => {
   const replyAfterNoticeMessageId = 'msg_asst_after_notice'
   const events: EventBufferEntry[] = [
     eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: userMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: { providerID: 'test-provider', modelID: 'reply-model' },
+      type: 'message',
+      message: {
+        id: userMessageId,
+        sessionId,
+        role: 'user',
+        createdAt: 1,
+        agent: 'build',
+        model: {
+          providerId: 'test-provider',
+          modelId: 'reply-model',
         },
       },
     }),
     eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_prompt',
-          sessionID: sessionId,
-          messageID: userMessageId,
-          type: 'text',
-          text: 'see how we display in discord tool calls',
+      type: 'part',
+      part: {
+        id: 'prt_prompt',
+        sessionId,
+        messageId: userMessageId,
+        kind: 'text',
+        text: 'see how we display in discord tool calls',
+      },
+    }),
+    eventEntry({
+      type: 'part',
+      part: {
+        id: 'prt_branch',
+        sessionId,
+        messageId: userMessageId,
+        kind: 'text',
+        text: '\n[current git branch is main]\n',
+        synthetic: true,
+      },
+    }),
+    eventEntry({
+      type: 'message',
+      message: {
+        id: replyMessageId,
+        sessionId,
+        role: 'assistant',
+        createdAt: 2,
+        parentId: userMessageId,
+        agent: 'build',
+        model: {
+          providerId: 'test-provider',
+          modelId: 'reply-model',
+        },
+        cost: 1,
+        usage: {
+          input: 10,
+          output: 1,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
         },
       },
     }),
     eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_branch',
-          sessionID: sessionId,
-          messageID: userMessageId,
-          type: 'text',
-          text: '\n[current git branch is main]\n',
-          synthetic: true,
+      type: 'message',
+      message: {
+        id: noticeMessageId,
+        sessionId,
+        role: 'user',
+        createdAt: 3,
+        agent: 'build',
+        model: {
+          providerId: 'subrouter',
+          modelId: 'build',
         },
       },
     }),
     eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: replyMessageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: userMessageId,
-          time: { created: 2 },
-          modelID: 'reply-model',
-          providerID: 'test-provider',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 1,
-          tokens: {
-            input: 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-        },
+      type: 'part',
+      part: {
+        id: 'prt_notice',
+        sessionId,
+        messageId: noticeMessageId,
+        kind: 'text',
+        text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+        ignored: true,
       },
     }),
     eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: noticeMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 3 },
-          agent: 'build',
-          model: { providerID: 'subrouter', modelID: 'build' },
+      type: 'message',
+      message: {
+        id: replyAfterNoticeMessageId,
+        sessionId,
+        role: 'assistant',
+        createdAt: 4,
+        completedAt: 5,
+        parentId: noticeMessageId,
+        agent: 'build',
+        model: {
+          providerId: 'subrouter',
+          modelId: 'build',
         },
-      },
-    }),
-    eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_notice',
-          sessionID: sessionId,
-          messageID: noticeMessageId,
-          type: 'text',
-          text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-          ignored: true,
+        cost: 1,
+        usage: {
+          input: 10,
+          output: 1,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
         },
-      },
-    }),
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: replyAfterNoticeMessageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: noticeMessageId,
-          time: { created: 4, completed: 5 },
-          modelID: 'build',
-          providerID: 'subrouter',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 1,
-          tokens: {
-            input: 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          finish: 'stop',
-        },
+        finish: 'stop',
       },
     }),
   ]
@@ -799,70 +678,62 @@ describe('ignored plugin notices do not steal the current Discord turn', () => {
     const fileAssistantId = 'msg_file_asst'
     const fileEvents: EventBufferEntry[] = [
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: fileUserId,
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 4 },
-            agent: 'build',
-            model: { providerID: 'test-provider', modelID: 'reply-model' },
+        type: 'message',
+        message: {
+          id: fileUserId,
+          sessionId,
+          role: 'user',
+          createdAt: 4,
+          agent: 'build',
+          model: {
+            providerId: 'test-provider',
+            modelId: 'reply-model',
           },
         },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_file',
-            sessionID: sessionId,
-            messageID: fileUserId,
-            type: 'file',
-            mime: 'image/png',
-            filename: 'shot.png',
-            url: 'https://example.com/shot.png',
-          },
+        type: 'part',
+        part: {
+          id: 'prt_file',
+          sessionId,
+          messageId: fileUserId,
+          kind: 'file',
+          mime: 'image/png',
+          url: 'https://example.com/shot.png',
+          filename: 'shot.png',
         },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_file_notice',
-            sessionID: sessionId,
-            messageID: fileUserId,
-            type: 'text',
-            text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-            ignored: true,
-          },
+        type: 'part',
+        part: {
+          id: 'prt_file_notice',
+          sessionId,
+          messageId: fileUserId,
+          kind: 'text',
+          text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+          ignored: true,
         },
       }),
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: fileAssistantId,
-            sessionID: sessionId,
-            role: 'assistant',
-            parentID: fileUserId,
-            time: { created: 5 },
-            modelID: 'reply-model',
-            providerID: 'test-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 1,
-            tokens: {
-              input: 10,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
+        type: 'message',
+        message: {
+          id: fileAssistantId,
+          sessionId,
+          role: 'assistant',
+          createdAt: 5,
+          parentId: fileUserId,
+          agent: 'build',
+          model: {
+            providerId: 'test-provider',
+            modelId: 'reply-model',
+          },
+          cost: 1,
+          usage: {
+            input: 10,
+            output: 1,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
           },
         },
       }),
@@ -921,20 +792,16 @@ describe('synthetic-question-followup', () => {
     {
       timestamp: 1,
       event: {
-        id: 'evt_user_1',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'deterministic-provider',
-              modelID: 'deterministic-v2',
-            },
+        type: 'message',
+        message: {
+          id: 'msg_user_1',
+          sessionId,
+          role: 'user',
+          createdAt: 1,
+          agent: 'build',
+          model: {
+            providerId: 'deterministic-provider',
+            modelId: 'deterministic-v2',
           },
         },
       },
@@ -942,50 +809,44 @@ describe('synthetic-question-followup', () => {
     {
       timestamp: 2,
       event: {
-        id: 'evt_asst_1',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_user_1',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 1,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
+        type: 'message',
+        message: {
+          id: 'msg_asst_1',
+          sessionId,
+          role: 'assistant',
+          createdAt: 2,
+          completedAt: 3,
+          parentId: 'msg_user_1',
+          agent: 'build',
+          model: {
+            providerId: 'deterministic-provider',
+            modelId: 'deterministic-v2',
           },
+          cost: 0,
+          usage: {
+            input: 1,
+            output: 1,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          finish: 'stop',
         },
       },
     },
     {
       timestamp: 4,
       event: {
-        id: 'evt_user_2',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_2',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 4 },
-            agent: 'build',
-            model: {
-              providerID: 'deterministic-provider',
-              modelID: 'deterministic-v2',
-            },
+        type: 'message',
+        message: {
+          id: 'msg_user_2',
+          sessionId,
+          role: 'user',
+          createdAt: 4,
+          agent: 'build',
+          model: {
+            providerId: 'deterministic-provider',
+            modelId: 'deterministic-v2',
           },
         },
       },
@@ -1075,85 +936,30 @@ describe('real-session-task-user-interruption', () => {
   })
 
   test('getDerivedSubtaskIndex restarts at 1 for a newer assistant message', () => {
-    const firstTaskEvent = events.find((entry) => {
-      if (entry.event.type !== 'message.part.updated') {
-        return false
-      }
-      const part = entry.event.properties.part
-      if (part.sessionID !== sessionId) {
-        return false
-      }
-      if (part.type !== 'tool' || part.tool !== 'task') {
-        return false
-      }
-      if (part.state.status !== 'running' && part.state.status !== 'completed') {
-        return false
-      }
-      return part.state.metadata?.sessionId === childSessionId
+    const firstTaskPart = findTaskPart(events, (part) => {
+      return part.sessionId === sessionId
+        && (part.status === 'running' || part.status === 'completed')
+        && part.subagent?.childSessionId === childSessionId
     })
-    if (!firstTaskEvent) {
-      throw new Error('Expected to find task tool event in fixture')
-    }
 
     const secondChildSessionId = 'ses_synthetic_child_2'
     const thirdChildSessionId = 'ses_synthetic_child_3'
     const syntheticAssistantMessageId = 'msg_synthetic_new_assistant'
 
-    const secondTaskEvent = structuredClone(firstTaskEvent)
-    if (secondTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const secondTaskPart = secondTaskEvent.event.properties.part
-    if (secondTaskPart.type !== 'tool' || secondTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (secondTaskPart.state.status !== 'completed') {
-      throw new Error('Expected completed task tool part')
-    }
-    secondTaskPart.id = `${secondTaskPart.id}-synthetic-2`
-    secondTaskPart.messageID = syntheticAssistantMessageId
-    secondTaskPart.state = {
-      ...secondTaskPart.state,
-      metadata: {
-        ...(secondTaskPart.state.metadata || {}),
-        sessionId: secondChildSessionId,
-      },
-      output: `task_id: ${secondChildSessionId}`,
-    }
-
-    const thirdTaskEvent = structuredClone(secondTaskEvent)
-    if (thirdTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const thirdTaskPart = thirdTaskEvent.event.properties.part
-    if (thirdTaskPart.type !== 'tool' || thirdTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (thirdTaskPart.state.status !== 'completed') {
-      throw new Error('Expected completed task tool part')
-    }
-    thirdTaskPart.id = `${thirdTaskPart.id}-synthetic-3`
-    thirdTaskPart.messageID = syntheticAssistantMessageId
-    thirdTaskPart.state = {
-      ...thirdTaskPart.state,
-      metadata: {
-        ...(thirdTaskPart.state.metadata || {}),
-        sessionId: thirdChildSessionId,
-      },
-      output: `task_id: ${thirdChildSessionId}`,
-    }
+    const delegatedPart = (suffix: string, childId: string): ToolPart => ({
+      ...firstTaskPart,
+      id: `${firstTaskPart.id}-${suffix}`,
+      messageId: syntheticAssistantMessageId,
+      status: 'completed',
+      output: `task_id: ${childId}`,
+      subagent: { ...firstTaskPart.subagent, childSessionId: childId },
+    })
 
     const lastTimestamp = events[events.length - 1]?.timestamp || 0
     const augmentedEvents: EventBufferEntry[] = [
       ...events,
-      {
-        timestamp: lastTimestamp + 1,
-        event: secondTaskEvent.event,
-      },
-      {
-        timestamp: lastTimestamp + 2,
-        event: thirdTaskEvent.event,
-      },
+      ...delegation(delegatedPart('synthetic-2', secondChildSessionId), lastTimestamp + 1),
+      ...delegation(delegatedPart('synthetic-3', thirdChildSessionId), lastTimestamp + 2),
     ]
 
     expect(getDerivedSubtaskIndex({
@@ -1185,18 +991,14 @@ describe('real-session-task-user-interruption', () => {
     const candidateSessionId = 'ses_child_without_task_metadata'
     const childCreated = eventEntry({
       type: 'session.created',
-      properties: {
-        sessionID: candidateSessionId,
-        info: {
-          id: candidateSessionId,
-          slug: 'child',
-          projectID: 'prj_1',
-          directory: '/test',
-          parentID: sessionId,
-          title: 'child task',
-          version: '1',
-          time: { created: 1, updated: 1 },
-        },
+      session: {
+        id: candidateSessionId,
+        title: 'child task',
+        directory: '/test',
+        createdAt: 1,
+        updatedAt: 1,
+        version: '1',
+        parentId: sessionId,
       },
     })
     const beforeTaskMetadata = [...events, childCreated]
@@ -1214,21 +1016,15 @@ describe('real-session-task-user-interruption', () => {
 
   test('uses task agent and order for parallel child sessions', () => {
     const captured = loadFixture('real-session-task-three-parallel-sleeps.jsonl')
-    const taskEvents = structuredClone(captured.filter((entry) => entry.event.type === 'message.part.updated'
-      && entry.event.properties.part.type === 'tool'
-      && entry.event.properties.part.tool === 'task'
-      && entry.event.properties.part.state.status === 'running'
-      && entry.event.properties.part.state.metadata?.sessionId))
-    expect(taskEvents).toHaveLength(3)
-    const children = taskEvents.map((entry) => {
-      if (entry.event.type !== 'message.part.updated') throw new Error('Missing task event')
-      const part = entry.event.properties.part
-      if (part.type !== 'tool' || (part.state.status !== 'running' && part.state.status !== 'completed')) throw new Error('Missing task')
-      const childId = part.state.metadata?.sessionId
-      if (typeof childId !== 'string') throw new Error('Missing child session')
-      part.state.input = { subagent_type: 'general' }
-      return childId
+    const runningTaskParts = captured.flatMap((entry) => {
+      const part = entry.event.type === 'part' ? entry.event.part : undefined
+      return part?.kind === 'tool' && part.tool === 'task' && part.status === 'running' && part.subagent?.childSessionId
+        ? [{ ...part, subagent: { ...part.subagent, agent: 'general' } }]
+        : []
     })
+    expect(runningTaskParts).toHaveLength(3)
+    const taskEvents = runningTaskParts.flatMap((part) => delegation(part))
+    const children = runningTaskParts.map((part) => part.subagent.childSessionId!)
 
     expect(children.map((candidateSessionId) => getDerivedSubtaskLabel({
       events: taskEvents,
@@ -1242,68 +1038,40 @@ describe('real-session-task-user-interruption', () => {
       ]
     `)
 
-    const laterUpdate = structuredClone(taskEvents[1])
-    if (laterUpdate?.event.type !== 'message.part.updated') throw new Error('Missing task update')
-    const laterPart = laterUpdate.event.properties.part
-    if (laterPart.type !== 'tool' || (laterPart.state.status !== 'running' && laterPart.state.status !== 'completed')) throw new Error('Missing task')
-    laterPart.state.input = {}
+    // A later update that no longer names the agent keeps the earlier label.
+    const { agent: _agent, ...withoutAgent } = runningTaskParts[1]!.subagent
+    const laterUpdate = delegation({ ...runningTaskParts[1]!, subagent: withoutAgent })
     expect(getDerivedSubtaskLabel({
-      events: [...taskEvents, laterUpdate],
+      events: [...taskEvents, ...laterUpdate],
       mainSessionId: getSessionId(captured),
       candidateSessionId: children[1]!,
     })).toMatchInlineSnapshot(`"general-2"`)
   })
 
   test('getDerivedSubagentSessions returns latest tasks first with agent labels', () => {
-    const firstTaskEvent = events.find((entry) => {
-      if (entry.event.type !== 'message.part.updated') {
-        return false
-      }
-      const part = entry.event.properties.part
-      if (part.sessionID !== sessionId) {
-        return false
-      }
-      if (part.type !== 'tool' || part.tool !== 'task') {
-        return false
-      }
-      return part.state.status === 'running' || part.state.status === 'completed'
+    const firstTaskPart = findTaskPart(events, (part) => {
+      return part.sessionId === sessionId && (part.status === 'running' || part.status === 'completed')
     })
-    if (!firstTaskEvent || firstTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected to find task tool event in fixture')
-    }
 
-    const newerTaskEvent = structuredClone(firstTaskEvent)
-    if (newerTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const newerTaskPart = newerTaskEvent.event.properties.part
-    if (newerTaskPart.type !== 'tool' || newerTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (newerTaskPart.state.status !== 'running' && newerTaskPart.state.status !== 'completed') {
-      throw new Error('Expected running or completed task tool part')
-    }
-    newerTaskPart.id = `${newerTaskPart.id}-newer`
-    newerTaskPart.state = {
-      ...newerTaskPart.state,
+    const newerTaskPart: ToolPart = {
+      ...firstTaskPart,
+      id: `${firstTaskPart.id}-newer`,
       input: {
-        ...newerTaskPart.state.input,
+        ...firstTaskPart.input,
         description: 'inspect recent task output',
         subagent_type: 'explore',
       },
-      metadata: {
-        ...(newerTaskPart.state.metadata || {}),
-        sessionId: 'ses_newer_child',
+      subagent: {
+        childSessionId: 'ses_newer_child',
+        agent: 'explore',
+        description: 'inspect recent task output',
       },
     }
 
     const latestTimestamp = events[events.length - 1]?.timestamp || 0
     const augmentedEvents: EventBufferEntry[] = [
       ...events,
-      {
-        timestamp: latestTimestamp + 1,
-        event: newerTaskEvent.event,
-      },
+      ...delegation(newerTaskPart, latestTimestamp + 1),
     ]
 
     expect(getDerivedSubagentSessions({
@@ -1421,19 +1189,16 @@ describe('getLatestTurnTokenUsage', () => {
     created: number
   }) {
     return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created },
-          agent: 'build',
-          model: {
-            providerID: 'openai',
-            modelID: 'gpt-5.3-codex',
-          },
+      type: 'message',
+      message: {
+        id: messageId,
+        sessionId,
+        role: 'user',
+        createdAt: created,
+        agent: 'build',
+        model: {
+          providerId: 'openai',
+          modelId: 'gpt-5.3-codex',
         },
       },
     })
@@ -1453,36 +1218,28 @@ describe('getLatestTurnTokenUsage', () => {
     messageId: string
     parentID: string
     created: number
-    tokens: {
-      total?: number
-      input: number
-      output: number
-      reasoning: number
-      cache: { read: number; write: number }
-    }
+    tokens: Partial<AgentUsage>
     cost?: number
     modelID?: string
     providerID?: string
   }) {
     return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          time: { created, completed: created + 1 },
-          parentID,
-          modelID,
-          providerID,
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost,
-          tokens,
-          finish: 'stop',
+      type: 'message',
+      message: {
+        id: messageId,
+        sessionId,
+        role: 'assistant',
+        createdAt: created,
+        completedAt: created + 1,
+        parentId: parentID,
+        agent: 'build',
+        model: {
+          providerId: providerID,
+          modelId: modelID,
         },
+        cost,
+        usage: usage(tokens),
+        finish: 'stop',
       },
     })
   }
@@ -1500,7 +1257,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 0,
           output: 0,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
       assistantEvent({
@@ -1512,7 +1269,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 100,
           output: 20,
           reasoning: 5,
-          cache: { read: 10, write: 2 },
+          cacheRead: 10, cacheWrite: 2,
         },
         cost: 1,
       }),
@@ -1525,7 +1282,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 50,
           output: 8,
           reasoning: 1,
-          cache: { read: 4, write: 0 },
+          cacheRead: 4, cacheWrite: 0,
         },
         cost: 2,
       }),
@@ -1559,7 +1316,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 1000,
           output: 100,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -1572,7 +1329,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 7,
           output: 3,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
         modelID: 'gemini-2.5-flash',
         providerID: 'google',
@@ -1665,7 +1422,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 1217,
           output: 278,
           reasoning: 54,
-          cache: { read: 45824, write: 0 },
+          cacheRead: 45824, cacheWrite: 0,
         },
       }),
     ]
@@ -1709,7 +1466,7 @@ describe('getLatestTurnTokenUsage', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
     ]
@@ -1741,19 +1498,16 @@ describe('getPromptCacheClear', () => {
     created: number
   }) {
     return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created },
-          agent: 'build',
-          model: {
-            providerID: 'openai',
-            modelID: 'gpt-5.3-codex',
-          },
+      type: 'message',
+      message: {
+        id: messageId,
+        sessionId,
+        role: 'user',
+        createdAt: created,
+        agent: 'build',
+        model: {
+          providerId: 'openai',
+          modelId: 'gpt-5.3-codex',
         },
       },
     })
@@ -1774,37 +1528,30 @@ describe('getPromptCacheClear', () => {
     messageId: string
     parentID: string
     created: number
-    tokens: {
-      input: number
-      output: number
-      reasoning: number
-      cache: { read: number; write: number }
-    }
+    tokens: Partial<AgentUsage>
     modelID?: string
     providerID?: string
     completed?: boolean
-    error?: { name: string; data: { message: string } }
+    error?: AgentError
   }) {
     return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          time: { created, completed: completed ? created + 1 : undefined },
-          parentID,
-          modelID,
-          providerID,
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 0,
-          tokens,
-          finish: completed ? 'stop' : undefined,
-          error,
+      type: 'message',
+      message: {
+        id: messageId,
+        sessionId,
+        role: 'assistant',
+        createdAt: created,
+        completedAt: completed ? created + 1 : undefined,
+        parentId: parentID,
+        agent: 'build',
+        model: {
+          providerId: providerID,
+          modelId: modelID,
         },
+        cost: 0,
+        usage: usage(tokens),
+        error,
+        finish: completed ? 'stop' : undefined,
       },
     })
   }
@@ -1822,7 +1569,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 20000 },
+          cacheRead: 0, cacheWrite: 20000,
         },
       }),
     ]
@@ -1846,7 +1593,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -1861,7 +1608,7 @@ describe('getPromptCacheClear', () => {
           input: 20100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
     ]
@@ -1885,7 +1632,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -1898,7 +1645,7 @@ describe('getPromptCacheClear', () => {
           input: 20100,
           output: 12,
           reasoning: 0,
-          cache: { read: 0, write: 20100 },
+          cacheRead: 0, cacheWrite: 20100,
         },
       }),
     ]
@@ -1921,32 +1668,28 @@ describe('getPromptCacheClear', () => {
       userEvent({ sessionId, messageId: 'msg_user_1', created: 1_000 }),
       assistantEvent({
         sessionId, messageId: 'msg_asst_1', parentID: 'msg_user_1', created: 2_000,
-        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 577000, write: 0 } },
+        tokens: { input: 100, output: 10, reasoning: 0, cacheRead: 577000, cacheWrite: 0 },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'part_tool',
-            sessionID: sessionId,
-            messageID: 'msg_asst_1',
-            type: 'tool',
-            callID: 'call_1',
-            tool: 'bash',
-            state: {
-              status: 'completed',
-              input: {},
-              output: '',
-              time: { start: 2_000, end: 422_000 },
-            },
-          },
+        type: 'part',
+        part: {
+          id: 'part_tool',
+          sessionId,
+          messageId: 'msg_asst_1',
+          kind: 'tool',
+          callId: 'call_1',
+          tool: 'bash',
+          status: 'completed',
+          input: {},
+          output: '',
+          startedAt: 2_000,
+          endedAt: 422_000,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 422_000 }),
       assistantEvent({
         sessionId, messageId: 'msg_asst_2', parentID: 'msg_user_2', created: 422_000,
-        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 577000 } },
+        tokens: { input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 577000 },
       }),
     ]
     const clear = getPromptCacheClear({ events, sessionId, currentMessageId: 'msg_asst_2' })
@@ -1967,7 +1710,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_btw_user', created: 301000 }),
@@ -1980,7 +1723,7 @@ describe('getPromptCacheClear', () => {
           input: 20100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 20100 },
+          cacheRead: 0, cacheWrite: 20100,
         },
       }),
     ]
@@ -2012,7 +1755,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 20000 },
+          cacheRead: 0, cacheWrite: 20000,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2025,7 +1768,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 12,
           reasoning: 0,
-          cache: { read: 0, write: 20200 },
+          cacheRead: 0, cacheWrite: 20200,
         },
       }),
     ]
@@ -2055,7 +1798,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 100 },
+          cacheRead: 20000, cacheWrite: 100,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2068,7 +1811,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 20300 },
+          cacheRead: 0, cacheWrite: 20300,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_3', created: 5 }),
@@ -2081,7 +1824,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 20500 },
+          cacheRead: 0, cacheWrite: 20500,
         },
       }),
     ]
@@ -2111,7 +1854,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 40000, write: 0 },
+          cacheRead: 40000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2124,7 +1867,7 @@ describe('getPromptCacheClear', () => {
           input: 200,
           output: 10,
           reasoning: 0,
-          cache: { read: 8000, write: 32000 },
+          cacheRead: 8000, cacheWrite: 32000,
         },
       }),
     ]
@@ -2154,25 +1897,24 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 100000, write: 0 },
+          cacheRead: 100000, cacheWrite: 0,
         },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_pruned',
-            sessionID: sessionId,
-            messageID: 'msg_asst_1',
-            type: 'tool',
-            tool: 'bash',
-            state: {
-              status: 'completed',
-              output: '',
-              time: { start: 3, end: 4, compacted: 5 },
-            },
-          },
+        type: 'part',
+        part: {
+          id: 'prt_pruned',
+          sessionId,
+          messageId: 'msg_asst_1',
+          kind: 'tool',
+          callId: 'call_pruned',
+          tool: 'bash',
+          status: 'completed',
+          input: {},
+          output: '',
+          startedAt: 3,
+          endedAt: 4,
+          compactedAt: 5,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 6 }),
@@ -2185,7 +1927,7 @@ describe('getPromptCacheClear', () => {
           input: 101100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 101100 },
+          cacheRead: 0, cacheWrite: 101100,
         },
       }),
     ]
@@ -2209,7 +1951,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 100000, write: 0 },
+          cacheRead: 100000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2222,7 +1964,7 @@ describe('getPromptCacheClear', () => {
           input: 21000,
           output: 10,
           reasoning: 0,
-          cache: { read: 79000, write: 0 },
+          cacheRead: 79000, cacheWrite: 0,
         },
       }),
     ]
@@ -2246,7 +1988,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 40000, write: 0 },
+          cacheRead: 40000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2259,7 +2001,7 @@ describe('getPromptCacheClear', () => {
           input: 200,
           output: 10,
           reasoning: 0,
-          cache: { read: 8000, write: 0 },
+          cacheRead: 8000, cacheWrite: 0,
         },
       }),
     ]
@@ -2283,7 +2025,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 187000, write: 0 },
+          cacheRead: 187000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2296,7 +2038,7 @@ describe('getPromptCacheClear', () => {
           input: 182000,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
     ]
@@ -2326,7 +2068,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2339,7 +2081,7 @@ describe('getPromptCacheClear', () => {
           input: 80,
           output: 5,
           reasoning: 0,
-          cache: { read: 20100, write: 80 },
+          cacheRead: 20100, cacheWrite: 80,
         },
       }),
       assistantEvent({
@@ -2351,7 +2093,7 @@ describe('getPromptCacheClear', () => {
           input: 20180,
           output: 12,
           reasoning: 0,
-          cache: { read: 0, write: 20180 },
+          cacheRead: 0, cacheWrite: 20180,
         },
       }),
     ]
@@ -2381,7 +2123,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2394,7 +2136,7 @@ describe('getPromptCacheClear', () => {
           input: 80,
           output: 10,
           reasoning: 0,
-          cache: { read: 22000, write: 80 },
+          cacheRead: 22000, cacheWrite: 80,
         },
       }),
     ]
@@ -2418,7 +2160,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 40000, write: 0 },
+          cacheRead: 40000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2427,12 +2169,12 @@ describe('getPromptCacheClear', () => {
         messageId: 'msg_asst_2',
         parentID: 'msg_user_2',
         created: 4,
-        error: { name: 'MessageAbortedError', data: { message: 'aborted' } },
+        error: { name: 'MessageAbortedError', message: 'aborted' },
         tokens: {
           input: 0,
           output: 0,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_3', created: 5 }),
@@ -2445,7 +2187,7 @@ describe('getPromptCacheClear', () => {
           input: 40100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 40100 },
+          cacheRead: 0, cacheWrite: 40100,
         },
       }),
     ]
@@ -2475,34 +2217,33 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 40000, write: 0 },
+          cacheRead: 40000, cacheWrite: 0,
         },
       }),
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_summary',
-            sessionID: sessionId,
-            role: 'assistant',
-            parentID: 'msg_user_1',
-            time: { created: 3, completed: 4 },
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'compaction',
-            agent: 'compaction',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 20,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-            summary: true,
+        type: 'message',
+        message: {
+          id: 'msg_summary',
+          sessionId,
+          role: 'assistant',
+          createdAt: 3,
+          completedAt: 4,
+          parentId: 'msg_user_1',
+          agent: 'compaction',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
+          cost: 0,
+          usage: {
+            input: 20,
+            output: 1,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          summary: true,
+          finish: 'stop',
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 5 }),
@@ -2515,7 +2256,7 @@ describe('getPromptCacheClear', () => {
           input: 40100,
           output: 10,
           reasoning: 0,
-          cache: { read: 0, write: 40100 },
+          cacheRead: 0, cacheWrite: 40100,
         },
       }),
     ]
@@ -2539,7 +2280,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 48512, write: 0 },
+          cacheRead: 48512, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2548,12 +2289,12 @@ describe('getPromptCacheClear', () => {
         messageId: 'msg_asst_2',
         parentID: 'msg_user_2',
         created: 4,
-        error: { name: 'MessageAbortedError', data: { message: 'aborted' } },
+        error: { name: 'MessageAbortedError', message: 'aborted' },
         tokens: {
           input: 0,
           output: 0,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
     ]
@@ -2577,7 +2318,7 @@ describe('getPromptCacheClear', () => {
           input: 100,
           output: 10,
           reasoning: 0,
-          cache: { read: 20000, write: 0 },
+          cacheRead: 20000, cacheWrite: 0,
         },
       }),
       userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
@@ -2591,7 +2332,7 @@ describe('getPromptCacheClear', () => {
           input: 0,
           output: 0,
           reasoning: 0,
-          cache: { read: 0, write: 0 },
+          cacheRead: 0, cacheWrite: 0,
         },
       }),
     ]
@@ -2623,8 +2364,8 @@ describe('getPromptCacheClear', () => {
 describe('getIdleTokenUsageDelta', () => {
   function idleEvent(sessionId: string): EventBufferEntry {
     return eventEntry({
-      type: 'session.idle',
-      properties: { sessionID: sessionId },
+      type: 'idle',
+      sessionId,
     })
   }
 
@@ -2632,46 +2373,42 @@ describe('getIdleTokenUsageDelta', () => {
     const sessionId = 'ses_delta'
     const events = [
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'openai',
-              modelID: 'gpt-5.3-codex',
-            },
+        type: 'message',
+        message: {
+          id: 'msg_user_1',
+          sessionId,
+          role: 'user',
+          createdAt: 1,
+          agent: 'build',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
         },
       }),
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 10,
-              output: 5,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
+        type: 'message',
+        message: {
+          id: 'msg_asst_1',
+          sessionId,
+          role: 'assistant',
+          createdAt: 2,
+          completedAt: 3,
+          parentId: 'msg_user_1',
+          agent: 'build',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
+          cost: 0,
+          usage: {
+            input: 10,
+            output: 5,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          finish: 'stop',
         },
       }),
       idleEvent(sessionId),
@@ -2698,73 +2435,67 @@ describe('getIdleTokenUsageDelta', () => {
     const sessionId = 'ses_late_tokens'
     const events = [
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'openai',
-              modelID: 'gpt-5.3-codex',
-            },
+        type: 'message',
+        message: {
+          id: 'msg_user_1',
+          sessionId,
+          role: 'user',
+          createdAt: 1,
+          agent: 'build',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
         },
       }),
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 0,
-              output: 0,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
+        type: 'message',
+        message: {
+          id: 'msg_asst_1',
+          sessionId,
+          role: 'assistant',
+          createdAt: 2,
+          parentId: 'msg_user_1',
+          agent: 'build',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
+          },
+          cost: 0,
+          usage: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
           },
         },
       }),
       idleEvent(sessionId),
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 4 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              total: 20,
-              input: 12,
-              output: 8,
-              reasoning: 3,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
+        type: 'message',
+        message: {
+          id: 'msg_asst_1',
+          sessionId,
+          role: 'assistant',
+          createdAt: 2,
+          completedAt: 4,
+          parentId: 'msg_user_1',
+          agent: 'build',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
+          cost: 0,
+          usage: {
+            input: 12,
+            output: 8,
+            reasoning: 3,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 20,
+          },
+          finish: 'stop',
         },
       }),
       idleEvent(sessionId),
@@ -2791,30 +2522,29 @@ describe('getIdleTokenUsageDelta', () => {
     const childSessionId = 'ses_task_child'
     const events = [
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child_asst_1',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_child_user_missing',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'general',
-            agent: 'general',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0.02,
-            tokens: {
-              total: 40,
-              input: 30,
-              output: 10,
-              reasoning: 4,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
+        type: 'message',
+        message: {
+          id: 'msg_child_asst_1',
+          sessionId: childSessionId,
+          role: 'assistant',
+          createdAt: 2,
+          completedAt: 3,
+          parentId: 'msg_child_user_missing',
+          agent: 'general',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
+          cost: 0.02,
+          usage: {
+            input: 30,
+            output: 10,
+            reasoning: 4,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 40,
+          },
+          finish: 'stop',
         },
       }),
       idleEvent(childSessionId),
@@ -2839,25 +2569,16 @@ describe('getIdleTokenUsageDelta', () => {
     const events = [
       eventEntry({
         type: 'session.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: 'ses_main',
-            title: 'child task',
-            version: '1',
-            cost: 0.05,
-            tokens: {
-              input: 100,
-              output: 20,
-              reasoning: 8,
-              cache: { read: 4, write: 1 },
-            },
-            time: { created: 1, updated: 2 },
-          },
+        session: {
+          id: childSessionId,
+          title: 'child task',
+          directory: '/test',
+          createdAt: 1,
+          updatedAt: 2,
+          version: '1',
+          parentId: 'ses_main',
+          cost: 0.05,
+          usage: usage({ input: 100, output: 20, reasoning: 8, cacheRead: 4, cacheWrite: 1 }),
         },
       }),
       idleEvent(childSessionId),
@@ -2882,30 +2603,29 @@ describe('getIdleTokenUsageDelta', () => {
     const childSessionId = 'ses_task_child_dedupe'
     const events = [
       eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child_asst_1',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_child_user_missing',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'general',
-            agent: 'general',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              total: 40,
-              input: 30,
-              output: 10,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
+        type: 'message',
+        message: {
+          id: 'msg_child_asst_1',
+          sessionId: childSessionId,
+          role: 'assistant',
+          createdAt: 2,
+          completedAt: 3,
+          parentId: 'msg_child_user_missing',
+          agent: 'general',
+          model: {
+            providerId: 'openai',
+            modelId: 'gpt-5.3-codex',
           },
+          cost: 0,
+          usage: {
+            input: 30,
+            output: 10,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 40,
+          },
+          finish: 'stop',
         },
       }),
       idleEvent(childSessionId),
@@ -2928,8 +2648,8 @@ describe('getIdleTokenUsageDelta', () => {
 describe('task child session token tracking', () => {
   function idleEvent(sessionId: string): EventBufferEntry {
     return eventEntry({
-      type: 'session.idle',
-      properties: { sessionID: sessionId },
+      type: 'idle',
+      sessionId,
     })
   }
 
@@ -2939,18 +2659,14 @@ describe('task child session token tracking', () => {
     const events = [
       eventEntry({
         type: 'session.created',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: mainSessionId,
-            title: 'explore files',
-            version: '1',
-            time: { created: 1, updated: 1 },
-          },
+        session: {
+          id: childSessionId,
+          title: 'explore files',
+          directory: '/test',
+          createdAt: 1,
+          updatedAt: 1,
+          version: '1',
+          parentId: mainSessionId,
         },
       }),
     ]
@@ -2973,35 +2689,35 @@ describe('task child session token tracking', () => {
     const events = [
       eventEntry({
         type: 'session.created',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: mainSessionId,
-            title: 'child task',
-            version: '1',
-            time: { created: 1, updated: 1 },
-          },
+        session: {
+          id: childSessionId,
+          title: 'child task',
+          directory: '/test',
+          createdAt: 1,
+          updatedAt: 1,
+          version: '1',
+          parentId: mainSessionId,
         },
       }),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'running',
-              input: { subagent_type: 'general' },
-              metadata: { sessionId: childSessionId },
-            },
+        type: 'part',
+        part: {
+          id: 'prt_task',
+          sessionId: mainSessionId,
+          messageId: 'msg_asst',
+          kind: 'tool',
+          callId: 'call_task',
+          tool: 'task',
+          status: 'running',
+          input: {
+            subagent_type: 'general',
+          },
+          metadata: {
+            sessionId: childSessionId,
+          },
+          subagent: {
+            childSessionId,
+            agent: 'general',
           },
         },
       }),
@@ -3027,68 +2743,65 @@ describe('question waits for preceding text-end', () => {
   const questionId = 'que_1'
 
   const textStart = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_text',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'text',
-        text: '',
-        time: { start: 1 },
-      },
+    type: 'part',
+    part: {
+      id: 'prt_text',
+      sessionId,
+      messageId,
+      kind: 'text',
+      text: '',
+      startedAt: 1,
     },
   })
   const questionAsked = eventEntry({
     type: 'question.asked',
-    properties: {
+    request: {
       id: questionId,
-      sessionID: sessionId,
-      questions: [{
-        question: 'What next?',
-        header: 'Next step',
-        options: [
-          { label: 'Commit', description: 'Commit these files' },
-        ],
-      }],
-      tool: {
-        messageID: messageId,
-        callID: 'call_question',
+      sessionId,
+      questions: [
+        {
+          question: 'What next?',
+          header: 'Next step',
+          options: [
+            {
+              label: 'Commit',
+              description: 'Commit these files',
+            },
+          ],
+        },
+      ],
+      toolCall: {
+        messageId,
+        callId: 'call_question',
       },
     },
   })
   const textEnd = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_text',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'text',
-        text: 'Done callout',
-        time: { start: 1, end: 2 },
-      },
+    type: 'part',
+    part: {
+      id: 'prt_text',
+      sessionId,
+      messageId,
+      kind: 'text',
+      text: 'Done callout',
+      startedAt: 1,
+      endedAt: 2,
     },
   })
   const questionError = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_question',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'tool',
-        tool: 'question',
-        callID: 'call_question',
-        state: {
-          status: 'error',
-          error: 'Aborted',
-          time: { start: 2, end: 3 },
-        },
-      },
+    type: 'part',
+    part: {
+      id: 'prt_question',
+      sessionId,
+      messageId,
+      kind: 'tool',
+      callId: 'call_question',
+      tool: 'question',
+      status: 'error',
+      input: {},
+      error: 'Aborted',
+      startedAt: 2,
+      endedAt: 3,
     },
   })
 
@@ -3140,61 +2853,53 @@ describe('question waits for preceding text-end', () => {
 
   test('question from an older user turn is not unanswered', () => {
     const firstUser = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: 'msg_user_first',
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: {
-            providerID: 'deterministic-provider',
-            modelID: 'deterministic-v2',
-          },
+      type: 'message',
+      message: {
+        id: 'msg_user_first',
+        sessionId,
+        role: 'user',
+        createdAt: 1,
+        agent: 'build',
+        model: {
+          providerId: 'deterministic-provider',
+          modelId: 'deterministic-v2',
         },
       },
     })
     const questionAssistant = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          time: { created: 2 },
-          parentID: 'msg_user_first',
-          modelID: 'deterministic-v2',
-          providerID: 'deterministic-provider',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 0,
-          tokens: {
-            input: 1,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
+      type: 'message',
+      message: {
+        id: messageId,
+        sessionId,
+        role: 'assistant',
+        createdAt: 2,
+        parentId: 'msg_user_first',
+        agent: 'build',
+        model: {
+          providerId: 'deterministic-provider',
+          modelId: 'deterministic-v2',
+        },
+        cost: 0,
+        usage: {
+          input: 1,
+          output: 1,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
         },
       },
     })
     const nextUser = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: 'msg_user_commit',
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 3 },
-          agent: 'build',
-          model: {
-            providerID: 'deterministic-provider',
-            modelID: 'deterministic-v2',
-          },
+      type: 'message',
+      message: {
+        id: 'msg_user_commit',
+        sessionId,
+        role: 'user',
+        createdAt: 3,
+        agent: 'build',
+        model: {
+          providerId: 'deterministic-provider',
+          modelId: 'deterministic-v2',
         },
       },
     })
@@ -3221,23 +2926,23 @@ describe('shouldBufferSessionEvent', () => {
 
   test('keeps the thread session and drops unrelated /btw fork events', () => {
     const parentBusy = eventEntry({
-      type: 'session.status',
-      properties: {
-        sessionID: mainSessionId,
-        status: { type: 'busy' },
+      type: 'status',
+      sessionId: mainSessionId,
+      status: {
+        state: 'busy',
       },
     }).event
     const btwClone = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: btwSessionId,
-        info: {
-          id: 'msg_cloned',
-          sessionID: btwSessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: { providerID: 'test', modelID: 'test' },
+      type: 'message',
+      message: {
+        id: 'msg_cloned',
+        sessionId: btwSessionId,
+        role: 'user',
+        createdAt: 1,
+        agent: 'build',
+        model: {
+          providerId: 'test',
+          modelId: 'test',
         },
       },
     }).event
@@ -3257,16 +2962,14 @@ describe('shouldBufferSessionEvent', () => {
   test('keeps the first child session.created so later child events can be recognized', () => {
     const childCreated = eventEntry({
       type: 'session.created',
-      properties: {
-        info: {
-          id: childSessionId,
-          parentID: mainSessionId,
-          title: 'task',
-          version: '1',
-          projectID: 'proj',
-          directory: '/test',
-          time: { created: 1, updated: 1 },
-        },
+      session: {
+        id: childSessionId,
+        title: 'task',
+        directory: '/test',
+        createdAt: 1,
+        updatedAt: 1,
+        version: '1',
+        parentId: mainSessionId,
       },
     }).event
 
@@ -3279,26 +2982,21 @@ describe('shouldBufferSessionEvent', () => {
 
   test('keeps known child session events and global toasts', () => {
     const childBusy = eventEntry({
-      type: 'session.status',
-      properties: {
-        sessionID: childSessionId,
-        status: { type: 'busy' },
+      type: 'status',
+      sessionId: childSessionId,
+      status: {
+        state: 'busy',
       },
     }).event
     const toast = eventEntry({
-      type: 'tui.toast.show',
-      properties: {
-        title: 'ok',
-        message: 'done',
-        variant: 'info',
-      },
+      type: 'notice',
+      title: 'ok',
+      message: 'done',
+      level: 'info',
     }).event
     const diff = eventEntry({
       type: 'session.diff',
-      properties: {
-        sessionID: mainSessionId,
-        diff: [],
-      },
+      sessionId: mainSessionId,
     }).event
 
     expect(shouldBufferSessionEvent({
@@ -3318,55 +3016,19 @@ describe('shouldBufferSessionEvent', () => {
     })).toBe(false)
   })
 
-  test('drops session.next text deltas, which Roadie does not consume', () => {
-    const btwDelta = eventEntry({
-      type: 'session.next.text.delta',
-      properties: {
-        timestamp: 1,
-        sessionID: btwSessionId,
-        assistantMessageID: 'msg_btw',
-        textID: 'txt_btw',
-        delta: 'x',
-      },
-    }).event
-    const parentDelta = eventEntry({
-      type: 'session.next.text.delta',
-      properties: {
-        timestamp: 1,
-        sessionID: mainSessionId,
-        assistantMessageID: 'msg_parent',
-        textID: 'txt_parent',
-        delta: 'x',
-      },
-    }).event
-
-    expect(shouldBufferSessionEvent({
-      event: btwDelta,
-      mainSessionId,
-      isKnownChildSession: () => false,
-    })).toBe(false)
-    expect(shouldBufferSessionEvent({
-      event: parentDelta,
-      mainSessionId,
-      isKnownChildSession: () => false,
-    })).toBe(false)
-  })
-
   test('drops scoped events until the thread session id is bound', () => {
     const parentBusy = eventEntry({
-      type: 'session.status',
-      properties: {
-        sessionID: mainSessionId,
-        status: { type: 'busy' },
+      type: 'status',
+      sessionId: mainSessionId,
+      status: {
+        state: 'busy',
       },
     }).event
     const toast = eventEntry({
-      type: 'tui.toast.show',
-      properties: {
-        title: 'ok',
-        message: 'done',
-        variant: 'info',
-      },
+      type: 'notice',
+      title: 'ok',
+      message: 'done',
+      level: 'info',
     }).event
 
     expect(shouldBufferSessionEvent({
@@ -3386,30 +3048,34 @@ describe('event buffer trim and busy derivation during task children', () => {
 
   function parentBusy(): EventBufferEntry {
     return eventEntry({
-      type: 'session.status',
-      properties: {
-        sessionID: mainSessionId,
-        status: { type: 'busy' },
+      type: 'status',
+      sessionId: mainSessionId,
+      status: {
+        state: 'busy',
       },
     })
   }
 
   function runningTaskPart(): EventBufferEntry {
     return eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: 'prt_task',
-          sessionID: mainSessionId,
-          messageID: 'msg_asst',
-          type: 'tool',
-          callID: 'call_task',
-          tool: 'task',
-          state: {
-            status: 'running',
-            input: { subagent_type: 'mythos-review' },
-            metadata: { sessionId: childSessionId },
-          },
+      type: 'part',
+      part: {
+        id: 'prt_task',
+        sessionId: mainSessionId,
+        messageId: 'msg_asst',
+        kind: 'tool',
+        callId: 'call_task',
+        tool: 'task',
+        status: 'running',
+        input: {
+          subagent_type: 'mythos-review',
+        },
+        metadata: {
+          sessionId: childSessionId,
+        },
+        subagent: {
+          childSessionId,
+          agent: 'mythos-review',
         },
       },
     })
@@ -3417,15 +3083,13 @@ describe('event buffer trim and busy derivation during task children', () => {
 
   function childPart(index: number): EventBufferEntry {
     return eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: `prt_child_${index}`,
-          sessionID: childSessionId,
-          messageID: 'msg_child',
-          type: 'text',
-          text: 'child output',
-        },
+      type: 'part',
+      part: {
+        id: `prt_child_${index}`,
+        sessionId: childSessionId,
+        messageId: 'msg_child',
+        kind: 'text',
+        text: 'child output',
       },
     })
   }
@@ -3443,16 +3107,20 @@ describe('event buffer trim and busy derivation during task children', () => {
     expect(isSessionBusy({
       events: [
         eventEntry({
-          type: 'message.part.updated',
-          properties: {
-            part: {
-              id: 'prt_task_pending',
-              sessionID: mainSessionId,
-              messageID: 'msg_asst',
-              type: 'tool',
-              callID: 'call_task_pending',
-              tool: 'task',
-              state: { status: 'pending', input: { subagent_type: 'explore' }, raw: '' },
+          type: 'part',
+          part: {
+            id: 'prt_task_pending',
+            sessionId: mainSessionId,
+            messageId: 'msg_asst',
+            kind: 'tool',
+            callId: 'call_task_pending',
+            tool: 'task',
+            status: 'pending',
+            input: {
+              subagent_type: 'explore',
+            },
+            subagent: {
+              agent: 'explore',
             },
           },
         }),
@@ -3465,21 +3133,25 @@ describe('event buffer trim and busy derivation during task children', () => {
     const events = [
       runningTaskPart(),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'completed',
-              output: 'done',
-              input: { subagent_type: 'mythos-review' },
-              metadata: { sessionId: childSessionId },
-            },
+        type: 'part',
+        part: {
+          id: 'prt_task',
+          sessionId: mainSessionId,
+          messageId: 'msg_asst',
+          kind: 'tool',
+          callId: 'call_task',
+          tool: 'task',
+          status: 'completed',
+          input: {
+            subagent_type: 'mythos-review',
+          },
+          output: 'done',
+          metadata: {
+            sessionId: childSessionId,
+          },
+          subagent: {
+            childSessionId,
+            agent: 'mythos-review',
           },
         },
       }),
@@ -3491,27 +3163,31 @@ describe('event buffer trim and busy derivation during task children', () => {
     const events = [
       runningTaskPart(),
       eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'error',
-              error: 'Task cancelled',
-              input: { subagent_type: 'mythos-review' },
-              metadata: { sessionId: childSessionId },
-            },
+        type: 'part',
+        part: {
+          id: 'prt_task',
+          sessionId: mainSessionId,
+          messageId: 'msg_asst',
+          kind: 'tool',
+          callId: 'call_task',
+          tool: 'task',
+          status: 'error',
+          input: {
+            subagent_type: 'mythos-review',
+          },
+          error: 'Task cancelled',
+          metadata: {
+            sessionId: childSessionId,
+          },
+          subagent: {
+            childSessionId,
+            agent: 'mythos-review',
           },
         },
       }),
       eventEntry({
-        type: 'session.idle',
-        properties: { sessionID: mainSessionId },
+        type: 'idle',
+        sessionId: mainSessionId,
       }),
     ]
     expect(isSessionBusy({ events, sessionId: mainSessionId })).toBe(false)
@@ -3548,17 +3224,18 @@ describe('event buffer trim and busy derivation during task children', () => {
     })).toBe(false)
     expect(shouldRetainSessionEvent({
       event: eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 1 },
-            agent: 'mythos-review',
-            model: { providerID: 'test', modelID: 'test' },
+        type: 'message',
+        message: {
+          id: 'msg_child',
+          sessionId: childSessionId,
+          role: 'assistant',
+          createdAt: 1,
+          agent: 'mythos-review',
+          model: {
+            providerId: 'test',
+            modelId: 'test',
           },
+          cost: 0,
         },
       }).event,
       mainSessionId,

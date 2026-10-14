@@ -7,7 +7,7 @@
 // Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
 // which uses a single global.event() SSE stream for all directories.
 
-import { OpenCodeSdkError } from '../errors.js'
+import { AgentBackendError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { AgentBackendEvent } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
@@ -191,7 +191,7 @@ async function runEventLoop(): Promise<void> {
         dispatchEvent(event)
       }
     })()
-      .catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
+      .catch((e) => new AgentBackendError({ operation: 'event.iterate', cause: e }))
 
     connected = false
 

@@ -3,14 +3,9 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import url from 'node:url'
 import { beforeAll, afterAll, afterEach, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
-import {
-  buildDeterministicOpencodeConfig,
-  type DeterministicMatcher,
-} from 'opencode-deterministic-provider'
 import { chooseAvailableLockPort, initTestGitRepo, removeTestDataDir } from './test-utils.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
@@ -27,38 +22,10 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { PiBackendProvider } from './agent-backend/pi/backend.js'
-import type { FakeMatcher, startFakeModelServer } from './agent-backend/pi/fake-model-server.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import { startPiTestBackend, type PiTestBackend } from './pi-test-backend.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
-import { startPiE2eBackend, type PiE2eBackend } from './pi-e2e-backend.js'
-
-/**
- * OpenCode bootstraps a directory's instance (config, plugins, skills, file
- * watcher) lazily on the first session.create for that directory, which takes
- * several seconds on a fresh server. Pay that once in beforeAll by creating
- * and deleting a throwaway session, so the first test's turn is not measured
- * against its per-test timeout.
- */
-export async function warmOpencodeInstance({
-  getClient,
-  directory,
-}: {
-  getClient: () => OpencodeClient
-  directory: string
-}): Promise<void> {
-  const created = await getClient().session.create({ directory, title: 'warmup' })
-  const sessionId = created.data?.id
-  if (!sessionId) {
-    throw new Error('OpenCode warmup could not create a session')
-  }
-  await getClient().session.delete({ sessionID: sessionId, directory }).catch(() => {})
-}
-import {
-  cleanupTestSessions,
-} from './test-utils.js'
-
 
 export function createRunDirectories({ name }: { name: string }) {
   const root = path.resolve(process.cwd(), 'tmp', name)
@@ -115,8 +82,8 @@ export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-export function createDeterministicMatchers(): DeterministicMatcher[] {
-  const raceFinalReplyMatcher: DeterministicMatcher = {
+export function createFakeMatchers(): FakeMatcher[] {
+  const raceFinalReplyMatcher: FakeMatcher = {
     id: 'race-final-reply',
     priority: 110,
     when: {
@@ -138,7 +105,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const questionSelectDrainMatcher: DeterministicMatcher = {
+  const questionSelectDrainMatcher: FakeMatcher = {
     id: 'question-select-drain-first',
     priority: 109,
     when: {
@@ -164,7 +131,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const slowAbortMatcher: DeterministicMatcher = {
+  const slowAbortMatcher: FakeMatcher = {
     id: 'slow-abort-marker',
     priority: 100,
     when: {
@@ -186,7 +153,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const slowBusyMatcher: DeterministicMatcher = {
+  const slowBusyMatcher: FakeMatcher = {
     id: 'slow-busy-reply',
     priority: 100,
     when: {
@@ -208,7 +175,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const toolFollowupMatcher: DeterministicMatcher = {
+  const toolFollowupMatcher: FakeMatcher = {
     id: 'tool-followup',
     priority: 50,
     when: { lastMessageRole: 'tool' },
@@ -227,7 +194,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const userReplyMatcher: DeterministicMatcher = {
+  const userReplyMatcher: FakeMatcher = {
     id: 'user-reply',
     priority: 10,
     when: {
@@ -254,7 +221,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // assert that typing resumes while the agent is still working. The text is
   // posted when its block ends, which a chat-completions stream marks by
   // starting the next block, so the busy part is a slow tool call.
-  const typingRepulseMatcher: DeterministicMatcher = {
+  const typingRepulseMatcher: FakeMatcher = {
     id: 'typing-repulse-marker',
     priority: 101,
     when: {
@@ -283,7 +250,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const pluginTimeoutSleepMatcher: DeterministicMatcher = {
+  const pluginTimeoutSleepMatcher: FakeMatcher = {
     id: 'plugin-timeout-sleep',
     priority: 100,
     when: {
@@ -311,7 +278,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const permissionTypingMatcher: DeterministicMatcher = {
+  const permissionTypingMatcher: FakeMatcher = {
     id: 'permission-typing-marker',
     priority: 105,
     when: {
@@ -332,11 +299,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           type: 'tool-call',
           toolCallId: 'permission-typing-read-call',
           toolName: 'read',
-          // `path` for Pi's read tool, `filePath` for OpenCode's.
-          input: JSON.stringify({
-            path: '/Users/morse/.zprofile',
-            filePath: '/Users/morse/.zprofile',
-          }),
+          input: JSON.stringify({ path: '/Users/morse/.zprofile' }),
         },
         {
           type: 'finish',
@@ -347,7 +310,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const permissionTypingFollowupMatcher: DeterministicMatcher = {
+  const permissionTypingFollowupMatcher: FakeMatcher = {
     id: 'permission-typing-followup',
     priority: 104,
     when: {
@@ -374,7 +337,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const externalDirectoryProbeMatcher: DeterministicMatcher = {
+  const externalDirectoryProbeMatcher: FakeMatcher = {
     id: 'external-directory-probe-marker',
     priority: 106,
     when: {
@@ -395,7 +358,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           type: 'tool-call',
           toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ path: EXTERNAL_DIRECTORY_PROBE_FILE, filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
+          input: JSON.stringify({ path: EXTERNAL_DIRECTORY_PROBE_FILE }),
         },
         {
           type: 'finish',
@@ -410,7 +373,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // the probe marker so it cannot cascade into unrelated turns. This is what
   // makes a project-level `deny` visible in Discord: without it an allowed read
   // and a denied read produce identical thread output.
-  const externalDirectoryProbeDeniedMatcher: DeterministicMatcher = {
+  const externalDirectoryProbeDeniedMatcher: FakeMatcher = {
     id: 'external-directory-probe-denied',
     priority: 107,
     when: {
@@ -436,7 +399,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const externalDirectoryProbeFollowupMatcher: DeterministicMatcher = {
+  const externalDirectoryProbeFollowupMatcher: FakeMatcher = {
     id: 'external-directory-probe-followup',
     priority: 105,
     when: {
@@ -464,7 +427,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
 
 
-  const actionButtonClickFollowupMatcher: DeterministicMatcher = {
+  const actionButtonClickFollowupMatcher: FakeMatcher = {
     id: 'action-button-click-followup',
     priority: 109,
     when: {
@@ -491,7 +454,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   // Question tool: model asks a question, user answers via text, model follows up
-  const questionToolMatcher: DeterministicMatcher = {
+  const questionToolMatcher: FakeMatcher = {
     id: 'question-text-answer-marker',
     priority: 106,
     when: {
@@ -528,7 +491,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
   // Question tool for select+queue drain test: model asks a question via dropdown,
   // user answers via select menu while a message is queued.
-  const questionSelectQueueMatcher: DeterministicMatcher = {
+  const questionSelectQueueMatcher: FakeMatcher = {
     id: 'question-select-queue-marker',
     priority: 107,
     when: {
@@ -564,8 +527,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   // Text then question, with text-end delayed after the tool call.
-  // Reproduces OpenCode emitting question.asked before the text part's time.end.
-  const questionAfterTextMatcher: DeterministicMatcher = {
+  const questionAfterTextMatcher: FakeMatcher = {
     id: 'question-after-text-marker',
     priority: 108,
     when: {
@@ -613,7 +575,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // Reproduces the bug where the first message gets no footer even though
   // it completed normally (isAssistantMessageNaturalCompletion rejects
   // finish="tool-calls").
-  const toolCallFooterMatcher: DeterministicMatcher = {
+  const toolCallFooterMatcher: FakeMatcher = {
     id: 'tool-call-footer',
     priority: 108,
     when: {
@@ -644,7 +606,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const toolCallFooterFollowupMatcher: DeterministicMatcher = {
+  const toolCallFooterFollowupMatcher: FakeMatcher = {
     id: 'tool-call-footer-followup',
     priority: 109,
     when: {
@@ -672,7 +634,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // messages — one with finish="tool-calls" + completed, one with finish="stop".
   // With the naive fix (allowing tool-calls as natural completion), we'd get
   // 2 footers. Only the final text response should get a footer.
-  const multiToolMatcher: DeterministicMatcher = {
+  const multiToolMatcher: FakeMatcher = {
     id: 'multi-tool',
     priority: 115,
     when: {
@@ -721,7 +683,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const multiToolFollowupMatcher: DeterministicMatcher = {
+  const multiToolFollowupMatcher: FakeMatcher = {
     id: 'multi-tool-followup',
     priority: 114,
     when: {
@@ -757,7 +719,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // Matcher priority ensures each step fires in order: the highest-priority
   // matcher that matches wins, and each step's rawPromptIncludes check only
   // matches once the previous step's output text is in the conversation.
-  const multiStepChainInitMatcher: DeterministicMatcher = {
+  const multiStepChainInitMatcher: FakeMatcher = {
     id: 'multi-step-chain-init',
     priority: 119,
     when: {
@@ -788,7 +750,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const multiStepChainStep2Matcher: DeterministicMatcher = {
+  const multiStepChainStep2Matcher: FakeMatcher = {
     id: 'multi-step-chain-step2',
     priority: 120,
     when: {
@@ -819,7 +781,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const multiStepChainStep3Matcher: DeterministicMatcher = {
+  const multiStepChainStep3Matcher: FakeMatcher = {
     id: 'multi-step-chain-step3',
     priority: 121,
     when: {
@@ -850,7 +812,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const multiStepChainFinalMatcher: DeterministicMatcher = {
+  const multiStepChainFinalMatcher: FakeMatcher = {
     id: 'multi-step-chain-final',
     priority: 122,
     when: {
@@ -876,7 +838,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   // dropdown. The test aborts the run before answering (session goes idle),
   // then answers via select. Because the original run is dead, roadie resumes
   // the session by sending the answers back as a new prompt.
-  const questionAbortResumeMatcher: DeterministicMatcher = {
+  const questionAbortResumeMatcher: FakeMatcher = {
     id: 'question-abort-resume-marker',
     priority: 107,
     when: {
@@ -913,7 +875,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
   // Follow-up after an aborted question is answered: roadie resumes with a
   // prompt containing the answers summary.
-  const questionAbortResumeFollowupMatcher: DeterministicMatcher = {
+  const questionAbortResumeFollowupMatcher: FakeMatcher = {
     id: 'question-abort-resume-followup',
     priority: 107,
     when: {
@@ -972,24 +934,27 @@ export type QueueAdvancedContext = {
   discord: DigitalDiscord
   botClient: Client
   testStartTime: number
-  /** Set with `backend: 'pi'`: the Pi backend and the scripted model server it calls. */
-  pi?: PiBackendProvider
-  modelServer?: Awaited<ReturnType<typeof startFakeModelServer>>
+  /** The suite's Pi backend and the scripted model server it calls. */
+  backend: PiTestBackend
+  /** The installed Pi provider (replaced by `restartPi`). */
+  readonly pi: PiBackendProvider
+  readonly modelServer: PiTestBackend['modelServer']
   /**
-   * Set with `backend: 'pi'`: a Roadie restart as the backend sees it. Kills
-   * every Pi process and installs a fresh provider over the same session
-   * directory, so sessions resume from their files.
+   * A Roadie restart as the backend sees it. Kills every Pi process and
+   * installs a fresh provider over the same session directory, so sessions
+   * resume from their files.
    */
-  restartPi?: () => Promise<void>
+  restartPi: () => Promise<void>
 }
 
 export const TEST_USER_ID = '200000000000000991'
 
 /**
  * Sets up a full queue-advanced e2e environment: digital-twin Discord server,
- * opencode deterministic provider, database, bot client.
+ * real Pi processes against the scripted model server, database, bot client.
  * Each caller should use a unique channelId and dirName to avoid collisions
- * when vitest runs files in parallel.
+ * when vitest runs files in parallel. Callers skip the suite when findPi()
+ * finds no binary.
  */
 export function setupQueueAdvancedSuite({
   channelId,
@@ -997,34 +962,24 @@ export function setupQueueAdvancedSuite({
   dirName,
   username,
   restrictExternalDirectories = false,
-  projectPermission,
   extraMatchers = [],
   isolateShellsUser,
-  backend = 'opencode',
 }: {
-  // 'pi' runs the suite on real Pi processes against the scripted fake model
-  // server (same matchers), with Pi as the default backend over a stub
-  // OpenCode. Callers skip the suite when findPi() finds no binary.
-  backend?: 'opencode' | 'pi'
   channelId: string
   channelName: string
   dirName: string
   username: string
   // Matchers only this suite needs. Keeps narrow markers out of the shared list
   // so they cannot cascade into unrelated e2e files.
-  extraMatchers?: (DeterministicMatcher | FakeMatcher)[]
+  extraMatchers?: FakeMatcher[]
   // Opt into the --restrict-directories behaviour so reads outside the project
   // still raise an external_directory permission prompt. Off by default, which
   // matches the shipped default of allowing every directory.
   restrictExternalDirectories?: boolean
-  // Extra `permission` block written into the project's opencode.json, as a
-  // real user would. Used to prove user rules still beat roadie's generated
-  // config instead of being overridden by session-level rules.
-  projectPermission?: Record<string, unknown>
-  // Opt into the --isolate-shells behaviour: the OpenCode server is started
-  // with SHELL pointing at the generated setpriv wrapper, so bash tool calls
-  // run as the given unprivileged user. Requires root (or CAP_SETUID/CAP_SETGID),
-  // setpriv, and an existing user; callers gate on that before enabling it.
+  // Opt into the --isolate-shells behaviour: Pi's bash tool runs through the
+  // generated setpriv wrapper as the given unprivileged user. Requires root
+  // (or CAP_SETUID/CAP_SETGID), setpriv, and an existing user; callers gate on
+  // that before enabling it.
   isolateShellsUser?: string
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
@@ -1032,12 +987,19 @@ export function setupQueueAdvancedSuite({
     discord: undefined as unknown as DigitalDiscord,
     botClient: undefined as unknown as Client,
     testStartTime: Date.now(),
+    backend: undefined as unknown as PiTestBackend,
+    get pi(): PiBackendProvider {
+      return ctx.backend.pi
+    },
+    get modelServer(): PiTestBackend['modelServer'] {
+      return ctx.backend.modelServer
+    },
+    restartPi: () => ctx.backend.restart(),
   }
 
   let previousDefaultVerbosity: VerbosityLevel | null = null
   let previousRestrictExternalDirectories: boolean | null = null
   let previousIsolateShellsUser: string | null = null
-  let piBackend: PiE2eBackend | undefined
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -1046,12 +1008,13 @@ export function setupQueueAdvancedSuite({
     // allowlist must not suppress the synthetic Discord channels.
     setChannelsConfigPath(null)
     const lockPort = await chooseAvailableLockPort({ key: `${channelId}:${ctx.directories.root}` })
-    const sessionEventsDir = path.join(ctx.directories.root, 'opencode-session-events')
+
+    const sessionEventsDir = path.join(ctx.directories.root, 'session-events')
     fs.mkdirSync(sessionEventsDir, { recursive: true })
 
     process.env['ROADIE_LOCK_PORT'] = String(lockPort)
-    process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS'] = '1'
-    process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
+    process.env['ROADIE_LOG_SESSION_EVENTS'] = '1'
+    process.env['ROADIE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
@@ -1078,48 +1041,17 @@ export function setupQueueAdvancedSuite({
 
     await ctx.discord.start()
 
-    const matchers = [...createDeterministicMatchers(), ...extraMatchers]
-    if (backend === 'pi') {
-      piBackend = await startPiE2eBackend({
-        root: ctx.directories.root,
-        dataDir: ctx.directories.dataDir,
-        projectDirectory: ctx.directories.projectDirectory,
-        matchers: matchers as FakeMatcher[],
-      })
-      ctx.pi = piBackend.pi
-      ctx.modelServer = piBackend.modelServer
-      ctx.restartPi = async () => {
-        await piBackend!.restart()
-        ctx.pi = piBackend!.pi
-      }
-    }
-
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(process.cwd(), '..', 'opencode-deterministic-provider', 'src', 'index.ts'),
-      )
-      .toString()
-
-    const opencodeConfig = buildDeterministicOpencodeConfig({
-      providerName: 'deterministic-provider',
-      providerNpm,
-      model: 'deterministic-v2',
-      smallModel: 'deterministic-v3',
-      settings: {
-        strict: false,
-        matchers: matchers as DeterministicMatcher[],
-      },
+    // Shell isolation needs a Roadie-owned agent dir to write Pi's shellPath.
+    const agentDir = path.join(ctx.directories.root, 'pi-agent')
+    ctx.backend = await startPiTestBackend({
+      root: ctx.directories.root,
+      dataDir: ctx.directories.dataDir,
+      projectDirectory: ctx.directories.projectDirectory,
+      matchers: [...createFakeMatchers(), ...extraMatchers],
+      ...(isolateShellsUser && {
+        options: { isolateShells: { username: isolateShellsUser, dataDir: ctx.directories.dataDir, agentDir } },
+      }),
     })
-    if (backend === 'opencode') fs.writeFileSync(
-      path.join(ctx.directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(
-        projectPermission
-          ? { ...opencodeConfig, permission: projectPermission }
-          : opencodeConfig,
-        null,
-        2,
-      ),
-    )
 
     const dbPath = path.join(ctx.directories.dataDir, 'discord-sessions.db')
     const hranaResult = await startHranaServer({ dbPath })
@@ -1146,42 +1078,19 @@ export function setupQueueAdvancedSuite({
       discordClient: ctx.botClient,
     })
 
-    if (backend === 'pi') {
-      // The bot entrypoint (cli-runner) starts IPC polling, not startDiscordBot.
-      // Pi's Roadie tools (action buttons, sleep, file upload) go through it.
-      await startIpcPolling({ discordClient: ctx.botClient })
-      return
-    }
-    const warmup = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (warmup instanceof Error) {
-      throw warmup
-    }
-    await warmOpencodeInstance({
-      getClient: warmup,
-      directory: ctx.directories.projectDirectory,
-    })
+    // The bot entrypoint (cli-runner) starts IPC polling, not startDiscordBot.
+    // Pi's Roadie tools (action buttons, sleep, file upload) go through it.
+    await startIpcPolling({ discordClient: ctx.botClient })
   }, 30_000)
 
   afterAll(async () => {
-    // Pi sessions live in the suite's data dir and go with it; OpenCode's
-    // shared server keeps them, so those are deleted here.
-    if (ctx.directories && backend === 'opencode') {
-      await cleanupTestSessions({
-        projectDirectory: ctx.directories.projectDirectory,
-        testStartTime: ctx.testStartTime,
-      })
-    }
-
     if (ctx.botClient) {
       void ctx.botClient.destroy()
     }
 
-    if (backend === 'pi') {
-      stopIpcPolling()
-      await piBackend?.stop()
-    } else {
-      await stopOpencodeServer()
-    }
+    stopIpcPolling()
+    // Pi sessions live in the suite's data dir and go with it.
+    await ctx.backend?.dispose()
     await Promise.all([
       closeDatabase().catch(() => {}),
       stopHranaServer().catch(() => {}),
@@ -1190,8 +1099,8 @@ export function setupQueueAdvancedSuite({
 
     delete process.env['ROADIE_LOCK_PORT']
     delete process.env['ROADIE_DB_URL']
-    delete process.env['ROADIE_LOG_OPENCODE_SESSION_EVENTS']
-    delete process.env['ROADIE_OPENCODE_SESSION_EVENTS_DIR']
+    delete process.env['ROADIE_LOG_SESSION_EVENTS']
+    delete process.env['ROADIE_SESSION_EVENTS_DIR']
     setChannelsConfigPath(undefined)
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
@@ -1205,8 +1114,6 @@ export function setupQueueAdvancedSuite({
     if (ctx.directories) {
       removeTestDataDir(ctx.directories.dataDir)
     }
-    // A Pi suite must never start or use OpenCode.
-    expect(piBackend?.opencodeTouched ?? []).toEqual([])
   }, 5_000)
 
   afterEach(async () => {
@@ -1214,11 +1121,6 @@ export function setupQueueAdvancedSuite({
     for (const threadId of threadIds) {
       disposeRuntime(threadId)
     }
-    if (backend === 'pi') return
-    await cleanupTestSessions({
-      projectDirectory: ctx.directories.projectDirectory,
-      testStartTime: ctx.testStartTime,
-    })
   }, 5_000)
 
   return ctx

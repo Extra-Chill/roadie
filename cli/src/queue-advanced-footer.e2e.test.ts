@@ -22,7 +22,6 @@ const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: footer emission', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-footer-e2e',
     dirName: 'qa-footer-e2e',

@@ -1,6 +1,6 @@
-// Hard cutover from a retired agent backend (#177). A thread whose session
-// lives on a backend Roadie no longer runs starts a new session on its next
-// prompt. The new session gets one context-only message built here: the
+// Retired sessions (#177). A thread bound to a session the agent backend does
+// not own (e.g. one from the removed OpenCode backend) starts a new session on
+// its next prompt. The new session gets one context-only message built here: the
 // thread's recent chat history, bounded, plus a note that the earlier
 // session's tool state did not carry over.
 
@@ -15,20 +15,18 @@ const MESSAGE_MAX_CHARS = 2_000
 
 export function buildRetiredSessionSeed({
   retiredSessionId,
-  retiredBackend,
   history,
   excludeMessageId,
   maxChars = RETIRED_SEED_MAX_CHARS,
 }: {
   retiredSessionId: string
-  retiredBackend: string
   history: ChatHistoryMessage[] | Error | undefined
   /** The message that triggered this turn; it arrives as the prompt itself. */
   excludeMessageId?: string
   maxChars?: number
 }): string {
   const header = [
-    `[Session moved] This thread was running on ${retiredBackend} (session ${retiredSessionId}), which Roadie no longer uses. This is a new session.`,
+    `[Session moved] This thread was running session ${retiredSessionId}, which the current agent backend cannot resume. This is a new session.`,
     `Files, tool results, todos and the earlier session's full transcript did not carry over; only the chat messages below did. Re-read files before relying on them.`,
   ]
   const lines: string[] = []

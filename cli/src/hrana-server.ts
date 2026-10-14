@@ -4,8 +4,8 @@
 //
 // Protocol logic is implemented in the `libsqlproxy` package.
 // This file handles: server lifecycle, single-instance enforcement,
-// auth, and roadie-specific endpoints (/health, /roadie/opencode-port,
-// /roadie/send, /roadie/agent/*).
+// auth, and roadie-specific endpoints (/health, /roadie/send,
+// /roadie/agent/*).
 //
 // Hrana v2 protocol spec ("Hrana over HTTP"):
 //   https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
@@ -37,11 +37,6 @@ import {
 import { ensureAgentTokenSecret } from './agent-token.js'
 import { handleAgentRequest } from './agent-remote.js'
 import { store } from './store.js'
-// Circular import: opencode.ts → hrana-server.ts → opencode.ts.
-// Safe because both sides only use lazy runtime function calls, never
-// top-level initialization values. The cycle could be broken by moving
-// the port into store.ts, but the current approach is simpler.
-import { getOpencodeServerPort } from './opencode.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
@@ -115,16 +110,6 @@ function ensureServiceAuthTokenInStore(): string {
 }
 
 /**
- * Get the Hrana HTTP URL for injecting into plugin child processes.
- * Returns null if the server hasn't been started yet.
- * Only used for ROADIE_DB_URL env var in opencode.ts — the bot process
-  * itself always uses direct file: access via Drizzle/libSQL.
- */
-export function getHranaUrl(): string | null {
-  return hranaUrl
-}
-
-/**
  * Start the in-process Hrana v2 server on the fixed lock port.
  * Handles single-instance enforcement: if the port is occupied, kills the
  * existing process first.
@@ -139,8 +124,7 @@ export async function startHranaServer({
   const port = getLockPort()
   const bindHost = '127.0.0.1'
   const serviceAuthToken = ensureServiceAuthTokenInStore()
-  // Shared with the OpenCode server process so its shell.env hook can mint
-  // per-session agent tokens for tool shells (see agent-token.ts).
+  // Mints per-session agent tokens for tool shells (see agent-token.ts).
   const agentTokenSecret = ensureAgentTokenSecret()
   if (!process.env.ROADIE_DB_AUTH_TOKEN_FILE) process.env.ROADIE_DB_AUTH_TOKEN = serviceAuthToken
 
@@ -167,20 +151,6 @@ export async function startHranaServer({
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid(), discordReady: discordGatewayReady, chatPlatform, chatReady }))
-      return
-    }
-    // OpenCode server port discovery — no auth required (localhost only).
-    // CLI subcommands query this to reuse the bot's running OpenCode server
-    // instead of spawning a redundant second server process.
-    if (pathname === '/roadie/opencode-port') {
-      const port = getOpencodeServerPort()
-      if (port === null) {
-        res.writeHead(404, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'no_opencode_server' }))
-        return
-      }
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ port }))
       return
     }
     // Scoped agent endpoints for tool shells: typed JSON operations the bot

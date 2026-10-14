@@ -75,7 +75,6 @@ import {
   handleVerbosityCommand,
   handleVerbositySelectMenu,
 } from './commands/verbosity.js'
-import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
@@ -424,13 +423,6 @@ export function registerInteractionHandler({
 
             case 'verbosity':
               await handleVerbosityCommand({ command: interaction, appId })
-              return
-
-            case 'restart-opencode-server':
-              await handleRestartOpencodeServerCommand({
-                command: interaction,
-                appId,
-              })
               return
 
             case 'run-shell-command':

@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { initDatabase, getChannelDirectory, initializeOpencodeForDirectory } from '../discord-bot.js'
+import { initDatabase, getChannelDirectory } from '../discord-bot.js'
 import { applicationDirectory, resolveSendChannel, validateApplicationDirectory } from '../channel-policy.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
@@ -128,7 +128,7 @@ cli
   )
   .option(
     '--parent-session <sessionId>',
-    'Parent OpenCode session ID for newly created child sessions',
+    'Parent session ID for newly created child sessions',
   )
   .option(
     '--wait',

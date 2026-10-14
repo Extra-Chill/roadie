@@ -47,6 +47,7 @@ function fakeProvider() {
   let started: ((info: { description: string }) => void) | undefined
   const provider: AgentBackendProvider = {
     id: 'fake',
+    owns: () => true,
     getBackend: () => null,
     initializeForDirectory: async () => new Error('unused'),
     subscribeEvents: ({ signal }) => {

@@ -100,7 +100,7 @@ Shared history remains shared; intake is not a private-context boundary.
 ## Verification
 
 The same scenario runs through both native adapters, their digital twins and
-the real OpenCode deterministic backend: unmentioned root ignored, mention
+a real Pi backend against a scripted model server: unmentioned root ignored, mention
 starts, starter replies naturally, eligible non-participant messages are
 context-only, outside-audience messages are excluded, another actor joins,
 speaker context switches, admission/session identity survive restart, and the

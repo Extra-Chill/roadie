@@ -1,4 +1,4 @@
-// OpenCode session prompt helpers.
+// agent session prompt helpers.
 // Creates the session-stable system message injected into every OpenCode
 // session, plus per-turn synthetic context for Discord/user/working-directory metadata.
 // Keep per-message data out of the system prompt so prompt caching can reuse
@@ -90,7 +90,7 @@ export async function readSessionSystemPrompt({
   return content
 }
 
-/** Remove the side-channel system prompt file for a deleted OpenCode session. */
+/** Remove the side-channel system prompt file for a deleted agent session. */
 export async function deleteSessionSystemPrompt({
   sessionId,
   dataDir,
@@ -161,13 +161,11 @@ export async function copySessionSystemPrompt({
   return true
 }
 
-// Backend-neutral: the same prompt serves OpenCode and Pi sessions; the
-// per-turn reminder names the backend. Prompts pinned before #222 use the
-// legacy OpenCode wording and stay recognized.
+// Backend-neutral: the per-turn reminder names the backend.
 const SESSION_ID_LINE_PREFIX = 'Your current session ID is: '
 const PARENT_SESSION_ID_LINE_PREFIX = 'Your parent session ID is: '
-const SESSION_ID_LINE_PREFIXES = [SESSION_ID_LINE_PREFIX, 'Your current OpenCode session ID is: ']
-const PARENT_SESSION_ID_LINE_PREFIXES = [PARENT_SESSION_ID_LINE_PREFIX, 'Your parent OpenCode session ID is: ']
+const SESSION_ID_LINE_PREFIXES = [SESSION_ID_LINE_PREFIX]
+const PARENT_SESSION_ID_LINE_PREFIXES = [PARENT_SESSION_ID_LINE_PREFIX]
 
 function sessionIdFromLine(line: string, prefixes: string[]): string | undefined {
   const prefix = prefixes.find((candidate) => line.startsWith(candidate))
@@ -372,7 +370,7 @@ function formatWorkingDirectoryReminder(dir: WorkingDirectoryInfo): string {
   return `<system-reminder>\n${lines.join('\n')}\n</system-reminder>`
 }
 
-export function getOpencodePromptContext({
+export function getPromptContext({
   platform = 'discord',
   sessionId,
   backend,
@@ -476,7 +474,7 @@ ${escapePromptText(repliedMessage.text)}
 
 type SystemPromptSection = PromptSection
 
-export function getOpencodeSystemMessage({
+export function getSystemMessage({
   platform = 'discord',
   sessionId,
   channelId,
@@ -500,7 +498,7 @@ export function getOpencodeSystemMessage({
   username?: string
   userId?: string
   /**
-   * Parent OpenCode session from explicit `roadie send --parent-session` only.
+   * Parent agent session from explicit `roadie send --parent-session` only.
    * Must stay undefined for /fork, task/subagent children, and
    * normal threads so the shared system prompt cache is not busted by a
    * per-parent block. Never auto-derive this from OpenCode parent session IDs.

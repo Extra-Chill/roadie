@@ -588,7 +588,7 @@ export class NativeSlackBot {
       parentSessionId: options.parentSession,
       sessionStartSource: source,
       images: attachments.images,
-      mode: 'opencode',
+      mode: 'direct',
     })
     const sessionId = runtime.state?.sessionId
     if (options.wait && sessionId) {
@@ -897,7 +897,7 @@ export class NativeSlackBot {
         expectedSessionId: event.sessionId,
         preprocess: async () => ({
           prompt,
-          mode: 'opencode',
+          mode: 'direct',
           skip: !(await consumeSessionSleepWake({ deliveryId: event.deliveryId })),
         }),
       })
@@ -1039,7 +1039,7 @@ export class NativeSlackBot {
       sourceMessageId: message.ts,
       sourceThreadId: runtime.threadId,
       sourceChannelId: message.channel,
-      mode: 'opencode',
+      mode: 'direct',
       noReply: intake.outcome === 'context',
       contextOnly: intake.outcome === 'context',
     })
@@ -1350,10 +1350,9 @@ export async function runNativeSlack(): Promise<void | Error> {
   const { getDataDir, readRoadieSecret } = await import('./config.js')
   const { startHranaServer, stopHranaServer } = await import('./hrana-server.js')
   const { initDatabase, closeDatabase } = await import('./database.js')
-  const { cleanupOrphanedAgentServer, markServiceProcess, recordInterruptedSessions } =
-    await import('./service-lifecycle.js')
+  const { recordInterruptedSessions } = await import('./service-lifecycle.js')
   const { snapshotBusyRuntimes } = await import('./session-handler/thread-session-runtime.js')
-  const { stopOpencodeServer } = await import('./opencode.js')
+  const { stopAgentBackend } = await import('./agent-backend/registry.js')
   const path = await import('node:path')
   const token = readRoadieSecret('ROADIE_SLACK_BOT_TOKEN')
   const signingSecret = readRoadieSecret('ROADIE_SLACK_SIGNING_SECRET')
@@ -1379,10 +1378,8 @@ export async function runNativeSlack(): Promise<void | Error> {
       operation: 'startup',
       detail: 'ROADIE_SLACK_PORT must be between 1 and 65535',
     })
-  markServiceProcess()
   const hrana = await startHranaServer({ dbPath: path.join(getDataDir(), 'discord-sessions.db') })
   if (hrana instanceof Error) return hrana
-  await cleanupOrphanedAgentServer()
   await initDatabase()
   const bot = new NativeSlackBot({
     token,
@@ -1404,7 +1401,7 @@ export async function runNativeSlack(): Promise<void | Error> {
     const deadline = setTimeout(() => process.exit(1), 15_000)
     void (async () => {
       await bot.stop()
-      await stopOpencodeServer()
+      await stopAgentBackend()
       await closeDatabase()
       await stopHranaServer()
       clearTimeout(deadline)

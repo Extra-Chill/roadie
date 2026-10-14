@@ -4,25 +4,21 @@ import { afterEach, describe, test, expect } from 'vitest'
 import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart as formatAgentPart, formatTaskToolTitle as formatAgentTaskToolTitle, formatTodoList as formatAgentTodoList, getStarterMessageText, getTextAttachments, leadInTextPartBefore, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
-import type { Part } from '@opencode-ai/sdk/v2'
-import { toAgentPart } from './agent-backend/opencode-events.js'
+import type { AgentPart as Part } from './agent-backend/events.js'
 
-// Parts are written the way OpenCode sends them and rendered through the real
-// translator, so these cover translator + formatting together.
-const formatPart = (part: Part, prefix?: string) => formatAgentPart(toAgentPart(part), prefix)
-const formatTodoList = (part: Part) => formatAgentTodoList(toAgentPart(part))
+const formatPart = formatAgentPart
+const formatTodoList = formatAgentTodoList
 const formatTaskToolTitle = (part: Part) => {
-  const agentPart = toAgentPart(part)
-  return agentPart.kind === 'tool' ? formatAgentTaskToolTitle(agentPart) : ''
+  return part.kind === 'tool' ? formatAgentTaskToolTitle(part) : ''
 }
 
 describe('formatPart', () => {
   test('callout text is returned without a diamond prefix', () => {
     const part: Part = {
       id: 'test',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'text',
       text: `<callout accent="#ef4444">\n## Top priority\n- **Stripe dispute** deadline\n</callout>`,
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`
@@ -36,9 +32,9 @@ describe('formatPart', () => {
   test('regular text has no diamond prefix', () => {
     const part: Part = {
       id: 'test',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'text',
       text: 'hello world',
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`"hello world"`)
@@ -47,9 +43,9 @@ describe('formatPart', () => {
   test('heading text has no diamond prefix', () => {
     const part: Part = {
       id: 'test',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'text',
       text: '## Summary\nDone.',
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`
@@ -61,9 +57,9 @@ describe('formatPart', () => {
   test('synthetic user context stays hidden', () => {
     const part: Part = {
       id: 'prt_branch',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_user',
+      sessionId: 'ses_test',
+      messageId: 'msg_user',
+      kind: 'text',
       text: '\n[current git branch is main]\n',
       synthetic: true,
     }
@@ -73,9 +69,9 @@ describe('formatPart', () => {
   test('ignored plugin notices stay visible', () => {
     const part: Part = {
       id: 'prt_notice',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_notice',
+      sessionId: 'ses_test',
+      messageId: 'msg_notice',
+      kind: 'text',
       text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
       ignored: true,
     }
@@ -544,11 +540,6 @@ describe('sessionPartContent', () => {
 })
 
 describe('collectSessionChunks', () => {
-  // Fixtures are OpenCode parts; translate them as the backend seam does.
-  const translated = ({ messages, ...rest }: { messages: Array<{ info: { role: string; id?: string }; parts: Part[] }>; limit?: number }) => ({
-    ...rest,
-    messages: messages.map((message) => ({ ...message, parts: message.parts.map(toAgentPart) })),
-  })
   function textPart({
     id,
     text,
@@ -562,16 +553,16 @@ describe('collectSessionChunks', () => {
   }): Part {
     return {
       id,
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID,
+      sessionId: 'ses_test',
+      messageId: messageID,
+      kind: 'text',
       text,
       synthetic,
     }
   }
 
   test('skips synthetic text parts', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -586,12 +577,12 @@ describe('collectSessionChunks', () => {
           ],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toEqual(['> working'])
   })
 
   test('quotes short text throughout a turn', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -602,7 +593,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
       [
         "> I will read it",
@@ -612,7 +603,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('quotes short text before a tool', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -620,17 +611,23 @@ describe('collectSessionChunks', () => {
             textPart({ id: 't1', text: 'I will read it', messageID: 'msg_1' }),
             {
               id: 'tool1',
-              type: 'tool',
-              sessionID: 'ses_test',
-              messageID: 'msg_1',
+              sessionId: 'ses_test',
+              messageId: 'msg_1',
+              kind: 'tool',
+              callId: 'call_tool1',
               tool: 'read',
-              callID: 'call_tool1',
-              state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
+              status: 'completed',
+              input: {},
+              title: '',
+              output: '',
+              metadata: {},
+              startedAt: 0,
+              endedAt: 0,
             },
           ],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toEqual([
       '> I will read it',
       '-# ┣ read',
@@ -638,7 +635,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('does not quote earlier text longer than two lines', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -655,7 +652,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toEqual([
       'line one\nline two\nline three',
       '> done',
@@ -663,7 +660,7 @@ describe('collectSessionChunks', () => {
   })
 
   test('does not quote text flushed before a question tool', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -671,23 +668,29 @@ describe('collectSessionChunks', () => {
             textPart({ id: 't1', text: 'Pick one', messageID: 'msg_1' }),
             {
               id: 'q1',
-              type: 'tool',
-              sessionID: 'ses_test',
-              messageID: 'msg_1',
+              sessionId: 'ses_test',
+              messageId: 'msg_1',
+              kind: 'tool',
+              callId: 'call_q1',
               tool: 'question',
-              callID: 'call_q1',
-              state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
+              status: 'completed',
+              input: {},
+              title: '',
+              output: '',
+              metadata: {},
+              startedAt: 0,
+              endedAt: 0,
             },
             textPart({ id: 't2', text: 'thanks', messageID: 'msg_1' }),
           ],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toEqual(['Pick one', '> thanks'])
   })
 
   test('quotes within each user turn separately', () => {
-    const { chunks } = collectSessionChunks(translated({
+    const { chunks } = collectSessionChunks({
       messages: [
         {
           info: { role: 'assistant', id: 'msg_1' },
@@ -706,7 +709,7 @@ describe('collectSessionChunks', () => {
           parts: [textPart({ id: 't3', text: 'second turn done', messageID: 'msg_3' })],
         },
       ],
-    }))
+    })
     expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
       [
         "> first turn",
@@ -764,36 +767,25 @@ describe('formatTaskToolTitle', () => {
     input?: { description?: string; subagent_type?: string }
     title?: string
     sessionId?: string
-  }): Extract<Part, { type: 'tool' }> {
-    const base = {
-      id: 'prt_task',
-      type: 'tool' as const,
-      tool: 'task',
-      callID: 'call_task',
-      sessionID: 'ses_parent',
-      messageID: 'msg_assistant',
-    }
-    if (status === 'completed') {
-      return {
-        ...base,
-        state: {
-          status,
-          input,
-          output: '',
-          title,
-          metadata: sessionId ? { sessionId } : {},
-          time: { start: 1, end: 2 },
-        },
-      }
-    }
+  }): Extract<Part, { kind: 'tool' }> {
     return {
-      ...base,
-      state: {
-        status,
-        input,
-        title,
-        metadata: sessionId ? { sessionId } : {},
-        time: { start: 1 },
+      id: 'prt_task',
+      sessionId: 'ses_parent',
+      messageId: 'msg_assistant',
+      kind: 'tool',
+      tool: 'task',
+      callId: 'call_task',
+      status,
+      input,
+      title,
+      ...(status === 'completed' && { output: '' }),
+      metadata: sessionId ? { sessionId } : {},
+      startedAt: 1,
+      ...(status === 'completed' && { endedAt: 2 }),
+      subagent: {
+        ...(sessionId && { childSessionId: sessionId }),
+        ...(input.subagent_type && { agent: input.subagent_type }),
+        ...(input.description && { description: input.description }),
       },
     }
   }
@@ -950,25 +942,33 @@ describe('formatTodoList', () => {
   test('formats active todo with number, dot, and two spaces', () => {
     const part: Part = {
       id: 'test',
-      type: 'tool',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'tool',
+      callId: 'call_test',
       tool: 'todowrite',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
-      callID: 'call_test',
-      state: {
-        status: 'completed',
-        input: {
-          todos: [
-            { content: 'First task', status: 'completed' },
-            { content: 'Second task', status: 'in_progress' },
-            { content: 'Third task', status: 'pending' },
-          ],
-        },
-        output: '',
-        title: 'todowrite',
-        metadata: {},
-        time: { start: 0, end: 0 },
+      status: 'completed',
+      input: {
+        todos: [
+          {
+            content: 'First task',
+            status: 'completed',
+          },
+          {
+            content: 'Second task',
+            status: 'in_progress',
+          },
+          {
+            content: 'Third task',
+            status: 'pending',
+          },
+        ],
       },
+      title: 'todowrite',
+      output: '',
+      metadata: {},
+      startedAt: 0,
+      endedAt: 0,
     }
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"2.  **second task**"`)
@@ -982,19 +982,20 @@ describe('formatTodoList', () => {
 
     const part: Part = {
       id: 'test',
-      type: 'tool',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'tool',
+      callId: 'call_test',
       tool: 'todowrite',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
-      callID: 'call_test',
-      state: {
-        status: 'completed',
-        input: { todos },
-        output: '',
-        title: 'todowrite',
-        metadata: {},
-        time: { start: 0, end: 0 },
+      status: 'completed',
+      input: {
+        todos,
       },
+      title: 'todowrite',
+      output: '',
+      metadata: {},
+      startedAt: 0,
+      endedAt: 0,
     }
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"12.  **task 12**"`)
@@ -1003,21 +1004,25 @@ describe('formatTodoList', () => {
   test('lowercases first letter of content', () => {
     const part: Part = {
       id: 'test',
-      type: 'tool',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'tool',
+      callId: 'call_test',
       tool: 'todowrite',
-      sessionID: 'ses_test',
-      messageID: 'msg_test',
-      callID: 'call_test',
-      state: {
-        status: 'completed',
-        input: {
-          todos: [{ content: 'Fix the bug', status: 'in_progress' }],
-        },
-        output: '',
-        title: 'todowrite',
-        metadata: {},
-        time: { start: 0, end: 0 },
+      status: 'completed',
+      input: {
+        todos: [
+          {
+            content: 'Fix the bug',
+            status: 'in_progress',
+          },
+        ],
       },
+      title: 'todowrite',
+      output: '',
+      metadata: {},
+      startedAt: 0,
+      endedAt: 0,
     }
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"1.  **fix the bug**"`)

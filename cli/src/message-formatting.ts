@@ -728,11 +728,14 @@ export function getToolSummaryText(part: AgentPart): string {
   if (part.kind !== 'tool') return ''
 
   if (part.tool === 'edit') {
-    const filePath = (part.input?.filePath as string) || ''
-    const newString = (part.input?.newString as string) || ''
-    const oldString = (part.input?.oldString as string) || ''
-    const added = newString.split('\n').length
-    const removed = oldString.split('\n').length
+    // Pi's edit: one path, a list of exact-text replacements.
+    const filePath = (part.input?.path as string) || ''
+    const edits = Array.isArray(part.input?.edits)
+      ? (part.input.edits as Array<{ oldText?: unknown; newText?: unknown }>)
+      : []
+    const lines = (text: unknown) => (typeof text === 'string' ? text.split('\n').length : 0)
+    const added = edits.reduce((sum, edit) => sum + lines(edit.newText), 0)
+    const removed = edits.reduce((sum, edit) => sum + lines(edit.oldText), 0)
     const fileName = filePath.split('/').pop() || ''
     return fileName
       ? `*${escapeInlineMarkdown(fileName)}* (+${added}-${removed})`
@@ -757,7 +760,7 @@ export function getToolSummaryText(part: AgentPart): string {
   }
 
   if (part.tool === 'write') {
-    const filePath = (part.input?.filePath as string) || ''
+    const filePath = (part.input?.path as string) || ''
     const content = (part.input?.content as string) || ''
     const lines = content.split('\n').length
     const fileName = filePath.split('/').pop() || ''
@@ -775,18 +778,18 @@ export function getToolSummaryText(part: AgentPart): string {
   }
 
   if (part.tool === 'read') {
-    const filePath = (part.input?.filePath as string) || ''
+    const filePath = (part.input?.path as string) || ''
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${escapeInlineMarkdown(fileName)}*` : ''
   }
 
-  if (part.tool === 'list') {
+  if (part.tool === 'ls') {
     const path = (part.input?.path as string) || ''
     const dirName = path.split('/').pop() || path
     return dirName ? `*${escapeInlineMarkdown(dirName)}*` : ''
   }
 
-  if (part.tool === 'glob') {
+  if (part.tool === 'find') {
     const pattern = (part.input?.pattern as string) || ''
     return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }

@@ -38,7 +38,6 @@ describe.skipIf(!findPi())('oversized scheduled prompts', () => {
   const originalBaseUrl = store.getState().discordBaseUrl
   afterEach(() => store.setState({ discordBaseUrl: originalBaseUrl }))
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: CHANNEL_ID,
     channelName: 'scheduled-prompt-e2e',
     dirName: 'scheduled-prompt-e2e',

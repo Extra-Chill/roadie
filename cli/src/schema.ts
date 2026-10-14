@@ -30,7 +30,7 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   // 'kimaki' is a legacy value kept for existing rows.
   source: sqliteCore.text('source', { enum: ['roadie', 'kimaki', 'external_poll'] }).notNull().default('roadie'),
   last_synced_name: sqliteCore.text('last_synced_name'),
-  // Parent OpenCode session that spawned this thread via roadie send --parent-session.
+  // Parent agent session that spawned this thread via roadie send --parent-session.
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
   parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
@@ -199,7 +199,7 @@ export const session_models = sqliteCore.sqliteTable('session_models', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
-// Current-turn actor per OpenCode session. Written by the bot before every
+// Current-turn actor per agent session. Written by the bot before every
 // prompt/command dispatch and read by the OpenCode plugin's shell.env hook so
 // tool processes see who is speaking right now. One row per session, replaced
 // each turn; a turn without a human speaker clears the actor columns so a

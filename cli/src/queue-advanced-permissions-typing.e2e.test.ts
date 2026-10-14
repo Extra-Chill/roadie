@@ -42,7 +42,6 @@ async function waitForPendingPermission({
 
 describe.skipIf(!findPi())('queue advanced: typing around permissions', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-permission-typing-e2e',
     dirName: 'qa-permission-typing-e2e',

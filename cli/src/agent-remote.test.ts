@@ -58,7 +58,7 @@ const savedEnv = Object.fromEntries(
   [
     AGENT_TOKEN_ENV,
     AGENT_TOKEN_SECRET_ENV,
-    'ROADIE_OPENCODE_PROCESS',
+    'ROADIE_AGENT_SHELL',
     'ROADIE_LOCK_PORT',
     'ROADIE_DB_URL',
     'ROADIE_DB_AUTH_TOKEN',
@@ -179,7 +179,6 @@ describe('operator requests', () => {
     }
     for (const argv of [
       ['credentials', 'client', 'add', 'x'],
-      ['credentials', 'export-opencode'],
       ['credentials', 'login', 'anthropic'],
       ['credentials', 'add-key'],
       ['credentials', 'mcp', 'set'],
@@ -284,7 +283,6 @@ describe('operator requests', () => {
       { argv: [] },
       { argv: ['session', 'list'] },
       { argv: ['credentials', 'client', 'add', 'x'] },
-      { argv: ['credentials', 'export-opencode'] },
       { argv: ['credentials', 'login', 'anthropic'] },
       { argv: ['upgrade'], sessionId: 'other' },
     ]) {
@@ -889,7 +887,7 @@ describe('client behavior', () => {
 
   test('resolveAgentCredentials is unaffected by the running test bot (operator mode)', async () => {
     const { resolveAgentCredentials } = await import('./agent-remote.js')
-    // No ROADIE_OPENCODE_PROCESS in the vitest process: operator mode.
+    // No ROADIE_AGENT_SHELL in the vitest process: operator mode.
     expect(resolveAgentCredentials()).toBeInstanceOf(Error)
   })
 })

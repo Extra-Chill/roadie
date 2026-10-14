@@ -26,7 +26,6 @@ function reply(id: string, text: string): FakePart[] {
 describe.skipIf(!findPi())('restart continuation', () => {
   let resumedThreadId = ''
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-restart-continuation-e2e',
     dirName: 'qa-restart-continuation-e2e',

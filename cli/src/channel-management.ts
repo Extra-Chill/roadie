@@ -253,7 +253,7 @@ export function getDefaultRoadieDirectory(): string {
 }
 
 const DEFAULT_CHANNEL_TOPIC =
-  'General channel for misc tasks with Roadie. Not connected to a specific OpenCode project or repository.'
+  'General channel for misc tasks with Roadie. Not connected to a specific project or repository.'
 
 /**
  * Create (or find) the default "roadie" channel for general-purpose tasks.

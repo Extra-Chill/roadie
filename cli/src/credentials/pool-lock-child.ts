@@ -1,5 +1,5 @@
 // Test helper: one process refreshing a pool account (see pool-lock.test.ts).
-import { ensureFreshOAuthAccount } from './provider.js'
+import { ensureFreshOAuthAccount } from './pool-routing.js'
 import { readPoolAccounts } from './store.js'
 
 const [dataDir, poolId, tokenUrl] = process.argv.slice(2) as [string, string, string]

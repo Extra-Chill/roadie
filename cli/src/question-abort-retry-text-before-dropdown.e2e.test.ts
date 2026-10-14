@@ -90,7 +90,6 @@ function createAbortRetryQuestionMatchers(): FakeMatcher[] {
 
 describe.skipIf(!findPi())('question text before dropdown after abort retry', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort-retry-order',
     dirName: 'qa-question-abort-retry-order',

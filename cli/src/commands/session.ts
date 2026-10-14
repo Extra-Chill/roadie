@@ -1,4 +1,4 @@
-// /new-session command - Start a new OpenCode session.
+// /new-session command - Start a new agent session.
 // Works in both text channels and threads. When used in a thread, the new
 // session inherits the same working directory (thread working directory) so the
 // user stays in the same folder context.
@@ -53,7 +53,7 @@ export async function createNewSessionThread({
   if (getBackend instanceof Error) return getBackend
 
   const [starter, ...remaining] = splitMarkdownForDiscord({
-    content: `**Starting OpenCode session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
+    content: `**Starting session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
     maxLength: 2000,
   })
   if (!starter) return new Error('No session request to send. Retry with /new-session and a prompt.')
@@ -61,7 +61,7 @@ export async function createNewSessionThread({
   const thread = await starterMessage.startThread({
     name: prompt.slice(0, 100),
     autoArchiveDuration: 1440,
-    reason: 'OpenCode session',
+    reason: 'agent session',
   })
   for (const chunk of remaining) {
     await sendThreadMessage(thread, chunk)
@@ -189,7 +189,7 @@ export async function handleSessionCommand({
     username: command.user.displayName,
     agent,
     appId,
-    mode: 'opencode',
+    mode: 'direct',
   }).catch(async (error) => {
     logger.error('New session dispatch failed:', error)
     await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')

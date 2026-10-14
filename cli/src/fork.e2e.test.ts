@@ -27,7 +27,6 @@ const TEXT_CHANNEL_ID = '200000000000001074'
 
 describe.skipIf(!findPi())('/fork', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-fork-e2e',
     dirName: 'qa-fork-e2e',

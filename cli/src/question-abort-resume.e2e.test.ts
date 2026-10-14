@@ -17,7 +17,6 @@ const TEXT_CHANNEL_ID = '200000000000001032'
 
 describe.skipIf(!findPi())('question answered after external abort resumes session', () => {
   const ctx = setupQueueAdvancedSuite({
-    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort-resume',
     dirName: 'qa-question-abort-resume',

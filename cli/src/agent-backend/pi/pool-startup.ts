@@ -5,7 +5,6 @@ import { getDataDir } from '../../config.js'
 import { startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
-import { readPoolClients } from '../../credentials/pool-clients.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay } from '../../credentials/remote-pool.js'
 import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from './pool.js'
 
@@ -17,19 +16,6 @@ export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { hos
   const port = Number(rawPort)
   if (!Number.isInteger(port) || port < 1 || port > 65535) return new Error(`ROADIE_POOL_PROXY_PORT must be a port number, got "${rawPort}"`)
   return { host, port }
-}
-
-/**
- * Start the proxy whenever Pi runs sessions — it is the default backend
- * (#177), and ROADIE_PI_CHANNELS opts channels in under ROADIE_BACKEND=opencode
- * — or whenever external pool clients are registered.
- */
-export function shouldStartPiPool({ dataDir, env = process.env }: { dataDir: string; env?: NodeJS.ProcessEnv }): boolean {
-  const backend = env['ROADIE_BACKEND']?.trim().toLowerCase()
-  if (backend !== 'opencode') return true
-  if (env['ROADIE_PI_CHANNELS']) return true
-  const clients = readPoolClients(dataDir)
-  return !(clients instanceof Error) && clients.length > 0
 }
 
 export async function startPiPool(): Promise<Error | {

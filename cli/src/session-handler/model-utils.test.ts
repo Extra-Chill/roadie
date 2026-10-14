@@ -1,22 +1,14 @@
 // Tests for model ID parsing, cached provider.list wrapping, and validation.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
-import { toOpenCodeBackend } from '../agent-backend/opencode-sessions.js'
+import type { AgentBackend, AgentProviderCatalog } from '../agent-backend/types.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import {
-  addAccount,
-  markCooldown,
-  savePreset,
-  setLiveRoute,
-  type StoredAccount,
-} from '@subrouter/cli'
 import { InvalidModelError } from '../errors.js'
 import { setDataDir } from '../config.js'
 import { setSessionRoute } from '../credentials/routes.js'
-import { ROADIE_PROVIDER_ID } from '../credentials/provider.js'
+import { ROADIE_PROVIDER_ID } from '../credentials/pool-routing.js'
 import {
   clearModelListCache,
   displayedModelLabel,
@@ -30,18 +22,6 @@ import {
   validateModelIdAgainstList,
   type ListedModel,
 } from './model-utils.js'
-
-function oauthAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
-  return {
-    type: 'oauth',
-    refresh: 'refresh-1',
-    access: 'access-1',
-    expires: Date.now() + 1_000_000_000,
-    addedAt: 1000,
-    lastUsed: 1000,
-    ...overrides,
-  }
-}
 
 const listed: ListedModel[] = [
   {
@@ -188,20 +168,6 @@ describe('formatDisplayedModelId', () => {
 })
 
 describe('resolveDisplayedModelId', () => {
-  let home: string
-  const previousHome = process.env.SUBROUTER_HOME
-
-  beforeEach(async () => {
-    home = await mkdtemp(path.join(tmpdir(), 'roadie-subrouter-model-'))
-    process.env.SUBROUTER_HOME = home
-  })
-
-  afterEach(async () => {
-    if (previousHome === undefined) delete process.env.SUBROUTER_HOME
-    else process.env.SUBROUTER_HOME = previousHome
-    await rm(home, { recursive: true, force: true })
-  })
-
   test('uses subrouter sdk name with parentheses', async () => {
     expect(
       await resolveDisplayedModelId({
@@ -215,92 +181,6 @@ describe('resolveDisplayedModelId', () => {
         modelID: 'build',
       }),
     ).toMatchInlineSnapshot(`"subrouter/build (claude-opus-4-6)"`)
-  })
-
-  test('shows the live subrouter candidate, not the preset name', async () => {
-    await addAccount({
-      provider: 'anthropic',
-      account: oauthAccount({ email: 'a@x.com' }),
-    })
-    await addAccount({
-      provider: 'opencode-go',
-      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
-    })
-    await savePreset({
-      name: 'build',
-      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
-    })
-
-    expect(
-      await resolveDisplayedModelId({
-        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
-        providerID: 'subrouter',
-        modelID: 'build',
-      }),
-    ).toMatchInlineSnapshot(`"subrouter/build (anthropic/claude-fake)"`)
-  })
-
-  test('shows the cooldown fallback candidate as the current model', async () => {
-    const anthropic = oauthAccount({ email: 'a@x.com' })
-    await addAccount({ provider: 'anthropic', account: anthropic })
-    await addAccount({
-      provider: 'opencode-go',
-      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
-    })
-    await savePreset({
-      name: 'build',
-      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
-    })
-    await markCooldown({
-      provider: 'anthropic',
-      account: anthropic,
-      untilMs: Date.now() + 60_000,
-    })
-
-    expect(
-      await resolveDisplayedModelId({
-        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
-        providerID: 'subrouter',
-        modelID: 'build',
-      }),
-    ).toMatchInlineSnapshot(`"subrouter/build (opencode-go/fake-model)"`)
-  })
-
-  test('shows the in-flight session route, not the first free preset model', async () => {
-    await addAccount({
-      provider: 'anthropic',
-      account: oauthAccount({ email: 'a@x.com' }),
-    })
-    await addAccount({
-      provider: 'opencode-go',
-      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
-    })
-    await savePreset({
-      name: 'build',
-      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
-    })
-    await setLiveRoute({
-      sessionID: 'ses_1',
-      preset: 'build',
-      provider: 'opencode-go',
-      modelId: 'fake-model',
-    })
-
-    expect(
-      await resolveDisplayedModelId({
-        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
-        providerID: 'subrouter',
-        modelID: 'build',
-        sessionID: 'ses_1',
-      }),
-    ).toMatchInlineSnapshot(`"subrouter/build (opencode-go/fake-model)"`)
-    expect(
-      await resolveDisplayedModelId({
-        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
-        providerID: 'subrouter',
-        modelID: 'build',
-      }),
-    ).toMatchInlineSnapshot(`"subrouter/build (anthropic/claude-fake)"`)
   })
 })
 
@@ -462,41 +342,43 @@ describe('validateModelIdAgainstList', () => {
   })
 })
 
+/** A backend whose catalog lists `providers` (every one connected). */
+function catalogBackend(providers: () => Promise<AgentProviderCatalog | Error>): AgentBackend {
+  return { catalog: { providers, config: async () => ({}), agents: async () => [] } } as unknown as AgentBackend
+}
+
+function catalogOf(providers: Array<{ id: string; models: Record<string, { name: string }> }>): AgentProviderCatalog {
+  return {
+    providers: providers.map((provider) => ({
+      id: provider.id,
+      name: provider.id,
+      models: Object.fromEntries(
+        Object.entries(provider.models).map(([id, model]) => [id, { id, name: model.name, variants: [] }]),
+      ),
+    })),
+    connected: providers.map((provider) => provider.id),
+    defaults: {},
+  } as AgentProviderCatalog
+}
+
 function fakeGetClient(options?: {
   calls?: { count: number }
   failOnce?: boolean
 }) {
   let failed = false
-  const client = {
-    config: {
-      providers: async () => {
-        if (options?.calls) options.calls.count += 1
-        if (options?.failOnce && !failed) {
-          failed = true
-          throw new Error('config.providers failed')
-        }
-        return {
-          data: {
-            providers: [
-              {
-                id: 'anthropic',
-                models: {
-                  'claude-opus-4-6': { name: 'Claude Opus 4.6' },
-                },
-              },
-            ],
-            default: {},
-          },
-        }
-      },
-    },
-  }
-  const backend = toOpenCodeBackend(client as unknown as OpencodeClient)
+  const backend = catalogBackend(async () => {
+    if (options?.calls) options.calls.count += 1
+    if (options?.failOnce && !failed) {
+      failed = true
+      return new Error('catalog.providers failed')
+    }
+    return catalogOf([{ id: 'anthropic', models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } } }])
+  })
   return () => backend
 }
 
 describe('listModels', () => {
-  test('returns listed models from config.providers', async () => {
+  test('returns listed models from the catalog', async () => {
     const models = await listModels({
       getClient: fakeGetClient() as never,
       directory: '/tmp/project-a',
@@ -515,7 +397,7 @@ describe('listModels', () => {
     `)
   })
 
-  test('memoizes config.providers per directory', async () => {
+  test('memoizes the catalog per directory', async () => {
     const calls = { count: 0 }
     const getClient = fakeGetClient({ calls }) as never
     const first = await listModels({ getClient, directory: '/tmp/project-a' })
@@ -547,41 +429,19 @@ describe('listModels', () => {
 
   test('does not restore a pending result after the cache is cleared', async () => {
     const calls = { count: 0 }
-    const firstResponse = Promise.withResolvers<{
-      data: {
-        providers: Array<{ id: string; models: Record<string, { name: string }> }>
-        default: Record<string, string>
-      }
-    }>()
-    const backend = toOpenCodeBackend({
-      config: {
-        providers: () => {
-          calls.count += 1
-          if (calls.count === 1) return firstResponse.promise
-          return Promise.resolve({
-            data: {
-              providers: [{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }],
-              default: {},
-            },
-          })
-        },
-      },
-    } as unknown as OpencodeClient)
+    const firstResponse = Promise.withResolvers<AgentProviderCatalog>()
+    const backend = catalogBackend(() => {
+      calls.count += 1
+      if (calls.count === 1) return firstResponse.promise
+      return Promise.resolve(catalogOf([{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }]))
+    })
     const getClient = () => backend
 
     const pending = listModels({ getClient, directory: '/tmp/project-a' })
     clearModelListCache()
-    firstResponse.resolve({
-      data: {
-        providers: [
-          {
-            id: 'anthropic',
-            models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } },
-          },
-        ],
-        default: {},
-      },
-    })
+    firstResponse.resolve(
+      catalogOf([{ id: 'anthropic', models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } } }]),
+    )
     await pending
 
     const refreshed = await listModels({ getClient, directory: '/tmp/project-a' })
@@ -607,7 +467,7 @@ describe('validateCliModelOption', () => {
     expect(await validateCliModelOption({ model: '' })).toBeUndefined()
   })
 
-  test('rejects bad format without starting opencode', async () => {
+  test('rejects bad format without starting the backend', async () => {
     const result = await validateCliModelOption({ model: 'claude-opus-4-6' })
     expect(result).toBeInstanceOf(InvalidModelError)
   })

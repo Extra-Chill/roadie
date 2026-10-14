@@ -41,7 +41,7 @@ import {
   makeAnthropicOAuthFetch,
   resolvePoolListCandidates,
   type PoolFetch,
-} from './provider.js'
+} from './pool-routing.js'
 
 export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 export const PROXY_KEY_HEADER = 'x-roadie-key'

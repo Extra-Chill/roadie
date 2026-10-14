@@ -3,7 +3,7 @@
 // The bot's local HTTP server exposes scoped agent endpoints (see
 // agent-remote.ts) so `roadie` subcommands inside an agent tool shell never
 // need the raw database credentials. The OpenCode plugin's shell.env hook
-// exports ROADIE_AGENT_TOKEN — an HMAC of the OpenCode session id under a
+// exports ROADIE_AGENT_TOKEN — an HMAC of the agent session id under a
 // secret shared only between the bot and the OpenCode server process — and
 // blanks the database credentials in the same hook output. The bot verifies
 // the HMAC per request and never accepts an agent token on the hrana /v2
@@ -26,6 +26,9 @@ export const AGENT_TOKEN_SECRET_ENV = 'ROADIE_AGENT_TOKEN_SECRET'
  * by setting them to '' because OpenCode merges hook env over the inherited
  * env; plugins in the server process keep their access.
  */
+/** Set to 1 in every agent tool shell. */
+export const AGENT_SHELL_ENV = 'ROADIE_AGENT_SHELL'
+
 export const SCRUBBED_SHELL_ENV_NAMES = [
   'ROADIE_DB_URL',
   'ROADIE_DB_AUTH_TOKEN',
@@ -116,14 +119,17 @@ export function applyAgentShellEnv({
   secret: string | undefined
   sessionId: string | undefined
 }): void {
-  // OpenCode builds a tool shell's environment as {...process.env, ...env}:
-  // this object is an overlay, so `delete` cannot remove an inherited value.
-  // Every name that must not reach the shell is overwritten with '' instead.
-  // The token secret is in the server's own environment, so leaving it
-  // inherited would let a shell mint a token for any session.
+  // A tool shell's environment is {...process.env, ...env}: this object is an
+  // overlay, so `delete` cannot remove an inherited value. Every name that
+  // must not reach the shell is overwritten with '' instead. The token secret
+  // is in the bot's own environment, so leaving it inherited would let a
+  // shell mint a token for any session.
   for (const name of SCRUBBED_SHELL_ENV_NAMES) {
     env[name] = ''
   }
   env[AGENT_TOKEN_SECRET_ENV] = ''
   env[AGENT_TOKEN_ENV] = secret && sessionId ? mintAgentToken({ secret, sessionId }) : ''
+  // Marks the shell as an agent tool shell: `roadie` subcommands use the
+  // scoped agent endpoints (agent-remote.ts) and refuse to start a bot.
+  env[AGENT_SHELL_ENV] = '1'
 }

@@ -81,19 +81,6 @@ export type RoadieState = {
   // Read by: discord-utils.ts hasRoadieBotPermission().
   allowAllUsers: boolean
 
-  // Hostname passed to `opencode serve --hostname`. Null means OpenCode's
-  // default (127.0.0.1). Set from --opencode-hostname. Roadie still talks
-  // to 127.0.0.1 even when the server binds 0.0.0.0. Does not bind the
-  // Roadie hrana/lock server.
-  // Changes: set once at startup from --opencode-hostname CLI flag.
-  // Read by: opencode.ts startSingleServer().
-  opencodeHostname: string | null
-
-  // Port passed to `opencode serve --port`. Null means pick a free port.
-  // Changes: set once at startup from --opencode-port CLI flag.
-  // Read by: opencode.ts startSingleServer().
-  opencodePort: number | null
-
   // When true, the agent may only touch the session working directory and a
   // small set of known-safe paths; anything else triggers an external_directory
   // permission prompt. When false (default), every directory is allowed and the
@@ -119,14 +106,6 @@ export type RoadieState = {
   // Read by: cli-runner.ts run() before calling backgroundUpgradeRoadie().
   autoUpgradeEnabled: boolean
 
-
-  // Whether the OpenCode backend loads @subrouter/opencode, which provides
-  // account rotation across subscriptions (subrouter/<preset> models).
-  // Disable with --no-subrouter or ROADIE_SUBROUTER=0 when the host supplies
-  // its own provider auth/rotation.
-  // Changes: set once at startup.
-  // Read by: opencode.ts when building the server plugin list.
-  subrouterEnabled: boolean
 
   // Whether credential pools are enabled: pool store under
   // <dataDir>/credentials/, the roadie provider (roadie/<rotation> models),
@@ -220,12 +199,9 @@ export const store = createStore<RoadieState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
-  opencodeHostname: null,
-  opencodePort: null,
   restrictExternalDirectories: false,
   permissionTimeoutMs: 10 * 60 * 1000,
   autoUpgradeEnabled: true,
-  subrouterEnabled: process.env.ROADIE_SUBROUTER !== '0',
   credentialPoolsEnabled: parseCredentialPoolsEnabled(process.env.ROADIE_CREDENTIAL_POOLS),
   credentialsMode: parseCredentialsMode(process.env.ROADIE_CREDENTIALS),
   threadBilling: parseThreadBilling(process.env.ROADIE_THREAD_BILLING),

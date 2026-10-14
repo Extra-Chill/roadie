@@ -351,7 +351,7 @@ async function resumeSessionWithAnswers(
 }
 
 /**
- * Submit all collected answers back to the OpenCode session.
+ * Submit all collected answers back to the agent session.
  *
  * The decision is based on whether the session still has a live run:
  *

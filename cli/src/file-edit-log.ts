@@ -1,21 +1,16 @@
-// Tracks which OpenCode sessions last edited each file.
-// Plugin appends JSONL events; CLI derives the per-file session list on read.
+// Tracks which agent sessions last edited each file.
+// The Pi backend appends JSONL events; the CLI derives the per-file session list on read.
 
-import type { Plugin } from '@opencode-ai/plugin'
 import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
 import { FilesystemOperationError } from './errors.js'
-import { extractPatchFilePaths } from './patch-text-parser.js'
-import { createPluginLogger, setPluginLogFilePath } from './plugin-logger.js'
-
-const logger = createPluginLogger('FILEEDIT')
 
 export const FILE_EDIT_EVENTS_FILENAME = 'file-edit-events.jsonl'
 const DEFAULT_MAX_EVENTS = 10_000
 const DEFAULT_COMPACT_AFTER_BYTES = 5 * 1024 * 1024
 
-export type FileEditTool = 'edit' | 'write' | 'apply_patch'
+export type FileEditTool = 'edit' | 'write'
 
 export type FileEditEvent = {
   v: 1
@@ -25,41 +20,8 @@ export type FileEditEvent = {
   tool: FileEditTool
 }
 
-function isFileEditTool(tool: string): tool is FileEditTool {
-  return tool === 'edit' || tool === 'write' || tool === 'apply_patch'
-}
-
-type ToolArgs = {
-  filePath?: string
-  patchText?: string
-}
-
-function getStringField({ args, key }: { args: ToolArgs; key: keyof ToolArgs }) {
-  const value = args[key]
-  return typeof value === 'string' ? value : ''
-}
-
-export function extractEditedFiles({
-  tool,
-  args,
-  directory,
-}: {
-  tool: string
-  args: ToolArgs
-  directory: string
-}) {
-  const name = tool.toLowerCase()
-  if (name === 'edit' || name === 'write') {
-    const filePath = getStringField({ args, key: 'filePath' })
-    if (!filePath) return []
-    return [path.resolve(directory, filePath)]
-  }
-  if (name !== 'apply_patch') return []
-  const patchText = getStringField({ args, key: 'patchText' })
-  if (!patchText) return []
-  return extractPatchFilePaths(patchText).map((filePath) => {
-    return path.resolve(directory, filePath)
-  })
+export function isFileEditTool(tool: string): tool is FileEditTool {
+  return tool === 'edit' || tool === 'write'
 }
 
 export function editorsForFile({
@@ -204,74 +166,4 @@ export function appendFileEditEvents({
   if (size instanceof Error) return size
   if (size < compactAfterBytes) return
   return compactFileEditLog({ dataDir, maxEvents })
-}
-
-function recordToolEdits({
-  dataDir,
-  directory,
-  sessionId,
-  tool,
-  args,
-}: {
-  dataDir: string
-  directory: string
-  sessionId: string
-  tool: string
-  args: ToolArgs
-}) {
-  const name = tool.toLowerCase()
-  if (!isFileEditTool(name)) return
-  const files = extractEditedFiles({ tool: name, args, directory })
-  if (files.length === 0) return
-  const at = Date.now()
-  const events = files.map((file) => {
-    return {
-      v: 1 as const,
-      at,
-      sessionId,
-      file,
-      tool: name,
-    }
-  })
-  const result = appendFileEditEvents({ dataDir, events })
-  if (result instanceof Error) {
-    logger.warn('Failed to record file edit', result.message)
-  }
-}
-
-export function createFileEditHooks({
-  dataDir,
-  directory,
-}: {
-  dataDir: string
-  directory: string
-}) {
-  return {
-    'tool.execute.after': async (input: {
-      tool: string
-      sessionID: string
-      args: ToolArgs
-    }) => {
-      recordToolEdits({
-        dataDir,
-        directory,
-        sessionId: input.sessionID,
-        tool: input.tool,
-        args: input.args,
-      })
-    },
-  }
-}
-
-export const fileEditTrackerPlugin: Plugin = async ({ directory }) => {
-  const dataDir = process.env.ROADIE_DATA_DIR
-  if (!dataDir) return {}
-  setPluginLogFilePath(dataDir)
-  const created = errore.try(
-    { try: () => fs.mkdirSync(dataDir, { recursive: true }), catch: (cause) => new FilesystemOperationError({ operation: 'create file edit log dir', cause }) },
-  )
-  if (created instanceof Error) {
-    logger.warn('Failed to create file edit log dir', created.message)
-  }
-  return createFileEditHooks({ dataDir, directory })
 }

@@ -1,7 +1,6 @@
 // Discord slash command registration logic, extracted from cli.ts to avoid
 // circular dependencies (cli → discord-bot → interaction-handler → command → cli).
-// Imported by both cli.ts (startup registration) and restart-opencode-server.ts
-// (post-restart re-registration).
+// Imported by cli-runner.ts (startup registration).
 
 import { hostUpgradeHandler, isManagedInstall } from './service-lifecycle.js'
 import {
@@ -215,7 +214,7 @@ export function buildStaticSlashCommands() {
   return [
     new SlashCommandBuilder()
       .setName('new-session')
-      .setDescription(truncateCommandDescription('Start a new OpenCode session'))
+      .setDescription(truncateCommandDescription('Start a new agent session'))
       .addStringOption((option) => {
         option
           .setName('prompt')
@@ -292,7 +291,7 @@ export function buildStaticSlashCommands() {
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
-      .setDescription(truncateCommandDescription('Abort, stop, terminate, or cancel the current OpenCode request in this thread'))
+      .setDescription(truncateCommandDescription('Abort, stop, terminate, or cancel the current agent request in this thread'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -362,13 +361,6 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('restart-opencode-server')
-      .setDescription(
-        truncateCommandDescription('Restart opencode server and re-register slash commands'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('run-shell-command')
       .setDescription(
         truncateCommandDescription('Run a shell command in the project directory. Tip: prefix messages with ! as shortcut'),
@@ -393,7 +385,7 @@ export function buildStaticSlashCommands() {
       .setName('session-id')
       .setDescription(
         truncateCommandDescription(
-          'Show current session ID, Discord thread ID, and opencode attach command for this thread',
+          'Show the session ID, Discord thread ID and working directory for this thread',
         ),
       )
       .setDMPermission(false)
@@ -512,7 +504,7 @@ export async function registerCommands({
       continue
     }
 
-    // Sanitize command name: oh-my-opencode uses MCP commands with colons and slashes,
+    // Sanitize command name: MCP prompts can use colons and slashes,
     // which Discord doesn't allow in command names.
     // Discord command names: lowercase, alphanumeric and hyphens only, must start with letter/number.
     const sanitizedName = cmd.name

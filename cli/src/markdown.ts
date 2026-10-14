@@ -1,5 +1,5 @@
 // Session-to-markdown renderer for sharing.
-// Generates shareable markdown from OpenCode sessions, formatting
+// Generates shareable markdown from agent sessions, formatting
 // user messages, assistant responses, tool calls, and reasoning blocks.
 
 import type { AgentMessage, AgentPart } from './agent-backend/events.js'
@@ -152,7 +152,7 @@ export function formatCompactToolSummary({
   return truncateChars(parts.join(' '), maxChars)
 }
 
-/** OpenCode-era timing shape `userPromptDurationMs` reads. */
+/** The timing shape `userPromptDurationMs` reads. */
 function timedInfo(message: AgentMessage) {
   return {
     role: message.role,
@@ -228,7 +228,7 @@ export class ShareMarkdown {
           `- **Updated**: ${formatDateTime(new Date(session.updatedAt ?? 0))}`,
         )
         if (session.version) {
-          lines.push(`- **OpenCode Version**: v${session.version}`)
+          lines.push(`- **Backend Version**: v${session.version}`)
         }
         lines.push('')
       }

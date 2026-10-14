@@ -11,8 +11,8 @@ import {
   systemPromptNamesOtherSession,
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
-  getOpencodePromptContext,
-  getOpencodeSystemMessage,
+  getPromptContext,
+  getSystemMessage,
   getSessionSystemPromptPath,
   ROADIE_SYSTEM_PROMPT_MARKER,
   readSessionSystemPrompt,
@@ -31,7 +31,7 @@ afterEach(async () => {
 
 describe('system-message', () => {
   test('requires roadie upload for Discord images, not markdown', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain('NEVER show images with markdown')
@@ -40,7 +40,7 @@ describe('system-message', () => {
   })
 
   test('points bug reports at the debugging guide, not upstream', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain('docs/debugging-roadie.md')
@@ -48,7 +48,7 @@ describe('system-message', () => {
   })
 
   test('includes callout guidance for important content', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain(ROADIE_SYSTEM_PROMPT_MARKER)
@@ -62,7 +62,7 @@ describe('system-message', () => {
   })
 
   test('tells the model the sleep tool result is not a wake', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain('The tool result is not a wake')
@@ -74,7 +74,7 @@ describe('system-message', () => {
   })
 
   test('tells the model to stay quiet between tool calls', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain('## Discord output')
@@ -86,7 +86,7 @@ describe('system-message', () => {
   })
 
   test('requires interactive tools after all text, using exact tool names', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
     })
     expect(message).toContain('You MUST write ALL user-visible text FIRST')
@@ -101,7 +101,7 @@ describe('system-message', () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-system-'))
     tempDirs.push(dataDir)
     const sessionId = 'ses_command_system'
-    const system = getOpencodeSystemMessage({ sessionId })
+    const system = getSystemMessage({ sessionId })
 
     await writeSessionSystemPrompt({ sessionId, system, dataDir })
 
@@ -141,12 +141,12 @@ describe('system-message', () => {
     const firstTurn = await resolveSessionSystemPrompt({
       sessionId: sourceSessionId,
       dataDir,
-      generate: () => getOpencodeSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'old topic' }),
+      generate: () => getSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'old topic' }),
     })
     const laterTurn = await resolveSessionSystemPrompt({
       sessionId: sourceSessionId,
       dataDir,
-      generate: () => getOpencodeSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'new topic' }),
+      generate: () => getSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'new topic' }),
     })
     expect(laterTurn).toBe(firstTurn)
     expect(firstTurn).not.toBe('legacy command-path prompt')
@@ -156,7 +156,7 @@ describe('system-message', () => {
     const forkSystem = await resolveSessionSystemPrompt({
       sessionId: forkSessionId,
       dataDir,
-      generate: () => getOpencodeSystemMessage({ sessionId: forkSessionId, threadId: 'thread_fork' }),
+      generate: () => getSystemMessage({ sessionId: forkSessionId, threadId: 'thread_fork' }),
     })
     if (forkSystem instanceof Error) throw forkSystem
     expect(copied).toBe(true)
@@ -169,12 +169,12 @@ describe('system-message', () => {
     expect(systemPromptHasParentSession({ system: forkSystem, parentSessionId: 'ses_parent_added_later' })).toBe(false)
     expect(
       systemPromptHasParentSession({
-        system: getOpencodeSystemMessage({ sessionId: 'ses_child', parentSessionId: 'ses_parent' }),
+        system: getSystemMessage({ sessionId: 'ses_child', parentSessionId: 'ses_parent' }),
         parentSessionId: 'ses_parent',
       }),
     ).toBe(true)
     expect(
-      getOpencodePromptContext({
+      getPromptContext({
         sessionId: forkSessionId,
         threadId: 'thread_fork',
         systemPromptFromSourceSession: true,
@@ -205,7 +205,7 @@ describe('system-message', () => {
   test('does not call a session forked when the prompt has no session ID line', () => {
     const managedSystem = 'You are a managed agent.\nNo identity lines here.'
     expect(systemPromptNamesOtherSession({ system: managedSystem, sessionId: 'ses_any' })).toBe(false)
-    const context = getOpencodePromptContext({
+    const context = getPromptContext({
       sessionId: 'ses_any',
       threadId: 'thread_any',
       systemPromptFromSourceSession: systemPromptNamesOtherSession({ system: managedSystem, sessionId: 'ses_any' }),
@@ -214,22 +214,14 @@ describe('system-message', () => {
     expect(context).toContain('Your current session ID is: ses_any')
   })
 
-  // Prompts pinned before #222 name the session with the OpenCode wording.
-  test('recognizes session lines in prompts pinned with the legacy OpenCode wording', () => {
-    const legacySystem = 'Your current OpenCode session ID is: ses_source\nYour parent OpenCode session ID is: ses_parent'
-    expect(systemPromptNamesOtherSession({ system: legacySystem, sessionId: 'ses_fork' })).toBe(true)
-    expect(systemPromptNamesOtherSession({ system: legacySystem, sessionId: 'ses_source' })).toBe(false)
-    expect(systemPromptHasParentSession({ system: legacySystem, parentSessionId: 'ses_parent' })).toBe(true)
-  })
-
   test('names the agent backend running the session in the turn reminder', () => {
-    const context = getOpencodePromptContext({ sessionId: 'ses_pi', backend: 'Pi', threadId: 'thread_pi' })
+    const context = getPromptContext({ sessionId: 'ses_pi', backend: 'Pi', threadId: 'thread_pi' })
     expect(context).toContain('Your current session ID is: ses_pi\nYour agent backend is: Pi\n')
     expect(context).not.toContain('OpenCode')
   })
 
   test('persisted fork origin adds a fork notice without a stale system prompt', () => {
-    const context = getOpencodePromptContext({
+    const context = getPromptContext({
       sessionId: 'ses_fork',
       threadId: 'thread_fork',
       systemPromptFromSourceSession: false,
@@ -263,7 +255,7 @@ describe('system-message', () => {
   })
 
   test('tells agents to read compressed session transcripts under 100 KB', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
       channelId: 'chan_123',
       threadId: 'thread_123',
@@ -274,7 +266,7 @@ describe('system-message', () => {
   })
 
   test('includes all-projects session search example', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
       channelId: 'chan_123',
     })
@@ -286,7 +278,7 @@ describe('system-message', () => {
   })
 
   test('includes session title update guidance when scope or goal changed', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
       threadId: 'thread_123',
     })
@@ -302,7 +294,7 @@ describe('system-message', () => {
   })
 
   test('includes parent session context when parentSessionId is set', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_child',
       channelId: 'chan_123',
       parentSessionId: 'ses_parent',
@@ -318,7 +310,7 @@ describe('system-message', () => {
   })
 
   test('scheduled cron task section shows task id, cron and no-sleep rule', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_task',
       channelId: 'chan_123',
       threadId: 'thread_123',
@@ -342,7 +334,7 @@ describe('system-message', () => {
   })
 
   test('cron task without timezone says UTC', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_task_utc',
       scheduledTask: { taskId: 7, scheduleKind: 'cron', cronExpr: '0 9 * * 1' },
     })
@@ -350,7 +342,7 @@ describe('system-message', () => {
   })
 
   test('one-shot at task says it does not repeat and skips sleep', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_oneshot',
       scheduledTask: { scheduleKind: 'at' },
     })
@@ -362,7 +354,7 @@ describe('system-message', () => {
   })
 
   test('no scheduled task section by default (normal sessions)', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_normal',
       channelId: 'chan_123',
       threadId: 'thread_123',
@@ -371,7 +363,7 @@ describe('system-message', () => {
   })
 
   test('lets agents omit --user for quiet scheduled work', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
       channelId: 'chan_123',
       threadId: 'thread_123',
@@ -392,7 +384,7 @@ describe('system-message', () => {
   test('omits parent session system block by default (btw/task/fork cache)', () => {
     // /btw, task subagents, and normal sessions must not get a parent block in
     // the system message. That block is opt-in via --parent-session only.
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_btw_or_task',
       channelId: 'chan_123',
       threadId: 'thread_123',
@@ -408,7 +400,7 @@ describe('system-message', () => {
   })
 
   test('keeps the system prompt session-scoped', () => {
-    const message = getOpencodeSystemMessage({
+    const message = getSystemMessage({
       sessionId: 'ses_123',
       channelId: 'chan_123',
       guildId: 'guild_123',
@@ -894,7 +886,7 @@ describe('system-message', () => {
 
   test('moves per-turn discord metadata into synthetic prompt context', () => {
     expect(
-      getOpencodePromptContext({
+      getPromptContext({
         sessionId: 'ses_123',
         threadId: 'thread_123',
         username: 'Tommy',
@@ -942,7 +934,7 @@ describe('system-message', () => {
   })
 
   test('subfolder working directory reminder does not claim a separate checkout', () => {
-    const context = getOpencodePromptContext({
+    const context = getPromptContext({
       workingDirectoryChanged: true,
       workingDirectory: {
         workingDirectory: '/repo/packages/app',
@@ -958,7 +950,7 @@ describe('system-message', () => {
 
   test('no reminder when the working directory did not change', () => {
     expect(
-      getOpencodePromptContext({
+      getPromptContext({
         workingDirectory: { workingDirectory: '/w', label: 'b', projectDirectory: '/repo', kind: 'git-worktree' },
       }),
     ).not.toContain('This thread works in')

@@ -1,14 +1,9 @@
 // Tests for session search query parsing and snippet matching helpers.
 
-import fs from 'node:fs'
-import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type { Part as OpenCodePart } from '@opencode-ai/sdk/v2'
-import { toAgentPart } from './agent-backend/opencode-events.js'
+import type { AgentPart } from './agent-backend/events.js'
 import {
   getPartSearchTexts,
-  toSearchPart,
-  type SessionSearchPart,
   buildSessionSearchSnippet,
   collectSessionSearchMatches,
   findFirstSessionSearchHit,
@@ -18,6 +13,10 @@ import {
   sessionSearchMinUpdated,
   validateSessionSearchScope,
 } from './session-search.js'
+
+function textPart(text: string): AgentPart {
+  return { id: 'prt', sessionId: 'ses', messageId: 'msg', kind: 'text', text }
+}
 
 describe('session search helpers', () => {
   test('returns error for invalid regex query', () => {
@@ -153,8 +152,8 @@ describe('session search helpers', () => {
         loaded.push(session.id)
         return [
           {
-            info: { role: 'user' },
-            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+            message: { role: 'user' },
+            parts: [textPart('auth timeout')],
           },
         ]
       },
@@ -188,8 +187,8 @@ describe('session search helpers', () => {
         loaded.push(session.id)
         return [
           {
-            info: { role: 'user' },
-            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+            message: { role: 'user' },
+            parts: [textPart('auth timeout')],
           },
         ]
       },
@@ -245,8 +244,8 @@ describe('session search helpers', () => {
         inFlight--
         return [
           {
-            info: { role: 'user' },
-            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+            message: { role: 'user' },
+            parts: [textPart('auth timeout')],
           },
         ]
       },
@@ -275,8 +274,8 @@ describe('session search helpers', () => {
           updated: 1,
           messages: [
             {
-              info: { role: 'user' },
-              parts: [{ type: 'text', text: 'auth timeout on login', synthetic: false }],
+              message: { role: 'user' },
+              parts: [textPart('auth timeout on login')],
             },
           ],
         },
@@ -287,8 +286,8 @@ describe('session search helpers', () => {
           updated: 3,
           messages: [
             {
-              info: { role: 'assistant' },
-              parts: [{ type: 'text', text: 'fixed the auth timeout', synthetic: false }],
+              message: { role: 'assistant' },
+              parts: [textPart('fixed the auth timeout')],
             },
           ],
         },
@@ -299,8 +298,8 @@ describe('session search helpers', () => {
           updated: 4,
           messages: [
             {
-              info: { role: 'user' },
-              parts: [{ type: 'text', text: 'refactor logger', synthetic: false }],
+              message: { role: 'user' },
+              parts: [textPart('refactor logger')],
             },
           ],
         },
@@ -311,8 +310,8 @@ describe('session search helpers', () => {
           updated: 2,
           messages: [
             {
-              info: { role: 'user' },
-              parts: [{ type: 'text', text: 'auth timeout retry', synthetic: false }],
+              message: { role: 'user' },
+              parts: [textPart('auth timeout retry')],
             },
           ],
         },
@@ -337,20 +336,47 @@ describe('session search helpers', () => {
   })
 })
 
-describe('Roadie parts search the same as the OpenCode parts they came from', () => {
-  test('every recorded part yields identical search texts after translation', () => {
-    const dir = path.join(import.meta.dirname, 'session-handler', 'event-stream-fixtures')
-    const parts = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.jsonl'))
-      .flatMap((name) => fs.readFileSync(path.join(dir, name), 'utf8').split('\n').filter((l) => l.trim()))
-      .map((line) => (JSON.parse(line) as { event: { type: string; properties: { part?: OpenCodePart } } }).event)
-      .flatMap((event) => (event.type === 'message.part.updated' && event.properties.part ? [event.properties.part] : []))
-    const kinds = new Set(parts.map((part) => part.type))
-    expect(kinds.has('tool') && kinds.has('text')).toBe(true)
-    for (const part of parts) {
-      expect(getPartSearchTexts(toSearchPart(toAgentPart(part)))).toEqual(
-        getPartSearchTexts(part as unknown as SessionSearchPart),
-      )
-    }
+describe('getPartSearchTexts', () => {
+  const base = { id: 'prt', sessionId: 'ses', messageId: 'msg' }
+
+  test('reads text, tool input/output, tool errors and file names', () => {
+    const parts: AgentPart[] = [
+      { ...base, kind: 'text', text: 'hello' },
+      { ...base, kind: 'reasoning', text: 'thinking' },
+      { ...base, kind: 'tool', callId: 'c1', tool: 'bash', status: 'completed', input: { command: 'ls' }, output: 'a.txt' },
+      { ...base, kind: 'tool', callId: 'c2', tool: 'read', status: 'error', input: { path: 'x' }, error: 'ENOENT' },
+      { ...base, kind: 'tool', callId: 'c3', tool: 'grep', status: 'running', input: { pattern: 'p' }, output: 'partial' },
+      { ...base, kind: 'file', mime: 'image/png', url: 'file:///shot.png', filename: 'shot.png' },
+      { ...base, kind: 'step-start' },
+    ]
+    expect(parts.map(getPartSearchTexts)).toMatchInlineSnapshot(`
+      [
+        [
+          "hello",
+        ],
+        [
+          "thinking",
+        ],
+        [
+          "tool:bash",
+          "{"command":"ls"}",
+          "a.txt",
+        ],
+        [
+          "tool:read",
+          "{"path":"x"}",
+          "ENOENT",
+        ],
+        [
+          "tool:grep",
+          "{"pattern":"p"}",
+        ],
+        [
+          "shot.png",
+          "file:///shot.png",
+        ],
+        [],
+      ]
+    `)
   })
 })
