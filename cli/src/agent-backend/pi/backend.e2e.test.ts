@@ -426,17 +426,42 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(await userTexts('third')).toContain('[current git branch is feature]')
 
     const bodies = server.bodies.length
-    const title = await provider.getBackend().sessions.generateTitle!({ directory: dir, prompt: 'Fix the login flow' })
+    const title = await provider.getBackend().sessions.generateTitle!({ sessionId: session.id, directory: dir, prompt: 'Fix the login flow' })
     expect(title).toBe('hello from the fake model')
     const request = JSON.parse(server.bodies[bodies]!) as { messages: Array<{ role: string; content: unknown }>; tools?: unknown[] }
     expect(JSON.stringify(request.messages[0]?.content)).toContain('Generate a concise descriptive chat title')
     expect(request.tools ?? []).toEqual([])
 
     // A provider rejection reaches the caller with its reason, not as an empty title.
-    const rejected = await provider.getBackend().sessions.generateTitle!({ directory: dir, prompt: 'TITLE_MODEL_REJECTS this request' })
+    const rejected = await provider.getBackend().sessions.generateTitle!({ sessionId: session.id, directory: dir, prompt: 'TITLE_MODEL_REJECTS this request' })
     expect(rejected).toBeInstanceOf(Error)
     expect((rejected as Error).message).toContain('thinking is not supported for this model')
   }, 40_000)
+
+  test('a pool-billed title request carries its own key, bound to the session it names', async () => {
+    // A pool provider resolves its header from ROADIE_PI_KEY, as the real pool's does.
+    const agentDir = path.join(root, 'pool-agent')
+    fs.mkdirSync(agentDir, { recursive: true })
+    const models = JSON.parse(fakeModelsJson(server.baseUrl)) as { providers: { fake: Record<string, unknown> } }
+    models.providers.fake['headers'] = { 'x-roadie-key': '${ROADIE_PI_KEY}' }
+    fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify(models))
+    const issued = new Map<string, () => string | undefined>()
+    const revoked: string[] = []
+    const pooled = new PiBackendProvider({
+      ...makeProvider().options,
+      env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
+      pool: { issueKey: (sessionId) => { const key = `key-${issued.size}`; issued.set(key, sessionId); return key }, revokeKey: (key) => revoked.push(key) },
+    })
+    // Only the issued key may satisfy the header, never one the test runner inherited.
+    const inherited = process.env['ROADIE_PI_KEY']
+    delete process.env['ROADIE_PI_KEY']
+    const title = await pooled.getBackend().sessions.generateTitle!({ sessionId: 'ses_named', directory: project, prompt: 'Fix the login flow' })
+      .finally(() => { if (inherited !== undefined) process.env['ROADIE_PI_KEY'] = inherited })
+    expect(title).toBe('hello from the fake model')
+    expect([...issued].map(([key, session]) => [key, session()])).toEqual([['key-0', 'ses_named']])
+    expect(revoked).toEqual(['key-0'])
+    pooled.dispose()
+  }, 30_000)
 
   test('the catalog lists Pi models; fork copies a whole session', async () => {
     const catalog = await provider.getBackend().catalog.providers({})
