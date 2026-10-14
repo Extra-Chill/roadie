@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.66.0] - 2026-10-14
+
+### Added
+- manage remote pool accounts on the pool host
+
 ## [0.65.7] - 2026-10-14
 
 ### Fixed
