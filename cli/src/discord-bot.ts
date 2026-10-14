@@ -90,6 +90,7 @@ import {
 import { runShellCommand } from './commands/run-command.js'
 import { getRoadieMetadata } from './discord-utils.js'
 import { registerInteractionHandler } from './interaction-handler.js'
+import { subscribeToOperatorRequests } from './commands/operator-request.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
@@ -417,6 +418,7 @@ export async function startDiscordBot({
       return cached && 'parentId' in cached ? cached.parentId : undefined
     })
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
+    subscribeToOperatorRequests(c)
     await reconcileDeletedDiscordChannels(c)
     await restorePersistedLocalQueues({
       discordClient: c,

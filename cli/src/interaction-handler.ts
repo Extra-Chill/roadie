@@ -68,6 +68,7 @@ import {
   handleFileUploadModalSubmit,
 } from './commands/file-upload.js'
 import { handleActionButton } from './commands/action-buttons.js'
+import { handleOperatorRequestButton, OPERATOR_REQUEST_PREFIX } from './commands/operator-request.js'
 import { handleHtmlActionButton } from './html-actions.js'
 import { handleUserCommand } from './commands/user-command.js'
 import {
@@ -498,6 +499,11 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
+
+          if (customId.startsWith(OPERATOR_REQUEST_PREFIX)) {
+            await handleOperatorRequestButton(interaction)
+            return
+          }
 
           if (
             customId.startsWith('permission_once:') ||

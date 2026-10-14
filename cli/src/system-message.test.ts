@@ -477,7 +477,9 @@ describe('system-message', () => {
       - CLI command: \`roadie upgrade\` upgrades and restarts the bot (or starts a fresh process if needed)
       - CLI command: \`roadie upgrade --skip-restart\` upgrades without restarting
 
-      Inside an isolated tool shell \`roadie upgrade\` is operator-only. Ask the user to run the upgrade, or use the "/upgrade-and-restart" slash command.
+      Inside an isolated tool shell, \`roadie upgrade\` posts an approval prompt in this thread and waits for a Roadie operator to approve or deny it.
+
+      Allowlisted \`roadie credentials\` commands in an isolated tool shell also post an approval prompt in this thread and wait for a Roadie operator.
 
       Do not restart the bot unless the user explicitly asks for it.
 

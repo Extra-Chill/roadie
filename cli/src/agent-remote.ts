@@ -41,7 +41,7 @@ import {
   type RemoteSendEvent,
 } from './remote-send.js'
 import { getScheduledTask, getThreadIdBySessionId } from './database.js'
-import { createOperatorRequest, expireOperatorRequest, waitForOperatorDecision } from './operator-requests.js'
+import { createOperatorRequest, expireOperatorRequest, isAllowedOperatorCommand, waitForOperatorDecision } from './operator-requests.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -151,6 +151,17 @@ export async function runAgentCommand({
     return 1
   }
   return relayRemoteRun(response.body, { stdout, stderr })
+}
+
+/** Submit an allowlisted operator command and relay the bot's streamed result. */
+export async function runAgentOperatorRequest(argv: string[]): Promise<number> {
+  if (!isAllowedOperatorCommand(argv)) {
+    process.stderr.write(`${AGENT_OPERATOR_ONLY_MESSAGE}\n`)
+    return 64
+  }
+  const agent = resolveAgentCredentials()
+  if (agent instanceof Error) throw agent
+  return runAgentCommand({ agent, request: { method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv } } })
 }
 
 /** Query parameters for `session search` (the query text itself is `q`). */
