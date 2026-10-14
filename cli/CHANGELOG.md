@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.69.0] - 2026-10-14
+
+### Added
+- one roadie provider serves every rotation entry across wire formats
+
 ## [0.68.5] - 2026-10-14
 
 ### Changed
