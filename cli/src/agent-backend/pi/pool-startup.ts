@@ -6,7 +6,7 @@ import { startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay } from '../../credentials/remote-pool.js'
-import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations, writePiPoolAgentDir } from './pool.js'
+import { anthropicRotations, codexModels as poolCodexModels, openaiCompatRotations, writePiPoolAgentDir } from './pool.js'
 
 /** Fixed listen address for external pool clients (#171); ephemeral when unset. */
 export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { host?: string; port?: number } | Error {
@@ -52,7 +52,7 @@ export async function startPiPool(): Promise<Error | {
   }
   const rotations = anthropicRotations({ dataDir })
   const openaiRotations = openaiCompatRotations({ dataDir })
-  const codexModels = hasCodexAccounts({ dataDir }) ? (process.env['ROADIE_PI_CODEX_MODELS']?.split(',').map((m) => m.trim()).filter(Boolean) ?? DEFAULT_CODEX_MODELS) : []
+  const codexModels = poolCodexModels({ dataDir })
   if (rotations.length === 0 && openaiRotations.length === 0 && codexModels.length === 0) return new Error('the shared pool has no ChatGPT account and no pool rotation')
   const listen = piPoolListenOptions()
   if (listen instanceof Error) return listen

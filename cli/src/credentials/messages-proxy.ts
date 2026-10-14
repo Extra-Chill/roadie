@@ -32,7 +32,7 @@ import { CODEX_RESPONSES_URL, codexAccountId } from './adapters/openai-codex-oau
 import { clearSessionRoute, setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { POOL_CLIENT_SCOPE_PATTERN, poolClientSessionId, resolvePoolClient } from './pool-clients.js'
-import { DEFAULT_CODEX_MODELS, anthropicRotations, hasCodexAccounts, openaiCompatRotations } from '../agent-backend/pi/pool.js'
+import { anthropicRotations, codexModels, openaiCompatRotations } from '../agent-backend/pi/pool.js'
 import { resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 import {
   cooldownUntilFromRetryAfter,
@@ -61,7 +61,7 @@ export function poolCatalog({ dataDir, poolIds }: { dataDir: string; poolIds: st
   return {
     rotations: anthropicRotations({ dataDir, poolIds }),
     openaiRotations: openaiCompatRotations({ dataDir, poolIds }),
-    codexModels: hasCodexAccounts({ dataDir, poolIds }) ? DEFAULT_CODEX_MODELS : [],
+    codexModels: codexModels({ dataDir, poolIds }),
   }
 }
 /** Pool provider id for ChatGPT (Codex) subscription accounts. */
@@ -76,7 +76,7 @@ const CODEX_ROTATION = 'codex'
  * /codex/responses, so both stay out of this wire.
  */
 function isApiKeyCandidate(candidate: PoolCandidate): candidate is PoolCandidate & { account: ApiPoolAccount } {
-  return candidate.account.type === 'api' && candidate.provider !== 'anthropic' && candidate.provider !== CODEX_PROVIDER
+  return candidate.account.type === 'api' && candidate.provider !== 'anthropic' && candidate.provider !== CODEX_PROVIDER && candidate.provider !== 'openai'
 }
 
 /** Anthropic-shaped error body, so the client reports it like an upstream error. */
