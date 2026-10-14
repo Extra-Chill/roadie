@@ -5082,6 +5082,7 @@ export class ThreadSessionRuntime {
           directory: this.sdkDirectory,
           command: queuedCommand.name,
           arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
+          system,
           agent: earlyAgentPreference,
           model: { providerId: earlyModelParam.providerID, modelId: earlyModelParam.modelID },
           ...(variantField.variant ? { variant: variantField.variant } : {}),
