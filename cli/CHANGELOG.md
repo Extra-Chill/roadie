@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.64.0] - 2026-10-14
+
+### Added
+- remote credential pool for bots
+
 ## [0.63.1] - 2026-10-14
 
 ### Fixed
