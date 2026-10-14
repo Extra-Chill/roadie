@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.0] - 2026-10-14
+
+### Added
+- connect person-scoped MCP accounts from chat (/connect) and welcome new people (/start)
+
 ## [0.67.3] - 2026-10-14
 
 ### Changed
