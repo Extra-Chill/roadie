@@ -496,18 +496,20 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /**
    * A bounded, isolated title request: a throwaway Pi process with only Roadie's
-   * title prompt, no tools, no session, no project context.
+   * title prompt, no tools, no session, no project context. It bills through
+   * the pool as the session it names, under its own short-lived key.
    */
-  private async generateTitle({ directory, prompt }: { directory: string; prompt: string }): Promise<string | Error> {
+  private async generateTitle({ sessionId, directory, prompt }: { sessionId: string; directory: string; prompt: string }): Promise<string | Error> {
     const model = this.options.titleModel ?? this.options.model
     if (!model) return new AgentRequestError({ detail: 'No model configured for Pi titles' })
+    const poolKey = this.options.pool?.issueKey(() => sessionId)
     const child = new PiProcess({
       bin: this.options.bin,
       args: ['--no-session', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
         // `minimal`, not `off`: adaptive-thinking models reject disabled thinking.
         '--system-prompt', TITLE_REQUEST_SYSTEM, '--model', model, '--thinking', 'minimal'],
       cwd: directory,
-      env: { ...scrubbedProcessEnv(), ...this.options.env },
+      env: { ...scrubbedProcessEnv(), ...this.options.env, ...(poolKey && { ROADIE_PI_KEY: poolKey }) },
     })
     try {
       const done = new Promise<Extract<PiMessage, { role: 'assistant' }> | undefined>((resolve) => {
@@ -527,6 +529,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       return new AgentRequestError({ detail: reply ? 'Pi returned an empty title' : 'Title request ended without a reply' })
     } finally {
       child.kill()
+      if (poolKey) this.options.pool?.revokeKey(poolKey)
     }
   }
 
@@ -1166,7 +1169,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   private sessionOperations(): AgentSessionOperations {
     return {
-      generateTitle: async ({ directory, prompt }) => this.generateTitle({ directory, prompt }),
+      generateTitle: async (input) => this.generateTitle(input),
       create: async ({ directory, permission, title }) => {
         const session = await this.start({ directory, extra: [], ...(title && { title }) })
         if (session instanceof Error) return session

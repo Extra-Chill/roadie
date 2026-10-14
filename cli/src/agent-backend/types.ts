@@ -37,7 +37,7 @@ export type AgentSessionMessage = { message: AgentMessage; parts: AgentPart[] }
 
 export type AgentSessionOperations = {
   /** A bounded title-only model request, without the source conversation. */
-  generateTitle?(input: { directory: string; prompt: string }): Promise<string | Error>
+  generateTitle?(input: { sessionId: string; directory: string; prompt: string }): Promise<string | Error>
   /**
    * Optional backend title mutation; it never starts an agent/model turn.
    * Omit `directory` to let the backend resolve the session by id alone.

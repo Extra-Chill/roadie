@@ -77,7 +77,7 @@ export async function applyPendingSessionTitle({ session, prompt, backend, direc
   const claimed = await db.select().from(schema.pending_session_titles).where(orm.eq(schema.pending_session_titles.session_id, session.id)).limit(1)
   const taskPrompt = claimed[0]?.task_prompt
   if (!taskPrompt || !backend.sessions.setTitle || !backend.sessions.generateTitle) return null
-  const generated = await backend.sessions.generateTitle({ directory, prompt: taskPrompt })
+  const generated = await backend.sessions.generateTitle({ sessionId: session.id, directory, prompt: taskPrompt })
   if (generated instanceof Error) return generated
   const cleaned = generated.replace(/<think>[\s\S]*?<\/think>/g, '').split('\n').map((line) => line.trim()).find(Boolean)?.replace(/^['"`]+|['"`]+$/g, '')
   const taskTitle = cleaned ? normalizeGeneratedSessionTitle(cleaned) : null
