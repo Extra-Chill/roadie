@@ -178,6 +178,7 @@ export async function applyFiltersAsync<N extends FilterName>(
   name: N,
   value: FilterValue<N>,
   context: FilterContext<N>,
+  { onError }: { onError?: (error: unknown) => void } = {},
 ): Promise<FilterValue<N>> {
   let current = value
   for (const entry of [...(filters.get(name) ?? [])]) {
@@ -185,6 +186,7 @@ export async function applyFiltersAsync<N extends FilterName>(
       current = (await entry.fn(current, context)) as FilterValue<N>
     } catch (error) {
       logger.error(`[HOOKS] filter "${name}"${describe(entry)} threw; skipped:`, error)
+      onError?.(error)
     }
   }
   return current

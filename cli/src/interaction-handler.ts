@@ -98,7 +98,7 @@ import {
   hasRoadieBotPermission,
   hasRoadieShellPermission,
 } from './discord-utils.js'
-import { getCachedPerson, resolvePerson } from './identity.js'
+import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, resolvePerson } from './identity.js'
 import {
   channelAllowsCapability,
   channelAllowsSpeaker,
@@ -240,7 +240,7 @@ export function registerInteractionHandler({
         // Identity hook (if configured): resolve the person once, before the
         // synchronous permission checks below read the cached result.
         if (interaction.guild) {
-          await resolvePerson({
+          const person = await resolvePerson({
             actor: {
               platform: 'discord',
               id: interaction.user.id,
@@ -251,6 +251,14 @@ export function registerInteractionHandler({
               ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
             },
           })
+          // Fail closed, but say the lookup failed rather than a denial.
+          if (person?.lookupFailed) {
+            if (interaction.isRepliable()) {
+              const reply = { content: IDENTITY_LOOKUP_FAILED_MESSAGE, flags: MessageFlags.Ephemeral } as const
+              await (interaction.deferred || interaction.replied ? interaction.followUp(reply) : interaction.reply(reply))
+            }
+            return
+          }
         }
 
         // Explicit application management is the only bootstrap exception to
