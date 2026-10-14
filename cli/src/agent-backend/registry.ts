@@ -42,11 +42,14 @@ export function configuredBackend(): 'pi' | 'opencode' {
  * OpenCode-owned threads keep working until the backend is deleted (#177).
  * `ROADIE_OPENCODE_FALLBACK=0|false|off` disables it: OpenCode never starts and
  * OpenCode-owned session ids are retired, so threads bound to them migrate to a
- * fresh Pi session instead.
+ * fresh Pi session instead. `1|true|on` (or unset) keeps it. Anything else is
+ * a startup error, never a guess, same as ROADIE_BACKEND.
  */
 export function opencodeFallbackEnabled(env: string | undefined = process.env['ROADIE_OPENCODE_FALLBACK']): boolean {
   const value = env?.trim().toLowerCase()
-  return !(value === '0' || value === 'false' || value === 'off')
+  if (!value || value === '1' || value === 'true' || value === 'on') return true
+  if (value === '0' || value === 'false' || value === 'off') return false
+  throw new Error(`ROADIE_OPENCODE_FALLBACK must be 1/true/on or 0/false/off, got "${env}"`)
 }
 
 /**

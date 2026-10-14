@@ -192,16 +192,16 @@ describe('ROADIE_OPENCODE_FALLBACK (#230)', () => {
     return shim
   }
 
-  test('on by default; 0, false and off disable it; everything else enables it', () => {
+  test('on by default; 1, true and on keep it; 0, false and off disable it; anything else is an error', () => {
     expect(opencodeFallbackEnabled(undefined)).toBe(true)
     expect(opencodeFallbackEnabled('')).toBe(true)
     expect(opencodeFallbackEnabled('1')).toBe(true)
-    expect(opencodeFallbackEnabled('yes')).toBe(true)
+    expect(opencodeFallbackEnabled(' On ')).toBe(true)
     expect(opencodeFallbackEnabled(' 0 ')).toBe(false)
     expect(opencodeFallbackEnabled('False')).toBe(false)
     expect(opencodeFallbackEnabled('off')).toBe(false)
-    // A mistake never silently flips the default off.
-    expect(opencodeFallbackEnabled('typo')).toBe(true)
+    // A typo is a startup error, never a guess (same as ROADIE_BACKEND).
+    expect(() => opencodeFallbackEnabled('typo')).toThrow('ROADIE_OPENCODE_FALLBACK must be')
   })
 
   test('with the flag off, the Pi default retires OpenCode-owned session ids', () => {
