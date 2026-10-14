@@ -268,6 +268,77 @@ describe('withPiDefault', () => {
   })
 })
 
+describe('withPiDefault with the fallback disabled (#230)', () => {
+  const LEGACY_SESSION = { id: 'ses_legacy', title: 'Legacy', directory: '/p', createdAt: 1, updatedAt: 2 }
+  const PI_SESSION = { id: 'pi_new', title: 'Pi', directory: '/p', createdAt: 3, updatedAt: 4 }
+  const fallbackBackendWithGet = {
+    sessions: {
+      get: async ({ sessionId }: { sessionId: string }) => ({ ...LEGACY_SESSION, id: sessionId }),
+    },
+  } as unknown as AgentBackend
+
+  /** Local Pi stand-in: `owns` decides retirement, nothing spawns. */
+  function pi(): PiBackendProvider {
+    return {
+      id: 'pi',
+      owns: (sessionId: string) => sessionId.startsWith('pi_'),
+      getBackend: () => ({
+        sessions: {
+          create: async () => PI_SESSION,
+        },
+        catalog: { providers: async () => ({ providers: [], connected: [], defaults: {} }), config: async () => ({}), agents: async () => [] },
+        auth: { methods: async () => ({}) },
+      } as unknown as AgentBackend),
+    } as unknown as PiBackendProvider
+  }
+
+  /** A fallback provider whose successful init is observable: it must never happen. */
+  function lazyFallback(calls: string[]): AgentBackendProvider {
+    return {
+      id: 'fake-oc',
+      getBackend: () => null,
+      initializeForDirectory: async (directory) => {
+        calls.push(`fallback.initialize:${directory}`)
+        return () => fallbackBackendWithGet
+      },
+      subscribeEvents: () => null,
+      onStarted: () => {},
+    }
+  }
+
+  test('marks every non-Pi session id retired and keeps Pi ids alive', () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: pi(), fallbackEnabled: false })
+    expect(provider.isRetiredSession?.('ses_legacy')).toBe(true)
+    expect(provider.isRetiredSession?.('pi_new')).toBe(false)
+    expect(calls).toEqual([])
+  })
+
+  test('a used retired id never starts the fallback; new sessions still come from Pi', async () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: pi(), fallbackEnabled: false })
+    const getBackend = await provider.initializeForDirectory('/p', {})
+    if (getBackend instanceof Error) throw getBackend
+    const result = await getBackend().sessions.get({ sessionId: 'ses_legacy' })
+    expect(result instanceof AgentRequestError).toBe(true)
+    expect(calls).toEqual([])
+    expect(await getBackend().sessions.create({ directory: '/p' })).toEqual(PI_SESSION)
+    // Only Pi served the directory; the fallback provider was never initialized.
+    expect(calls).toEqual([])
+  })
+
+  test('enabled (the default): OpenCode-owned sessions keep working and get no retirement signal', async () => {
+    const calls: string[] = []
+    const provider = withPiDefault({ fallback: lazyFallback(calls), pi: pi(), fallbackEnabled: true })
+    expect(provider.isRetiredSession).toBeUndefined()
+    const fallbackDefault = withPiDefault({ fallback: lazyFallback(calls), pi: pi() })
+    expect(fallbackDefault.isRetiredSession).toBeUndefined()
+    const getBackend = await provider.initializeForDirectory('/p', {})
+    if (getBackend instanceof Error) throw getBackend
+    expect(await getBackend().sessions.get({ sessionId: 'ses_legacy' })).toEqual(LEGACY_SESSION)
+    expect(calls).toEqual(['fallback.initialize:/p'])
+  })
+})
 describe('checkPiVersion', () => {
   test('accepts 1.x, rejects 0.x and a missing binary', () => {
     expect(checkPiVersion('pi', () => '1.1.0\n')).toBe('1.1.0')

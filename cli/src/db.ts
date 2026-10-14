@@ -220,6 +220,8 @@ async function migrateSchema({
     "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
+    // Retired-backend migration keeps the predecessor id linkable (#230).
+    'ALTER TABLE thread_sessions ADD COLUMN migrated_from_session_id TEXT',
     'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
     'ALTER TABLE channel_directories ADD COLUMN guild_id TEXT',
     // First session_sleeps shape had thread_id only. Later ticks query these.

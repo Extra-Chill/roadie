@@ -22,6 +22,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
 import { createDiscordChatChannel, createDiscordChatThread } from '../chat-platform/discord.js'
+import type { ChatHistoryMessage } from '../chat-platform/types.js'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -96,6 +97,7 @@ import {
   setPartMessage,
   getThreadSession,
   setThreadSession,
+  setThreadMigratedFromSessionId,
   getThreadParentSessionId,
   setThreadParentSessionId,
   getSessionForkOrigin,
@@ -240,6 +242,48 @@ const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
 const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
+
+// Migration seed bounds (#230): the seed message keeps the last 50 messages of
+// thread history or their last 24 KiB of text, whichever is smaller, so the
+// seed prompt on a fresh session never grows unbounded on long threads.
+export const SESSION_SEED_MAX_MESSAGES = 50
+export const SESSION_SEED_MAX_BYTES = 24 * 1024
+
+/** One history line for a migration or heading seed, oldest-first rendering. */
+function renderSeedLine(message: ChatHistoryMessage): string {
+  return `${message.timestamp ? `${message.timestamp} ` : ''}${message.author}${message.bot ? ' [bot]' : ''}: ${message.content}`
+}
+
+/**
+ * Render recent messages to seed lines (oldest first), keeping the newest
+ * within both bounds. Oldest lines are dropped first; a single line that does
+ * not fit the byte bound is dropped entirely.
+ */
+export function boundSeedHistoryLines({
+  messages,
+  maxMessages,
+  maxBytes,
+}: {
+  messages: ChatHistoryMessage[]
+  maxMessages: number
+  maxBytes: number
+}): string[] {
+  let lines = messages.map(renderSeedLine).filter(Boolean)
+  if (lines.length > maxMessages) {
+    lines = lines.slice(-maxMessages)
+  }
+  // Walk from the newest line backwards; the newest line is always kept (it
+  // is the most recent context), older ones fill up to the byte bound.
+  const kept: string[] = []
+  let bytes = 0
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const size = Buffer.byteLength(lines[index]!, 'utf8')
+    if (bytes > 0 && bytes + size > maxBytes) break
+    kept.unshift(lines[index]!)
+    bytes += size
+  }
+  return kept
+}
 
 function extractToastSessionId({ message }: { message: string }): string | undefined {
   const match = message.match(TOAST_SESSION_ID_REGEX)
@@ -5379,6 +5423,8 @@ export class ThreadSessionRuntime {
         session: { id: string; title: string }
         getClient: AgentBackendGetter
         createdNewSession: boolean
+        /** Set when the thread migrated off a retired session onto the new one. */
+        migratedFromSessionId?: string
       }
   > {
     const directory = this.sdkDirectory
@@ -5406,6 +5452,20 @@ export class ThreadSessionRuntime {
 
     let session: { id: string; title: string } | undefined
     let createdNewSession = false
+
+    // Retired-session migration (#230): when the provider says the mapped
+    // session can no longer be resumed (the OpenCode fallback was disabled),
+    // skip the get probe entirely — a retired id never reaches any backend —
+    // and fall through to the create path, which rebinds the thread to a fresh
+    // Pi session. A sessions.get error alone never migrates anything.
+    let migratedFromSessionId: string | undefined
+    if (sessionId && getAgentBackendProvider().isRetiredSession?.(sessionId)) {
+      logger.log(
+        `[ENSURE SESSION] session ${sessionId} is retired; migrating thread ${this.thread.id} to a new session`,
+      )
+      migratedFromSessionId = sessionId
+      sessionId = undefined
+    }
 
     if (sessionId) {
       const sessionResponse = await getClient().sessions.get({
@@ -5468,6 +5528,26 @@ export class ThreadSessionRuntime {
       )
     }
 
+    // The migration is complete once the thread is rebound to the new session
+    // (the final setThreadSession below). Announce it and seed the fresh
+    // session with the thread's recent history before the user's prompt is
+    // dispatched, so the model does not start cold.
+    if (migratedFromSessionId) {
+      const persisted = await setThreadMigratedFromSessionId({
+        threadId: this.thread.id,
+        sessionId: migratedFromSessionId,
+      })
+      if (persisted instanceof Error) {
+        logger.warn(`[SESSION MIGRATION] Failed to record the predecessor session in thread ${this.thread.id}: ${persisted.message}`)
+      }
+      await this.sendRetiredSessionNotice()
+      await this.seedMigratedSessionHistory({
+        client: getClient(),
+        sessionId: session.id,
+        fromSessionId: migratedFromSessionId,
+      })
+    }
+
     // Store session in DB and thread state
     await setThreadSession(this.thread.id, session.id)
     threadState.setSessionId(this.threadId, session.id)
@@ -5507,7 +5587,57 @@ export class ThreadSessionRuntime {
       await setSessionAgent(session.id, agent)
     }
 
-    return { session, getClient, createdNewSession }
+    return { session, getClient, createdNewSession, ...(migratedFromSessionId && { migratedFromSessionId }) }
+  }
+
+  /**
+   * One-time migration notice (#230): the thread's messages now reach the new
+   * session instead of the retired one. The rebind makes this happen at most
+   * once per thread.
+   */
+  private async sendRetiredSessionNotice(): Promise<void> {
+    const notice = 'This thread continued in a new session; the previous one ran on a retired agent backend.'
+    const result = await this.chat.sendNotice(notice)
+    if (result instanceof Error) {
+      logger.warn(`[SESSION MIGRATION] Failed to post the migration notice: ${result.message}`)
+    }
+  }
+
+  /**
+   * Seed a migrated session with the thread's recent history as one recorded
+   * (noReply) message, so the model is not starting cold. The history read is
+   * best-effort: on failure the seed is just the note and the migration still
+   * completes.
+   */
+  private async seedMigratedSessionHistory({
+    client,
+    sessionId,
+    fromSessionId,
+  }: {
+    client: AgentBackend
+    sessionId: string
+    fromSessionId: string
+  }): Promise<void> {
+    const note = `This conversation moved from an earlier session (${fromSessionId}) to this one for the agent to keep working. Recent thread history (oldest first):`
+    let lines: string[] = []
+    if (this.chat.readRecentMessages) {
+      const history = await this.chat.readRecentMessages(SESSION_SEED_MAX_MESSAGES)
+      if (history instanceof Error) {
+        logger.warn(`[SESSION MIGRATION] Failed to read thread history for the seed: ${history.message}`)
+      } else if (history.length > 0) {
+        lines = boundSeedHistoryLines({ messages: history, maxMessages: SESSION_SEED_MAX_MESSAGES, maxBytes: SESSION_SEED_MAX_BYTES })
+      }
+    }
+    const text = [note, ...(lines.length ? ['', ...lines] : [])].join('\n')
+    const seeded = await client.sessions.prompt({
+      sessionId,
+      directory: this.sdkDirectory,
+      parts: [{ kind: 'text', text, synthetic: true }],
+      noReply: true,
+    })
+    if (seeded instanceof Error) {
+      logger.warn(`[SESSION MIGRATION] Failed to record the history seed: ${seeded.message}`)
+    }
   }
 
   /**

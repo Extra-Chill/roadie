@@ -29,6 +29,17 @@ export type ChatInteractions = {
 
 export type ChatMessage = { id: string }
 
+/** One recent message read back out of the thread. */
+export type ChatHistoryMessage = {
+  /** Display name of the sender (or its platform id). */
+  author: string
+  bot: boolean
+  /** When the message was sent, as a readable string if known. */
+  timestamp: string
+  /** The message's text content; attachments are not included. */
+  content: string
+}
+
 export type ChatThread = {
   /** Optional native presentation of a backend session title. */
   syncTitle?(title: string): Promise<void | Error>
@@ -78,6 +89,11 @@ export type ChatThread = {
    * use an hourglass reaction).
    */
   setPendingMarker(messageId: string, on: boolean): Promise<Error | void>
+  /**
+   * Up to `limit` messages of the thread's own conversation, oldest first.
+   * Absent when the platform cannot read history back.
+   */
+  readRecentMessages?(limit: number): Promise<Error | ChatHistoryMessage[]>
   /** Show a typing indicator. */
   sendTyping(): Promise<Error | void>
   /** Change the thread title. Rejects on failure; may be slow when rate limited. */

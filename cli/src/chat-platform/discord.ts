@@ -13,7 +13,8 @@ import { showPermissionButtons, addPermissionRequestToContext, pendingPermission
 import { showAskUserQuestionDropdowns, hasPendingQuestionForThread, cancelPendingQuestion } from '../commands/ask-question.js'
 import { showActionButtons, pendingActionButtonContexts } from '../commands/action-buttons.js'
 import { pendingFileUploadContexts, showFileUploadButton } from '../commands/file-upload.js'
-import { DiscordOperationError } from '../errors.js'
+import { DiscordApiError, DiscordOperationError } from '../errors.js'
+import { readChannelMessages } from '../discord-channel-reads.js'
 import type { ChatThread } from './types.js'
 
 function flagsFor(notify: boolean | undefined): number {
@@ -86,6 +87,17 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       const message = await thread.messages.fetch(messageId)
         .catch((e) => new DiscordOperationError({ operation: 'fetchMessage', cause: e }))
       return message instanceof Error ? message : message.content
+    },
+
+    async readRecentMessages(limit) {
+      const messages = await readChannelMessages({ rest: thread.client.rest, channelId: thread.id, limit })
+      if (messages instanceof DiscordApiError) return messages
+      return messages.map((message) => ({
+        author: message.author,
+        bot: message.bot,
+        timestamp: message.timestamp,
+        content: message.content,
+      }))
     },
 
     async editMessageText(messageId, content) {
@@ -196,6 +208,7 @@ export function createDiscordChatChannel(channel: TextChannel): ChatThread {
     },
     sendNotice: base.sendNotice,
     readMessageText: base.readMessageText,
+    readRecentMessages: base.readRecentMessages,
     editMessageText: base.editMessageText,
     setPendingMarker: base.setPendingMarker,
     sendTyping: base.sendTyping,

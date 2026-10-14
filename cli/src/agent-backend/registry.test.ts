@@ -11,6 +11,7 @@ import {
   piSettingsDefaultModel,
   clearResolvedDefaultProvider,
   getAgentBackendProvider,
+  opencodeFallbackEnabled,
   resolveAgentBackendProvider,
   setAgentBackendProvider,
 } from './registry.js'
@@ -93,14 +94,14 @@ describe('agent backend registry', () => {
 })
 
 describe('default backend resolution (#177)', () => {
-  const savedEnv: Array<[string, string | undefined]> = []
-
   /** A `pi` stand-in whose --version satisfies the registry's 1.x check. */
   function writePiVersionShim(dir: string, version = '1.2.3'): string {
     const shim = path.join(dir, `fake-pi-${version}`)
     fs.writeFileSync(shim, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 })
     return shim
   }
+
+  const savedEnv: Array<[string, string | undefined]> = []
 
   function withEnv(name: string, value: string | undefined): void {
     savedEnv.push([name, process.env[name]])
@@ -179,6 +180,57 @@ describe('default backend resolution (#177)', () => {
   test('an invalid ROADIE_BACKEND value is a startup error, never a fallback', () => {
     withEnv('ROADIE_BACKEND', 'claude')
     expect(() => resolveAgentBackendProvider()).toThrow(/ROADIE_BACKEND must be/)
+  })
+})
+
+describe('ROADIE_OPENCODE_FALLBACK (#230)', () => {
+  const tmp = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'registry-oc-fallback-'))
+
+  function writePiVersionShim(dir: string, version = '1.2.3'): string {
+    const shim = path.join(dir, `fake-pi-${version}`)
+    fs.writeFileSync(shim, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 })
+    return shim
+  }
+
+  test('on by default; 0, false and off disable it; everything else enables it', () => {
+    expect(opencodeFallbackEnabled(undefined)).toBe(true)
+    expect(opencodeFallbackEnabled('')).toBe(true)
+    expect(opencodeFallbackEnabled('1')).toBe(true)
+    expect(opencodeFallbackEnabled('yes')).toBe(true)
+    expect(opencodeFallbackEnabled(' 0 ')).toBe(false)
+    expect(opencodeFallbackEnabled('False')).toBe(false)
+    expect(opencodeFallbackEnabled('off')).toBe(false)
+    // A mistake never silently flips the default off.
+    expect(opencodeFallbackEnabled('typo')).toBe(true)
+  })
+
+  test('with the flag off, the Pi default retires OpenCode-owned session ids', () => {
+    const saved: Array<[string, string | undefined]> = []
+    const withEnv = (name: string, value: string | undefined) => {
+      saved.push([name, process.env[name]])
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    try {
+      withEnv('ROADIE_BACKEND', undefined)
+      withEnv('ROADIE_PI_CHANNELS', undefined)
+      withEnv('ROADIE_OPENCODE_FALLBACK', '0')
+      withEnv('ROADIE_PI_BIN', writePiVersionShim(tmp))
+      withEnv('ROADIE_PI_SESSION_DIR', path.join(tmp, 'pi-sessions'))
+      clearResolvedDefaultProvider()
+      const provider = resolveAgentBackendProvider()
+      // The real Pi provider owns nothing in this empty session dir, so the
+      // non-Pi id is retired; the provider-routed pieces are covered in
+      // router.test.ts with a deterministic Pi stand-in.
+      expect(provider.id).toBe('pi+opencode')
+      expect(provider.isRetiredSession?.('ses_legacy')).toBe(true)
+    } finally {
+      for (const [name, value] of saved.reverse()) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+      clearResolvedDefaultProvider()
+    }
   })
 })
 

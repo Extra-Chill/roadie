@@ -38,6 +38,18 @@ export function configuredBackend(): 'pi' | 'opencode' {
 }
 
 /**
+ * The OpenCode fallback inside the Pi default (#230): on by default so
+ * OpenCode-owned threads keep working until the backend is deleted (#177).
+ * `ROADIE_OPENCODE_FALLBACK=0|false|off` disables it: OpenCode never starts and
+ * OpenCode-owned session ids are retired, so threads bound to them migrate to a
+ * fresh Pi session instead.
+ */
+export function opencodeFallbackEnabled(env: string | undefined = process.env['ROADIE_OPENCODE_FALLBACK']): boolean {
+  const value = env?.trim().toLowerCase()
+  return !(value === '0' || value === 'false' || value === 'off')
+}
+
+/**
  * The built-in default: Pi for every new session, with OpenCode serving the
  * sessions it already owns. ROADIE_BACKEND=opencode restores the previous
  * default (OpenCode, plus Pi for the channels listed in ROADIE_PI_CHANNELS,
@@ -151,7 +163,7 @@ function defaultProvider(): AgentBackendProvider {
     // fail startup with a clear error (opt back into OpenCode explicitly).
     throw new Error(`${version.message}. Pi is the default agent backend; install Pi ${MIN_PI_MAJOR}.x or newer, or set ROADIE_BACKEND=opencode to keep OpenCode as the default`)
   }
-  resolvedDefault = withPiDefault({ fallback: openCodeBackendProvider, pi })
+  resolvedDefault = withPiDefault({ fallback: openCodeBackendProvider, pi, fallbackEnabled: opencodeFallbackEnabled() })
   return resolvedDefault
 }
 

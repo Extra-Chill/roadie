@@ -135,6 +135,7 @@ Service installs configure Roadie through the environment; nothing needs to touc
 |---|---|
 | `ROADIE_PLATFORM` | `discord` (default) or `slack`. Same as `--platform`. |
 | `ROADIE_BACKEND` | Agent backend for new sessions: `pi` (default) or `opencode`. Existing OpenCode sessions keep running on OpenCode. Same as `--backend`. See [Agent backend](docs/agent-backend.md). |
+| `ROADIE_OPENCODE_FALLBACK` | `0`, `false` or `off` disables the OpenCode fallback under the Pi default: OpenCode never starts and OpenCode-owned threads migrate to a fresh Pi session instead of resuming. Default: on, until the OpenCode backend is removed. |
 | `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |

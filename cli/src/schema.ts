@@ -33,6 +33,9 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   // Parent OpenCode session that spawned this thread via roadie send --parent-session.
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
   parent_session_id: sqliteCore.text('parent_session_id'),
+  // Session this thread migrated off when its backend was retired (#230).
+  // The thread rebinds to a fresh Pi session; the old id stays linkable.
+  migrated_from_session_id: sqliteCore.text('migrated_from_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
   // Bumped on every (re)binding of a session to this thread. /resume can map one
   // session to several threads, so session_id -> thread_id needs a tiebreaker.

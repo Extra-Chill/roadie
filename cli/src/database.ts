@@ -881,6 +881,29 @@ export async function upsertThreadSession({ threadId, sessionId, source }: { thr
     })
 }
 
+/**
+ * Durable predecessor of a thread's current session: the session the thread
+ * ran on before a retired-backend migration (#230). Written once when the
+ * migration rebinds the thread; nothing overwrites it afterwards.
+ */
+export async function setThreadMigratedFromSessionId({
+  threadId,
+  sessionId,
+}: {
+  threadId: string
+  sessionId: string
+}): Promise<void | Error> {
+  const db = await getDb()
+  try {
+    await db
+      .update(schema.thread_sessions)
+      .set({ migrated_from_session_id: sessionId })
+      .where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  } catch (cause) {
+    return new Error('Failed to record the migrated-from session', { cause })
+  }
+}
+
 export async function getThreadParentSessionId(threadId: string) {
   const db = await getDb()
   return (

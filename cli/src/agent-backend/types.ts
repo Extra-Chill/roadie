@@ -329,6 +329,13 @@ export type AgentBackendProvider = {
    * across several backends. Single-backend providers omit it: `id` answers.
    */
   sessionBackendId?(sessionId: string): string
+  /**
+   * True when `sessionId` can no longer be resumed through any backend this
+   * provider supplies (e.g. the OpenCode fallback was disabled). The migration
+   * caller uses this explicit signal instead of probing with sessions.get, so
+   * a transient get error never reads as retirement.
+   */
+  isRetiredSession?(sessionId: string): boolean
   /** Backend for a directory whose server is already running, or null. */
   getBackend(directory: string): AgentBackend | null
   /** Ensure the backend serving `directory` is running; returns a getter. */

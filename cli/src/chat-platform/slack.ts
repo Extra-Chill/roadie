@@ -304,6 +304,36 @@ export class SlackChatThread implements ChatThread {
       ts: messageId,
     })
   }
+  async readRecentMessages(limit: number) {
+    const result = await this.options.api.call(
+      'conversations.replies',
+      { channel: this.parentId, ts: this.options.threadTs, limit },
+      z.object({
+        messages: z.array(z.object({
+          ts: z.string(),
+          text: z.string().default(''),
+          user: z.string().optional(),
+          username: z.string().optional(),
+          bot_id: z.string().optional(),
+          subtype: z.string().optional(),
+        }).passthrough()),
+      }),
+    )
+    if (result instanceof Error) return result
+    // Slack lists replies oldest first. Bot posts carry the `bot_message`
+    // subtype; other subtypes are join/leave and mime-only noise. Skip records
+    // without prose so the seed reads like the conversation.
+    return result.messages.flatMap((message) => {
+      if (!message.text.trim()) return []
+      const bot = Boolean(message.bot_id) || message.subtype === 'bot_message'
+      if (message.subtype && !bot) return []
+      const author = message.username ?? message.user ?? message.bot_id ?? 'unknown'
+      const timestamp = Number.isFinite(Number(message.ts))
+        ? new Date(Number(message.ts) * 1000).toISOString()
+        : message.ts
+      return [{ author, bot, timestamp, content: message.text }]
+    })
+  }
   editMessageText(messageId: string, content: string) {
     return this.options.api.edit({ channel: this.parentId, ts: messageId, text: content })
   }

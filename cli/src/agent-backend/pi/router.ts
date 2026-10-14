@@ -273,17 +273,37 @@ export function withPiChannels({
 export function withPiDefault({
   fallback,
   pi,
+  fallbackEnabled = true,
 }: {
   fallback: AgentBackendProvider
   pi: PiBackendProvider
+  /**
+   * The OpenCode fallback within the Pi default (#230). When false —
+   * `ROADIE_OPENCODE_FALLBACK=0` — OpenCode is never started (ensureFallback
+   * resolves null) and every session id Pi does not own is retired: the runtime
+   * migrates those threads to a fresh Pi session instead of resuming.
+   */
+  fallbackEnabled?: boolean
 }): AgentBackendProvider {
   return {
     id: `pi+${fallback.id}`,
     sessionBackendId: (sessionId) => sessionBackendId({ sessionId, fallback, pi }),
+    // Only the disabled fallback retires sessions: an id Pi does not own can
+    // never resume again. When the fallback is enabled there is no signal and
+    // OpenCode-owned sessions keep working.
+    isRetiredSession: fallbackEnabled
+      ? undefined
+      : (sessionId) => !pi.owns(sessionId),
     getBackend(directory) {
       return composite(fallback.getBackend(directory), pi, true)
     },
     async initializeForDirectory(directory, options) {
+      if (!fallbackEnabled) {
+        // OpenCode never starts: the fallback resolves to null, so any routed
+        // session operation on a retired id fails with "backend is unavailable"
+        // instead of starting the server.
+        return () => composite(null, pi, true)
+      }
       let started: Promise<AgentBackend | null> | undefined
       const ensureFallback = () => {
         started ??= fallback
