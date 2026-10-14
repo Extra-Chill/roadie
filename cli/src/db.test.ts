@@ -256,7 +256,7 @@ describe('getDb', () => {
     expect(await getSessionForkOrigin('ses_fork_origin')).toEqual({ sourceSessionId: 'ses_src', sourceThreadId: 'thread_src' })
   })
 
-  test('migrates pending fork titles and preserves the claimed task across reopening', async () => {
+  test('renames legacy pending fork titles, adds the task column, and preserves the claimed task across reopening', async () => {
     await closeDb()
     const previousDbUrl = process.env['ROADIE_DB_URL']
     const dbPath = path.join(testDbDir, `test-db-fork-title-${crypto.randomUUID()}.db`)
@@ -267,12 +267,12 @@ describe('getDb', () => {
     process.env['ROADIE_DB_URL'] = `file:${dbPath}`
     try {
       const db = await getDb()
-      expect(await db.query.pending_fork_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
+      expect(await db.query.pending_session_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
         inherited_title: 'Inherited title', task_prompt: null,
       })
-      await db.update(schema.pending_fork_titles).set({ task_prompt: 'Original task' }).where(orm.eq(schema.pending_fork_titles.session_id, 'legacy-fork'))
+      await db.update(schema.pending_session_titles).set({ task_prompt: 'Original task' }).where(orm.eq(schema.pending_session_titles.session_id, 'legacy-fork'))
       await closeDb()
-      expect(await (await getDb()).query.pending_fork_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
+      expect(await (await getDb()).query.pending_session_titles.findFirst({ where: { session_id: 'legacy-fork' } })).toMatchObject({
         inherited_title: 'Inherited title', task_prompt: 'Original task',
       })
     } finally {

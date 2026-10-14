@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS `pending_fork_titles` (
+CREATE TABLE IF NOT EXISTS `pending_session_titles` (
 	`session_id` text PRIMARY KEY,
 	`inherited_title` text NOT NULL,
 	`task_prompt` text

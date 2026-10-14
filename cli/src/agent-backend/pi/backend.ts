@@ -504,15 +504,16 @@ export class PiBackendProvider implements AgentBackendProvider {
     const child = new PiProcess({
       bin: this.options.bin,
       args: ['--no-session', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
-        '--system-prompt', TITLE_REQUEST_SYSTEM, '--model', model, '--thinking', 'off'],
+        // `minimal`, not `off`: adaptive-thinking models reject disabled thinking.
+        '--system-prompt', TITLE_REQUEST_SYSTEM, '--model', model, '--thinking', 'minimal'],
       cwd: directory,
       env: { ...scrubbedProcessEnv(), ...this.options.env },
     })
     try {
-      const done = new Promise<PiMessage | undefined>((resolve) => {
+      const done = new Promise<Extract<PiMessage, { role: 'assistant' }> | undefined>((resolve) => {
         child.onRecord((record) => {
           if (record.type === 'agent_end') {
-            resolve((record.messages as PiMessage[] | undefined)?.findLast((m) => m.role === 'assistant'))
+            resolve((record.messages as PiMessage[] | undefined)?.findLast((m) => m.role === 'assistant') as Extract<PiMessage, { role: 'assistant' }> | undefined)
           }
         })
         child.onExit(() => resolve(undefined))
@@ -520,10 +521,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       const accepted = await child.request({ type: 'prompt', message: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) })
       if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
       const reply = await Promise.race([done, new Promise<undefined>((resolve) => setTimeout(resolve, 15_000))])
-      const text = reply && Array.isArray(reply.content)
-        ? (reply.content as Array<{ type: string; text?: string }>).flatMap((c) => (c.type === 'text' && c.text ? [c.text] : [])).join('').trim()
-        : ''
-      return text || new AgentRequestError({ detail: 'Pi returned an empty title' })
+      const text = reply ? finalAssistantText([reply]) : ''
+      if (text) return text
+      if (reply?.errorMessage) return new AgentRequestError({ detail: `Title model failed: ${reply.errorMessage}` })
+      return new AgentRequestError({ detail: reply ? 'Pi returned an empty title' : 'Title request ended without a reply' })
     } finally {
       child.kill()
     }

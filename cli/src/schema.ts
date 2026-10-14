@@ -40,7 +40,7 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
 
 // Only newly created forks awaiting their first task prompt. Separate from
 // session history; this marker survives runtime reconstruction and restart.
-export const pending_fork_titles = sqliteCore.sqliteTable('pending_fork_titles', {
+export const pending_session_titles = sqliteCore.sqliteTable('pending_session_titles', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   inherited_title: sqliteCore.text('inherited_title').notNull(),
   // Claimed by the first actual task; retries keep this input across restarts.
@@ -408,7 +408,7 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 
 export const relations = defineRelations({
   person_welcomes,
-  pending_fork_titles,
+  pending_session_titles,
   session_fork_origins,
   conversation_admissions,
   conversation_participants,

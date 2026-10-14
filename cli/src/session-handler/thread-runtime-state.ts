@@ -14,11 +14,11 @@
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import type { RepliedMessageContext } from '../system-message.js'
 import { store } from '../store.js'
-import type { ForkTitleTurn } from '../fork-title.js'
+import type { SessionTitleTurn } from '../session-title.js'
 
 // ── Shared types ─────────────────────────────────────────────────
 
-export type QueuedMessage = ForkTitleTurn & {
+export type QueuedMessage = SessionTitleTurn & {
   // Stable id for this queue entry. Used by Discord remove-queue buttons so
   // position shifts after earlier drains do not remove the wrong item.
   queueId?: string

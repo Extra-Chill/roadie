@@ -7,7 +7,7 @@
 // run internals.
 
 import { resolveSessionPermissionRules } from '../permission-policy.js'
-import { forkTitlePrompt, schedulePendingForkTitle } from '../fork-title.js'
+import { markPendingSessionTitle, sessionTitlePrompt, schedulePendingSessionTitle } from '../session-title.js'
 import { doAction } from '../hooks.js'
 import { parsePersistedEvents } from './persisted-events.js'
 import {
@@ -3790,7 +3790,7 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
-      schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
+      schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
       await this.registerSpeakerMcpServers({ client: getClient(), input })
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
@@ -4823,7 +4823,7 @@ export class ThreadSessionRuntime {
       return false
     }
     const { session, getClient, createdNewSession } = sessionResult
-    schedulePendingForkTitle({ session, prompt: forkTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
+    schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
     await this.registerSpeakerMcpServers({ client: getClient(), input })
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
@@ -5525,7 +5525,7 @@ export class ThreadSessionRuntime {
         requested: permissions,
         phase: 'create',
       })
-      // Omit title so OpenCode auto-generates a summary from the conversation
+      // Untitled: the first task names it (markPendingSessionTitle below).
       const createResult = await getClient().sessions.create({
         directory: this.sdkDirectory,
         permission: sessionPermissions,
@@ -5544,6 +5544,7 @@ export class ThreadSessionRuntime {
       // source='roadie' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
       await setThreadSession(this.thread.id, session.id)
+      await markPendingSessionTitle(session)
       if (injectionGuardPatterns?.length) {
         writeInjectionGuardConfig({
           sessionId: session.id,

@@ -48,7 +48,7 @@ import {
 } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
-import { markPendingForkTitle } from './fork-title.js'
+import { markPendingSessionTitle } from './session-title.js'
 import { recordSessionForkOrigin, setThreadSession } from './database.js'
 import { copySessionPreferences } from './commands/model.js'
 import { copySessionSystemPrompt } from './system-message.js'
@@ -1229,7 +1229,7 @@ export class NativeSlackBot {
         sourceSessionId: sessionId,
         sourceThreadId: runtime.threadId,
       })
-      await markPendingForkTitle(forkedSession)
+      await markPendingSessionTitle(forkedSession)
       const working = await getThreadWorkingDirectory(runtime.threadId)
       if (workspace.binding) {
         await setThreadWorkingDirectory({ threadId: id, ...workspace.binding })
