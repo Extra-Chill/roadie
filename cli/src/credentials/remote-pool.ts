@@ -204,5 +204,10 @@ export function remotePoolAccounts({ url, key, fetchImpl = fetch }: RemotePoolCo
       const result = await call<{ accounts: PoolAccountView[] }>('POST', 'accounts/reorder', { pool: poolId, accountId, position })
       return result instanceof Error ? result : result.accounts
     },
+    async setRotation({ poolId, name, entries }) {
+      const result = await call<{ set: boolean }>('POST', 'rotations', { pool: poolId, name, entries })
+      if (result instanceof Error) return result
+      return result.set === true || new Error(`pool host ${url} did not set rotation ${name}`)
+    },
   }
 }

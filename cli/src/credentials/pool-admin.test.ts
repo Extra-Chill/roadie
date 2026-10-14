@@ -10,7 +10,7 @@ import { POOL_ADMIN_PATH, PROXY_KEY_HEADER, startMessagesProxy, type MessagesPro
 import { addPoolClient } from './pool-clients.js'
 import { localPoolAccounts } from './pool-accounts.js'
 import { createPoolAdminHandler } from './pool-admin.js'
-import { addPoolAccount, readPoolAccounts, setPoolRotation, SHARED_POOL_ID } from './store.js'
+import { addPoolAccount, readPoolAccounts, readPoolRotations, setPoolRotation, SHARED_POOL_ID } from './store.js'
 
 const CATALOG = { openai: { id: 'openai', npm: '@ai-sdk/openai' } }
 const TEST_KEY = 'sk-test-not-a-real-key-ZZ99'
@@ -138,6 +138,33 @@ describe('pool admin API', () => {
     const done = await call(adminKey, 'POST', 'oauth/complete', { pool: 'shared', flowId: 'deadbeef', input: 'code#state' })
     expect(done.status).toBe(400)
     expect(done.json.error.message).toContain('expired')
+  })
+
+  test('sets and removes rotations; only admins, only their own pools (#275)', async () => {
+    const { call, adminKey, plainKey, dataDir } = await host()
+    const set = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5', 'anthropic/claude-sonnet-4'] })
+    expect(set.status).toBe(200)
+    expect(set.json).toEqual({ set: true })
+    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({ default: ['openai/gpt-5', 'anthropic/claude-sonnet-4'] })
+
+    // Replacing and removing (empty entries) work too.
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5'] })).status).toBe(200)
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: [] })).status).toBe(200)
+    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
+
+    // Same validation as the host's own CLI.
+    const invalid = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['no-slash'] })
+    expect(invalid.status).toBe(400)
+    expect(invalid.json.error.message).toContain('provider/model')
+    const missing = await call(adminKey, 'POST', 'rotations', { pool: 'shared', entries: ['a/m'] })
+    expect(missing.status).toBe(400)
+    const notArray = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: 'a/m' })
+    expect(notArray.status).toBe(400)
+
+    // A non-admin client and a pool outside the client's list are refused.
+    expect((await call(plainKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['a/m'] })).status).toBe(403)
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'alice', name: 'default', entries: ['a/m'] })).status).toBe(403)
+    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
   })
 
   test('reorders and removes accounts', async () => {

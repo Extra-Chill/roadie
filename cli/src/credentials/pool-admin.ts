@@ -11,6 +11,7 @@
 //   POST   oauth/complete                  {pool, flowId, input}
 //   DELETE accounts/<id>?pool=<id>         -> {removed}
 //   POST   accounts/reorder                {pool, accountId, position} -> {accounts}
+//   POST   rotations                       {pool, name, entries} -> {set}
 //
 // Only registered clients registered with --admin may call it, and only for
 // pools in their own `pools` list. Every route delegates to the host's
@@ -136,6 +137,18 @@ export function createPoolAdminHandler({
       }
       const ordered = await accounts.move({ poolId, accountId, position })
       respond(200, ordered instanceof Error ? ordered : { accounts: ordered })
+      return
+    }
+    if (req.method === 'POST' && route === 'rotations') {
+      const name = str(body, 'name')
+      const rawEntries = body['entries']
+      const entries = Array.isArray(rawEntries) && rawEntries.every((entry) => typeof entry === 'string') ? (rawEntries as string[]) : undefined
+      if (!name || !entries) {
+        fail(res, 400, 'name and an entries array of provider/model strings are required')
+        return
+      }
+      const set = await accounts.setRotation({ poolId, name, entries })
+      respond(200, set instanceof Error ? set : { set })
       return
     }
     if (req.method === 'DELETE' && route.startsWith('accounts/')) {

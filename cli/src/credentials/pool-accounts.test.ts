@@ -9,7 +9,7 @@ import { startMessagesProxy, type MessagesProxy } from './messages-proxy.js'
 import { addPoolClient } from './pool-clients.js'
 import { localPoolAccounts, resolvePoolAccounts, toPoolAccountView } from './pool-accounts.js'
 import { createPoolAdminHandler } from './pool-admin.js'
-import { readPoolAccounts, SHARED_POOL_ID } from './store.js'
+import { readPoolAccounts, readPoolRotations, SHARED_POOL_ID } from './store.js'
 
 const CATALOG = { openai: { id: 'openai', npm: '@ai-sdk/openai' } }
 const TEST_KEY = 'sk-test-not-a-real-key-YY88'
@@ -76,6 +76,25 @@ describe('toPoolAccountView', () => {
   })
 })
 
+describe('localPoolAccounts.setRotation', () => {
+  test('sets, replaces and removes a rotation; store validation applies', async () => {
+    const dataDir = tempDir()
+    const accounts = localPoolAccounts({ dataDir, catalog: CATALOG })
+    expect(await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: ['openai/gpt-5'] })).toBe(true)
+    expect(await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: ['anthropic/claude-sonnet-4', 'openai/gpt-5'] })).toBe(true)
+    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({ default: ['anthropic/claude-sonnet-4', 'openai/gpt-5'] })
+    expect(await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: [] })).toBe(true)
+    expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
+
+    const badName = await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'bad name!', entries: ['a/m'] })
+    expect(badName).toBeInstanceOf(Error)
+    const badEntry = await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: ['no-slash'] })
+    expect(badEntry).toBeInstanceOf(Error)
+    const badPool = await accounts.setRotation({ poolId: 'not valid!', name: 'default', entries: ['a/m'] })
+    expect(badPool).toBeInstanceOf(Error)
+  })
+})
+
 describe('remote PoolAccounts against a real pool host', () => {
   test('round-trips list, add and remove; the host holds the key', async () => {
     const hostDir = tempDir()
@@ -109,6 +128,16 @@ describe('remote PoolAccounts against a real pool host', () => {
     const foreign = await accounts.list({ poolId: 'alice' })
     expect(foreign).toBeInstanceOf(Error)
     expect((foreign as Error).message).toContain('cannot manage pool alice')
+
+    // Rotations are set on the host, never in the bot's local pool (#275).
+    expect(await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: ['openai/gpt-5'] })).toBe(true)
+    expect(readPoolRotations({ dataDir: hostDir, poolId: SHARED_POOL_ID })).toEqual({ default: ['openai/gpt-5'] })
+    expect(fs.existsSync(path.join(botDir, 'credentials'))).toBe(false)
+    const badEntry = await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: ['no-slash'] })
+    expect(badEntry).toBeInstanceOf(Error)
+    expect((badEntry as Error).message).toContain('provider/model')
+    expect(await accounts.setRotation({ poolId: SHARED_POOL_ID, name: 'default', entries: [] })).toBe(true)
+    expect(readPoolRotations({ dataDir: hostDir, poolId: SHARED_POOL_ID })).toEqual({})
 
     expect(await accounts.remove({ poolId: SHARED_POOL_ID, accountId: added.account.id })).toBe(true)
     expect(readPoolAccounts({ dataDir: hostDir, poolId: SHARED_POOL_ID })).toEqual([])
