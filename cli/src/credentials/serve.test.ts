@@ -92,4 +92,23 @@ describe('servePool', () => {
     expect(second).toBeInstanceOf(Error)
     expect((second as Error).message).toContain(`:${port}`)
   })
+
+  test('closes an open streaming response after the shutdown grace period', async () => {
+    const dataDir = tempDir()
+    const account = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', label: 'a', refresh: 'refresh-a', access: 'access-a', expires: Date.now() + 3_600_000 })
+    if (account instanceof Error) throw account
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'claude-best', entries: ['anthropic/claude-opus-4-8'] })
+    const client = addPoolClient({ dataDir, name: 'stream-client' })
+    if (client instanceof Error) throw client
+    proxy = await servePool({ dataDir, port: await freePort(), shutdownGraceMs: 50,
+      fetchImpl: async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('event: message_start\\n\\n')) } }), { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    }) as MessagesProxy
+    const response = await fetch(`${proxy.baseUrl}/v1/messages`, { method: 'POST', headers: { 'x-roadie-key': client.key, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'claude-best', max_tokens: 8, messages: [] }) })
+    expect(response.status).toBe(200)
+    const started = Date.now()
+    await proxy.close()
+    expect(Date.now() - started).toBeLessThan(1_000)
+    await response.body?.cancel().catch(() => {})
+    proxy = undefined
+  })
 })

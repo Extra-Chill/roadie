@@ -150,6 +150,8 @@ export type MessagesProxyOptions = {
   /** Listen address. Defaults to 127.0.0.1 on an ephemeral port. */
   host?: string
   port?: number
+  /** Time to let active requests finish when closing the listener. */
+  shutdownGraceMs?: number
 }
 
 export type MessagesProxy = {
@@ -511,6 +513,10 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
     revokeKey(key) {
       keys.delete(key)
     },
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () => new Promise((resolve) => {
+      server.close(() => resolve())
+      const timer = setTimeout(() => server.closeAllConnections(), options.shutdownGraceMs ?? 3_000)
+      timer.unref()
+    }),
   }
 }
