@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.2] - 2026-10-14
+
+### Changed
+- run the restart-continuation and runtime-lifecycle e2e suites on Pi
+
 ## [0.65.1] - 2026-10-14
 
 ### Changed
