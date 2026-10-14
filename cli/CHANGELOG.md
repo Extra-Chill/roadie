@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.67.0] - 2026-10-14
+
+### Changed
+- remove the OpenCode backend
+
+### Fixed
+- request adaptive thinking for Claude 4.6+ and 5.x pool rotations
+
 ## [0.66.1] - 2026-10-14
 
 ### Changed
