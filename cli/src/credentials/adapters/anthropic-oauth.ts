@@ -278,7 +278,31 @@ const OPENCODE_IDENTITY = 'You are OpenCode, the best coding agent on the planet
 const SUBAGENT_MODEL_IDENTITY = 'You are powered by the model named'
 const ENV_CLOSE_TAG = '</env>'
 
-function sanitizeSystemText(text: string): string {
+// Pi's default system prompt is classified the same way: with its harness
+// identity and its `<docs>` section (Pi's own documentation index) the OAuth
+// gate answers "Third-party apps now draw from your extra usage". Pi renders
+// every non-preamble section as `<name>\n...\n</name>`, so the docs section
+// has exact bounds. The identity sentence is neutralized; the docs index only
+// matters when the user asks about Pi itself, so it is dropped.
+const PI_IDENTITY = 'You are an expert coding assistant operating inside pi, a coding agent harness.'
+const NEUTRAL_IDENTITY = 'You are an expert coding assistant.'
+const PI_DOCS_OPEN = '<docs>\nPi documentation (read only when'
+const DOCS_CLOSE_TAG = '</docs>'
+
+function stripPiHarness(text: string): string {
+  let result = text.replace(PI_IDENTITY, NEUTRAL_IDENTITY)
+  const docsIdx = result.indexOf(PI_DOCS_OPEN)
+  if (docsIdx === -1) return result
+  const closeIdx = result.indexOf(DOCS_CLOSE_TAG, docsIdx)
+  if (closeIdx === -1) return result
+  let endIdx = closeIdx + DOCS_CLOSE_TAG.length
+  while (result[endIdx] === '\n') endIdx++
+  result = result.slice(0, docsIdx) + result.slice(endIdx)
+  return result
+}
+
+function sanitizeSystemText(input: string): string {
+  const text = stripPiHarness(input)
   const replaceBlock = (startIdx: number) => {
     const envCloseIdx = text.indexOf(ENV_CLOSE_TAG, startIdx)
     if (envCloseIdx === -1) return text
