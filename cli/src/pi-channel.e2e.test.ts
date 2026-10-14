@@ -123,7 +123,7 @@ describe.skipIf(!bin)('Pi channel', () => {
     const sessionId = await getThreadSession(thread.id)
     const interaction = await th.user(TEST_USER_ID).clickButton({ messageId: action.messageId, customId: `action_button:${action.contextHash}:0` })
     await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
-    await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000, afterMessageIncludes: 'Go on, pi' })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000, afterMessageIncludes: '**pi-tester:** Go on, pi' })
     expect(await getThreadSession(thread.id)).toBe(sessionId)
     expect(await th.text({ showInteractions: true })).toMatchInlineSnapshot(`
       "--- from: user (pi-tester)
