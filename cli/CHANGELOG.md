@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.70.0] - 2026-10-14
+
+### Added
+- /roadie connect, /roadie start and first-contact welcome DM
+
 ## [0.69.0] - 2026-10-14
 
 ### Added
