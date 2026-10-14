@@ -1,4 +1,4 @@
-// Credential pools: /login with --credential-pools on adds an account to a
+// Credential pools: /login adds an account to a
 // pool by reusing the /credentials handlers (issue #137 item 4).
 //
 // The provider picker lists the models.dev catalog (hermetic fixture via
@@ -6,9 +6,7 @@
 // and an API key account, and every write goes through the exact /credentials
 // pending-context pipeline — the same target-pool resolution, the same
 // shared-pool admin rule, ephemeral replies, keys only ever via a modal. The
-// flow tests only open menus and modals, they never submit a key, and the
-// opencode auth.json path (project directory, auth API) is never entered.
-// With pools off, /login keeps its old behavior.
+// flow tests only open menus and modals, they never submit a key.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -177,8 +175,7 @@ afterEach(() => {
 describe('/login with credential pools on', () => {
   test('lists the models.dev catalog providers in an ephemeral select, without a project directory', async () => {
     const { replies } = await openPoolLoginPicker()
-    // The pool flow never asks for a channel project directory or an opencode
-    // server: the picker shows up with only bare interaction context.
+    // The pool flow never asks for a channel project directory: the picker shows up with only bare interaction context.
     expect(replies[0]?.content).toContain('Add a provider account to your credential pool')
     const options = firstSelectOptions(replies[0] ?? {})
     expect(options.map((option) => option.value)).toEqual([
@@ -290,18 +287,6 @@ describe('/login with credential pools on', () => {
     expect(replyText(replies)).toContain('Only server admins can manage the shared credential pool')
     expect(readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toEqual([])
     expect(readPoolAccounts({ dataDir, poolId: OWN_POOL })).toEqual([])
-  })
-})
-
-describe('/login with credential pools off', () => {
-  test('keeps the auth.json flow: no pool picker, unchanged channel requirement', async () => {
-    store.setState({ credentialPoolsEnabled: false })
-    const { interaction, replies } = makeLoginCommandInteraction()
-    await handleLoginCommand({ interaction, appId: 'app-1' })
-    expect(replyText(replies)).not.toContain('credential pool')
-    // The unchanged flow still requires a configured channel before anything
-    // opencode-related happens.
-    expect(replyText(replies)).toContain('This command can only be used in a channel')
   })
 })
 

@@ -183,8 +183,8 @@ export function parseThreadBillingStrict(value: string): ThreadBilling | Error {
 
 /**
  * Credential pools are on by default (phase 4a): only `ROADIE_CREDENTIAL_POOLS=0`
- * (or `--no-credential-pools`) turns them off, restoring OpenCode's own
- * auth.json. Any other value — including unset and the legacy `1` — keeps
+ * (or `--no-credential-pools`) turns them off, restoring Pi's own
+ * agent-dir auth.json (managed with `pi` on the host). Any other value — including unset and the legacy `1` — keeps
  * pools enabled.
  */
 export function parseCredentialPoolsEnabled(value: string | undefined | null): boolean {

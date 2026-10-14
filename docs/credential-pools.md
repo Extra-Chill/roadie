@@ -8,7 +8,8 @@ moves existing subrouter accounts over.
 
 Pools are **on by default**. `--no-credential-pools` (or
 `ROADIE_CREDENTIAL_POOLS=0`) turns them off: Pi's own auth (its agent dir
-`auth.json`) applies and `/credentials` is not registered.
+`auth.json`, managed with `pi` on the host) applies, and `/login` and
+`/credentials` are not registered.
 
 ## Configuring pools
 
@@ -20,7 +21,7 @@ roadie --no-credential-pools                   # pools off
 
 | setting | values | default |
 | --- | --- | --- |
-| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the pool models and the Discord `/credentials` command off | on |
+| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the pool models and the Discord `/login` and `/credentials` commands off | on |
 | `--credentials` / `ROADIE_CREDENTIALS` | `global`, `per-person`, `per-person-fallback` | `global` |
 | `--thread-billing` / `ROADIE_THREAD_BILLING` | `owner`, `speaker` | `owner` |
 
@@ -122,9 +123,9 @@ In per-person modes the command manages **your own pool**. Writing to
 `shared` requires admin capability (server administrator, or the identity
 hook's `admin`).
 
-### `/login` with pools on
+### `/login`
 
-With pools on, `/login` never touches Pi's `auth.json`. The provider
+`/login` is registered only while pools are on and never touches Pi's `auth.json`. The provider
 picker lists the models.dev catalog, and Anthropic offers both a subscription
 login and an API key. The writes go through the same handlers as
 `/credentials`: in `global` mode accounts land in `shared` (admin only), in

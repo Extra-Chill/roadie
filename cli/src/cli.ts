@@ -142,7 +142,7 @@ cli
   )
   .option(
     '--no-credential-pools',
-    'Disable credential pools entirely: Pi\'s own auth (its agent dir auth.json) applies and /credentials is not registered. Same as ROADIE_CREDENTIAL_POOLS=0',
+    'Disable credential pools entirely: Pi\'s own auth (its agent dir auth.json, managed with `pi` on the host) applies and /login and /credentials are not registered. Same as ROADIE_CREDENTIAL_POOLS=0',
   )
   .option(
     '--credentials <mode>',

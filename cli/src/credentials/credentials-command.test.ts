@@ -394,14 +394,19 @@ describe('/credentials registration gating', () => {
     expect(buildStaticSlashCommands().some((c) => c.name === 'credentials')).toBe(false)
   })
 
-  test('not registered when credential pools are off; /login unchanged', () => {
-    const commands = buildRegistrableStaticCommands({ credentialPoolsEnabled: false })
-    const names = commands.map((c) => c.name)
+  test('buildStaticSlashCommands never contains login', () => {
+    expect(buildStaticSlashCommands().some((c) => c.name === 'login')).toBe(false)
+  })
+
+  test('/credentials and /login are not registered when credential pools are off', () => {
+    const names = buildRegistrableStaticCommands({ credentialPoolsEnabled: false }).map((c) => c.name)
     expect(names).not.toContain('credentials')
-    const login = commands.find((c) => c.name === 'login')
-    expect(login?.description).toBe(
-      'Authenticate with an AI provider (OAuth or API key). Use this instead of /connect',
-    )
+    expect(names).not.toContain('login')
+  })
+
+  test('/login is registered once when credential pools are on', () => {
+    const names = buildRegistrableStaticCommands({ credentialPoolsEnabled: true }).map((c) => c.name)
+    expect(names.filter((n) => n === 'login')).toHaveLength(1)
   })
 
   test('registered once when credential pools are on, with the five subcommands', () => {

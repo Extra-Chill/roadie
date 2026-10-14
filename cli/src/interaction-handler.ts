@@ -40,12 +40,6 @@ import {
 import {
   handleLoginCommand,
   handleLoginSelect,
-  handleLoginTextButton,
-  handleLoginTextModalSubmit,
-  handleLoginApiKeyButton,
-  handleOAuthCodeButton,
-  handleOAuthCodeModalSubmit,
-  handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
   handleCredentialsCommand,
@@ -94,7 +88,6 @@ import {
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
 import {
-  hasRoadieAdminPermission,
   hasRoadieBotPermission,
   hasRoadieShellPermission,
 } from './discord-utils.js'
@@ -422,19 +415,17 @@ export function registerInteractionHandler({
               return
 
             case 'login':
-              if (
-                !store.getState().credentialPoolsEnabled &&
-                !hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)
-              ) {
+              if (!store.getState().credentialPoolsEnabled) {
+                // Stale registration: /login only exists when credential
+                // pools are enabled. Fail closed rather than touch pools.
                 await interaction.reply({
-                  content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
+                  content: 'Credential pools are not enabled on this server.',
                   flags: MessageFlags.Ephemeral,
                 })
                 return
               }
-              // With credential pools on, the flow enforces the stricter
-              // shared-pool admin rule itself and per-person callers manage
-              // their own pool, like /credentials.
+              // The flow enforces the stricter shared-pool admin rule itself
+              // and per-person callers manage their own pool, like /credentials.
               await handleLoginCommand({ interaction, appId })
               return
 
@@ -559,42 +550,6 @@ export function registerInteractionHandler({
             return
           }
 
-          if (customId.startsWith('login_text_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleLoginTextButton(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_apikey_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleLoginApiKeyButton(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_oauth_code_btn:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleOAuthCodeButton(interaction)
-            return
-          }
-
           if (customId.startsWith(CREDENTIALS_OAUTH_BUTTON_PREFIX)) {
             // Per-person command: the handler enforces admin itself when the
             // interaction targets the shared pool.
@@ -682,18 +637,16 @@ export function registerInteractionHandler({
           }
 
           if (customId.startsWith('login_select:')) {
-            if (
-              !store.getState().credentialPoolsEnabled &&
-              !hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)
-            ) {
+            if (!store.getState().credentialPoolsEnabled) {
+              // Stale menu: /login only exists when credential pools are enabled.
               await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure login credentials.`,
+                content: 'Credential pools are not enabled on this server.',
                 flags: MessageFlags.Ephemeral,
               })
               return
             }
-            // With credential pools on the pool flow re-checks the shared-pool
-            // admin rule at every write (same handlers as /credentials).
+            // The pool flow re-checks the shared-pool admin rule at every
+            // write (same handlers as /credentials).
             await handleLoginSelect(interaction)
             return
           }
@@ -710,42 +663,6 @@ export function registerInteractionHandler({
           }
 
           const customId = interaction.customId
-
-          if (customId.startsWith('login_apikey:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleApiKeyModalSubmit(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_text:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleLoginTextModalSubmit(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_oauth_code:')) {
-            if (!hasRoadieAdminPermission(interaction.member, interaction.guild, interaction.channelId)) {
-              await interaction.reply({
-                content: `Only server admins or users with the **Roadie** role can configure credentials.`,
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            await handleOAuthCodeModalSubmit(interaction)
-            return
-          }
 
           if (
             customId.startsWith(CREDENTIALS_APIKEY_MODAL_PREFIX) ||

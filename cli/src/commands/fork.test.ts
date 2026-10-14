@@ -35,12 +35,6 @@ function createStubBackend({ fork }: { fork?: (input: unknown) => Promise<unknow
       config: async () => ({}),
       agents: async () => [],
     },
-    auth: {
-      methods: async () => ({}),
-      startOAuth: async () => new Error('not implemented'),
-      finishOAuth: async () => undefined,
-      setApiKey: async () => undefined,
-    },
     sessions: {
       create: async () => new Error('not implemented'),
       get: async () => undefined,

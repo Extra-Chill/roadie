@@ -7,7 +7,7 @@ Roadie's session runtime talks to an *agent backend* through an interface: sessi
 - **Version gate.** Roadie needs the `pi` binary (from `ROADIE_PI_BIN`, default `pi`) at major version 1 or newer. If it is missing or older, startup fails with a clear error.
 - **`ROADIE_BACKEND`.** Optional; when set it must be `pi`. Any other value stops startup with an error.
 - **Variables.** `ROADIE_PI_BIN`, `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
-- **Catalogs and logins.** `/model`, `/agent` and `/login` show Pi's providers, agents and auth methods, plus whatever plugins add through the `agent_providers`, `agent_definitions` and `agent_backend` filters.
+- **Catalogs and logins.** `/model` and `/agent` show Pi's providers and agents, plus whatever plugins add through the `agent_providers`, `agent_definitions` and `agent_backend` filters.
 - **Credential pools.** When credential pools are enabled (the default), Pi sessions bill to the pools through the loopback pool proxy, which starts with the bot. See [Credential pools](credential-pools.md).
 - **Channel setup.** Bind channels to project directories with `--channels-config` / `ROADIE_CHANNELS_CONFIG`.
 

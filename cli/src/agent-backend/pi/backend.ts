@@ -409,12 +409,6 @@ export class PiBackendProvider implements AgentBackendProvider {
         connect: async ({ directory, name }) => this.setMcpEnabled(directory, name, true),
         disconnect: async ({ directory, name }) => this.setMcpEnabled(directory, name, false),
       },
-      auth: {
-        methods: async () => ({}),
-        startOAuth: async () => new AgentRequestError({ detail: 'Sign in to providers with `pi` itself; Roadie does not manage Pi credentials yet.' }),
-        finishOAuth: async () => new AgentRequestError({ detail: 'Sign in to providers with `pi` itself.' }),
-        setApiKey: async () => new AgentRequestError({ detail: 'Configure Pi API keys in its auth.json; Roadie does not manage Pi credentials yet.' }),
-      },
     }
   }
 

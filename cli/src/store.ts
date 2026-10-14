@@ -94,14 +94,12 @@ export type RoadieState = {
 
   // Whether credential pools are enabled: pool store under
   // <dataDir>/credentials/, the roadie provider (roadie/<rotation> models),
-  // and the chat.headers tagging plugin in the OpenCode backend. On by
-  // default since phase 4a; disable with --no-credential-pools or
-  // ROADIE_CREDENTIAL_POOLS=0 to fall back to OpenCode's own auth.json.
-  // With no rotations in the shared pool the generated OpenCode config is
-  // unchanged (no roadie provider), so servers that never used pools see no
-  // difference.
+  // and the Pi messages proxy. Also gates the /login and /credentials
+  // commands. On by default since phase 4a; disable with
+  // --no-credential-pools or ROADIE_CREDENTIAL_POOLS=0 to fall back to Pi's
+  // own agent-dir auth.json, managed with `pi` on the host.
   // Changes: set once at startup.
-  // Read by: opencode.ts when building the server config and env.
+  // Read by: command registration, interaction-handler.ts, session runtime.
   credentialPoolsEnabled: boolean
 
   // How LLM requests are routed to credential pools (credential pools phase
