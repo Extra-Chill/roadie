@@ -8,6 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  piSettingsDefaultModel,
   clearResolvedDefaultProvider,
   getAgentBackendProvider,
   resolveAgentBackendProvider,
@@ -178,5 +179,23 @@ describe('default backend resolution (#177)', () => {
   test('an invalid ROADIE_BACKEND value is a startup error, never a fallback', () => {
     withEnv('ROADIE_BACKEND', 'claude')
     expect(() => resolveAgentBackendProvider()).toThrow(/ROADIE_BACKEND must be/)
+  })
+})
+
+describe('Pi default model from settings.json', () => {
+  const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pi-settings-'))
+  test('reads defaultProvider/defaultModel as provider/model', () => {
+    const agentDir = dir()
+    fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ transport: 'sse', defaultProvider: 'openai-codex', defaultModel: 'gpt-6-luna' }))
+    expect(piSettingsDefaultModel(agentDir)).toBe('openai-codex/gpt-6-luna')
+  })
+  test('a partial, missing or unreadable setting gives no model', () => {
+    const agentDir = dir()
+    expect(piSettingsDefaultModel(agentDir)).toBeUndefined()
+    fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'gpt-6-luna' }))
+    expect(piSettingsDefaultModel(agentDir)).toBeUndefined()
+    fs.writeFileSync(path.join(agentDir, 'settings.json'), '{not json')
+    expect(piSettingsDefaultModel(agentDir)).toBeUndefined()
+    expect(piSettingsDefaultModel(undefined)).toBeUndefined()
   })
 })
