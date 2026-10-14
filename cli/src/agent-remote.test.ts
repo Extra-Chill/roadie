@@ -7,12 +7,13 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import * as upgradeCommand from './commands/upgrade.js'
 import { closeDb } from './db.js'
 import { setDataDir } from './config.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { createScheduledTask } from './database.js'
-import { setRemoteSendRunner } from './remote-send.js'
+import { relayRemoteRun, setRemoteSendRunner } from './remote-send.js'
 import { chooseLockPort } from './test-utils.js'
 import {
   ensureAgentTokenSecret,
@@ -41,9 +42,13 @@ import {
   type AgentCommandRequest,
 } from './agent-remote.js'
 import {
+  attachOperatorRequestPrompt,
+  consumeInterruptedOperatorRequests,
   createOperatorRequest,
   decideOperatorRequest,
   onOperatorRequestCreated,
+  onOperatorRequestFinished,
+  operatorRequestContinuations,
   waitForOperatorDecision,
 } from './operator-requests.js'
 
@@ -286,6 +291,137 @@ describe('operator requests', () => {
       expect((await post(AGENT_OPERATOR_REQUESTS_PATH, `Bearer ${token()}`, body)).status).toBe(400)
     }
     expect(runs.length).toBe(before)
+  })
+})
+
+/** Approve every request as it is created, recording its approval prompt in `threadId`. */
+function autoApprove(threadId: string) {
+  return onOperatorRequestCreated((request) => {
+    attachOperatorRequestPrompt(request.id, { threadId, messageId: `msg-${request.id}` })
+    setTimeout(() => decideOperatorRequest({ id: request.id, decision: 'approve', approverId: 'test-operator' }), 0)
+  })
+}
+
+describe('approved operator requests are restart-safe', () => {
+  test('upgrade accepts only --skip-restart', () => {
+    expect(createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['upgrade', '--skip-restart'] }).state).toBe('pending')
+    expect(() => createOperatorRequest({ sessionId: AGENT_SESSION, argv: ['upgrade', '--force'] })).toThrow()
+  })
+
+  test('the outcome with exit code and output is posted before the agent gets its exit', async () => {
+    const order: string[] = []
+    const unsubscribe = autoApprove('thread-outcome')
+    const unsubscribeFinished = onOperatorRequestFinished(async (request, outcome) => {
+      expect(request.prompt).toEqual({ threadId: 'thread-outcome', messageId: `msg-${request.id}` })
+      expect(outcome).toEqual({ exitCode: 3, output: 'stub stdout line\nstub stderr line\n' })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      order.push('posted')
+    })
+    nextExit = 3
+    try {
+      const result = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['credentials', 'list'] } })
+      order.push('agent exit')
+      expect(result.exit).toBe(3)
+      expect(order).toEqual(['posted', 'agent exit'])
+      expect(consumeInterruptedOperatorRequests({ dataDir })).toEqual([])
+    } finally {
+      nextExit = 0
+      unsubscribe()
+      unsubscribeFinished()
+    }
+  })
+
+  test('upgrade runs in the bot and restarts only after the result is posted and answered', async () => {
+    const order: string[] = []
+    const runUpgrade = vi.spyOn(upgradeCommand, 'runBotUpgrade').mockImplementation(async () => {
+      order.push('upgrade')
+      return { ok: true, message: 'Upgraded roadie **v1.0.0** -> **v1.1.0**.', restart: 'self' }
+    })
+    const restart = vi.spyOn(upgradeCommand, 'restartBot').mockImplementation(() => {
+      order.push('restart')
+    })
+    const unsubscribe = autoApprove('thread-upgrade')
+    const unsubscribeFinished = onOperatorRequestFinished((_request, outcome) => {
+      expect(outcome).toEqual({ exitCode: 0, output: 'Upgraded roadie v1.0.0 -> v1.1.0. Restarting bot...\n' })
+      order.push('posted')
+    })
+    const before = runs.length
+    try {
+      const result = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['upgrade'] } })
+      await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce())
+      expect(result).toEqual({ exit: 0, out: 'Upgraded roadie v1.0.0 -> v1.1.0. Restarting bot...\n', err: '' })
+      expect(order).toEqual(['upgrade', 'posted', 'restart'])
+      expect(runs.length).toBe(before)
+      // The restart's continuation tells the session it followed its command.
+      expect(operatorRequestContinuations().filter((s) => s.threadId === 'thread-upgrade')).toEqual([{
+        threadId: 'thread-upgrade',
+        sessionId: AGENT_SESSION,
+        note: 'This restart followed your approved operator command `roadie upgrade`, which exited 0.',
+      }])
+    } finally {
+      runUpgrade.mockRestore()
+      restart.mockRestore()
+      unsubscribe()
+      unsubscribeFinished()
+    }
+  })
+
+  test('upgrade --skip-restart and failed upgrades never restart', async () => {
+    const results = [
+      { ok: true, message: 'Upgraded roadie **v1.0.0** -> **v1.1.0**.', restart: 'self' as const },
+      { ok: false, message: 'Upgrade failed: offline', restart: 'none' as const },
+    ]
+    const runUpgrade = vi.spyOn(upgradeCommand, 'runBotUpgrade').mockImplementation(async () => results.shift()!)
+    const restart = vi.spyOn(upgradeCommand, 'restartBot').mockImplementation(() => undefined)
+    const unsubscribe = autoApprove('thread-no-restart')
+    try {
+      const skipped = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['upgrade', '--skip-restart'] } })
+      expect(skipped).toEqual({ exit: 0, out: 'Upgraded roadie v1.0.0 -> v1.1.0. Not restarting (--skip-restart).\n', err: '' })
+      const failed = await runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['upgrade'] } })
+      expect(failed).toEqual({ exit: 1, out: '', err: 'Upgrade failed: offline\n' })
+      expect(restart).not.toHaveBeenCalled()
+      expect(operatorRequestContinuations().filter((s) => s.threadId === 'thread-no-restart')).toEqual([])
+    } finally {
+      runUpgrade.mockRestore()
+      restart.mockRestore()
+      unsubscribe()
+    }
+  })
+
+  test('an approved request still running at shutdown is recorded as interrupted', async () => {
+    let finishRun!: () => void
+    const restoreSlowRunner = setRemoteSendRunner(async (_args, emit) => {
+      emit({ stream: 'stdout', data: 'started\n' })
+      await new Promise<void>((resolve) => { finishRun = resolve })
+      return 0
+    })
+    const unsubscribe = autoApprove('thread-interrupted')
+    try {
+      const pending = runClient({ method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv: ['credentials', 'import-opencode'] } })
+      await vi.waitFor(() => expect(finishRun).toBeTypeOf('function'))
+      // Graceful shutdown: the session's continuation says it did not complete.
+      expect(operatorRequestContinuations().filter((s) => s.threadId === 'thread-interrupted')).toEqual([{
+        threadId: 'thread-interrupted',
+        sessionId: AGENT_SESSION,
+        note: 'Your approved operator command `roadie credentials import-opencode` was still running when Roadie restarted. ' +
+          'It was interrupted and did not complete; check its effect before relying on it.',
+      }])
+      // Any restart, including a crash: the next process finds it on disk.
+      const persisted = JSON.parse(fs.readFileSync(path.join(dataDir, 'operator-requests-running.json'), 'utf8'))
+      expect(persisted.requests).toEqual([expect.objectContaining({
+        sessionId: AGENT_SESSION,
+        argv: ['credentials', 'import-opencode'],
+        approverId: 'test-operator',
+        prompt: { threadId: 'thread-interrupted', messageId: expect.stringMatching(/^msg-/) },
+      })])
+      finishRun()
+      expect((await pending).exit).toBe(0)
+      expect(fs.existsSync(path.join(dataDir, 'operator-requests-running.json'))).toBe(false)
+      expect(operatorRequestContinuations().filter((s) => s.threadId === 'thread-interrupted')).toEqual([])
+    } finally {
+      restoreSlowRunner()
+      unsubscribe()
+    }
   })
 })
 
@@ -717,6 +853,24 @@ describe('tasks are scoped to the token session or thread', () => {
 })
 
 describe('client behavior', () => {
+  test('a stream that ends without an exit event is reported as interrupted, never success', async () => {
+    const encode = (text: string) => new TextEncoder().encode(text)
+    async function* cutOff() {
+      yield encode(`${JSON.stringify({ stream: 'stdout', data: 'started\n' })}\n`)
+      throw new Error('socket hang up')
+    }
+    async function* endedEarly() {
+      yield encode(`${JSON.stringify({ stream: 'stdout', data: 'started\n' })}\n`)
+    }
+    for (const body of [cutOff(), endedEarly()]) {
+      const out: string[] = []
+      const err: string[] = []
+      expect(await relayRemoteRun(body, { stdout: sink(out), stderr: sink(err) })).toBe(1)
+      expect(out.join('')).toBe('started\n')
+      expect(err.join('')).toContain('ended before the run finished')
+    }
+  })
+
   test('relays exit codes from the bot run', async () => {
     nextExit = 3
     const result = await runClient({ method: 'GET', path: AGENT_PROJECTS_PATH })

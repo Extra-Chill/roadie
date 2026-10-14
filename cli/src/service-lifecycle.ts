@@ -200,6 +200,33 @@ export type InterruptedSession = {
   sessionId: string
   userId?: string
   username?: string
+  /** Appended to the continuation prompt, e.g. what happened to an approved operator command. */
+  note?: string
+}
+
+/** Combine continuation sources, one entry per thread; notes of the same thread are joined. */
+export function mergeInterruptedSessions(...sources: InterruptedSession[][]): InterruptedSession[] {
+  const byThread = new Map<string, InterruptedSession>()
+  for (const session of sources.flat()) {
+    const existing = byThread.get(session.threadId)
+    if (!existing) {
+      byThread.set(session.threadId, { ...session })
+      continue
+    }
+    const note = [existing.note, session.note].filter(Boolean).join('\n')
+    byThread.set(session.threadId, {
+      ...existing,
+      userId: existing.userId ?? session.userId,
+      username: existing.username ?? session.username,
+      ...(note ? { note } : {}),
+    })
+  }
+  return [...byThread.values()]
+}
+
+/** The continuation turn's prompt for one interrupted session. */
+export function restartContinuationPrompt(session: InterruptedSession): string {
+  return session.note ? `${RESTART_CONTINUATION_PROMPT}\n\n${session.note}` : RESTART_CONTINUATION_PROMPT
 }
 
 type InterruptedFile = {
@@ -263,7 +290,8 @@ export function consumeInterruptedSessions({
     return { resume: [], stale: [] }
   }
   const sessions = record.sessions.filter((s): s is InterruptedSession => {
-    return !!s && typeof s.threadId === 'string' && typeof s.sessionId === 'string'
+    return !!s && typeof s.threadId === 'string' && typeof s.sessionId === 'string' &&
+      (s.note === undefined || typeof s.note === 'string')
   })
   const fresh = now - record.recordedAt <= ttlMs && now >= record.recordedAt
   if (!isRestartContinuationEnabled()) return { resume: [], stale: sessions }

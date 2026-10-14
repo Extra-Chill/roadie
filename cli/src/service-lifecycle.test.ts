@@ -11,7 +11,10 @@ import {
   INTERRUPTED_TTL_MS,
   isManagedInstall,
   looksLikeAgentServer,
+  mergeInterruptedSessions,
   recordAgentServerPid,
+  RESTART_CONTINUATION_PROMPT,
+  restartContinuationPrompt,
   recordInterruptedSessions,
   runHostUpgrade,
 } from './service-lifecycle.js'
@@ -183,5 +186,23 @@ describe('restart continuation record', () => {
     fs.writeFileSync(path.join(dataDir, 'interrupted-sessions.json'), '{nope')
     expect(consumeInterruptedSessions({ dataDir })).toEqual({ resume: [], stale: [] })
     expect(fs.existsSync(path.join(dataDir, 'interrupted-sessions.json'))).toBe(false)
+  })
+
+  test('operator notes merge per thread and reach the continuation prompt', () => {
+    const dataDir = tempDir()
+    const merged = mergeInterruptedSessions(
+      [session],
+      [{ threadId: 't1', sessionId: 's1', note: 'first note' }, { threadId: 't2', sessionId: 's2', note: 'other thread' }],
+      [{ threadId: 't1', sessionId: 's1', note: 'second note' }],
+    )
+    expect(merged).toEqual([
+      { ...session, note: 'first note\nsecond note' },
+      { threadId: 't2', sessionId: 's2', note: 'other thread' },
+    ])
+    recordInterruptedSessions(merged, { dataDir, now: 1000 })
+    const { resume } = consumeInterruptedSessions({ dataDir, now: 2000 })
+    expect(resume).toEqual(merged)
+    expect(restartContinuationPrompt(resume[0]!)).toBe(`${RESTART_CONTINUATION_PROMPT}\n\nfirst note\nsecond note`)
+    expect(restartContinuationPrompt(session)).toBe(RESTART_CONTINUATION_PROMPT)
   })
 })

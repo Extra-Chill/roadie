@@ -150,7 +150,7 @@ export async function relayRemoteRun(
     stderr?: NodeJS.WritableStream
   } = {},
 ): Promise<number> {
-  let exitCode = 1
+  let exitCode: number | undefined
   let buffered = ''
   const decoder = new TextDecoder()
   const handle = (line: string) => {
@@ -159,16 +159,25 @@ export async function relayRemoteRun(
     if ('exit' in event) exitCode = event.exit
     else if ('stream' in event) (event.stream === 'stdout' ? stdout : stderr).write(event.data)
   }
-  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
-    buffered += decoder.decode(chunk, { stream: true })
-    let newline = buffered.indexOf('\n')
-    while (newline >= 0) {
-      handle(buffered.slice(0, newline))
-      buffered = buffered.slice(newline + 1)
-      newline = buffered.indexOf('\n')
+  try {
+    for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+      buffered += decoder.decode(chunk, { stream: true })
+      let newline = buffered.indexOf('\n')
+      while (newline >= 0) {
+        handle(buffered.slice(0, newline))
+        buffered = buffered.slice(newline + 1)
+        newline = buffered.indexOf('\n')
+      }
     }
+    handle(buffered)
+  } catch {
+    // A dropped connection (the bot restarted or stopped) ends the stream early.
   }
-  handle(buffered)
+  if (exitCode === undefined) {
+    // Never a success: the run may have been interrupted before it finished.
+    stderr.write('The connection to the Roadie bot ended before the run finished; it may have been interrupted.\n')
+    return 1
+  }
   return exitCode
 }
 

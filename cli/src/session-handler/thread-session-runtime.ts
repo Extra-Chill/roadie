@@ -14,7 +14,7 @@ import {
   consumeInterruptedSessions,
   RESTART_CONTINUATION_FAILED_NOTICE,
   RESTART_CONTINUATION_MAX_ATTEMPTS,
-  RESTART_CONTINUATION_PROMPT,
+  restartContinuationPrompt,
   type InterruptedSession,
 } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
@@ -511,7 +511,7 @@ export async function resumeInterruptedSessions({
     }
     await runtime.chat.sendNotice(asSubtext('Roadie restarted while this session was running. Resuming.'))
     const result = await runtime.resumeAfterRestart({
-      prompt: RESTART_CONTINUATION_PROMPT,
+      prompt: restartContinuationPrompt(entry),
       userId: entry.userId || discordClient?.user?.id || '',
       username: entry.username || 'Roadie',
       appId,
