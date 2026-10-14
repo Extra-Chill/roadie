@@ -216,7 +216,9 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
         if (part.type === 'text-delta') chunk({ content: part.delta })
         else if (part.type === 'reasoning-delta') chunk({ reasoning_content: part.delta })
         else if (part.type === 'tool-call') {
-          const id = part.toolCallId || `call_${state.requests}_${toolIndex}`
+          // Unique per request, like a real model's: a scripted id reused
+          // across turns would collide with the earlier turn's tool part.
+          const id = `${part.toolCallId || 'call'}_${state.requests}_${toolIndex}`
           chunk({ tool_calls: [{ index: toolIndex++, id, type: 'function', function: { name: part.toolName, arguments: part.input } }] })
         } else if (part.type === 'finish') {
           finished = true
