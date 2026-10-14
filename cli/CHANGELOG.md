@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.5] - 2026-10-14
+
+### Fixed
+- surface failed model turns in the thread
+
 ## [0.65.4] - 2026-10-14
 
 ### Changed
