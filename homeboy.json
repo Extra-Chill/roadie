@@ -10,6 +10,7 @@
   },
   "id": "roadie",
   "release": {
+    "owner": "ci",
     "publish": false
   },
   "remote_path": "",
