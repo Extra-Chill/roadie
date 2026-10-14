@@ -827,7 +827,7 @@ export async function assertCompatibleOpencodeVersion({
   })
   const result = await execAsync(
     { command, args },
-    { timeout: 5000, encoding: 'utf8' },
+    { timeout: 5000 },
   ).catch((cause) => {
     return new Error('Failed to read OpenCode version', { cause })
   })

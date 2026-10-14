@@ -15,22 +15,29 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { execAsync } from '../git-utils.js'
+import { CommandTimeoutError, execAsync } from '../exec-async.js'
 import { stripAnsi } from '../utils.js'
 
 const logger = createLogger(LogPrefix.INTERACTION)
 
 const MAX_OUTPUT_CHARS = 1900
+/**
+ * Budget for one interactive command. Under Discord's 15-minute limit for
+ * editing a deferred interaction reply, so the result can always be posted.
+ */
+export const RUN_COMMAND_TIMEOUT_MS = 10 * 60_000
 
 export async function runShellCommand({
   command,
   directory,
+  timeoutMs = RUN_COMMAND_TIMEOUT_MS,
 }: {
   command: string
   directory: string
+  timeoutMs?: number
 }): Promise<string> {
   try {
-    const { stdout, stderr } = await execAsync(command, { cwd: directory })
+    const { stdout, stderr } = await execAsync(command, { cwd: directory, timeout: timeoutMs })
     const output = stripAnsi([stdout, stderr].filter(Boolean).join('\n').trim())
 
     const header = `\`${command}\` exited with 0`
@@ -39,22 +46,26 @@ export async function runShellCommand({
     }
     return formatOutput(output, header)
   } catch (error) {
+    if (error instanceof CommandTimeoutError) {
+      logger.error(`[RUN-COMMAND] Command "${command}" timed out after ${error.timeoutMs}ms and was stopped`)
+      return `\`${command}\` timed out after ${formatDuration(error.timeoutMs)} and was stopped`
+    }
     const execError = error as {
       stdout?: string
       stderr?: string
       message?: string
-      code?: number | string
+      code?: number | string | null
+      signal?: string | null
     }
     const output = stripAnsi(
       [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim(),
     )
-    const exitCode = execError.code ?? 1
-    logger.error(
-      `[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`,
-      error,
-    )
+    const outcome = execError.signal
+      ? `was killed by ${execError.signal}`
+      : `exited with ${execError.code ?? 1}`
+    logger.error(`[RUN-COMMAND] Command "${command}" ${outcome}:`, error)
 
-    const header = `\`${command}\` exited with ${exitCode}`
+    const header = `\`${command}\` ${outcome}`
     return formatOutput(output || execError.message || 'Unknown error', header)
   }
 }
@@ -109,6 +120,12 @@ export async function handleRunCommand({
     directory: resolved.workingDirectory,
   })
   await command.editReply({ content: result })
+}
+
+function formatDuration(ms: number): string {
+  if (ms % 60_000 === 0) return `${ms / 60_000}m`
+  if (ms % 1_000 === 0) return `${ms / 1_000}s`
+  return `${ms}ms`
 }
 
 function formatOutput(output: string, header: string): string {
