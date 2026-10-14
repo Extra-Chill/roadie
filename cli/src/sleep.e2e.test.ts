@@ -5,7 +5,8 @@
 
 import { describe, test, expect } from 'vitest'
 import { Routes } from 'discord.js'
-import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { findPi } from './agent-backend/pi/find-pi.js'
+import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 import { getSessionSleep, getThreadSession, upsertSessionSleep } from './database.js'
@@ -26,8 +27,8 @@ const oversizedReasons = [
   },
 ]
 
-function createSleepMatchers(): DeterministicMatcher[] {
-  const sleepCallMatcher: DeterministicMatcher = {
+function createSleepMatchers(): FakeMatcher[] {
+  const sleepCallMatcher: FakeMatcher = {
     id: 'sleep-tool-call',
     priority: 130,
     when: {
@@ -62,7 +63,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepAcknowledgeMatcher: DeterministicMatcher = {
+  const sleepAcknowledgeMatcher: FakeMatcher = {
     id: 'sleep-tool-ack',
     priority: 129,
     when: {
@@ -84,7 +85,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepWakeMatcher: DeterministicMatcher = {
+  const sleepWakeMatcher: FakeMatcher = {
     id: 'sleep-tool-wake',
     priority: 131,
     when: {
@@ -105,7 +106,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepCancelCallMatcher: DeterministicMatcher = {
+  const sleepCancelCallMatcher: FakeMatcher = {
     id: 'sleep-cancel-call',
     priority: 132,
     when: {
@@ -130,7 +131,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepCancelAckMatcher: DeterministicMatcher = {
+  const sleepCancelAckMatcher: FakeMatcher = {
     id: 'sleep-cancel-ack',
     priority: 133,
     when: {
@@ -156,7 +157,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepQueueCallMatcher: DeterministicMatcher = {
+  const sleepQueueCallMatcher: FakeMatcher = {
     id: 'sleep-queue-call',
     priority: 135,
     when: {
@@ -181,7 +182,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepQueueAckMatcher: DeterministicMatcher = {
+  const sleepQueueAckMatcher: FakeMatcher = {
     id: 'sleep-queue-ack',
     priority: 136,
     when: {
@@ -207,7 +208,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepQueuedMessageMatcher: DeterministicMatcher = {
+  const sleepQueuedMessageMatcher: FakeMatcher = {
     id: 'sleep-queued-message',
     priority: 137,
     when: {
@@ -233,7 +234,7 @@ function createSleepMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const sleepCancelFollowupMatcher: DeterministicMatcher = {
+  const sleepCancelFollowupMatcher: FakeMatcher = {
     id: 'sleep-cancel-followup',
     priority: 134,
     when: {
@@ -261,16 +262,16 @@ function createSleepMatchers(): DeterministicMatcher[] {
 
   return [
     ...oversizedReasons.map(
-      ({ name, reason }): DeterministicMatcher => ({
+      ({ name, reason }): FakeMatcher => ({
         ...sleepWakeMatcher,
         id: `sleep-full-${name}`,
         priority: 150,
         when: { lastMessageRole: 'user', latestUserTextIncludes: reason },
         then: {
-          ...sleepWakeMatcher.then,
-          parts: sleepWakeMatcher.then.parts.map((part) =>
-            part.type === 'text-delta' ? { ...part, delta: `full-wake-${name}` } : part,
-          ),
+          parts: [
+            { type: 'text-delta', id: 'sleep-full-wake-text', delta: `full-wake-${name}` },
+            { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+          ],
         },
       }),
     ),
@@ -286,8 +287,9 @@ function createSleepMatchers(): DeterministicMatcher[] {
   ]
 }
 
-describe('roadie_sleep', () => {
+describe.skipIf(!findPi())('roadie_sleep', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'sleep-e2e',
     dirName: 'sleep-e2e',
@@ -360,22 +362,22 @@ describe('roadie_sleep', () => {
         "--- from: user (sleep-tester)
         SLEEP_TOOL_MARKER wait for the deploy
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         > waiting for the deploy
 
         -# ┣ roadie_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
 
         sleep-started
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         -# Woke after sleeping until 2030-01-01 09:00 UTC
         Reason: waiting for the deploy
         Continue the work you were waiting for.
         [embed]
         sleep-wake-done
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
 
-    // The wake must continue the SAME OpenCode session, not start a new one:
+    // The wake must continue the SAME agent session, not start a new one:
     // that is the whole point of sleeping instead of scheduling a new prompt.
     expect(await getThreadSession(thread.id)).toBe(sessionId)
 
@@ -477,16 +479,16 @@ describe('roadie_sleep', () => {
         "--- from: user (sleep-tester)
         SLEEP_CANCEL_MARKER wait for something
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         -# ┣ roadie_sleep for 2h _cancel me_
 
         cancel-sleep-started
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (sleep-tester)
         SLEEP_CANCEL_FOLLOWUP never mind, keep going
         --- from: assistant (TestBot)
         cancel-followup-done
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
   }, 20_000)
 

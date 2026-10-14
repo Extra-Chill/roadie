@@ -164,7 +164,10 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
   const state = { requests: 0, bodies: [] as string[], log: [] as FakeModelRequest[] }
   const server = http.createServer((req, res) => {
     let body = ''
-    req.on('data', (chunk) => {
+    // Decode across chunks: a multi-byte character split between two chunks
+    // must not turn into two replacement characters.
+    req.setEncoding('utf8')
+    req.on('data', (chunk: string) => {
       body += chunk
     })
     req.on('end', async () => {

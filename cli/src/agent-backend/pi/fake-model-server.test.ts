@@ -72,6 +72,26 @@ describe('fake model server', () => {
     expect(server.log.map((request) => [request.matcher, request.model, request.aborted])).toEqual([['slow-tool', 'fake-2', false]])
   })
 
+  test('a multi-byte character split across request chunks survives', async () => {
+    server = await startFakeModelServer({
+      matchers: [{ id: 'cafe', when: { latestUserTextIncludes: 'café' }, then: { parts: [{ type: 'text-delta', id: 't', delta: 'x' }] } }],
+    })
+    const body = Buffer.from(JSON.stringify({ model: 'fake-1', messages: [{ role: 'user', content: 'café' }] }))
+    const split = body.indexOf(Buffer.from('é')) + 1
+    // Two writes, the first ending inside 'é'.
+    const { request } = await import('node:http')
+    await new Promise<void>((resolve, reject) => {
+      const req = request(`${server!.baseUrl}/chat/completions`, { method: 'POST', headers: { 'content-length': body.length } }, (res) => {
+        res.resume()
+        res.on('end', resolve)
+      })
+      req.on('error', reject)
+      req.write(body.subarray(0, split))
+      setTimeout(() => req.end(body.subarray(split)), 50)
+    })
+    expect(server.log[0]?.matcher).toBe('cafe')
+  })
+
   test("the finish part's usage is reported", async () => {
     server = await startFakeModelServer({
       matchers: [{ id: 'big', then: { parts: [{ type: 'text-delta', id: 't', delta: 'x' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 15_000, outputTokens: 1, totalTokens: 15_001 } }] } }],
