@@ -2,6 +2,7 @@
 // Reproduces the bug where button click interaction acks but the session does not continue.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -65,8 +66,9 @@ async function waitForNoPendingActionButtons({
   throw new Error('Timed out waiting for action buttons cleanup')
 }
 
-describe('queue advanced: action buttons', () => {
+describe.skipIf(!findPi())('queue advanced: action buttons', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-action-buttons-e2e',
     dirName: 'qa-action-buttons-e2e',
@@ -165,15 +167,15 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
         » **queue-action-tester:** Continue action-buttons flow
         action-buttons-click-continued
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       expect(timeline).toContain('action-buttons-click-continued')
     },
@@ -255,9 +257,9 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         **Action Required**
         _Buttons dismissed._
         --- from: user (queue-action-tester)

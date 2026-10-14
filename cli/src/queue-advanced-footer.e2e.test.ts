@@ -2,6 +2,7 @@
 // Split from thread-queue-advanced.e2e.test.ts for parallelization.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -17,10 +18,11 @@ import {
 
 const TEXT_CHANNEL_ID = '200000000000001001'
 
-const e2eTest = describe
+const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: footer emission', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-footer-e2e',
     dirName: 'qa-footer-e2e',
@@ -53,9 +55,9 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       const foundFooter = footerMessages.some((m) => {
         return m.author.id === ctx.discord.botUserId
@@ -94,9 +96,9 @@ e2eTest('queue advanced: footer emission', () => {
           "--- from: user (queue-advanced-tester)
           Reply with exactly: footer-with-mention
           --- from: assistant (TestBot)
-          -# *using deterministic-provider/deterministic-v2*
+          -# *using fake/fake-1*
           ok
-          -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1* <@200000000000000991>"
         `)
       } finally {
         store.setState({ footerMentionsEnabled: false })
@@ -159,14 +161,14 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -236,13 +238,13 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         > running tool
 
         -# ┣ bash _echo tool-call-footer-test_
 
         tool call completed
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
     },
     10_000,

@@ -2,6 +2,7 @@
 // Split from thread-queue-advanced.e2e.test.ts for parallelization.
 
 import { describe, test, expect } from 'vitest'
+import { findPi } from './agent-backend/pi/find-pi.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -20,10 +21,11 @@ import {
 
 const TEXT_CHANNEL_ID = '200000000000001003'
 
-const e2eTest = describe
+const e2eTest = describe.skipIf(!findPi())
 
 e2eTest('queue advanced: abort and retry', () => {
   const ctx = setupQueueAdvancedSuite({
+    backend: 'pi',
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-abort-e2e',
     dirName: 'qa-abort-e2e',
@@ -201,9 +203,9 @@ e2eTest('queue advanced: abort and retry', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: abort-no-footer-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)
@@ -298,7 +300,7 @@ e2eTest('queue advanced: abort and retry', () => {
 
       await setSessionModel({
         sessionId,
-        modelId: 'deterministic-provider/deterministic-v3',
+        modelId: 'fake/fake-2',
         variant: null,
       })
 
@@ -329,7 +331,10 @@ e2eTest('queue advanced: abort and retry', () => {
       })
 
       const text = await th.text()
-      // The follow-up reply ("ok") must be present with deterministic-v3
+      // The retry ran on the new model, from the same session history.
+      const retriedOnNewModel = ctx.modelServer!.log.filter((request) => request.model === 'fake-2')
+      expect(retriedOnNewModel.length).toBeGreaterThan(0)
+      expect(JSON.stringify(retriedOnNewModel[0]!.messages)).toContain('Reply with exactly: retry-setup')
       expect(text).toContain('Reply with exactly: model-switch-followup')
       expect(text).toContain('ok')
       // The old sleep text should be visible from the first turn
@@ -372,7 +377,7 @@ e2eTest('queue advanced: abort and retry', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: force-abort-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        -# *using fake/fake-1*
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)
