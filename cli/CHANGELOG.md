@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.68.1] - 2026-10-14
+
+### Fixed
+- name new Pi sessions and stop disabling thinking for title requests
+
 ## [0.68.0] - 2026-10-14
 
 ### Added
