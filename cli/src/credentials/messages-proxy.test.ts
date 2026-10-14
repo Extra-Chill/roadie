@@ -166,11 +166,11 @@ describe('messages proxy: ChatGPT (Codex) accounts', () => {
 describe('messages proxy: API-key (OpenAI-compatible) accounts', () => {
   const ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
 
-  async function apiKeySetup(responses: Array<() => Response>, { rotationEntries = ['zai-coding-plan/glm-5.3-flash'] }: { rotationEntries?: string[] } = {}) {
+  async function apiKeySetup(responses: Array<() => Response>, { rotationEntries = ['zai-coding-plan/glm-5.3-flash'], provider = 'zai-coding-plan' }: { rotationEntries?: string[]; provider?: string } = {}) {
     const dataDir = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pool-apikey-'))
     const accounts = []
     for (const label of ['a', 'b']) {
-      const added = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'zai-coding-plan', key: `zai-key-${label}`, label })
+      const added = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider, key: `zai-key-${label}`, label, ...(provider === 'opencode-go' && { baseURL: ZAI_BASE_URL }) })
       if (added instanceof Error) throw added
       accounts.push(added)
     }
@@ -186,7 +186,7 @@ describe('messages proxy: API-key (OpenAI-compatible) accounts', () => {
       dataDir,
       resolvePools: async () => SHARED_POOL_ID,
       fetchImpl,
-      catalog: { 'zai-coding-plan': { id: 'zai-coding-plan', api: ZAI_BASE_URL } },
+      catalog: { 'zai-coding-plan': { id: 'zai-coding-plan', api: ZAI_BASE_URL }, 'opencode-go': { id: 'opencode-go', api: ZAI_BASE_URL } },
     })
     return { dataDir, accounts, anthropicAccount, seen, proxy: apiKeyProxy }
   }
@@ -230,5 +230,37 @@ describe('messages proxy: API-key (OpenAI-compatible) accounts', () => {
     expect(response.status).toBe(200)
     expect(ctx.seen).toHaveLength(1)
     expect(ctx.seen[0]?.headers.get('authorization')).toBe('Bearer zai-key-a')
+  })
+
+  test('adds a stable opaque OpenCode Go session header derived from the pool session', async () => {
+    const ctx = await apiKeySetup([() => Response.json({ choices: [] }), () => Response.json({ choices: [] }), () => Response.json({ choices: [] })], {
+      rotationEntries: ['opencode-go/glm-5.3-flash'], provider: 'opencode-go',
+    })
+    proxy = ctx.proxy
+    const postFor = (sessionId: string) => postChat(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => sessionId), { model: 'glm-best', messages: [] })
+    await postFor('same-session')
+    await postFor('same-session')
+    await postFor('other-session')
+    const values = ctx.seen.map((call) => call.headers.get('x-opencode-session'))
+    expect(values[0]).toMatch(/^[a-f0-9]{32}$/)
+    expect(values[1]).toBe(values[0])
+    expect(values[2]).not.toBe(values[0])
+  })
+
+  test('does not add OpenCode Go session header for other providers and preserves a client value', async () => {
+    const ctx = await apiKeySetup([() => Response.json({ choices: [] }), () => Response.json({ choices: [] })])
+    proxy = ctx.proxy
+    await postChat(ctx.proxy.baseUrl, ctx.proxy.issueKey(() => 'ses-no-opencode'), { model: 'glm-best', messages: [] })
+    expect(ctx.seen[0]?.headers.has('x-opencode-session')).toBe(false)
+    await ctx.proxy.close()
+    const opencode = await apiKeySetup([() => Response.json({ choices: [] })], { rotationEntries: ['opencode-go/glm-5.3-flash'], provider: 'opencode-go' })
+    proxy = opencode.proxy
+    const response = await fetch(`${opencode.proxy.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-roadie-key': opencode.proxy.issueKey(() => 'ses-client'), 'x-opencode-session': 'client-session' },
+      body: JSON.stringify({ model: 'glm-best', messages: [] }),
+    })
+    expect(response.status).toBe(200)
+    expect(opencode.seen[0]?.headers.get('x-opencode-session')).toBe('client-session')
   })
 })
