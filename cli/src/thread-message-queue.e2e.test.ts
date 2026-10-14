@@ -644,9 +644,14 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
         afterMessageIncludes: 'india',
       })
 
-      // C's user message appears before its bot response.
-      // We assert on india's reply existence.
-      expect(await th.text()).toMatchInlineSnapshot(`
+      // C's user message appears before its bot response. Whether india
+      // joined hotel's turn or followed it as its own (a timing question)
+      // only changes how many reply+footer pairs end the transcript.
+      const settled = (await settledText(th)).replace(
+        /(\nok\n-# \*project ⋅[^\n]*)+$/,
+        (_all, last: string) => last,
+      )
+      expect(settled).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: golf
         --- from: assistant (TestBot)

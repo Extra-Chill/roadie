@@ -29,13 +29,10 @@ import {
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
-import { setAgentBackendProvider } from './agent-backend/registry.js'
-import type { AgentBackendProvider } from './agent-backend/types.js'
-import { PiBackendProvider } from './agent-backend/pi/backend.js'
-import { withPiDefault } from './agent-backend/pi/router.js'
-import { fakeModelsJson, startFakeModelServer, type FakeMatcher } from './agent-backend/pi/fake-model-server.js'
+import type { PiBackendProvider } from './agent-backend/pi/backend.js'
+import type { FakeMatcher, startFakeModelServer } from './agent-backend/pi/fake-model-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
-import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
+import { startPiE2eBackend, type PiE2eBackend } from './pi-e2e-backend.js'
 
 /**
  * OpenCode bootstraps a directory's instance (config, plugins, skills, file
@@ -61,7 +58,6 @@ export async function warmOpencodeInstance({
 import {
   cleanupTestSessions,
 } from './test-utils.js'
-import { findPi } from './agent-backend/pi/find-pi.js'
 
 
 export function createRunDirectories({ name }: { name: string }) {
@@ -987,23 +983,6 @@ export type QueueAdvancedContext = {
   restartPi?: () => Promise<void>
 }
 
-/**
- * OpenCode stand-in for Pi suites. Pi is the default backend; anything that
- * reaches the old backend is a bug, so it records the call and refuses.
- */
-export function untouchableOpencodeFallback(touched: string[] = []): AgentBackendProvider {
-  return {
-    id: 'opencode',
-    getBackend: () => null,
-    async initializeForDirectory(directory) {
-      touched.push(`initializeForDirectory ${directory}`)
-      return new Error('the retired OpenCode backend was started')
-    },
-    subscribeEvents: async () => new Error('the retired OpenCode backend has no events'),
-    onStarted: () => {},
-  }
-}
-
 export const TEST_USER_ID = '200000000000000991'
 
 /**
@@ -1058,8 +1037,7 @@ export function setupQueueAdvancedSuite({
   let previousDefaultVerbosity: VerbosityLevel | null = null
   let previousRestrictExternalDirectories: boolean | null = null
   let previousIsolateShellsUser: string | null = null
-  let restoreProvider: (() => void) | undefined
-  const opencodeTouched: string[] = []
+  let piBackend: PiE2eBackend | undefined
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -1102,27 +1080,17 @@ export function setupQueueAdvancedSuite({
 
     const matchers = [...createDeterministicMatchers(), ...extraMatchers]
     if (backend === 'pi') {
-      ctx.modelServer = await startFakeModelServer({ matchers: matchers as FakeMatcher[] })
-      const agentDir = path.join(ctx.directories.root, 'pi-agent')
-      fs.mkdirSync(agentDir, { recursive: true })
-      fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(ctx.modelServer.baseUrl))
-      const piOptions = {
-        bin: findPi()!,
-        sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),
-        fileEditLogDir: ctx.directories.dataDir,
-        model: 'fake/fake-1',
-        env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
-      }
-      ctx.pi = new PiBackendProvider(piOptions)
-      restoreProvider = setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
-      restartGlobalEventListener()
+      piBackend = await startPiE2eBackend({
+        root: ctx.directories.root,
+        dataDir: ctx.directories.dataDir,
+        projectDirectory: ctx.directories.projectDirectory,
+        matchers: matchers as FakeMatcher[],
+      })
+      ctx.pi = piBackend.pi
+      ctx.modelServer = piBackend.modelServer
       ctx.restartPi = async () => {
-        await ctx.pi!.dispose()
-        ctx.pi = new PiBackendProvider(piOptions)
-        // Replaces the suite's provider; the first restore still puts back
-        // whatever was installed before the suite.
-        setAgentBackendProvider(withPiDefault({ fallback: untouchableOpencodeFallback(opencodeTouched), pi: ctx.pi }))
-        restartGlobalEventListener()
+        await piBackend!.restart()
+        ctx.pi = piBackend!.pi
       }
     }
 
@@ -1210,10 +1178,7 @@ export function setupQueueAdvancedSuite({
 
     if (backend === 'pi') {
       stopIpcPolling()
-      restoreProvider?.()
-      // Pi writes its session file until it exits; the data dir goes next.
-      await ctx.pi?.dispose()
-      await ctx.modelServer?.close()
+      await piBackend?.stop()
     } else {
       await stopOpencodeServer()
     }
@@ -1241,7 +1206,7 @@ export function setupQueueAdvancedSuite({
       removeTestDataDir(ctx.directories.dataDir)
     }
     // A Pi suite must never start or use OpenCode.
-    expect(opencodeTouched).toEqual([])
+    expect(piBackend?.opencodeTouched ?? []).toEqual([])
   }, 5_000)
 
   afterEach(async () => {
