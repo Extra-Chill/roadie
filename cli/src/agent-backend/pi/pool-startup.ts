@@ -73,7 +73,7 @@ export async function startPiPool(): Promise<Error | {
   const proxy = await startMessagesProxy({ dataDir, ...listen, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
-  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, openaiRotations, codexModels })
+  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, openaiRotations, codexModels, dataDir })
   return {
     baseUrl: proxy.baseUrl,
     agentDir,

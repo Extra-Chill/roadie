@@ -97,7 +97,28 @@ function poolModel(rotation: string) {
   }
 }
 
-export function piPoolModelsJson({ baseUrl, rotations, openaiRotations = [], codexModels = [] }: { baseUrl: string; rotations: string[]; openaiRotations?: string[]; codexModels?: string[] }) {
+/** Anthropic model families using adaptive thinking (Claude 4.6+ and 5.x). */
+export function supportsAdaptiveThinking(modelId: string): boolean {
+  return /(?:^|-)claude-(?:opus|sonnet)-(?:4-(?:6|[7-9]|\d{2,})|[5-9](?:-|$)|\d{2,}(?:-|$))/.test(modelId)
+}
+
+function adaptiveAnthropicRotations({ dataDir, poolIds, rotations }: { dataDir?: string; poolIds?: string[]; rotations: string[] }): Set<string> {
+  if (!dataDir) return new Set()
+  const adaptive = new Set<string>()
+  for (const poolId of poolIds ?? [SHARED_POOL_ID]) {
+    const entriesByRotation = readPoolRotations({ dataDir, poolId })
+    if (entriesByRotation instanceof Error) continue
+    for (const rotation of rotations) {
+      if (entriesByRotation[rotation]?.some((entry) => {
+        const parsed = parseRotationEntry(entry)
+        return parsed?.provider === 'anthropic' && supportsAdaptiveThinking(parsed.modelId)
+      })) adaptive.add(rotation)
+    }
+  }
+  return adaptive
+}
+
+export function piPoolModelsJson({ baseUrl, rotations, openaiRotations = [], codexModels = [], adaptiveRotations = [] }: { baseUrl: string; rotations: string[]; openaiRotations?: string[]; codexModels?: string[]; adaptiveRotations?: string[] }) {
   const keyHeader = { 'x-roadie-key': `\${${PI_KEY_ENV}}` }
   return {
     providers: {
@@ -123,7 +144,7 @@ export function piPoolModelsJson({ baseUrl, rotations, openaiRotations = [], cod
         api: 'anthropic-messages',
         apiKey: 'roadie-pool-managed',
         headers: keyHeader,
-        models: rotations.map(poolModel),
+        models: rotations.map((rotation) => ({ ...poolModel(rotation), ...(adaptiveRotations.includes(rotation) && { compat: { forceAdaptiveThinking: true } }) })),
       } }),
       ...(openaiRotations.length > 0 && { [PI_OPENAI_POOL_PROVIDER]: {
         baseUrl,
@@ -137,14 +158,15 @@ export function piPoolModelsJson({ baseUrl, rotations, openaiRotations = [], cod
 }
 
 /** Write the pool providers into a Roadie-owned Pi agent dir, keeping any other providers there. */
-export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, openaiRotations = [], codexModels = [] }: { agentDir: string; baseUrl: string; rotations: string[]; openaiRotations?: string[]; codexModels?: string[] }) {
+export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, openaiRotations = [], codexModels = [], dataDir, poolIds }: { agentDir: string; baseUrl: string; rotations: string[]; openaiRotations?: string[]; codexModels?: string[]; dataDir?: string; poolIds?: string[] }) {
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 })
   const file = path.join(agentDir, 'models.json')
   let existing: { providers?: Record<string, unknown> } = {}
   try {
     existing = JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch {}
-  const pool = piPoolModelsJson({ baseUrl, rotations, openaiRotations, codexModels })
+  const adaptiveRotations = [...adaptiveAnthropicRotations({ dataDir, poolIds, rotations })]
+  const pool = piPoolModelsJson({ baseUrl, rotations, openaiRotations, codexModels, adaptiveRotations })
   fs.writeFileSync(file, JSON.stringify({ ...existing, providers: { ...existing.providers, ...pool.providers } }, null, 2), { mode: 0o600 })
   // The proxy speaks HTTP + SSE only; Pi's Codex client would try a WebSocket first.
   const settingsFile = path.join(agentDir, 'settings.json')

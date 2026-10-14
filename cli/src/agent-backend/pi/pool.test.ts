@@ -46,16 +46,21 @@ describe('rotation wire formats', () => {
   test('every rotation with a roadie candidate gets a model, with the pi api type per wire format', async () => {
     const dataDir = tempDataDir('pi-pool-')
     await seedRotations(dataDir, {
-      'claude-best': ['anthropic/claude-opus-4-8'],
+      'claude-best': ['anthropic/claude-opus-5-5'],
+      'claude-legacy': ['anthropic/claude-sonnet-4-5'],
       'glm-best': ['zai-coding-plan/glm-5.3-flash'],
     })
     const rotations = anthropicRotations({ dataDir })
     const openaiRotations = openaiCompatRotations({ dataDir })
-    const json = piPoolModelsJson({ baseUrl: 'http://127.0.0.1:47120', rotations, openaiRotations })
-    const providers = json.providers as Record<string, { api: string; models: Array<{ id: string }> }>
-    expect(providers[PI_POOL_PROVIDER]).toMatchObject({ api: 'anthropic-messages', models: [{ id: 'claude-best' }] })
+    const agentDir = path.join(dataDir, 'agent')
+    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', rotations, openaiRotations, dataDir })
+    const { providers } = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')) as { providers: Record<string, { api: string; models: Array<{ id: string; compat?: { forceAdaptiveThinking?: boolean } }> }> }
+    expect(providers[PI_POOL_PROVIDER]).toMatchObject({ api: 'anthropic-messages', models: [{ id: 'claude-best' }, { id: 'claude-legacy' }] })
     expect(providers[PI_OPENAI_POOL_PROVIDER]).toMatchObject({ api: 'openai-completions', models: [{ id: 'glm-best' }] })
     expect(providers[PI_CODEX_POOL_PROVIDER]).toBeUndefined()
+    expect(providers[PI_POOL_PROVIDER]?.models.find((model) => model.id === 'claude-best')?.compat).toEqual({ forceAdaptiveThinking: true })
+    expect(providers[PI_POOL_PROVIDER]?.models.find((model) => model.id === 'claude-legacy')?.compat).toBeUndefined()
+    expect(providers[PI_OPENAI_POOL_PROVIDER]?.models[0]?.compat).toBeUndefined()
     for (const provider of [providers[PI_POOL_PROVIDER]!, providers[PI_OPENAI_POOL_PROVIDER]!]) {
       expect(provider.models[0]).toMatchObject({ reasoning: true, input: ['text', 'image'] })
     }

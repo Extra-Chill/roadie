@@ -477,7 +477,7 @@ cli
     const openaiRotations = openaiCompatRotations({ dataDir, poolIds })
     const codexModels = hasCodexAccounts({ dataDir, poolIds }) ? DEFAULT_CODEX_MODELS : []
     if (rotations.length === 0 && openaiRotations.length === 0 && codexModels.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no ChatGPT account and no pool rotation`)
-    writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, openaiRotations, codexModels })
+    writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, openaiRotations, codexModels, dataDir, poolIds })
     cliLogger.log(`Wrote Pi agent dir ${dir} (anthropic rotations: ${rotations.join(', ') || 'none'}; api-key rotations: ${openaiRotations.join(', ') || 'none'}; ChatGPT models: ${codexModels.join(', ') || 'none'})`)
     process.exit(0)
   })
