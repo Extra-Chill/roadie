@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.65.0] - 2026-10-14
+
+### Added
+- move threads on retired OpenCode sessions to a seeded Pi session
+
 ## [0.64.1] - 2026-10-14
 
 ### Changed
