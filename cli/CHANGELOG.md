@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.63.1] - 2026-10-14
+
+### Fixed
+- fall back to Pi's settings.json default model when ROADIE_PI_MODEL is unset
+
 ## [0.63.0] - 2026-10-14
 
 ### Added
