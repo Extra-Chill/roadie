@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.64.1] - 2026-10-14
+
+### Changed
+- install a pinned Pi and require the Pi e2e suites to run
+
 ## [0.64.0] - 2026-10-14
 
 ### Added
