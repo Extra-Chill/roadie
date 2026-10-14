@@ -42,7 +42,7 @@ import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
-import { getCachedPerson, isIdentityHookConfigured, resolvePerson } from '../identity.js'
+import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
 import {
@@ -5293,9 +5293,9 @@ export class ThreadSessionRuntime {
 
   /**
    * Connect the speaker's own MCP servers, authenticated with their stored
-   * credential. Only chat speakers the identity hook allows get any; the
-   * hook result is read again here (cached) rather than carried on the queued
-   * turn so no credential material ever travels with it. Never fatal.
+   * credential. Only chat speakers allowed by the identity hook get any;
+   * their previously resolved person is read from cache. Turns without a
+   * cached person get no speaker MCP servers. Never fatal.
    */
   private async registerSpeakerMcpServers({
     client,
@@ -5307,7 +5307,7 @@ export class ThreadSessionRuntime {
     if (!isIdentityHookConfigured()) return
     if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
     const actor = { platform: this.chat.platform, id: input.userId }
-    const person = await resolvePerson({ actor }).catch(() => null)
+    const person = getCachedPerson(actor)
     if (!person?.allowed || !person.mcpServers?.length) return
     const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
     if (!personKey) return

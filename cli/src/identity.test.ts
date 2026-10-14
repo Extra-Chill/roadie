@@ -13,6 +13,7 @@ import {
   resolvePerson,
   setIdentityHookCommand,
 } from './identity.js'
+import { addFilter } from './hooks.js'
 import {
   hasRoadieAdminPermission,
   hasRoadieBotPermission,
@@ -67,6 +68,28 @@ const member = (id: string) =>
   }) as unknown as Parameters<typeof hasRoadieBotPermission>[0]
 
 describe('identity hook', () => {
+  test('speaker MCP lookup uses the context-resolved cached person', async () => {
+    const actor = { platform: 'discord', id: 'space-member' }
+    const invocations: Array<{ guildId?: string }> = []
+    const removeFilter = addFilter('person', (_person, { context }) => {
+      invocations.push(context)
+      return context.guildId
+        ? { allowed: true, capabilities: new Set(['sessions'] as const), permissions: [] }
+        : { allowed: false, capabilities: new Set<never>(), permissions: [] }
+    })
+    try {
+      const resolved = await resolvePerson({ actor, context: { guildId: 'guild-1', channelId: 'channel-1' } })
+      expect(resolved?.allowed).toBe(true)
+
+      // registerSpeakerMcpServers performs this cached-only lookup.
+      expect(getCachedPerson(actor)?.allowed).toBe(true)
+      expect(invocations).toEqual([{ guildId: 'guild-1', channelId: 'channel-1' }])
+    } finally {
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
   test('no hook configured: resolvePerson returns null', async () => {
     setIdentityHookCommand(null)
     expect(isIdentityHookConfigured()).toBe(false)
