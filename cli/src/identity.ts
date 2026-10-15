@@ -136,6 +136,9 @@ type CacheEntry = { person: Person; expiresAt: number }
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<Person>>()
 const lastKnown = new Map<string, { person: Person; resolvedAt: number }>()
+// Bumped when one actor's entry is dropped, so a lookup that was already in
+// flight cannot write its (now outdated) answer back into the cache.
+const generations = new Map<string, number>()
 
 let hookCommandOverride: string | null | undefined
 
@@ -162,11 +165,17 @@ function cacheKey(actor: IdentityActor): string {
   return `${actor.platform}:${actor.id}`
 }
 
-/** Drop cached people (all, or one actor). */
+/**
+ * Drop cached people (all, or one actor). For one actor this also forgets an
+ * in-flight lookup, so the next resolvePerson asks the host again (used after
+ * the host links the actor's identity).
+ */
 export function clearIdentityCache(actor?: IdentityActor) {
   if (actor) {
     cache.delete(cacheKey(actor))
     lastKnown.delete(cacheKey(actor))
+    inflight.delete(cacheKey(actor))
+    generations.set(cacheKey(actor), (generations.get(cacheKey(actor)) ?? 0) + 1)
     return
   }
   cache.clear()
@@ -208,6 +217,7 @@ export async function resolvePerson({
   const pending = inflight.get(key)
   if (pending) return pending
 
+  const generation = generations.get(key) ?? 0
   const base = command
     ? runHook({ command, actor, context })
     : Promise.resolve({ person: null as Person | null, ttlSeconds: DEFAULT_TTL_SECONDS })
@@ -220,6 +230,7 @@ export async function resolvePerson({
       // failure. Either way only for the short failure TTL, so the next
       // message retries.
       let failed = false
+      const current = () => (generations.get(key) ?? 0) === generation
       const filtered = (await applyFiltersAsync('person', person, { actor, context }, {
         onError: () => { failed = true },
       })) ?? DENIED
@@ -229,18 +240,18 @@ export async function resolvePerson({
         const stale = known && now - known.resolvedAt <= STALE_IF_ERROR_SECONDS * 1000 ? known.person : undefined
         if (stale) logger.warn(`[IDENTITY] lookup failed for ${key}; using the last successful lookup`)
         const resolved = stale ?? LOOKUP_FAILED
-        cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
+        if (current()) cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
         return resolved
       }
       // A hook that disables caching (ttl_seconds 0) gets no stale fallback.
-      if (ttlSeconds > 0) {
+      if (ttlSeconds > 0 && current()) {
         cache.set(key, { person: filtered, expiresAt: now + ttlSeconds * 1000 })
         lastKnown.set(key, { person: filtered, resolvedAt: now })
       }
       return filtered
     })
     .finally(() => {
-      inflight.delete(key)
+      if (inflight.get(key) === promise) inflight.delete(key)
     })
   inflight.set(key, promise)
   return promise

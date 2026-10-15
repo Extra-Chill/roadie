@@ -21,6 +21,7 @@ import type { ContextRequest, ContextSection } from './context-provider.js'
 import type { IdentityActor, IdentityContext, Person } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
 import type { WelcomeMessageContext } from './person-welcome.js'
+import type { IdentityLinkContext, IdentityLinkProvider, IdentityLinkResult } from './identity-link.js'
 import type { ForkWorkspaceProvider, ForkWorkspaceRequest, ForkWorkspaceBinding } from './fork-workspace.js'
 import type { IntakeDecision, ConversationIntakeRequest, ConversationAdmission } from './conversation-intake.js'
 import type { HostUpgradeHandler } from './service-lifecycle.js'
@@ -41,6 +42,18 @@ export interface RoadieFilters {
    * /start). The value starts as Roadie's generic default; null or '' disables it.
    */
   welcome_message: [string | null, WelcomeMessageContext]
+  /**
+   * Self-serve identity linking (#292): the OAuth-protected resource (typically
+   * a person MCP server URL) whose sign-in proves who a denied chat actor is.
+   * Starts as null; null means linking is not offered.
+   */
+  identity_link_provider: [IdentityLinkProvider | null, { actor: IdentityActor; context: IdentityContext }]
+  /**
+   * Self-serve identity linking (#292): verify the token from the provider's
+   * sign-in and record the link. Starts as null (treated as not linked).
+   * The token is a secret: never log or persist it.
+   */
+  link_identity: [IdentityLinkResult | null, IdentityLinkContext]
   /** Effective channel policy: undefined = built-in behavior, null = do not answer. */
   channel_policy: [ChannelPolicy | null | undefined, { channelId: string }]
   /** System prompt sections, in order, before host prompt config applies. */

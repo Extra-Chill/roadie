@@ -422,6 +422,11 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('link')
+      .setDescription(truncateCommandDescription('Link your chat account to your account on this server (privately)'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('start')
       .setDescription(truncateCommandDescription('Show how to use Roadie (privately)'))
       .setDMPermission(false)

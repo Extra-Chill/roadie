@@ -81,6 +81,7 @@ import {
   handleConnectCommand,
 } from './commands/connect.js'
 import { handleStartCommand, welcomeDiscordUser } from './commands/start.js'
+import { handleLinkButton, handleLinkCommand, LINK_BUTTON_PREFIX } from './commands/link.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -206,6 +207,12 @@ export function registerInteractionHandler({
           await handleConnectButton(interaction)
           return
         }
+        // Link buttons in a link-prompt DM (#292): the flow acts only for the
+        // clicking user, so a DM button can only link the clicker's account.
+        if (!interaction.guild && interaction.isButton() && interaction.customId.startsWith(LINK_BUTTON_PREFIX)) {
+          await handleLinkButton(interaction)
+          return
+        }
 
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
@@ -252,6 +259,18 @@ export function registerInteractionHandler({
             }
             return
           }
+        }
+
+        // Self-serve identity linking (#292) is for people Roadie does not
+        // admit yet, so /link and Link buttons skip the permission and
+        // channel-audience checks below. Both act only for the clicking user.
+        if (interaction.isChatInputCommand() && interaction.commandName === 'link') {
+          await handleLinkCommand({ command: interaction })
+          return
+        }
+        if (interaction.isButton() && interaction.customId.startsWith(LINK_BUTTON_PREFIX)) {
+          await handleLinkButton(interaction)
+          return
         }
 
         // Explicit application management is the only bootstrap exception to

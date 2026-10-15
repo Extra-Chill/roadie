@@ -143,6 +143,7 @@ import {
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
 import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityHookConfigured, resolvePerson } from './identity.js'
+import { offerDiscordLinkPrompt } from './commands/link.js'
 import { welcomeDiscordUser } from './commands/start.js'
 import {
   channelAllowsCapability,
@@ -762,6 +763,18 @@ export async function startDiscordBot({
 
         if (!hasRoadieBotPermission(member, message.guild)) {
           if (explicitIntake) return
+          // Self-serve identity linking (#292): a denied human (not a lookup
+          // failure) gets a private Link prompt when the host offers a
+          // provider, at most once per actor per interval.
+          const offered = await offerDiscordLinkPrompt({
+            user: message.author,
+            displayName: member.displayName || message.author.displayName,
+            person,
+            context: { guildId: message.guild.id, channelId: message.channelId },
+            replyInChannel: async ({ content, components }) =>
+              await message.reply({ content, components, flags: SILENT_MESSAGE_FLAGS }),
+          })
+          if (offered) return
           await message.reply({
             content: person?.lookupFailed
               ? IDENTITY_LOOKUP_FAILED_MESSAGE

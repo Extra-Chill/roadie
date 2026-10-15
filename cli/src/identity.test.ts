@@ -120,6 +120,44 @@ describe('identity hook', () => {
     }
   })
 
+  test('dropping one actor discards an in-flight lookup so it cannot cache a stale answer', async () => {
+    const actor = { platform: 'discord', id: 'relinked' }
+    const other = { platform: 'discord', id: 'unrelated' }
+    let allowed = false
+    let release: () => void = () => undefined
+    let entered: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const inside = new Promise<void>((resolve) => { entered = resolve })
+    const removeFilter = addFilter('person', async (_value, { actor: who }) => {
+      const answer = allowed
+      if (who.id === actor.id && !answer) {
+        entered()
+        await gate
+      }
+      return { allowed: answer, capabilities: new Set(answer ? (['sessions'] as const) : []), permissions: [] }
+    })
+    try {
+      expect((await resolvePerson({ actor: other }))?.allowed).toBe(false)
+      const stale = resolvePerson({ actor })
+      await inside
+      // The host links the actor while the old lookup is still running.
+      allowed = true
+      clearIdentityCache(actor)
+      const fresh = await resolvePerson({ actor })
+      expect(fresh?.allowed).toBe(true)
+      release()
+      expect((await stale)?.allowed).toBe(false)
+      // The stale answer did not overwrite the fresh one.
+      expect(getCachedPerson(actor)?.allowed).toBe(true)
+      // Other actors keep their cache entry.
+      expect(getCachedPerson(other)?.allowed).toBe(false)
+    } finally {
+      removeFilter()
+      clearIdentityCache(actor)
+      clearIdentityCache(other)
+    }
+  })
+
   test('a failed lookup falls back to the last successful lookup', async () => {
     const actor = { platform: 'discord', id: 'known-then-flaky' }
     let fail = false
