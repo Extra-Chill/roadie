@@ -24,7 +24,7 @@ import { ROADIE_CONTEXT_TYPE } from './roadie-extension.js'
 
 type PiContent =
   | { type: 'text'; text: string }
-  | { type: 'thinking'; thinking: string }
+  | { type: 'thinking'; thinking: string; thinkingSignature?: string; redacted?: boolean }
   | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
   | { type: 'image'; mimeType?: string; data?: string }
 
@@ -73,6 +73,24 @@ export function piMessageId(message: { role: string; timestamp: number }): strin
 function contentList(content: unknown): PiContent[] {
   if (typeof content === 'string') return [{ type: 'text', text: content }]
   return Array.isArray(content) ? (content as PiContent[]) : []
+}
+
+const NARRATION_LABEL = Buffer.from([0x42, 0x09, ...Buffer.from('narration')])
+
+/**
+ * Whether a thinking block is Anthropic "narration": prose the model wrote for
+ * the user ahead of a tool call, which the API files as a thinking block. The
+ * label is only in the opaque signature (a protobuf whose prefix holds field 8,
+ * `B <len> "narration"`), and Pi's RPC stream strips signatures from live
+ * updates, so this is decided on the finished message (#288).
+ */
+export function isNarrationThinking(item: PiContent): boolean {
+  if (item.type !== 'thinking' || item.redacted || !item.thinking?.trim()) return false
+  const signature = item.thinkingSignature
+  if (typeof signature !== 'string' || !signature) return false
+  const head = signature.slice(0, 64)
+  const bytes = Buffer.from(head.slice(0, head.length - (head.length % 4)), 'base64')
+  return bytes.includes(NARRATION_LABEL)
 }
 
 function textOf(content: unknown): string {
@@ -166,7 +184,8 @@ export function toAgentParts({
       return [{ ...base, kind: 'text', text: item.text, startedAt: message.timestamp, endedAt: message.timestamp }]
     }
     if (item.type === 'thinking') {
-      return [{ ...base, kind: 'reasoning', text: item.thinking, startedAt: message.timestamp, endedAt: message.timestamp }]
+      const kind = isNarrationThinking(item) ? 'text' : 'reasoning'
+      return [{ ...base, kind, text: item.thinking, startedAt: message.timestamp, endedAt: message.timestamp }]
     }
     if (item.type === 'toolCall') {
       const result = toolResults?.get(item.id)
@@ -413,8 +432,28 @@ export class PiEventTranslator {
     // aborted"); report it as an abort, which the runtime treats as expected.
     const failure = toError(assistant)
     const error = failure && this.aborting ? { ...failure, name: 'MessageAbortedError' } : failure
+    // Narration arrived as reasoning while streaming; it is user-facing text.
+    // Same part id, so the runtime replaces the reasoning part in place, still
+    // ahead of the tool call it introduces.
+    const narration = contentList(assistant.content).flatMap((item, index): AgentEvent[] => (
+      item.type === 'thinking' && isNarrationThinking(item)
+        ? [{
+            type: 'part',
+            part: {
+              id: `${agentMessage.id}-${index}`,
+              sessionId,
+              messageId: agentMessage.id,
+              kind: 'text',
+              text: item.thinking,
+              startedAt: assistant.timestamp,
+              endedAt: Date.now(),
+            },
+          }]
+        : []
+    ))
     return [
       { type: 'message', message: agentMessage },
+      ...narration,
       {
         type: 'part',
         part: {
