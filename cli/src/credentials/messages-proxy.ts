@@ -29,7 +29,7 @@ import { CODEX_RESPONSES_BASE_URL } from './adapters/openai-codex-oauth.js'
 import { clearSessionRoute, setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { POOL_CLIENT_SCOPE_PATTERN, poolClientSessionId, resolvePoolClient } from './pool-clients.js'
-import { poolRotations } from '../agent-backend/pi/pool.js'
+import { adaptiveAnthropicRotations, poolRotations } from '../agent-backend/pi/pool.js'
 import { resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 import {
   cooldownUntilFromRetryAfter,
@@ -52,11 +52,17 @@ export const POOL_END_TURN_PATH = '/roadie/pool/end-turn'
 /** Account management on a pool host, for admin clients (#238, credentials/pool-admin.ts). */
 export const POOL_ADMIN_PATH = '/roadie/pool/admin/'
 
-/** What a client's pools can serve; a remote bot writes its Pi models from it. */
-export type PoolCatalog = { rotations: string[] }
+/**
+ * What a client's pools can serve; a bot writes its Pi models from it.
+ * `adaptiveRotations` travels with the rotations because only the pool host
+ * holds their entries, and Opus 5.x returns no thinking or narration text
+ * unless Pi requests adaptive thinking.
+ */
+export type PoolCatalog = { rotations: string[]; adaptiveRotations: string[] }
 
 export function poolCatalog({ dataDir, poolIds }: { dataDir: string; poolIds: string[] }): PoolCatalog {
-  return { rotations: poolRotations({ dataDir, poolIds }) }
+  const rotations = poolRotations({ dataDir, poolIds })
+  return { rotations, adaptiveRotations: adaptiveAnthropicRotations({ dataDir, poolIds, rotations }) }
 }
 
 /** Pool provider id for ChatGPT (Codex) subscription accounts. */

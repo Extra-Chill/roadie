@@ -63,7 +63,8 @@ export async function fetchRemotePoolCatalog({ config, fetchImpl = fetch }: { co
   if (!response.ok) return new Error(`pool host ${config.url} refused the catalog request (HTTP ${response.status}); check this bot's client key`)
   const body = (await response.json().catch(() => undefined)) as Partial<PoolCatalog> | undefined
   const list = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
-  return { rotations: list(body?.rotations) }
+  const rotations = list(body?.rotations)
+  return { rotations, adaptiveRotations: list(body?.adaptiveRotations).filter((rotation) => rotations.includes(rotation)) }
 }
 
 export type RemotePoolRelay = {

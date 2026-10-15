@@ -5,7 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { setPoolRotation, SHARED_POOL_ID } from '../../credentials/store.js'
-import { poolRotations, PI_POOL_PROVIDER, writePiPoolAgentDir } from './pool.js'
+import { poolCatalog } from '../../credentials/messages-proxy.js'
+import { PI_POOL_PROVIDER, writePiPoolAgentDir } from './pool.js'
 
 function tempDataDir(prefix: string): string {
   return fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), prefix))
@@ -29,10 +30,12 @@ describe('pool provider', () => {
       'glm-best': ['zai-coding-plan/glm-5.3-flash'],
       subagent: ['zai-coding-plan/glm-5.3-flash', 'opencode-go/glm-5.3-flash', 'openai/gpt-6-luna', 'anthropic/claude-sonnet-5-5'],
     })
-    const rotations = poolRotations({ dataDir })
+    const catalog = poolCatalog({ dataDir, poolIds: [SHARED_POOL_ID] })
+    const { rotations } = catalog
     expect(rotations).toEqual(['claude-best', 'claude-legacy', 'glm-best', 'subagent'])
+    expect(catalog.adaptiveRotations).toEqual(['claude-best', 'subagent'])
     const agentDir = path.join(dataDir, 'agent')
-    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', rotations, dataDir })
+    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', ...catalog })
     const { providers } = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')) as { providers: Providers }
     expect(Object.keys(providers)).toEqual([PI_POOL_PROVIDER])
     const pool = providers[PI_POOL_PROVIDER]!
