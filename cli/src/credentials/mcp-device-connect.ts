@@ -586,35 +586,56 @@ export type DeviceConnectPrompt = {
 export type DeviceConnectSession = {
   prompt: DeviceConnectPrompt
   /** Poll until the person approves (token stored) or the flow ends. */
-  complete(options?: {
-    signal?: AbortSignal
-    sleep?: (ms: number) => Promise<void>
-    /** Stop earlier than the device code expiry (e.g. chat reply token lifetime). */
-    maxWaitMs?: number
-  }): Promise<void | DeviceConnectError>
+  complete(options?: DeviceGrantCompleteOptions): Promise<void | DeviceConnectError>
+}
+
+export type DeviceGrantCompleteOptions = {
+  signal?: AbortSignal
+  sleep?: (ms: number) => Promise<void>
+  /** Stop earlier than the device code expiry (e.g. chat reply token lifetime). */
+  maxWaitMs?: number
 }
 
 /**
- * Start connecting `personKey` to one MCP server: discovery, client
- * registration and device authorization. The returned prompt is shown to the
- * person privately; `complete()` polls and stores their token under their own
- * person key and the server's credential name.
+ * A token obtained by the device grant, with what is needed to refresh or
+ * revoke it. Never log it.
  */
-export async function beginDeviceConnect({
+export type DeviceGrantToken = {
+  access: string
+  /** Epoch ms. */
+  expires?: number
+  refresh?: string
+  tokenEndpoint: string
+  clientId: string
+  clientSecret?: string
+  revocationEndpoint?: string
+}
+
+export type DeviceGrantSession = {
+  prompt: DeviceConnectPrompt
+  /** Poll until the person approves (returns the token, unstored) or the flow ends. */
+  complete(options?: DeviceGrantCompleteOptions): Promise<DeviceGrantToken | DeviceConnectError>
+}
+
+/**
+ * Start a device grant against the authorization server of an OAuth-protected
+ * resource (an MCP server URL): discovery, client registration and device
+ * authorization. `complete()` polls and returns the token without storing it;
+ * the caller decides where it goes (beginDeviceConnect stores it for a person,
+ * identity linking hands it to the host first).
+ */
+export async function beginDeviceGrant({
   dataDir,
-  personKey,
-  target,
+  resourceUrl,
   fetchImpl = defaultFetch(),
   now = () => Date.now(),
 }: {
   dataDir: string
-  personKey: string
-  target: ConnectTarget
+  resourceUrl: string
   fetchImpl?: ConnectFetch
   now?: () => number
-}): Promise<DeviceConnectSession | DeviceConnectError> {
-  if (!personKey.trim()) return new DeviceConnectError('failed', 'Could not resolve your account.')
-  const discovery = await discoverMcpAuthorization({ mcpUrl: target.url, fetchImpl })
+}): Promise<DeviceGrantSession | DeviceConnectError> {
+  const discovery = await discoverMcpAuthorization({ mcpUrl: resourceUrl, fetchImpl })
   if (discovery instanceof Error) return discovery
   const server = discovery.authorizationServer
   const unsupported = deviceFlowUnsupportedReason(server)
@@ -675,26 +696,86 @@ export async function beginDeviceConnect({
         ...(signal ? { signal } : {}),
       })
       if (token instanceof Error) return token
-      const stored = await setPersonMcpToken({
-        dataDir,
-        personKey,
-        credential: target.credential,
-        token: {
-          access: token.access,
-          ...(token.expires ? { expires: token.expires } : {}),
-          ...(token.refresh ? { refresh: token.refresh } : {}),
-          tokenEndpoint: server.tokenEndpoint,
-          clientId: registered.clientId,
-          ...(registered.clientSecret ? { clientSecret: registered.clientSecret } : {}),
-          ...(server.revocationEndpoint ? { revocationEndpoint: server.revocationEndpoint } : {}),
-        },
-      })
+      return {
+        access: token.access,
+        ...(token.expires ? { expires: token.expires } : {}),
+        ...(token.refresh ? { refresh: token.refresh } : {}),
+        tokenEndpoint: server.tokenEndpoint,
+        clientId: registered.clientId,
+        ...(registered.clientSecret ? { clientSecret: registered.clientSecret } : {}),
+        ...(server.revocationEndpoint ? { revocationEndpoint: server.revocationEndpoint } : {}),
+      }
+    },
+  }
+}
+
+/**
+ * Start connecting `personKey` to one MCP server: discovery, client
+ * registration and device authorization. The returned prompt is shown to the
+ * person privately; `complete()` polls and stores their token under their own
+ * person key and the server's credential name.
+ */
+export async function beginDeviceConnect({
+  dataDir,
+  personKey,
+  target,
+  fetchImpl = defaultFetch(),
+  now = () => Date.now(),
+}: {
+  dataDir: string
+  personKey: string
+  target: ConnectTarget
+  fetchImpl?: ConnectFetch
+  now?: () => number
+}): Promise<DeviceConnectSession | DeviceConnectError> {
+  if (!personKey.trim()) return new DeviceConnectError('failed', 'Could not resolve your account.')
+  const grant = await beginDeviceGrant({ dataDir, resourceUrl: target.url, fetchImpl, now })
+  if (grant instanceof Error) return grant
+  return {
+    prompt: grant.prompt,
+    async complete(options = {}) {
+      const token = await grant.complete(options)
+      if (token instanceof Error) return token
+      const stored = await setPersonMcpToken({ dataDir, personKey, credential: target.credential, token })
       if (stored instanceof Error) {
         return new DeviceConnectError('failed', 'Could not store the credential.', { cause: stored })
       }
       return undefined
     },
   }
+}
+
+/**
+ * Revoke a token at its authorization server (RFC 7009), best effort: the
+ * refresh token when there is one (revoking it ends the grant), else the
+ * access token. Returns whether the server accepted the revocation. Never
+ * throws and never logs the token.
+ */
+export async function revokeOAuthToken({
+  token,
+  fetchImpl = defaultFetch(),
+}: {
+  token: {
+    access: string
+    refresh?: string
+    clientId?: string
+    clientSecret?: string
+    revocationEndpoint?: string
+  }
+  fetchImpl?: ConnectFetch
+}): Promise<boolean> {
+  if (!token.revocationEndpoint || !isAllowedMcpUrl(token.revocationEndpoint)) return false
+  const response = await request(fetchImpl, token.revocationEndpoint, {
+    method: 'POST',
+    headers: FORM_HEADERS,
+    body: form({
+      token: token.refresh ?? token.access,
+      token_type_hint: token.refresh ? 'refresh_token' : 'access_token',
+      client_id: token.clientId,
+      client_secret: token.clientSecret,
+    }),
+  })
+  return !(response instanceof Error) && response.ok
 }
 
 /**
@@ -715,20 +796,6 @@ export async function disconnectPersonMcp({
   const record = readPersonMcpToken({ dataDir, personKey, credential })
   const removed = await removePersonMcpToken({ dataDir, personKey, credential })
   if (removed instanceof Error) return removed
-  let revoked = false
-  if (record?.revocationEndpoint && isAllowedMcpUrl(record.revocationEndpoint)) {
-    const token = record.refresh ?? record.access
-    const response = await request(fetchImpl, record.revocationEndpoint, {
-      method: 'POST',
-      headers: FORM_HEADERS,
-      body: form({
-        token,
-        token_type_hint: record.refresh ? 'refresh_token' : 'access_token',
-        client_id: record.clientId,
-        client_secret: record.clientSecret,
-      }),
-    })
-    revoked = !(response instanceof Error) && response.ok
-  }
+  const revoked = record ? await revokeOAuthToken({ token: record, fetchImpl }) : false
   return { removed, revoked }
 }
