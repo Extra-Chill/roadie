@@ -32,11 +32,12 @@ describe('buildStaticSlashCommands', () => {
 })
 
 describe('person commands', () => {
-  test('registers /connect and /start as ephemeral-reply guild commands', () => {
+  test('registers /connect, /link and /start as ephemeral-reply guild commands', () => {
     const names = buildStaticSlashCommands().map((command) => command.name)
     expect(names).toContain('connect')
+    expect(names).toContain('link')
     expect(names).toContain('start')
-    for (const name of ['connect', 'start']) {
+    for (const name of ['connect', 'link', 'start']) {
       const command = buildStaticSlashCommands().find((entry) => entry.name === name)
       expect(command?.options ?? []).toEqual([])
       expect(command?.description.length).toBeLessThanOrEqual(100)

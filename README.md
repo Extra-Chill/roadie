@@ -183,6 +183,8 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `person` | the person behind a chat user, or `null` | `{ actor, context }` |
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
 | `welcome_message` | text of the private welcome a newly admitted person gets once (a DM on Discord and Slack) and `/start` (`/roadie start` on Slack) re-shows; starts as Roadie's generic default, `null` or `''` disables it | `{ actor, person, personKey, channelId?, pendingMcpServers, trigger }` |
+| `identity_link_provider` | async. Self-serve identity linking: `{ url, name?, credential? }` or `null` (default; linking not offered). `url` is an OAuth-protected resource, typically a person MCP server URL; Roadie discovers its authorization server like `/connect` does | `{ actor, context }` |
+| `link_identity` | async. Starts as `null` (not linked). Verify the sign-in token and record the link; return `{ linked: true }` or `{ linked: false, reason }`. The token is a secret: never log or store it | `{ actor, context, token: { access, refresh?, expires?, tokenEndpoint?, clientId?, revocationEndpoint? } }` |
 | `system_prompt_sections` | system prompt sections, in order | `{ sessionId }` |
 | `context_sections` | host context sections for a session start or turn | the context request |
 | `agent_providers` | providers and models offered to users (hide, rename, reorder) | `{ directory }` |
@@ -207,6 +209,12 @@ Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROA
 The identity hook can name MCP servers for a person (`mcp_servers: [{ name, url, credential? }]`). Their tools are available only in that person's turns, authenticated with that person's own token. People connect their own account from chat with `/connect` on Discord or `/roadie connect` on Slack (or the Connect button in their welcome): Roadie discovers the authorization server from the MCP endpoint (RFC 9728 `WWW-Authenticate`/well-known metadata, RFC 8414), registers itself as a public client (RFC 7591, cached per server in `<data dir>/mcp-clients/`), and runs the OAuth device grant (RFC 8628), showing the sign-in link only to that person. Servers without a device authorization endpoint or client registration are reported as not connectable from chat; operators can still store a token with `roadie credentials mcp set`. Disconnecting removes the token and revokes it when the server has a revocation endpoint.
 
 Newly admitted people (identity hook `allowed: true`) get a one-time private welcome (a DM on Discord and Slack) with Connect buttons for any servers they have not connected yet. Override or disable the text with the `welcome_message` filter.
+
+### Self-serve identity linking
+
+People the identity layer denies can link their chat account themselves instead of sending an admin their ID. When the `identity_link_provider` filter returns a provider, a denied, platform-authenticated human (not a lookup failure, a CLI-asserted actor or a bot) who messages Roadie gets a private **Link your account** prompt: a DM on Discord, or, if their DMs are closed, a channel reply whose button only they can use. The prompt is shown at most once per person every 10 minutes; `/link` starts the same flow on demand. Clicking runs the OAuth device grant against the provider's authorization server (the sign-in link is shown only to the clicker), then hands the token to `link_identity`.
+
+On `{ linked: true }` Roadie drops the person's cached identity and asks the identity layer again. If they are now allowed and one of their `mcp_servers` has the provider's `url` (the provider's `credential` picks between several), the token is stored as that MCP credential, so one sign-in covers linking and `/connect`; then they get the first-contact welcome. If they are still denied they're told "Linked. You don't have access yet; ask an admin." On `{ linked: false, reason }` the reason is shown. A token Roadie does not store is revoked (best effort, when the server has a revocation endpoint) and never written to disk. The person is always whoever clicks or runs `/link`. Discord only for now; Slack does not offer linking yet.
 
 ### Shell env
 
@@ -253,6 +261,7 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/run-shell-command` | Run a shell command in the thread's working directory |
 | `/mcp` | List and manage MCP servers for this project |
 | `/connect` | Connect or disconnect your own account on the per-person MCP servers the identity hook names for you (OAuth device sign-in) |
+| `/link` | Link your chat account to your account on the host with its own sign-in, when you are not admitted yet (see Self-serve identity linking) |
 | `/start` | Show the welcome and how to use Roadie, privately |
 
 The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
