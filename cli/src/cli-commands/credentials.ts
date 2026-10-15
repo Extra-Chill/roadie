@@ -53,7 +53,8 @@ import {
 } from '../credentials/person-mcp-store.js'
 import { addPoolClient, readPoolClients, removePoolClient } from '../credentials/pool-clients.js'
 import { resolvePoolServeAddress, servePool } from '../credentials/serve.js'
-import { poolRotations, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
+import { writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
+import { poolCatalog } from '../credentials/messages-proxy.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -442,10 +443,10 @@ cli
     if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) exitWithError('--base-url must be an http(s) URL')
     const dataDir = getDataDir()
     const poolIds = resolvePoolIds(options.pools)
-    const rotations = poolRotations({ dataDir, poolIds })
-    if (rotations.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no rotation`)
-    writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), rotations, dataDir, poolIds })
-    cliLogger.log(`Wrote Pi agent dir ${dir} (rotations: ${rotations.join(', ')})`)
+    const catalog = poolCatalog({ dataDir, poolIds })
+    if (catalog.rotations.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no rotation`)
+    writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), ...catalog })
+    cliLogger.log(`Wrote Pi agent dir ${dir} (rotations: ${catalog.rotations.join(', ')})`)
     process.exit(0)
   })
 

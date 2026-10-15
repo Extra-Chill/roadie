@@ -50,8 +50,8 @@ export function supportsAdaptiveThinking(modelId: string): boolean {
   return /(?:^|-)claude-(?:opus|sonnet)-(?:4-(?:6|[7-9]|\d{2,})|[5-9](?:-|$)|\d{2,}(?:-|$))/.test(modelId)
 }
 
-function adaptiveAnthropicRotations({ dataDir, poolIds, rotations }: { dataDir?: string; poolIds?: string[]; rotations: string[] }): Set<string> {
-  if (!dataDir) return new Set()
+/** Rotations with an adaptive-thinking Anthropic entry: Pi must request adaptive thinking for them. */
+export function adaptiveAnthropicRotations({ dataDir, poolIds, rotations }: { dataDir: string; poolIds?: string[]; rotations: string[] }): string[] {
   const adaptive = new Set<string>()
   for (const poolId of poolIds ?? [SHARED_POOL_ID]) {
     const entriesByRotation = readPoolRotations({ dataDir, poolId })
@@ -63,7 +63,7 @@ function adaptiveAnthropicRotations({ dataDir, poolIds, rotations }: { dataDir?:
       })) adaptive.add(rotation)
     }
   }
-  return adaptive
+  return [...adaptive].sort()
 }
 
 export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }: { baseUrl: string; rotations: string[]; adaptiveRotations?: string[] }) {
@@ -83,9 +83,10 @@ export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }:
 /**
  * Write the pool provider into a Roadie-owned Pi agent dir. Providers named
  * `roadie` or `roadie-*` are the pool's and are replaced; any other provider
- * there is kept.
+ * there is kept. `adaptiveRotations` comes from whoever holds the rotation
+ * entries: the local pool, or a remote pool host's catalog.
  */
-export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, dataDir, poolIds }: { agentDir: string; baseUrl: string; rotations: string[]; dataDir?: string; poolIds?: string[] }) {
+export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, adaptiveRotations = [] }: { agentDir: string; baseUrl: string; rotations: string[]; adaptiveRotations?: string[] }) {
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 })
   const file = path.join(agentDir, 'models.json')
   let existing: { providers?: Record<string, unknown> } = {}
@@ -93,7 +94,6 @@ export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, dataDir, poo
     existing = JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch {}
   const kept = Object.fromEntries(Object.entries(existing.providers ?? {}).filter(([id]) => id !== PI_POOL_PROVIDER && !id.startsWith(`${PI_POOL_PROVIDER}-`)))
-  const adaptiveRotations = [...adaptiveAnthropicRotations({ dataDir, poolIds, rotations })]
   const pool = piPoolModelsJson({ baseUrl, rotations, adaptiveRotations })
   fs.writeFileSync(file, JSON.stringify({ ...existing, providers: { ...kept, ...pool.providers } }, null, 2), { mode: 0o600 })
 }

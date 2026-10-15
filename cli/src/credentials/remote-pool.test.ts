@@ -9,6 +9,7 @@ import { POOL_CATALOG_PATH, POOL_END_TURN_PATH, startMessagesProxy, type Message
 import { addPoolClient } from './pool-clients.js'
 import { addPoolOAuthAccount, setPoolRotation, SHARED_POOL_ID } from './store.js'
 import { readSessionRoute } from './routes.js'
+import { PI_POOL_PROVIDER, writePiPoolAgentDir } from '../agent-backend/pi/pool.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay, type RemotePoolRelay } from './remote-pool.js'
 
 const tempDir = () => fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'remote-pool-'))
@@ -64,11 +65,29 @@ describe('readRemotePoolConfig', () => {
 describe('pool host client endpoints', () => {
   test('the catalog lists what the client pools serve, for client keys only', async () => {
     const { key, host } = await poolHost()
-    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: ['claude-best'] })
+    // Adaptive thinking travels with the rotation: only the host knows its entries.
+    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: ['claude-best'], adaptiveRotations: ['claude-best'] })
     expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key: 'wrong' } })).toBeInstanceOf(Error)
     // A Pi process's session key is not a client key.
     const sessionKey = host.issueKey(() => 'sess')
     expect((await fetch(`${host.baseUrl}${POOL_CATALOG_PATH}`, { headers: { 'x-roadie-key': sessionKey } })).status).toBe(401)
+  })
+})
+
+describe('remote catalog to Pi models', () => {
+  test('a remote bot requests adaptive thinking for the host\'s adaptive rotations', async () => {
+    const { key, host } = await poolHost()
+    const catalog = await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })
+    if (catalog instanceof Error) throw catalog
+    const agentDir = path.join(tempDir(), 'agent')
+    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:1', ...catalog })
+    const models = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')).providers[PI_POOL_PROVIDER].models as Array<{ id: string; compat?: unknown }>
+    expect(models).toEqual([expect.objectContaining({ id: 'claude-best', compat: { forceAdaptiveThinking: true } })])
+  })
+
+  test('an older host without adaptiveRotations still yields its rotations', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ rotations: ['claude-best'] }), { status: 200 })
+    expect(await fetchRemotePoolCatalog({ config: { url: 'http://pool', key: 'k' }, fetchImpl })).toEqual({ rotations: ['claude-best'], adaptiveRotations: [] })
   })
 })
 

@@ -2,11 +2,12 @@
 
 import path from 'node:path'
 import { getDataDir } from '../../config.js'
-import { startMessagesProxy } from '../../credentials/messages-proxy.js'
+import { poolCatalog, startMessagesProxy } from '../../credentials/messages-proxy.js'
 import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay } from '../../credentials/remote-pool.js'
-import { poolRotations, writePiPoolAgentDir } from './pool.js'
+import { SHARED_POOL_ID } from '../../credentials/store.js'
+import { writePiPoolAgentDir } from './pool.js'
 
 /** Fixed listen address for external pool clients (#171); ephemeral when unset. */
 export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { host?: string; port?: number } | Error {
@@ -48,14 +49,14 @@ export async function startPiPool(): Promise<Error | {
       },
     }
   }
-  const rotations = poolRotations({ dataDir })
-  if (rotations.length === 0) return new Error('the shared pool has no rotation')
+  const catalog = poolCatalog({ dataDir, poolIds: [SHARED_POOL_ID] })
+  if (catalog.rotations.length === 0) return new Error('the shared pool has no rotation')
   const listen = piPoolListenOptions()
   if (listen instanceof Error) return listen
   const proxy = await startMessagesProxy({ dataDir, ...listen, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
-  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations, dataDir })
+  writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, ...catalog })
   return {
     baseUrl: proxy.baseUrl,
     agentDir,
