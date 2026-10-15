@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.71.0] - 2026-10-15
+
+### Added
+- self-serve identity linking with /link
+
 ## [0.70.3] - 2026-10-15
 
 ### Fixed
