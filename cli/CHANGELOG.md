@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.71.1] - 2026-10-15
+
+### Fixed
+- carry adaptive-thinking rotations in the remote pool catalog
+
 ## [0.71.0] - 2026-10-15
 
 ### Added
