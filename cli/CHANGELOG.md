@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.70.3] - 2026-10-15
+
+### Fixed
+- post narration-labelled thinking as text before interactive tools
+
 ## [0.70.2] - 2026-10-14
 
 ### Fixed
