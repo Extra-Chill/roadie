@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.71.2] - 2026-10-16
+
+### Fixed
+- give tool shells a session-lifetime pool key
+
 ## [0.71.1] - 2026-10-15
 
 ### Fixed
