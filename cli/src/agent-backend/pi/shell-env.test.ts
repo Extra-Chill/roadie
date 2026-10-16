@@ -89,4 +89,37 @@ describe('Pi backend writeShellEnv with configured templates', () => {
       provider.dispose()
     }
   })
+
+  test('gives tool shells a session-lifetime pool key, revoked only when the session is deleted', async () => {
+    const sessionId = 'ses-pi-shell-pool-key'
+    const live = new Map<string, () => string | undefined>()
+    let issued = 0
+    const pool = {
+      issueKey: (session: () => string | undefined) => {
+        const key = `key-${++issued}`
+        live.set(key, session)
+        return key
+      },
+      revokeKey: (key: string) => {
+        live.delete(key)
+      },
+    }
+    const sessionDir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'roadie-pi-shell-env-'))
+    const provider = new PiBackendProvider({ bin: 'pi', sessionDir, pool })
+    try {
+      const first = await writeShellEnv(provider, sessionId)
+      const key = first.ROADIE_PI_KEY
+      expect(key).toBeDefined()
+      expect(live.get(key!)?.()).toBe(sessionId)
+      // A later turn (or a resumed Pi process) reuses the same key, so work a
+      // shell started earlier keeps billing after its Pi process stops.
+      const second = await writeShellEnv(provider, sessionId)
+      expect(second.ROADIE_PI_KEY).toBe(key)
+      expect(issued).toBe(1)
+      await provider.getBackend().sessions.delete({ sessionId, directory: sessionDir })
+      expect(live.has(key!)).toBe(false)
+    } finally {
+      provider.dispose()
+    }
+  })
 })

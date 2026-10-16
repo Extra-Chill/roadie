@@ -70,6 +70,7 @@ import {
   resolveTurnAttribution,
 } from '../../turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
+import { PI_KEY_ENV } from './pool.js'
 
 const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
 
@@ -359,6 +360,13 @@ function readSessionHeader(file: string): { id: string; cwd: string; createdAt: 
 export class PiBackendProvider implements AgentBackendProvider {
   readonly id = 'pi'
   private sessions = new Map<string, RunningSession>()
+  /**
+   * Pool keys for tool shells, one per session. A Pi process's own key is
+   * revoked when the process exits (idle stop, crash), but a tool shell can
+   * start work that outlives it (a detached `pi -p`), so shells get a key
+   * that lives as long as the session and is revoked on delete/dispose.
+   */
+  private shellPoolKeys = new Map<string, string>()
   private starting = new Map<string, Promise<RunningSession | Error>>()
   private titles = new Map<string, string>()
   private permissionRules = new Map<string, AgentPermissionRule[]>()
@@ -503,7 +511,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         // `minimal`, not `off`: adaptive-thinking models reject disabled thinking.
         '--system-prompt', TITLE_REQUEST_SYSTEM, '--model', model, '--thinking', 'minimal'],
       cwd: directory,
-      env: { ...scrubbedProcessEnv(), ...this.options.env, ...(poolKey && { ROADIE_PI_KEY: poolKey }) },
+      env: { ...scrubbedProcessEnv(), ...this.options.env, ...(poolKey && { [PI_KEY_ENV]: poolKey }) },
     })
     try {
       const done = new Promise<Extract<PiMessage, { role: 'assistant' }> | undefined>((resolve) => {
@@ -575,6 +583,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   async dispose(): Promise<void> {
     const processes = [...this.sessions.values()].map((session) => session.process)
     this.sessions.clear()
+    for (const key of this.shellPoolKeys.values()) this.options.pool?.revokeKey(key)
+    this.shellPoolKeys.clear()
     await Promise.all(processes.map((process) => process.kill()))
   }
 
@@ -669,7 +679,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         // The extension's injection guard reads per-session scan patterns
         // (`send --injection-guard`) from this directory.
         ...(this.options.injectionGuardDir && { ROADIE_PI_INJECTION_GUARD_DIR: this.options.injectionGuardDir }),
-        ...(poolKey && { ROADIE_PI_KEY: poolKey }),
+        ...(poolKey && { [PI_KEY_ENV]: poolKey }),
       },
     })
     const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' })
@@ -999,10 +1009,24 @@ export class PiBackendProvider implements AgentBackendProvider {
    * attribution and the configured --shell-env templates. The extension
    * prepends it to every bash command.
    */
+  /** The session's tool-shell pool key, issued once and kept across its Pi processes. */
+  private shellPoolKey(sessionId: string): string | undefined {
+    const pool = this.options.pool
+    if (!pool) return undefined
+    let key = this.shellPoolKeys.get(sessionId)
+    if (!key) {
+      key = pool.issueKey(() => sessionId)
+      this.shellPoolKeys.set(sessionId, key)
+    }
+    return key
+  }
+
   private async writeShellEnv(file: string, sessionId: string) {
     const env: Record<string, string> = {}
     applyAgentShellEnv({ env, secret: process.env[AGENT_TOKEN_SECRET_ENV], sessionId })
     env[ROADIE_SESSION_ID_ENV] = sessionId
+    const shellKey = this.shellPoolKey(sessionId)
+    if (shellKey) env[PI_KEY_ENV] = shellKey
     const attribution = await resolveTurnAttribution(sessionId).catch(() => undefined)
     applyTurnAttributionEnv({ env, attribution })
     applyShellEnvTemplates({
@@ -1374,6 +1398,9 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.sessions.get(sessionId)?.process.kill()
         this.sessions.delete(sessionId)
         this.turnAgentRules.delete(sessionId)
+        const shellKey = this.shellPoolKeys.get(sessionId)
+        if (shellKey) this.options.pool?.revokeKey(shellKey)
+        this.shellPoolKeys.delete(sessionId)
         if (file) fs.rmSync(file, { force: true })
         fs.rmSync(sessionStatePath(this.options.sessionDir, sessionId), { force: true })
         return undefined
