@@ -65,6 +65,7 @@ export function decideConversationIntake({
   const continuation = policy.intake.continue ?? 'eligible'
   const continues =
     continuation === 'eligible' ||
+    (continuation === 'mention' && explicit) ||
     (continuation === 'starter' && admission?.starterActorId === request.actor.id) ||
     (continuation === 'participants' && Boolean(admission?.participants.includes(request.actor.id)))
   if (continues) return { outcome: 'respond', admit: true }

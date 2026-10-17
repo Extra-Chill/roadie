@@ -34,7 +34,7 @@ the existing project/channel/category/default policy lookup.
 | Field | Values | Meaning |
 | --- | --- | --- |
 | `start` | `message`, `mention`, `command` | Start from any eligible message, explicit direction to the agent, or a command. |
-| `continue` | `starter`, `participants`, `eligible` | Who can continue without another explicit direction to the agent. |
+| `continue` | `starter`, `participants`, `eligible`, `mention` | Who can continue without another explicit direction to the agent. `mention` requires explicit direction (mention or command) on every turn. |
 | `join` | `mention`, `message`, `never` | Admit another eligible actor through explicit direction, any message, or never. |
 | `other` | `context`, `ignore` | Record other eligible messages as data in an existing session, or ignore them. |
 
@@ -48,6 +48,25 @@ The default continuation is `eligible`, join is `mention`, and other is
 `intake` object, existing adapter behavior is preserved. `respond: never`,
 channel audience/capability restrictions and identity/platform access checks
 remain bounds; intake cannot grant eligibility.
+
+## Mention-only channels with ambient context
+
+A channel can reply only to explicit mentions or commands while every other
+eligible message is recorded into the session as context. With `continue:
+mention`, untagged follow-ups never respond; they take the `other` path, so
+with `other: context` they become context-only input once a session exists
+(and are ignored before one does):
+
+```yaml
+intake:
+  start: mention
+  continue: mention
+  other: context
+```
+
+Paired with `threads: none` (one channel-keyed session), teammates can talk
+untagged, then tag the bot; the reply has their earlier discussion in history
+without the bot answering every message.
 
 `threads: existing-only` prevents physical thread creation, including a relayed
 Slack root whose `thread_ts` equals its own timestamp. It can still start an

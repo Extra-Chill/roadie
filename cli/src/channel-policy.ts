@@ -53,7 +53,7 @@ const policySchema = z
     intake: z
       .object({
         start: z.enum(['message', 'mention', 'command']).optional(),
-        continue: z.enum(['starter', 'participants', 'eligible']).optional(),
+        continue: z.enum(['starter', 'participants', 'eligible', 'mention']).optional(),
         join: z.enum(['mention', 'message', 'never']).optional(),
         other: z.enum(['context', 'ignore']).optional(),
       })
