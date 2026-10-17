@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.72.0] - 2026-10-17
+
+### Added
+- plugin-registered platforms and multiple platforms per bot
+
 ## [0.71.2] - 2026-10-16
 
 ### Fixed
