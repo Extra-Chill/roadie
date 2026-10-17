@@ -378,6 +378,16 @@ export function channelContextBinding(channelId: string): {
   }
 }
 
+/**
+ * Every channel id (or ancestor id, such as a category) the config lists
+ * explicitly. The `*` wildcard is not a channel and is left out.
+ */
+export function configuredChannelIds(): string[] {
+  const config = currentConfig()
+  if (!config) return []
+  return Object.keys(config.channels).filter((id) => id !== '*')
+}
+
 /** All explicit channel bindings for a named project or canonical directory. */
 export function channelsForProject(project: string): string[] {
   const config = currentConfig()
