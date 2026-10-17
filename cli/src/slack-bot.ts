@@ -61,7 +61,7 @@ import {
 import { SlackChatThread, slackInteractionSchema } from './chat-platform/slack.js'
 import { createLogger } from './logger.js'
 import { store } from './store.js'
-import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
+import { startIpcPolling } from './ipc-polling.js'
 import { startTaskRunner } from './task-runner.js'
 import {
   formatSessionSleepWakePrompt,
@@ -203,6 +203,7 @@ export class NativeSlackBot {
   private stopTasks: (() => Promise<void>) | null = null
   private restoreSendRunner: (() => void) | null = null
   private stopIdleSweep: (() => Promise<void>) | null = null
+  private stopIpc: (() => void) | null = null
 
   constructor(readonly options: SlackBotOptions) {
     this.api = new SlackApi({ token: options.token, apiUrl: options.apiUrl })
@@ -227,7 +228,7 @@ export class NativeSlackBot {
     this.workspaceId = auth.team_id
     this.botUserId = auth.user_id
     this.botId = auth.bot_id ?? ''
-    setChannelParentResolver((id) => parseSlackThreadId(id)?.channelId)
+    setChannelParentResolver((id) => parseSlackThreadId(id)?.channelId, { key: 'slack' })
     this.server = http.createServer((request, response) => {
       void this.receive(request, response).catch((error) => {
         logger.error('Slack intake failed', error)
@@ -262,7 +263,9 @@ export class NativeSlackBot {
       await resumeInterruptedSessions({ resolveRuntime })
       await restorePersistedLocalQueues({ resolveRuntime })
     })().catch((error) => logger.error('Slack session recovery failed', error))
-    await startIpcPolling({ resolveChatThread: async (id) => (await resolveRuntime(id))?.chat })
+    this.stopIpc = await startIpcPolling({
+      resolveChatThread: async (id) => (await resolveRuntime(id))?.chat,
+    })
     this.restoreSendRunner = setRemoteSendRunner(async (args, emit) => {
       const options: Record<string, unknown> = {}
       const filePaths: string[] = []
@@ -354,7 +357,8 @@ export class NativeSlackBot {
   async stop() {
     this.stopped = true
     markChatPlatformReady('slack', false)
-    stopIpcPolling()
+    this.stopIpc?.()
+    this.stopIpc = null
     await this.stopIdleSweep?.()
     await this.stopTasks?.()
     this.restoreSendRunner?.()
@@ -1404,15 +1408,14 @@ export class NativeSlackBot {
   }
 }
 
-/** CLI service entrypoint; configuration/hooks have already been applied. */
-export async function runNativeSlack(): Promise<void | Error> {
-  const { getDataDir, readRoadieSecret } = await import('./config.js')
-  const { startHranaServer, stopHranaServer } = await import('./hrana-server.js')
-  const { initDatabase, closeDatabase } = await import('./database.js')
-  const { recordInterruptedSessions } = await import('./service-lifecycle.js')
-  const { snapshotBusyRuntimes } = await import('./session-handler/thread-session-runtime.js')
-  const { stopAgentBackend } = await import('./agent-backend/registry.js')
-  const path = await import('node:path')
+/**
+ * The Slack entry for the chat platform registry (#297). Shared services
+ * (Hrana lock port, database) are already up in runChatPlatforms(); this
+ * reads the Slack secrets, starts the native receiver, and hands back a stop
+ * handle. Hooks and configuration have already been applied.
+ */
+export async function startNativeSlackPlatform(): Promise<Error | { stop(): Promise<void> }> {
+  const { readRoadieSecret } = await import('./config.js')
   const token = readRoadieSecret('ROADIE_SLACK_BOT_TOKEN')
   const signingSecret = readRoadieSecret('ROADIE_SLACK_SIGNING_SECRET')
   if (!token || !signingSecret)
@@ -1421,7 +1424,6 @@ export async function runNativeSlack(): Promise<void | Error> {
       detail:
         'set ROADIE_SLACK_BOT_TOKEN and ROADIE_SLACK_SIGNING_SECRET (or their _FILE variants)',
     })
-  process.env.ROADIE_PLATFORM = 'slack'
   // The agent gets the send capability, not Slack's reusable credentials or
   // credential-file paths. The native adapter alone owns those secrets.
   for (const name of [
@@ -1437,9 +1439,6 @@ export async function runNativeSlack(): Promise<void | Error> {
       operation: 'startup',
       detail: 'ROADIE_SLACK_PORT must be between 1 and 65535',
     })
-  const hrana = await startHranaServer({ dbPath: path.join(getDataDir(), 'discord-sessions.db') })
-  if (hrana instanceof Error) return hrana
-  await initDatabase()
   const bot = new NativeSlackBot({
     token,
     signingSecret,
@@ -1447,25 +1446,6 @@ export async function runNativeSlack(): Promise<void | Error> {
     workspaceId: process.env.ROADIE_SLACK_WORKSPACE_ID,
   })
   const started = await bot.start()
-  if (started instanceof Error) {
-    await closeDatabase()
-    await stopHranaServer()
-    return started
-  }
-  let stopping = false
-  const stop = () => {
-    if (stopping) return
-    stopping = true
-    recordInterruptedSessions(snapshotBusyRuntimes())
-    const deadline = setTimeout(() => process.exit(1), 15_000)
-    void (async () => {
-      await bot.stop()
-      await stopAgentBackend()
-      await closeDatabase()
-      await stopHranaServer()
-      clearTimeout(deadline)
-    })().catch((error) => logger.error('Slack shutdown failed', error))
-  }
-  process.once('SIGTERM', stop)
-  process.once('SIGINT', stop)
+  if (started instanceof Error) return started
+  return { stop: () => bot.stop() }
 }

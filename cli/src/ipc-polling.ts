@@ -71,26 +71,29 @@ type ClaimedRequest = {
 
 type ChatResolver = (threadId: string) => Promise<ChatThread | undefined>
 
-async function resolveIpcThread(input: { req: ClaimedRequest; discordClient?: Client; resolveChatThread?: ChatResolver }): Promise<ChatThread | Error> {
-  if (input.resolveChatThread) {
-    const thread = await input.resolveChatThread(input.req.thread_id)
-    return thread ?? new IpcDispatchError({ requestId: input.req.id, reason: 'Thread not found' })
+// Several platforms can run in one process (#297); each registers its own
+// thread resolver and the first one that recognizes the id wins. Platforms
+// namespace their thread ids, so a resolver returns undefined for a foreign id.
+type IpcRegistration = { discordClient?: Client; resolveChatThread?: ChatResolver }
+
+const registrations = new Set<IpcRegistration>()
+
+async function resolveIpcThread(req: ClaimedRequest): Promise<ChatThread | Error> {
+  for (const registration of registrations) {
+    if (registration.resolveChatThread) {
+      const thread = await registration.resolveChatThread(req.thread_id)
+      if (thread) return thread
+      continue
+    }
+    const channel = await registration.discordClient?.channels
+      .fetch(req.thread_id)
+      .catch(() => undefined)
+    if (channel?.isThread()) return createDiscordChatThread(channel)
   }
-  const channel = await input.discordClient?.channels.fetch(input.req.thread_id).catch((cause) => new IpcDispatchError({ requestId: input.req.id, reason: 'Thread fetch failed', cause }))
-  if (channel instanceof Error) return channel
-  if (!channel?.isThread()) return new IpcDispatchError({ requestId: input.req.id, reason: 'Thread not found' })
-  return createDiscordChatThread(channel)
+  return new IpcDispatchError({ requestId: req.id, reason: 'Thread not found' })
 }
 
-async function dispatchRequest({
-  req,
-  discordClient,
-  resolveChatThread,
-}: {
-  req: ClaimedRequest
-  discordClient?: Client
-  resolveChatThread?: ChatResolver
-}) {
+async function dispatchRequest({ req }: { req: ClaimedRequest }) {
   switch (req.type) {
     case 'file_upload': {
       const parsed = errore.try(
@@ -114,7 +117,7 @@ async function dispatchRequest({
         return parsed
       }
 
-      const thread = await resolveIpcThread({ req, discordClient, resolveChatThread })
+      const thread = await resolveIpcThread(req)
       if (thread instanceof Error) {
         await completeIpcRequest({
           id: req.id,
@@ -182,7 +185,7 @@ async function dispatchRequest({
         return
       }
 
-      const thread = await resolveIpcThread({ req, discordClient, resolveChatThread })
+      const thread = await resolveIpcThread(req)
       if (thread instanceof Error) {
         await completeIpcRequest({
           id: req.id,
@@ -226,22 +229,29 @@ const STALE_CHECK_INTERVAL_MS = 30 * 1000
 let lastStaleCheck = 0
 
 /**
- * Start polling the ipc_requests table for pending requests from the plugin.
- * Claims rows atomically (pending -> processing) to prevent duplicate dispatch.
- * Uses an in-flight guard to prevent overlapping poll ticks.
+ * Register a platform's thread resolver and start polling the ipc_requests
+ * table for pending requests from the plugin. Claims rows atomically
+ * (pending -> processing) to prevent duplicate dispatch, with an in-flight
+ * guard against overlapping poll ticks. One poll loop serves every platform
+ * in the process; the returned function removes this registration (the loop
+ * stops with the last one).
  */
-export async function startIpcPolling({
-  discordClient,
-  resolveChatThread,
-}: {
+export async function startIpcPolling(registration: {
   discordClient?: Client
   resolveChatThread?: ChatResolver
-}) {
+}): Promise<() => void> {
   // Clean up stale requests from previous runs before first poll tick
   await cancelAllPendingIpcRequests().catch((e) => {
     ipcLogger.warn('Failed to cancel stale IPC requests:', (e as Error).message)
     void notifyError(e, 'Failed to cancel stale IPC requests')
   })
+
+  registrations.add(registration)
+  const unregister = () => {
+    registrations.delete(registration)
+    if (registrations.size === 0) stopIpcPolling()
+  }
+  if (pollingInterval) return unregister
 
   let polling = false
   pollingInterval = setInterval(async () => {
@@ -276,7 +286,7 @@ export async function startIpcPolling({
     }
 
     for (const req of claimed) {
-      const result = await dispatchRequest({ req, discordClient, resolveChatThread }).catch(
+      const result = await dispatchRequest({ req }).catch(
         (e) =>
           new IpcDispatchError({
             requestId: req.id,
@@ -292,9 +302,12 @@ export async function startIpcPolling({
 
     polling = false
   }, 200)
+  return unregister
 }
 
+/** Stop the poll loop and drop every registration (process shutdown, tests). */
 export function stopIpcPolling() {
+  registrations.clear()
   if (!pollingInterval) return
   clearInterval(pollingInterval)
   pollingInterval = null

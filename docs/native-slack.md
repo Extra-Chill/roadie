@@ -50,7 +50,7 @@ Configure these environment variables (secret variables also accept `_FILE`):
 
 | Variable | Purpose |
 | --- | --- |
-| `ROADIE_PLATFORM=slack` | Select native Slack; alternatively use `--platform slack`. |
+| `ROADIE_PLATFORM=slack` | Select native Slack; alternatively use `--platform slack`. Comma-separated ids (e.g. `discord,slack`) run several platforms in one process; see [chat-platforms.md](chat-platforms.md). |
 | `ROADIE_SLACK_BOT_TOKEN` | Slack bot token. |
 | `ROADIE_SLACK_SIGNING_SECRET` | Authenticate Slack or host-re-signed deliveries. |
 | `ROADIE_SLACK_WORKSPACE_ID` | Optional expected workspace; startup verifies it against `auth.test`. |

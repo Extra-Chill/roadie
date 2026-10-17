@@ -51,8 +51,10 @@ import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
   resolveSubcommandAgentBackendProvider,
-  run,
 } from './cli-runner.js'
+import { registerBuiltinChatPlatforms } from './chat-platform/builtin.js'
+import { parseChatPlatformIds } from './chat-platform/registry.js'
+import { runChatPlatforms } from './chat-platform/run-platforms.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke('roadie')
@@ -61,7 +63,15 @@ process.title = 'roadie'
 
 cli
   .command('', 'Set up and run the Roadie Discord bot')
-  .option('--platform <name>', 'Chat platform: discord (default) or slack. Also ROADIE_PLATFORM')
+  .option(
+    '--platform <id>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Chat platform id(s) to run: discord (default), slack, or a plugin-registered platform. Repeatable or comma-separated; several platforms share one process and data dir. Also ROADIE_PLATFORM',
+      ),
+  )
   .option('--restart-onboarding', 'Prompt for new credentials even if saved')
   .option(
     '--add-channels',
@@ -216,7 +226,7 @@ cli
       plugin?: string[]
       disableSkill?: string[]
       shellEnv?: string[]
-      platform?: string
+      platform?: string[]
     }) => {
       // Guard: only one roadie bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
@@ -489,7 +499,10 @@ cli
           await printDiscordInstallUrlAndExit()
         }
 
-        // Plugins register their hooks before anything reads them.
+        // Built-in platforms register first so a plugin that reuses their id
+        // fails at plugin load; plugins register their hooks and platforms
+        // before anything reads them.
+        registerBuiltinChatPlatforms()
         const plugins = await loadPlugins(resolvePluginSpecs(options.plugin))
         if (plugins instanceof Error) {
           cliLogger.error(plugins.message)
@@ -518,22 +531,30 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
         cliLogger.log(`Agent backend: ${backend.id}`)
-        const platform = options.platform ?? process.env.ROADIE_PLATFORM ?? 'discord'
-        if (platform === 'slack') {
-          const { runNativeSlack } = await import('./slack-bot.js')
-          const result = await runNativeSlack()
-          if (result instanceof Error) { cliLogger.error(result.message); process.exit(EXIT_NO_RESTART) }
-          return
+        const platformIds = parseChatPlatformIds(
+          options.platform ?? process.env.ROADIE_PLATFORM,
+        )
+        // Children (agent tool shells, `roadie send`) see the running platforms.
+        process.env.ROADIE_PLATFORM = platformIds.join(',')
+        if (platformIds.length > 1) {
+          cliLogger.log(`Chat platforms: ${platformIds.join(', ')}`)
         }
-        if (platform !== 'discord') { cliLogger.error('Use --platform discord or --platform slack'); process.exit(EXIT_NO_RESTART) }
-
-        // Single-instance enforcement is handled by the hrana server binding the lock port.
-        // startHranaServer() in run() evicts any existing instance before binding.
-        await run({
-          restartOnboarding: options.restartOnboarding,
-          addChannels: options.addChannels,
-          dataDir: options.dataDir,
+        // Single-instance enforcement is handled by the hrana server binding
+        // the lock port. runChatPlatforms() starts it (evicting any existing
+        // instance), then every requested platform through the registry.
+        const result = await runChatPlatforms({
+          platformIds,
+          options: {
+            restartOnboarding: options.restartOnboarding,
+            addChannels: options.addChannels,
+            dataDir: options.dataDir,
+          },
         })
+        if (result instanceof Error) {
+          cliLogger.error(result.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+        return
       } catch (error) {
         cliLogger.error('Unhandled error:', formatErrorWithStack(error))
         process.exit(EXIT_NO_RESTART)

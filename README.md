@@ -125,7 +125,7 @@ Service installs configure Roadie through the environment; nothing needs to touc
 
 | Variable | Purpose |
 |---|---|
-| `ROADIE_PLATFORM` | `discord` (default) or `slack`. Same as `--platform`. |
+| `ROADIE_PLATFORM` | Chat platform id(s): `discord` (default), `slack`, or a plugin-registered platform. Comma-separated ids run several platforms in one process. Same as `--platform`. See [docs/chat-platforms.md](docs/chat-platforms.md). |
 | `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
@@ -199,6 +199,8 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `session_error` | `{ sessionId, threadId, message, parentSessionId? }` |
 | `child_session_started` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
 | `child_session_finished` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
+
+Plugins can also register a whole chat platform with `roadie.registerChatPlatform({ id, start })` — the same registry Discord and Slack go through — and run it with `--platform <id>`, alone or alongside the built-in platforms. See [docs/chat-platforms.md](docs/chat-platforms.md).
 
 Hosts that prefer external commands to code can use the flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 

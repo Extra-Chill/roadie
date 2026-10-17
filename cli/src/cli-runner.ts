@@ -1040,6 +1040,21 @@ export async function resolveCredentials({
   return { appId: derivedAppId, token: wizardToken, credentialSource: 'wizard' }
 }
 
+/**
+ * The Discord entry for the chat platform registry (#297). Shared services
+ * (Hrana lock port, database) are already up in runChatPlatforms(); Discord's
+ * own shutdown stays signal-driven through registerBotLifecycleHandlers(),
+ * which also stops any other platforms running in this process.
+ */
+export async function startDiscordPlatform(context: {
+  options: CliOptions
+}): Promise<Error | { stop(): Promise<void> }> {
+  await run(context.options)
+  // Stop is only used to roll back a partial multi-platform startup; real
+  // shutdown goes through the lifecycle handlers registered in run().
+  return { stop: async () => {} }
+}
+
 export async function run({
   restartOnboarding,
   addChannels,
@@ -1052,23 +1067,11 @@ export async function run({
     void backgroundUpgradeRoadie()
   }
 
-  // Start in-process Hrana server before database init. Required for the bot
-  // process because it serves as both the DB server and the single-instance
-  // lock (binds the fixed lock port). Without it, IPC and lock enforcement
-  // don't work. CLI subcommands skip the server and use file: directly.
-  const hranaResult = await startHranaServer({
-    dbPath: path.join(getDataDir(), 'discord-sessions.db'),
-  })
-  if (hranaResult instanceof Error) {
-    cliLogger.error('Failed to start hrana server:', hranaResult.message)
-    process.exit(EXIT_NO_RESTART)
-  }
-  // We own the lock port from here on. Stop signals must release it in every
-  // startup phase (Discord login, channel reconcile), not only after ready.
+  // The Hrana server (lock port) and database are started by
+  // runChatPlatforms() before any platform. We own the lock port here, so
+  // stop signals must release it in every startup phase (Discord login,
+  // channel reconcile), not only after ready.
   registerBotLifecycleHandlers()
-
-  // Initialize database (connects to hrana server via HTTP)
-  await initDatabase()
 
   // One-time migration from subrouter (credential pools phase 4a): import
   // subrouter accounts into the shared pool and rewrite stored
