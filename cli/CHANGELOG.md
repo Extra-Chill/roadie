@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.72.1] - 2026-10-17
+
+### Fixed
+- answer person-scoped commands in unbound channels
+
 ## [0.72.0] - 2026-10-17
 
 ### Added
