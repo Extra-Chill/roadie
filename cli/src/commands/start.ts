@@ -55,7 +55,14 @@ export async function welcomeDiscordUser({
   })
 }
 
-export async function handleStartCommand({ command }: { command: ChatInputCommandInteraction }): Promise<void> {
+export async function handleStartCommand({
+  command,
+  channelBound = true,
+}: {
+  command: ChatInputCommandInteraction
+  /** False in a channel Roadie does not answer in: the welcome does not point at it. */
+  channelBound?: boolean
+}): Promise<void> {
   const actor: IdentityActor = { platform: 'discord', id: command.user.id, name: command.user.displayName }
   const person = await resolvePerson({
     actor,
@@ -76,7 +83,7 @@ export async function handleStartCommand({ command }: { command: ChatInputComman
     actor,
     person,
     personKey,
-    ...(command.channelId ? { channelId: command.channelId } : {}),
+    ...(command.channelId && channelBound ? { channelId: command.channelId } : {}),
     trigger: 'command',
     dataDir: getDataDir(),
   })

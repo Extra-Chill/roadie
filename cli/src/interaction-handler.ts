@@ -98,6 +98,7 @@ import {
   channelAllowsSpeaker,
   decideRespond,
   applicationBinding,
+  configuredChannelIds,
   resolveSendChannel,
   resolveChannelPolicy,
 } from './channel-policy.js'
@@ -105,7 +106,7 @@ import { createLogger, LogPrefix } from './logger.js'
 import { store } from './store.js'
 import { replyOrEditInteraction } from './interaction-reply.js'
 import { notifyError } from './sentry.js'
-import { getChannelDirectory, getThreadSession } from './database.js'
+import { findChannelsByDirectory, getChannelDirectory, getThreadSession } from './database.js'
 import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 import {
   reserveThreadIngress,
@@ -172,6 +173,63 @@ async function isInteractionOwnedByThisMachine(
   return false
 }
 
+// Slash commands that act only on the calling user's own account and need no
+// project. They are answered in any channel of a guild this machine serves.
+const PERSON_SCOPED_COMMANDS = new Set(['link', 'connect', 'start'])
+
+/**
+ * Person-scoped interactions (#301): /link, /connect, /start and the Link and
+ * Connect/Disconnect buttons. Each acts only for the clicking user.
+ */
+export function isPersonScopedInteraction(interaction: Interaction): boolean {
+  if (interaction.isChatInputCommand()) return PERSON_SCOPED_COMMANDS.has(interaction.commandName)
+  if (interaction.isButton()) {
+    return interaction.customId.startsWith(LINK_BUTTON_PREFIX) || interaction.customId.startsWith(CONNECT_BUTTON_PREFIX)
+  }
+  return false
+}
+
+async function channelGuildId(client: Client, channelId: string, fetch: boolean): Promise<string | undefined> {
+  const channel = client.channels.cache.get(channelId)
+    ?? (fetch ? await client.channels.fetch(channelId).catch(() => null) : null)
+  if (!channel || !('guildId' in channel)) return undefined
+  return channel.guildId ?? undefined
+}
+
+/**
+ * Whether this machine serves the interaction's guild: the guild of the
+ * application channel, or of any channel bound here (channels config or the
+ * local channel directories). Several machines can share one bot token, so a
+ * guild with no local binding belongs to someone else.
+ */
+export async function isGuildServedByThisMachine(
+  interaction: Pick<Interaction, 'client' | 'guildId'>,
+): Promise<boolean> {
+  const guildId = interaction.guildId
+  if (!guildId) return false
+  if (await isApplicationGuild(interaction)) return true
+
+  const rows = await findChannelsByDirectory({}).catch(() => [])
+  if (rows.some((row) => row.guild_id === guildId)) return true
+  const candidates = [...new Set([
+    ...configuredChannelIds(),
+    ...rows.filter((row) => !row.guild_id).map((row) => row.channel_id),
+  ])]
+  if (candidates.length === 0) return false
+
+  // Cached channels first; fetch only what the cache does not know.
+  const uncached: string[] = []
+  for (const id of candidates) {
+    if (!interaction.client.channels.cache.has(id)) {
+      uncached.push(id)
+      continue
+    }
+    if (await channelGuildId(interaction.client, id, false) === guildId) return true
+  }
+  const fetched = await Promise.all(uncached.map((id) => channelGuildId(interaction.client, id, true)))
+  return fetched.includes(guildId)
+}
+
 export function registerInteractionHandler({
   discordClient,
   appId,
@@ -221,7 +279,11 @@ export function registerInteractionHandler({
         const channelCommand = interaction.isChatInputCommand() && interaction.commandName === 'channel'
         const applicationGuild = channelCommand && await isApplicationGuild(interaction)
         const owned = await isInteractionOwnedByThisMachine(interaction)
-        if (!owned && !applicationGuild) {
+        // Person-scoped commands need no project: answer them in any channel
+        // of a guild this machine serves, so they never go unanswered (#301).
+        const unboundPersonScoped = !owned && !applicationGuild && isPersonScopedInteraction(interaction)
+          && await isGuildServedByThisMachine(interaction)
+        if (!owned && !applicationGuild && !unboundPersonScoped) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
@@ -265,11 +327,11 @@ export function registerInteractionHandler({
         // admit yet, so /link and Link buttons skip the permission and
         // channel-audience checks below. Both act only for the clicking user.
         if (interaction.isChatInputCommand() && interaction.commandName === 'link') {
-          await handleLinkCommand({ command: interaction })
+          await handleLinkCommand({ command: interaction, channelBound: !unboundPersonScoped })
           return
         }
         if (interaction.isButton() && interaction.customId.startsWith(LINK_BUTTON_PREFIX)) {
-          await handleLinkButton(interaction)
+          await handleLinkButton(interaction, { channelBound: !unboundPersonScoped })
           return
         }
 
@@ -282,8 +344,10 @@ export function registerInteractionHandler({
 
         // Channel policy: interactions in channels the bot does not answer, or
         // from users outside the channel's audience, are ignored. Consuming
-        // the token here is fine: this machine owns the channel.
-        if (interaction.guild && interaction.channelId) {
+        // the token here is fine: this machine owns the channel. An unbound
+        // channel has no policy of its own; person-scoped commands there are
+        // still gated by the permission checks below.
+        if (!unboundPersonScoped && interaction.guild && interaction.channelId) {
           const member = interaction.member
           const roleIds = member
             ? Array.isArray(member.roles)
@@ -320,11 +384,12 @@ export function registerInteractionHandler({
             user: interaction.user,
             displayName: interaction.user.displayName,
             person: getCachedPerson({ platform: 'discord', id: interaction.user.id }),
-            ...(interaction.channelId ? { channelId: interaction.channelId } : {}),
+            // Never point the welcome at a channel Roadie does not answer in.
+            ...(interaction.channelId && !unboundPersonScoped ? { channelId: interaction.channelId } : {}),
           })
         }
 
-        if (!interaction.isAutocomplete() && interaction.channel?.isThread() && interaction.isRepliable() && resolveChannelPolicy(interaction.channel.id)?.intake) {
+        if (!unboundPersonScoped && !interaction.isAutocomplete() && interaction.channel?.isThread() && interaction.isRepliable() && resolveChannelPolicy(interaction.channel.id)?.intake) {
           const thread = interaction.channel
           const scope = { platform: 'discord', spaceId: thread.guildId, threadId: thread.id }
           const hasSession = Boolean(await getThreadSession(thread.id))
@@ -507,7 +572,7 @@ export function registerInteractionHandler({
               return
 
             case 'start':
-              await handleStartCommand({ command: interaction })
+              await handleStartCommand({ command: interaction, channelBound: !unboundPersonScoped })
               return
 
           }

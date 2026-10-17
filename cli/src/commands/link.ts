@@ -131,6 +131,7 @@ function actorOf(interaction: ChatInputCommandInteraction | ButtonInteraction): 
 async function runLink(
   interaction: ChatInputCommandInteraction | ButtonInteraction,
   context: IdentityContext,
+  { channelBound = true }: { channelBound?: boolean } = {},
 ): Promise<void> {
   const actor = actorOf(interaction)
   const started = await startIdentityLink({
@@ -144,7 +145,8 @@ async function runLink(
         user: interaction.user,
         displayName: interaction.user.displayName,
         person,
-        ...(context.channelId ? { channelId: context.channelId } : {}),
+        // Never point the welcome at a channel Roadie does not answer in.
+        ...(context.channelId && channelBound ? { channelId: context.channelId } : {}),
       }),
     onDone: async (outcome) => {
       await interaction.editReply({ content: outcome.text, components: [] }).catch((error: unknown) => {
@@ -166,15 +168,25 @@ async function runLink(
   })
 }
 
-export async function handleLinkCommand({ command }: { command: ChatInputCommandInteraction }): Promise<void> {
+export async function handleLinkCommand({
+  command,
+  channelBound = true,
+}: {
+  command: ChatInputCommandInteraction
+  /** False in a channel Roadie does not answer in (#301). */
+  channelBound?: boolean
+}): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   await runLink(command, {
     ...(command.guildId ? { guildId: command.guildId } : {}),
     ...(command.channelId ? { channelId: command.channelId } : {}),
-  })
+  }, { channelBound })
 }
 
-export async function handleLinkButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleLinkButton(
+  interaction: ButtonInteraction,
+  { channelBound = true }: { channelBound?: boolean } = {},
+): Promise<void> {
   const parsed = parseLinkButtonCustomId(interaction.customId)
   if (!parsed) return
   if (parsed.restrictTo && parsed.restrictTo !== interaction.user.id) {
@@ -189,5 +201,5 @@ export async function handleLinkButton(interaction: ButtonInteraction): Promise<
   await runLink(interaction, {
     ...(guildId ? { guildId } : {}),
     ...(interaction.guildId && interaction.channelId ? { channelId: interaction.channelId } : {}),
-  })
+  }, { channelBound })
 }
