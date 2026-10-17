@@ -89,7 +89,10 @@ export type WhoEntry = z.infer<typeof whoEntrySchema>
 export type ParentResolver = (channelId: string) => string | null | undefined
 
 let configPathOverride: string | null | undefined
-let parentResolver: ParentResolver = () => undefined
+// One resolver per platform (#297): several platforms can run in a process,
+// each recognizing only its own namespaced channel/thread ids. The first
+// resolver returning an id wins.
+const parentResolvers = new Map<string, ParentResolver>()
 
 type LoadedState = {
   path: string
@@ -111,9 +114,24 @@ export function getChannelsConfigPath(): string | undefined {
   return fromEnv || undefined
 }
 
-/** Register how to find a channel's parent (the Discord client cache). */
-export function setChannelParentResolver(resolver: ParentResolver) {
-  parentResolver = resolver
+/**
+ * Register how to find a channel's parent (e.g. the Discord client cache).
+ * Platforms pass their own `key` so resolvers coexist; registering the same
+ * key again replaces that platform's resolver.
+ */
+export function setChannelParentResolver(
+  resolver: ParentResolver,
+  { key = 'default' }: { key?: string } = {},
+) {
+  parentResolvers.set(key, resolver)
+}
+
+function resolveChannelParent(channelId: string): string | null | undefined {
+  for (const resolver of parentResolvers.values()) {
+    const parent = resolver(channelId)
+    if (parent != null) return parent
+  }
+  return undefined
 }
 
 /** True when a channels config file or a `channel_policy` filter is in place. */
@@ -195,7 +213,7 @@ function lookupChain(channelId: string): string[] {
   while (current && !seen.has(current) && chain.length < 4) {
     seen.add(current)
     chain.push(current)
-    current = parentResolver(current)
+    current = resolveChannelParent(current)
   }
   chain.push('*')
   return chain

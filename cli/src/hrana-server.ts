@@ -44,12 +44,14 @@ let db: Database.Database | null = null
 let server: http.Server | null = null
 let hranaUrl: string | null = null
 let discordGatewayReady = false
-let chatPlatform = 'discord'
-let chatReady = false
+let lastChatPlatform = 'discord'
+// Several chat platforms can run in one process (#297); /health reports each.
+const readyChatPlatforms = new Set<string>()
 
 export function markChatPlatformReady(platform: string, ready: boolean): void {
-  chatPlatform = platform
-  chatReady = ready
+  lastChatPlatform = platform
+  if (ready) readyChatPlatforms.add(platform)
+  else readyChatPlatforms.delete(platform)
 }
 
 /** Record that the Discord connection is up (reported by /health consumers and tests). */
@@ -150,7 +152,15 @@ export async function startHranaServer({
     // Health check — no auth required
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid(), discordReady: discordGatewayReady, chatPlatform, chatReady }))
+      res.end(JSON.stringify({
+        status: 'ok',
+        pid: process.pid,
+        wrapperPid: getWrapperPid(),
+        discordReady: discordGatewayReady,
+        chatPlatform: readyChatPlatforms.size ? [...readyChatPlatforms].join(',') : lastChatPlatform,
+        chatReady: readyChatPlatforms.size > 0,
+        chatPlatforms: [...readyChatPlatforms],
+      }))
       return
     }
     // Scoped agent endpoints for tool shells: typed JSON operations the bot
@@ -229,7 +239,7 @@ export async function stopHranaServer() {
   }
   hranaUrl = null
   discordGatewayReady = false
-  chatReady = false
+  readyChatPlatforms.clear()
   if (automaticAuthTokenFile && process.env.ROADIE_DB_AUTH_TOKEN_FILE === automaticAuthTokenFile) {
     delete process.env.ROADIE_DB_AUTH_TOKEN_FILE
   }

@@ -10,6 +10,7 @@
 //   export function register(roadie) {
 //     roadie.addFilter('context_sections', async (sections, request) => [...sections, ...])
 //     roadie.addAction('session_idle', ({ sessionId }) => { ... })
+//     roadie.registerChatPlatform({ id: 'host-chat', start: async () => ({ stop: async () => {} }) })
 //   }
 
 import path from 'node:path'
@@ -26,6 +27,7 @@ import {
   removeFilter,
   DEFAULT_PRIORITY,
 } from './hooks.js'
+import { registerChatPlatform, type ChatPlatformDefinition } from './chat-platform/registry.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { getRoadieEnv } from './config.js'
 
@@ -45,6 +47,13 @@ export type RoadiePluginApi = {
   removeAction: typeof removeAction
   hasAction: typeof hasAction
   doAction: typeof doAction
+  /**
+   * Register a chat platform (#297): the same registry Discord and Slack go
+   * through. Start it with `--platform <id>` / ROADIE_PLATFORM, alone or
+   * alongside other platforms. Throws on an invalid or duplicate id so a
+   * misconfigured plugin stops startup instead of silently losing a platform.
+   */
+  registerChatPlatform: (definition: ChatPlatformDefinition) => void
 }
 
 export type RoadiePlugin = { register: (roadie: RoadiePluginApi) => void | Promise<void> }
@@ -63,6 +72,10 @@ function apiFor(spec: string): RoadiePluginApi {
     removeAction,
     hasAction,
     doAction,
+    registerChatPlatform: (definition) => {
+      const result = registerChatPlatform(definition, { source: spec })
+      if (result instanceof Error) throw result
+    },
   }
 }
 

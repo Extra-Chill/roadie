@@ -14,6 +14,7 @@ declare global {
 }
 
 import { doAction } from './hooks.js'
+import { stopActiveChatPlatforms } from './chat-platform/registry.js'
 import { mergeInterruptedSessions, recordInterruptedSessions } from './service-lifecycle.js'
 import { operatorRequestContinuations } from './operator-requests.js'
 import { DiscordOperationError } from './errors.js'
@@ -413,10 +414,13 @@ export async function startDiscordBot({
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
 
-    setChannelParentResolver((channelId) => {
-      const cached = c.channels.cache.get(channelId)
-      return cached && 'parentId' in cached ? cached.parentId : undefined
-    })
+    setChannelParentResolver(
+      (channelId) => {
+        const cached = c.channels.cache.get(channelId)
+        return cached && 'parentId' in cached ? cached.parentId : undefined
+      },
+      { key: 'discord' },
+    )
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     subscribeToOperatorRequests(c)
     await reportInterruptedOperatorRequests(c).catch((error) => {
@@ -1579,6 +1583,15 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
       )
     }
     await stopBackgroundWorkers?.()
+
+    // Other chat platforms sharing this process (#297) stop before the
+    // shared services they depend on are torn down.
+    await stopActiveChatPlatforms().catch((error) => {
+      discordLogger.warn(
+        'Failed to stop chat platforms:',
+        error instanceof Error ? error.message : String(error),
+      )
+    })
 
     await flushDebouncedProcessCallbacks().catch((error) => {
       discordLogger.warn(
