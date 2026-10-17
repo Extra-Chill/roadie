@@ -123,6 +123,21 @@ test('context cannot establish a backend session and existing-only refers to phy
   ).toEqual({ outcome: 'ignore', admit: false })
 })
 
+test('mention-only continuation replies to explicit direction and records the rest as context', () => {
+  const mentionOnly = {
+    intake: { start: 'mention' as const, continue: 'mention' as const, other: 'context' as const },
+  }
+  const decide = (input: Partial<ConversationIntakeRequest>) =>
+    decideConversationIntake({ policy: mentionOnly, admission, request: { ...request, ...input } })
+  // An untagged follow-up from an eligible member becomes session context.
+  expect(decide({})).toEqual({ outcome: 'context', admit: false })
+  // Explicit direction to the agent responds: mention or command.
+  expect(decide({ mentionsBot: true })).toEqual({ outcome: 'respond', admit: true })
+  expect(decide({ isCommand: true })).toEqual({ outcome: 'respond', admit: true })
+  // Context requires an existing session; without one the message is ignored.
+  expect(decide({ hasSession: false })).toEqual({ outcome: 'ignore', admit: false })
+})
+
 test('command-only starts accept an explicit command rather than an ordinary mention', () => {
   const commands = { intake: { start: 'command' as const } }
   expect(
