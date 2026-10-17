@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.0] - 2026-10-17
+
+### Added
+- add mention-only continuation with ambient context
+
 ## [0.72.1] - 2026-10-17
 
 ### Fixed
