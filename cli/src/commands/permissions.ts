@@ -23,6 +23,7 @@ import { AgentRequestError, type AgentBackend } from '../agent-backend/types.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { updateComponentMessage } from '../interaction-reply.js'
 
 /**
  * Permission replies used to ignore OpenCode's rejection responses and only
@@ -360,14 +361,14 @@ export async function handlePermissionButton(
   const context = takePendingPermissionContext(contextHash)
 
   if (!context) {
-    await interaction.update({
+    await updateComponentMessage(interaction, {
       content: '_Permission expired and was already rejected. Send a new message to continue._',
       components: [],
     })
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the click (deferUpdate).
 
   try {
     const permClient = getAgentBackendProvider().getBackend(context.directory)

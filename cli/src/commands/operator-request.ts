@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction, type Client } from 'discord.js'
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ButtonInteraction, type Client } from 'discord.js'
 import { getThreadIdBySessionId } from '../database.js'
 import { hasRoadieAdminPermission } from '../discord-utils.js'
 import {
@@ -12,6 +12,7 @@ import {
   type OperatorRequestOutcome,
 } from '../operator-requests.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { replyOrEditInteraction, updateComponentMessage } from '../interaction-reply.js'
 
 const logger = createLogger(LogPrefix.INTERACTION)
 export const OPERATOR_REQUEST_PREFIX = 'operator_request:'
@@ -112,12 +113,12 @@ export function subscribeToOperatorRequests(client: Client): () => void {
 
 export async function handleOperatorRequestButton(interaction: ButtonInteraction): Promise<void> {
   if (!hasRoadieAdminPermission(interaction.member, interaction.guild)) {
-    await interaction.reply({ content: 'Only a Roadie operator can decide this request.', flags: MessageFlags.Ephemeral })
+    await replyOrEditInteraction(interaction, 'Only a Roadie operator can decide this request.')
     return
   }
   const match = /^operator_request:(approve|deny):([\w-]+)$/.exec(interaction.customId)
   if (!match) {
-    await interaction.reply({ content: 'Invalid operator request.', flags: MessageFlags.Ephemeral })
+    await replyOrEditInteraction(interaction, 'Invalid operator request.')
     return
   }
   const [, decision, id] = match
@@ -134,7 +135,7 @@ export async function handleOperatorRequestButton(interaction: ButtonInteraction
       if (!(error instanceof Error) || !error.message.startsWith('Operator request')) throw error
       status = 'Already decided or expired.'
     }
-    await interaction.update({
+    await updateComponentMessage(interaction, {
       content: `${interaction.message.content.split('\nStatus:')[0]}\nStatus: ${status}`,
       components: [],
       allowedMentions: { parse: [] },

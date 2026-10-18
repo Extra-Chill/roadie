@@ -7,7 +7,6 @@ import {
   StringSelectMenuInteraction,
   ActionRowBuilder,
   type ThreadChannel,
-  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -15,6 +14,7 @@ import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { AgentRequestError } from '../agent-backend/types.js'
 import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 
@@ -241,24 +241,18 @@ export async function handleAskQuestionSelectMenu(
   const questionIndex = parseInt(parts[2]!, 10)
 
   if (!contextHash) {
-    await interaction.reply({
-      content: 'Invalid selection.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Invalid selection.')
     return
   }
 
   const context = pendingQuestionContexts.get(contextHash)
 
   if (!context) {
-    await interaction.reply({
-      content: 'This question has expired. Please ask the AI again.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'This question has expired. Please ask the AI again.')
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const selectedValues = interaction.values
   const question = context.questions[questionIndex]

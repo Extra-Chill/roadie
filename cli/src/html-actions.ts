@@ -9,6 +9,7 @@ import {
   type ButtonInteraction,
 } from 'discord.js'
 import { createLogger } from './logger.js'
+import { replyOrEditInteraction } from './interaction-reply.js'
 import { notifyError } from './sentry.js'
 
 const logger = createLogger('HTML_ACT')
@@ -107,23 +108,17 @@ export async function handleHtmlActionButton(
 
   const actionId = customId.slice('html_action:'.length)
   if (!actionId) {
-    await interaction.reply({
-      content: 'Invalid action button.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Invalid action button.')
     return
   }
 
   const action = pendingHtmlActions.get(actionId)
   if (!action || action.resolved) {
-    await interaction.reply({
-      content: 'This action is no longer available.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'This action is no longer available.')
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the click (deferUpdate).
   const resolvedAction = resolveHtmlAction({ actionId })
   if (!resolvedAction) {
     return

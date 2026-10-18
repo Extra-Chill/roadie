@@ -34,6 +34,7 @@ import {
 } from '../identity-link.js'
 import type { IdentityActor, IdentityContext, Person } from '../identity.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 import { welcomeDiscordUser } from './start.js'
 
 const logger = createLogger(LogPrefix.DISCORD)
@@ -190,13 +191,11 @@ export async function handleLinkButton(
   const parsed = parseLinkButtonCustomId(interaction.customId)
   if (!parsed) return
   if (parsed.restrictTo && parsed.restrictTo !== interaction.user.id) {
-    await interaction.reply({
-      content: 'This button is for someone else. Run `/link` to link your own account.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'This button is for someone else. Run `/link` to link your own account.')
     return
   }
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  // In a guild the interaction listener has already deferred this privately.
+  if (!interaction.deferred) await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   const guildId = interaction.guildId ?? parsed.guildId
   await runLink(interaction, {
     ...(guildId ? { guildId } : {}),

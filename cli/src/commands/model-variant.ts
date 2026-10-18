@@ -36,6 +36,7 @@ import {
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import { resolveDisplayedModelId } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 
 const logger = createLogger(LogPrefix.MODEL)
 
@@ -332,14 +333,11 @@ export async function handleVariantQuickSelectMenu(
   const context = pendingVariantContexts.get(contextHash)
 
   if (!context) {
-    await interaction.reply({
-      content: 'Selection expired. Please run /model again.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Selection expired. Please run /model again.')
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const selected = interaction.values[0]
   if (!selected) {
@@ -381,14 +379,11 @@ export async function handleVariantScopeSelectMenu(
   const context = pendingVariantContexts.get(contextHash)
 
   if (!context) {
-    await interaction.reply({
-      content: 'Selection expired. Please run /model again.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Selection expired. Please run /model again.')
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const selected = interaction.values[0]
   if (!selected) {

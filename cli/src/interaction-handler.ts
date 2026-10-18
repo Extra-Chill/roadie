@@ -92,7 +92,7 @@ import {
   hasRoadieBotPermission,
   hasRoadieShellPermission,
 } from './discord-utils.js'
-import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, resolvePerson } from './identity.js'
+import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, resolvePerson, resolvePersonPreferKnown } from './identity.js'
 import {
   channelAllowsCapability,
   channelAllowsSpeaker,
@@ -171,6 +171,19 @@ async function isInteractionOwnedByThisMachine(
   }
 
   return false
+}
+
+// Components whose first response must be showModal(), so the listener
+// cannot defer them (#306). login_select opens the API key modal for most
+// providers. Every other button and select menu is deferred up front.
+const MODAL_COMPONENT_PREFIXES = ['file_upload_btn:', CREDENTIALS_OAUTH_BUTTON_PREFIX, 'login_select:']
+
+// Components answered with a private reply of their own instead of an edit of
+// the clicked message: their buttons can sit on messages other people see.
+const PRIVATE_REPLY_COMPONENT_PREFIXES = [LINK_BUTTON_PREFIX, CONNECT_BUTTON_PREFIX]
+
+function opensModal(customId: string): boolean {
+  return MODAL_COMPONENT_PREFIXES.some((prefix) => customId.startsWith(prefix))
 }
 
 // Slash commands that act only on the calling user's own account and need no
@@ -298,11 +311,24 @@ export function registerInteractionHandler({
         if (interaction.isChatInputCommand() && interaction.commandName === 'fork') {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral })
         }
+        // Same for buttons and select menus (#306): the identity lookup below
+        // can outlast the deadline. Denials then go out as ephemeral
+        // follow-ups. Modal openers must answer with showModal() instead.
+        const modalComponent = interaction.isMessageComponent() && opensModal(interaction.customId)
+        if (interaction.isMessageComponent() && !modalComponent) {
+          if (PRIVATE_REPLY_COMPONENT_PREFIXES.some((prefix) => interaction.customId.startsWith(prefix))) {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+          } else {
+            await interaction.deferUpdate()
+          }
+        }
 
         // Identity hook (if configured): resolve the person once, before the
-        // synchronous permission checks below read the cached result.
+        // synchronous permission checks below read the cached result. A modal
+        // opener cannot wait for a slow lookup when the person is already
+        // known, so it uses the last successful lookup and refreshes it.
         if (interaction.guild) {
-          const person = await resolvePerson({
+          const person = await (modalComponent ? resolvePersonPreferKnown : resolvePerson)({
             actor: {
               platform: 'discord',
               id: interaction.user.id,
@@ -316,8 +342,7 @@ export function registerInteractionHandler({
           // Fail closed, but say the lookup failed rather than a denial.
           if (person?.lookupFailed) {
             if (interaction.isRepliable()) {
-              const reply = { content: IDENTITY_LOOKUP_FAILED_MESSAGE, flags: MessageFlags.Ephemeral } as const
-              await (interaction.deferred || interaction.replied ? interaction.followUp(reply) : interaction.reply(reply))
+              await replyOrEditInteraction(interaction, IDENTITY_LOOKUP_FAILED_MESSAGE)
             }
             return
           }
@@ -600,10 +625,9 @@ export function registerInteractionHandler({
 
         if (interaction.isButton()) {
           if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-              flags: MessageFlags.Ephemeral,
-            })
+            await replyOrEditInteraction(interaction,
+              `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
+            )
             return
           }
 
@@ -656,10 +680,9 @@ export function registerInteractionHandler({
 
         if (interaction.isStringSelectMenu()) {
           if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-              flags: MessageFlags.Ephemeral,
-            })
+            await replyOrEditInteraction(interaction,
+              `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
+            )
             return
           }
 
@@ -723,10 +746,7 @@ export function registerInteractionHandler({
           if (customId.startsWith('login_select:')) {
             if (!store.getState().credentialPoolsEnabled) {
               // Stale menu: /login only exists when credential pools are enabled.
-              await interaction.reply({
-                content: 'Credential pools are not enabled on this server.',
-                flags: MessageFlags.Ephemeral,
-              })
+              await replyOrEditInteraction(interaction, 'Credential pools are not enabled on this server.')
               return
             }
             // The pool flow re-checks the shared-pool admin rule at every
@@ -739,10 +759,9 @@ export function registerInteractionHandler({
 
         if (interaction.isModalSubmit()) {
           if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await interaction.reply({
-              content: `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-              flags: MessageFlags.Ephemeral,
-            })
+            await replyOrEditInteraction(interaction,
+              `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
+            )
             return
           }
 

@@ -494,7 +494,7 @@ export async function handleAgentSelectMenu(
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.replace('agent_select:', '')
   const context = pendingAgentContexts.get(contextHash)
