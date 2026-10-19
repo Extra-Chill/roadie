@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   getChatPlatform,
+  getFailedChatPlatforms,
   listChatPlatformIds,
   parseChatPlatformIds,
   registerChatPlatform,
@@ -18,9 +19,14 @@ import { loadPlugins } from '../plugins.js'
 
 const context = { platformIds: [] as string[], options: {} }
 
-function platform(id: string, events: string[], { fail = false } = {}): ChatPlatformDefinition {
+function platform(
+  id: string,
+  events: string[],
+  { fail = false, required }: { fail?: boolean; required?: boolean } = {},
+): ChatPlatformDefinition {
   return {
     id,
+    ...(required !== undefined && { required }),
     start: async () => {
       if (fail) return new Error(`${id} refused`)
       events.push(`start:${id}`)
@@ -97,14 +103,63 @@ describe('startChatPlatforms', () => {
     expect(events).toHaveLength(4)
   })
 
-  test('a failing platform rolls back the ones already running', async () => {
+  test('a failing platform is recorded while the healthy ones keep running', async () => {
     const events: string[] = []
     registerChatPlatform(platform('alpha', events))
     registerChatPlatform(platform('broken', events, { fail: true }))
-    const result = await startChatPlatforms({ ...context, platformIds: ['alpha', 'broken'] })
+    const handle = await startChatPlatforms({ ...context, platformIds: ['broken', 'alpha'] })
+    if (handle instanceof Error) throw handle
+    expect(events).toEqual(['start:alpha'])
+    expect(getFailedChatPlatforms()).toEqual([{ id: 'broken', error: 'broken refused' }])
+    await handle.stop()
+    expect(events).toEqual(['start:alpha', 'stop:alpha'])
+  })
+
+  test('a recorded failure clears when the platform is requested again', async () => {
+    const events: string[] = []
+    registerChatPlatform(platform('broken', events, { fail: true }))
+    registerChatPlatform(platform('alpha', events))
+    const first = await startChatPlatforms({ ...context, platformIds: ['broken', 'alpha'] })
+    if (first instanceof Error) throw first
+    expect(getFailedChatPlatforms()).toEqual([{ id: 'broken', error: 'broken refused' }])
+    await first.stop()
+    unregisterChatPlatform('broken')
+    registerChatPlatform(platform('broken', events))
+    const second = await startChatPlatforms({ ...context, platformIds: ['broken'] })
+    if (second instanceof Error) throw second
+    expect(getFailedChatPlatforms()).toEqual([])
+    await second.stop()
+  })
+
+  test('returns an Error when every requested platform failed', async () => {
+    const events: string[] = []
+    registerChatPlatform(platform('broken', events, { fail: true }))
+    registerChatPlatform(platform('cracked', events, { fail: true }))
+    const result = await startChatPlatforms({ ...context, platformIds: ['broken', 'cracked'] })
+    expect(result).toBeInstanceOf(Error)
+    expect((result as Error).message).toContain('Every requested chat platform failed')
+    expect((result as Error).message).toContain('broken (broken refused)')
+    expect((result as Error).message).toContain('cracked (cracked refused)')
+    expect(events).toEqual([])
+    expect(getFailedChatPlatforms()).toEqual([
+      { id: 'broken', error: 'broken refused' },
+      { id: 'cracked', error: 'cracked refused' },
+    ])
+  })
+
+  test('a required failing platform rolls back the ones already running', async () => {
+    const events: string[] = []
+    registerChatPlatform(platform('alpha', events))
+    registerChatPlatform(platform('broken', events, { fail: true, required: true }))
+    registerChatPlatform(platform('omega', events))
+    const result = await startChatPlatforms({
+      ...context,
+      platformIds: ['alpha', 'broken', 'omega'],
+    })
     expect(result).toBeInstanceOf(Error)
     expect((result as Error).message).toContain('broken failed to start')
     expect(events).toEqual(['start:alpha', 'stop:alpha'])
+    expect(getFailedChatPlatforms()).toEqual([{ id: 'broken', error: 'broken refused' }])
   })
 })
 

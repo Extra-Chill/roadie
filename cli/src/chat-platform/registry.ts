@@ -43,9 +43,15 @@ export type ChatPlatformDefinition = {
   /**
    * Connect the platform's ingress and return a stop handle. Shared services
    * (lock port, database, agent backend, hooks) are already up. A returned
-   * Error stops startup; platforms started earlier are stopped again.
+   * Error is logged and recorded (see getFailedChatPlatforms); the remaining
+   * platforms keep starting unless this platform is `required`.
    */
   start(context: ChatPlatformStartContext): Promise<Error | ChatPlatformHandle>
+  /**
+   * When true, a start failure keeps the all-or-nothing behavior: platforms
+   * started earlier are stopped again and startup fails.
+   */
+  required?: boolean
 }
 
 const CHAT_PLATFORM_ID = /^[a-z][a-z0-9-]*$/
@@ -54,6 +60,14 @@ const platforms = new Map<string, ChatPlatformDefinition & { source?: string }>(
 
 /** Platforms started by `startChatPlatforms` and not yet stopped. */
 const activeHandles = new Map<string, ChatPlatformHandle>()
+
+/** Platforms whose last start() failed, by id, with the error message. */
+const failedPlatforms = new Map<string, string>()
+
+/** Failed platform starts for /health and diagnostics. */
+export function getFailedChatPlatforms(): { id: string; error: string }[] {
+  return [...failedPlatforms].map(([id, error]) => ({ id, error }))
+}
 
 /**
  * Register a chat platform. Built-in adapters (Discord, Slack) and plugins
@@ -98,6 +112,7 @@ export function unregisterChatPlatform(id: string): boolean {
 export function resetChatPlatforms(): void {
   platforms.clear()
   activeHandles.clear()
+  failedPlatforms.clear()
 }
 
 /**
@@ -116,8 +131,12 @@ export function parseChatPlatformIds(raw: string | string[] | undefined): string
 
 /**
  * Start every requested platform in order. All ids are validated first so an
- * unknown platform never partially starts the bot. On a start failure the
- * platforms already running are stopped again (newest first).
+ * unknown platform never partially starts the bot. A platform whose start()
+ * fails is logged and recorded (getFailedChatPlatforms) while the remaining
+ * platforms keep starting, so one bad platform never takes the others down.
+ * An Error is returned only when every requested platform failed, or when a
+ * platform marked `required` fails — then the platforms already running are
+ * stopped again (newest first), keeping the historic all-or-nothing behavior.
  */
 export async function startChatPlatforms(
   context: ChatPlatformStartContext,
@@ -131,19 +150,33 @@ export async function startChatPlatforms(
         'Plugins add platforms with registerChatPlatform() in register(roadie).',
     )
   }
+  for (const id of context.platformIds) failedPlatforms.delete(id)
   const startedIds: string[] = []
+  const failedIds: string[] = []
   for (const id of context.platformIds) {
     const definition = platforms.get(id)!
     const handle = await definition
       .start(context)
       .catch((error) => (error instanceof Error ? error : new Error(String(error))))
     if (handle instanceof Error) {
-      await stopActiveChatPlatforms()
-      return new Error(`Chat platform ${id} failed to start: ${handle.message}`, { cause: handle })
+      failedPlatforms.set(id, handle.message)
+      failedIds.push(id)
+      logger.error(`[PLATFORM] ${id} failed to start:`, handle)
+      if (definition.required) {
+        await stopActiveChatPlatforms()
+        return new Error(`Chat platform ${id} failed to start: ${handle.message}`, {
+          cause: handle,
+        })
+      }
+      continue
     }
     activeHandles.set(id, handle)
     startedIds.push(id)
     logger.log(`[PLATFORM] ${id} started`)
+  }
+  if (!startedIds.length && failedIds.length) {
+    const details = failedIds.map((id) => `${id} (${failedPlatforms.get(id)})`).join('; ')
+    return new Error(`Every requested chat platform failed to start: ${details}`)
   }
   return {
     stop: async () => {

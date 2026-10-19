@@ -35,6 +35,7 @@ import {
   type RemoteSendEvent,
 } from './remote-send.js'
 import { ensureAgentTokenSecret } from './agent-token.js'
+import { getFailedChatPlatforms } from './chat-platform/registry.js'
 import { handleAgentRequest } from './agent-remote.js'
 import { store } from './store.js'
 
@@ -160,6 +161,7 @@ export async function startHranaServer({
         chatPlatform: readyChatPlatforms.size ? [...readyChatPlatforms].join(',') : lastChatPlatform,
         chatReady: readyChatPlatforms.size > 0,
         chatPlatforms: [...readyChatPlatforms],
+        failedPlatforms: getFailedChatPlatforms(),
       }))
       return
     }
