@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.2] - 2026-10-19
+
+### Changed
+- Serve the last allowed person while refreshing an expired identity lookup
+
 ## [0.73.1] - 2026-10-19
 
 ### Changed
