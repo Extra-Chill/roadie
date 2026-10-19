@@ -22,7 +22,7 @@ import {
   personMcpServerName,
   registerPersonMcpServers,
 } from './person-mcp.js'
-import { applyPersonToIngress, type IngressInput } from './session-handler/thread-session-runtime.js'
+import { applyPersonToIngress, type IngressInput } from './session-handler/ingress-input.js'
 
 let dir: string
 let dataDir: string

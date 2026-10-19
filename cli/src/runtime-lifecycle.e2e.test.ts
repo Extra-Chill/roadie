@@ -8,7 +8,7 @@
 
 import { describe, test, expect } from 'vitest'
 import { ChannelType } from 'discord.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 import {
   createScheduledTask,
   getChannelDirectory,

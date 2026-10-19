@@ -20,7 +20,7 @@ import {
 import {
   applyPersonToIngress,
   type IngressInput,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/ingress-input.js'
 
 // Counts `person` filter invocations so caching can be asserted.
 let lookups = 0

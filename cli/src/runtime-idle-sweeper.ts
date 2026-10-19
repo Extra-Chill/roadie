@@ -2,9 +2,7 @@
 // Periodically disposes thread runtimes that stayed idle past a timeout.
 
 import { createLogger, LogPrefix } from './logger.js'
-import {
-  disposeInactiveRuntimes,
-} from './session-handler/thread-session-runtime.js'
+import { disposeInactiveRuntimes } from './session-handler/runtime-registry.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 

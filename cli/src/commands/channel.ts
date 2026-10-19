@@ -2,7 +2,7 @@ import { ChannelType, MessageFlags } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { applicationBinding, setApplicationChannelBinding } from '../channel-policy.js'
 import { hasRoadieAdminPermission } from '../discord-utils.js'
-import { disposeRuntime, getRuntimeThreadIdsForChannel } from '../session-handler/thread-session-runtime.js'
+import { disposeRuntime, getRuntimeThreadIdsForChannel } from '../session-handler/runtime-registry.js'
 
 /** Bootstrap only in the guild already owned by the application's default. */
 export async function isApplicationGuild(interaction: Pick<CommandContext['command'], 'client' | 'guildId'>): Promise<boolean> {

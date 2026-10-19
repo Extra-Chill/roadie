@@ -25,9 +25,7 @@ import { createLogger } from '../logger.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
-import {
-  getOrCreateRuntime,
-} from '../session-handler/thread-session-runtime.js'
+import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000

@@ -6,7 +6,7 @@ import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setu
 import { setChannelsConfigPath } from './channel-policy.js'
 import { addFilter } from './hooks.js'
 import { getChannelDirectory, getThreadSession, setChannelDirectory } from './database.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 import { waitForFooterMessage } from './test-utils.js'
 
 const DEFAULT = '200000000000001086'

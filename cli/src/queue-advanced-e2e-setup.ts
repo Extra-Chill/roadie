@@ -11,7 +11,7 @@ import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { setChannelsConfigPath } from './channel-policy.js'
 import { startDiscordBot } from './discord-bot.js'
-import { disposeRuntime } from './session-handler/thread-session-runtime.js'
+import { disposeRuntime } from './session-handler/runtime-registry.js'
 import {
   setBotToken,
   initDatabase,

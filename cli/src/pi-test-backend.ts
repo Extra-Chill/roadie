@@ -10,7 +10,7 @@ import { PiBackendProvider, type PiBackendOptions } from './agent-backend/pi/bac
 import { findPi } from './agent-backend/pi/find-pi.js'
 import { fakeModelsJson, startFakeModelServer, type FakeMatcher, type FakeModel } from './agent-backend/pi/fake-model-server.js'
 import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
-import { disposeRuntimesForDirectory } from './session-handler/thread-session-runtime.js'
+import { disposeRuntimesForDirectory } from './session-handler/runtime-registry.js'
 
 export type PiTestBackend = {
   /** The installed Pi provider; replaced by `restart()`. */

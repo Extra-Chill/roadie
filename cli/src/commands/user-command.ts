@@ -9,7 +9,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
 import { SILENT_MESSAGE_FLAGS, resolveWorkingDirectory } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {

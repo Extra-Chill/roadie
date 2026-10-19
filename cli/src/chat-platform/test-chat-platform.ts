@@ -20,8 +20,8 @@ import {
 import {
   disposeRuntime,
   getOrCreateRuntime,
-  type ThreadSessionRuntime,
-} from '../session-handler/thread-session-runtime.js'
+} from '../session-handler/runtime-registry.js'
+import type { ThreadSessionRuntime } from '../session-handler/thread-session-runtime.js'
 import {
   readConversationAdmission,
   recordConversationAdmission,

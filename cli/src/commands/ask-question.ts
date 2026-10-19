@@ -16,7 +16,7 @@ import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
+import { getRuntime } from '../session-handler/runtime-registry.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 

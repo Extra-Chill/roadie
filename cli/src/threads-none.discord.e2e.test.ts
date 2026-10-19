@@ -21,7 +21,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { disposeGlobalEventListener } from './session-handler/global-event-listener.js'
-import { disposeRuntime } from './session-handler/thread-session-runtime.js'
+import { disposeRuntime } from './session-handler/runtime-registry.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { initTestGitRepo, chooseLockPort } from './test-utils.js'
 import { findPi } from './agent-backend/pi/find-pi.js'

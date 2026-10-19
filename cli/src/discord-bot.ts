@@ -84,9 +84,11 @@ import {
   restorePersistedLocalQueues,
   resumeInterruptedSessions,
   snapshotBusyRuntimes,
+} from './session-handler/runtime-registry.js'
+import {
   reserveThreadIngress,
   runInThreadIngressSlot,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/thread-ingress.js'
 import { runShellCommand } from './commands/run-command.js'
 import { getRoadieMetadata } from './discord-utils.js'
 import { registerInteractionHandler } from './interaction-handler.js'

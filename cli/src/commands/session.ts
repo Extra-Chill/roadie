@@ -23,7 +23,7 @@ import {
   resolveWorkingDirectory,
   resolveTextChannel,
 } from '../discord-utils.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { DiscordOperationError } from '../errors.js'
 import { resolveConversationIntake, recordConversationAdmission } from '../conversation-intake.js'

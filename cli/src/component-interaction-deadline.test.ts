@@ -16,7 +16,8 @@ import { clearIdentityCache, resolvePerson, type Capability, type Person } from 
 import { registerInteractionHandler } from './interaction-handler.js'
 import { pendingActionButtonContexts, showActionButtons } from './commands/action-buttons.js'
 import { cancelPendingFileUpload, pendingFileUploadContexts, showFileUploadButton } from './commands/file-upload.js'
-import { disposeRuntime, ThreadSessionRuntime } from './session-handler/thread-session-runtime.js'
+import { disposeRuntime } from './session-handler/runtime-registry.js'
+import { ThreadSessionRuntime } from './session-handler/thread-session-runtime.js'
 
 const userId = '100000000000000555'
 const guildId = '100000000000000111'

@@ -18,7 +18,7 @@ import type { ContextRequest } from './context-provider.js'
 import type { Capability } from './identity.js'
 import { TITLE_REQUEST_SYSTEM } from './title-request.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 
 describe.skipIf(!findPi())('native Slack', () => {
   const secret = 'native-slack-test-secret'

@@ -20,7 +20,7 @@ import {
 import { stopHranaServer } from '../hrana-server.js'
 import { chooseLockPort, initTestGitRepo } from '../test-utils.js'
 import { disposeGlobalEventListener } from '../session-handler/global-event-listener.js'
-import { disposeRuntime } from '../session-handler/thread-session-runtime.js'
+import { disposeRuntime } from '../session-handler/runtime-registry.js'
 import { findPi } from '../agent-backend/pi/find-pi.js'
 import { startPiTestBackend, type PiTestBackend } from '../pi-test-backend.js'
 import { addFilter } from '../hooks.js'

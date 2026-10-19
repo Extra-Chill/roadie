@@ -19,7 +19,7 @@ import { getDb } from '../db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
 import { resolveTextChannel, getRoadieMetadata } from '../discord-utils.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
+import { getRuntime } from '../session-handler/runtime-registry.js'
 import { formatModelSource, getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
