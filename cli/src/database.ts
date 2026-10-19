@@ -18,6 +18,7 @@ import type {
   VerbosityLevel,
 } from './schema.js'
 import { store } from './store.js'
+import { readRoadieSecret } from './config.js'
 import { channelPolicyOverrides } from './channel-policy.js'
 
 const dbLogger = createLogger(LogPrefix.DB)
@@ -1169,6 +1170,31 @@ function createServiceCredentials() {
   return { clientId: crypto.randomUUID(), clientSecret: crypto.randomBytes(32).toString('hex') }
 }
 
+// Derive the Discord Application ID from a bot token.
+// Discord bot tokens have the format: base64(userId).timestamp.hmac
+// The first segment is the bot's user ID (= Application ID) base64-encoded.
+// Anything else returns undefined.
+export function appIdFromToken(token: string): string | undefined {
+  const segment = token.split('.')[0]
+  if (!segment) {
+    return undefined
+  }
+  try {
+    const decoded = Buffer.from(segment, 'base64').toString('utf8')
+    if (/^\d{17,20}$/.test(decoded)) {
+      return decoded
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The saved bot, with its token. An app registered from ROADIE_BOT_TOKEN has
+ * no token on disk: its token comes from the environment, and without it the
+ * bot is reported as not configured.
+ */
 export async function getBotToken(): Promise<{
   appId: string
   token: string
@@ -1177,9 +1203,16 @@ export async function getBotToken(): Promise<{
   const db = await getDb()
   const [row] = await db.query.bot_tokens.findMany({ orderBy: { last_used_at: 'desc', created_at: 'desc' }, limit: 1 })
   if (!row) return undefined
+  const token = row.token || environmentBotToken(row.app_id)
+  if (!token) return undefined
   const gatewayToken = await ensureServiceAuthToken({ appId: row.app_id })
   store.setState({ gatewayToken })
-  return { appId: row.app_id, token: row.token, gatewayToken }
+  return { appId: row.app_id, token, gatewayToken }
+}
+
+function environmentBotToken(appId: string): string | undefined {
+  const token = readRoadieSecret('ROADIE_BOT_TOKEN')
+  return token && appIdFromToken(token) === appId ? token : undefined
 }
 
 export async function ensureServiceAuthToken({ appId, preferredGatewayToken }: { appId: string; preferredGatewayToken?: string }) {
@@ -1188,7 +1221,7 @@ export async function ensureServiceAuthToken({ appId, preferredGatewayToken }: {
   if (!row) throw new Error(`Bot token row not found for app_id ${appId}`)
   const preferred = preferredGatewayToken ? splitServiceAuthToken({ token: preferredGatewayToken }) : null
   const existing = row.client_id && row.client_secret ? { clientId: row.client_id, clientSecret: row.client_secret } : null
-  const fromStoredToken = splitServiceAuthToken({ token: row.token })
+  const fromStoredToken = row.token ? splitServiceAuthToken({ token: row.token }) : null
   const resolved = preferred || existing || fromStoredToken || createServiceCredentials()
   if (row.client_id !== resolved.clientId || row.client_secret !== resolved.clientSecret) {
     await db.update(schema.bot_tokens)
@@ -1205,6 +1238,21 @@ export async function setBotToken(appId: string, token: string) {
     .values({ app_id: appId, token, client_id: generated.clientId, client_secret: generated.clientSecret })
     .onConflictDoUpdate({ target: schema.bot_tokens.app_id, set: { token } })
   await ensureServiceAuthToken({ appId })
+}
+
+/**
+ * Register a bot whose token is supplied through ROADIE_BOT_TOKEN. The row
+ * keeps the app's identity and service credentials; the token stays in memory
+ * and any copy saved earlier for the app is cleared.
+ */
+export async function registerEnvironmentBot(appId: string) {
+  const db = await getDb()
+  const saved = await db.query.bot_tokens.findFirst({ where: { app_id: appId }, columns: { token: true } })
+  await setBotToken(appId, '')
+  if (saved?.token) {
+    // The old page still holds the token in the WAL until a checkpoint.
+    await db.run(orm.sql`PRAGMA wal_checkpoint(TRUNCATE)`).catch(() => undefined)
+  }
 }
 
 export async function setChannelDirectory({ channelId, directory, channelType, guildId, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; guildId?: string; skipIfExists?: boolean }) {

@@ -126,7 +126,7 @@ Service installs configure Roadie through the environment; nothing needs to touc
 | Variable | Purpose |
 |---|---|
 | `ROADIE_PLATFORM` | Chat platform id(s): `discord` (default), `slack`, or a plugin-registered platform. Comma-separated ids run several platforms in one process. Same as `--platform`. See [docs/chat-platforms.md](docs/chat-platforms.md). |
-| `ROADIE_BOT_TOKEN` | Discord bot token. Saved on startup; the application ID is derived from it. |
+| `ROADIE_BOT_TOKEN` | Discord bot token; the application ID is derived from it. The token stays in memory: the data directory records only the application ID, and a token saved there earlier for the same app is cleared. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
 | `ROADIE_SERVICE_TOKEN` | Send token (any secret string). Lets other OS users send through the running bot. Unset, the send endpoint is off. |
