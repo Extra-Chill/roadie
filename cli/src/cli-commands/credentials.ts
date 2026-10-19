@@ -305,7 +305,7 @@ cli
 
 function requirePersonKey(person: string | undefined): string {
   const key = person?.trim()
-  if (!key) exitWithError('--person is required: the identity hook person_id, or <platform>:<actorId>')
+  if (!key) exitWithError('--person is required: the person filter personId, or <platform>:<actorId>')
   return key
 }
 
@@ -314,8 +314,8 @@ cli
     'credentials mcp set',
     'Store a person\'s own OAuth token for an MCP server. Token JSON on stdin: {"access_token","refresh_token","expires_in","token_endpoint","client_id","client_secret"} (only access_token is required)',
   )
-  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
-  .option('--credential <name>', 'Credential name referenced by the identity hook mcp_servers entry (default: the server name)')
+  .option('--person <key>', 'Person key: the person filter personId, or <platform>:<actorId>')
+  .option('--credential <name>', 'Credential name referenced by the person filter mcpServers entry (default: the server name)')
   .action(async (options) => {
     await refuseAgentMode()
     const personKey = requirePersonKey(options.person)
@@ -357,7 +357,7 @@ cli
 
 cli
   .command('credentials mcp list', 'List the MCP credential names stored for a person (never the tokens)')
-  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
+  .option('--person <key>', 'Person key: the person filter personId, or <platform>:<actorId>')
   .action(async (options) => {
     await refuseAgentMode()
     const personKey = requirePersonKey(options.person)
@@ -368,7 +368,7 @@ cli
 
 cli
   .command('credentials mcp remove', 'Remove a person\'s stored MCP credential')
-  .option('--person <key>', 'Person key: the identity hook person_id, or <platform>:<actorId>')
+  .option('--person <key>', 'Person key: the person filter personId, or <platform>:<actorId>')
   .option('--credential <name>', 'Credential name to remove')
   .action(async (options) => {
     await refuseAgentMode()

@@ -1,20 +1,17 @@
-// Identity hook: contract, caching, fail-closed behavior, permission gates and
-// per-person ingress overrides.
+// Identity: the `person` filter contract, caching, fail-closed behavior,
+// permission gates and per-person ingress overrides.
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, beforeAll, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
 import {
   clearIdentityCache,
   getCachedPerson,
-  isIdentityHookConfigured,
+  isIdentityConfigured,
   personHas,
   resolvePerson,
-  setIdentityHookCommand,
   type Person,
+  type PersonLookup,
 } from './identity.js'
-import { addFilter } from './hooks.js'
+import { addFilter, resetHooks } from './hooks.js'
 import {
   hasRoadieAdminPermission,
   hasRoadieBotPermission,
@@ -25,40 +22,37 @@ import {
   type IngressInput,
 } from './session-handler/ingress-input.js'
 
-let dir: string
-const writeHook = (name: string, body: string) => {
-  const file = path.join(dir, name)
-  fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 })
-  return file
-}
+// Counts `person` filter invocations so caching can be asserted.
+let lookups = 0
 
-// A hook that reads the actor from stdin and answers per user id, counting
-// invocations in a file so caching can be asserted.
-let mappingHook: string
-let countFile: string
+// Register a `person` filter answering from a fixed table, counting lookups.
+// Actors missing from the table stay unvouched (null), which denies.
+const usePeople = (people: Record<string, PersonLookup>) =>
+  addFilter('person', (person, { actor }) => {
+    lookups++
+    return people[actor.id] ?? person
+  })
 
-beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-identity-'))
-  countFile = path.join(dir, 'count')
-  fs.writeFileSync(countFile, '')
-  mappingHook = writeHook(
-    'map.sh',
-    `input=$(cat)
-echo x >> ${countFile}
-case "$input" in
-  *'"id":"owner"'*) echo '{"allowed":true,"person_id":"wp:1","capabilities":["sessions","shell","admin"]}' ;;
-  *'"id":"team"'*) echo '{"allowed":true,"person_id":"host:38","capabilities":["sessions"],"agent":"team-bot","model":"anthropic/claude-sonnet-5-5","permissions":["bash:deny"]}' ;;
-  *) echo '{"allowed":false}' ;;
-esac`,
-  )
-})
+// Owner with every capability, a team member with per-person overrides;
+// everyone else is denied.
+const useMapping = () =>
+  usePeople({
+    owner: { allowed: true, personId: 'wp:1', capabilities: new Set(['sessions', 'shell', 'admin'] as const), permissions: [] },
+    team: {
+      allowed: true,
+      personId: 'host:38',
+      capabilities: new Set(['sessions'] as const),
+      agent: 'team-bot',
+      model: 'anthropic/claude-sonnet-5-5',
+      permissions: ['bash:deny'],
+    },
+  })
 
 afterEach(() => {
-  setIdentityHookCommand(undefined)
-  fs.writeFileSync(countFile, '')
+  resetHooks()
+  clearIdentityCache()
+  lookups = 0
 })
-
-const invocations = () => fs.readFileSync(countFile, 'utf8').split('\n').filter(Boolean).length
 
 // Minimal API-shaped guild member; no roles, no admin bits.
 const member = (id: string) =>
@@ -68,7 +62,7 @@ const member = (id: string) =>
     permissions: '0',
   }) as unknown as Parameters<typeof hasRoadieBotPermission>[0]
 
-describe('identity hook', () => {
+describe('person filter', () => {
   test('speaker MCP lookup uses the context-resolved cached person', async () => {
     const actor = { platform: 'discord', id: 'space-member' }
     const invocations: Array<{ guildId?: string }> = []
@@ -196,7 +190,7 @@ describe('identity hook', () => {
 
     // A `person` filter whose answer the test sets and whose lookups block
     // until released.
-    function gatedFilter(initial: Person) {
+    function gatedFilter(initial: PersonLookup) {
       const state = { answer: initial, gated: false, started: 0, release: () => {} }
       const removeFilter = addFilter('person', async () => {
         state.started++
@@ -345,11 +339,9 @@ describe('identity hook', () => {
       }
     })
 
-    test('a hook with ttl_seconds 0 always waits for the lookup', async () => {
-      setIdentityHookCommand(writeHook('swr-nocache.sh', `cat >/dev/null; echo '{"allowed":true,"person_id":"wp:1","ttl_seconds":0}'`))
+    test('a lookup with ttlSeconds 0 always waits for the lookup', async () => {
       const actor = { platform: 'discord', id: 'swr-uncached' }
-      // The filter keeps the hook's ttl_seconds 0 and gates the lookup.
-      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      const { state, removeFilter } = gatedFilter({ ...allowed('wp:1'), ttlSeconds: 0 })
       try {
         expect((await resolvePerson({ actor }))?.personId).toBe('wp:1')
         state.gated = true
@@ -366,14 +358,14 @@ describe('identity hook', () => {
     })
   })
 
-  test('no hook configured: resolvePerson returns null', async () => {
-    setIdentityHookCommand(null)
-    expect(isIdentityHookConfigured()).toBe(false)
+  test('no person filter: resolvePerson returns null', async () => {
+    expect(isIdentityConfigured()).toBe(false)
     expect(await resolvePerson({ actor: { platform: 'discord', id: 'owner' } })).toBeNull()
   })
 
   test('maps actors to people with capabilities and overrides', async () => {
-    setIdentityHookCommand(mappingHook)
+    useMapping()
+    expect(isIdentityConfigured()).toBe(true)
     const owner = await resolvePerson({ actor: { platform: 'discord', id: 'owner' } })
     const team = await resolvePerson({ actor: { platform: 'discord', id: 'team', name: 'Team Member' } })
     const stranger = await resolvePerson({ actor: { platform: 'discord', id: 'nobody' } })
@@ -390,43 +382,40 @@ describe('identity hook', () => {
     expect(team && personHas(team, 'sessions')).toBe(true)
     expect(team && personHas(team, 'shell')).toBe(false)
     expect(stranger?.allowed).toBe(false)
+    expect(stranger?.lookupFailed).toBeUndefined()
     expect(stranger && personHas(stranger, 'sessions')).toBe(false)
   })
 
-  test('credential_pool: a valid override lands on the person, legacy output is untouched', async () => {
-    setIdentityHookCommand(
-      writeHook(
-        'pool.sh',
-        `input=$(cat)
-case "$input" in
-  *'"id":"pooled"'*) echo '{"allowed":true,"person_id":"wp:9","credential_pool":"team-pool"}' ;;
-  *'"id":"badpool"'*) echo '{"allowed":true,"person_id":"wp:9","credential_pool":"Not A Pool!"}' ;;
-  *) echo '{"allowed":true,"person_id":"wp:9"}' ;;
-esac`,
-      ),
-    )
+  test('an explicit denial is denied, not a lookup failure', async () => {
+    usePeople({ banned: { allowed: false, personId: 'wp:13', capabilities: new Set(['admin'] as const), permissions: [] } })
+    const banned = await resolvePerson({ actor: { platform: 'discord', id: 'banned' } })
+    expect(banned?.allowed).toBe(false)
+    expect(banned?.lookupFailed).toBeUndefined()
+    expect(banned && personHas(banned, 'admin')).toBe(false)
+  })
+
+  test('credentialPool: a valid override lands on the person, an invalid one is ignored', async () => {
+    const base = { allowed: true, personId: 'wp:9', capabilities: new Set(['sessions'] as const), permissions: [] }
+    usePeople({
+      pooled: { ...base, credentialPool: 'team-pool' },
+      badpool: { ...base, credentialPool: 'Not A Pool!' },
+      plain: base,
+    })
     const pooled = await resolvePerson({ actor: { platform: 'discord', id: 'pooled' } })
     expect(pooled?.credentialPool).toBe('team-pool')
     // An invalid pool id is ignored: the person resolves as if it were absent.
     const bad = await resolvePerson({ actor: { platform: 'discord', id: 'badpool' } })
     expect(bad?.allowed).toBe(true)
     expect(bad?.credentialPool).toBeUndefined()
-    // Hooks that do not send the field behave as before.
-    const legacy = await resolvePerson({ actor: { platform: 'discord', id: 'plain' } })
-    expect(legacy?.allowed).toBe(true)
-    expect(legacy?.credentialPool).toBeUndefined()
+    const plain = await resolvePerson({ actor: { platform: 'discord', id: 'plain' } })
+    expect(plain?.allowed).toBe(true)
+    expect(plain?.credentialPool).toBeUndefined()
   })
 
   test('applyPersonToIngress carries the credential pool override', async () => {
-    const poolHook = writeHook(
-      'pool-team.sh',
-      `input=$(cat)
-case "$input" in
-  *'"id":"team"'*) echo '{"allowed":true,"person_id":"host:38","credential_pool":"team-pool"}' ;;
-  *) echo '{"allowed":false}' ;;
-esac`,
-    )
-    setIdentityHookCommand(poolHook)
+    usePeople({
+      team: { allowed: true, personId: 'host:38', capabilities: new Set(['sessions'] as const), permissions: [], credentialPool: 'team-pool' },
+    })
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     expect(
       applyPersonToIngress({ prompt: 'hi', userId: 'team', username: 'Team Member', mode: 'direct' }),
@@ -434,64 +423,95 @@ esac`,
   })
 
   test('caches per actor and dedupes concurrent lookups', async () => {
-    setIdentityHookCommand(mappingHook)
+    useMapping()
     const actor = { platform: 'discord', id: 'team' }
     await Promise.all([resolvePerson({ actor }), resolvePerson({ actor }), resolvePerson({ actor })])
     await resolvePerson({ actor })
-    expect(invocations()).toBe(1)
+    expect(lookups).toBe(1)
     clearIdentityCache(actor)
     await resolvePerson({ actor })
-    expect(invocations()).toBe(2)
+    expect(lookups).toBe(2)
   })
 
-  test('ttl_seconds 0 disables caching', async () => {
-    setIdentityHookCommand(writeHook('nocache.sh', `cat >/dev/null; echo x >> ${countFile}; echo '{"allowed":true,"ttl_seconds":0}'`))
-    const actor = { platform: 'discord', id: 'a' }
-    await resolvePerson({ actor })
-    await resolvePerson({ actor })
-    expect(invocations()).toBe(2)
-    expect(getCachedPerson(actor)).toBeUndefined()
-  })
+  describe('ttlSeconds', () => {
+    const denied = (ttlSeconds?: number): PersonLookup => ({
+      allowed: false,
+      capabilities: new Set(),
+      permissions: [],
+      ...(ttlSeconds === undefined ? {} : { ttlSeconds }),
+    })
+    let clock: MockInstance<() => number>
+    let now: number
+    beforeEach(() => {
+      now = Date.now()
+      clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    })
+    afterEach(() => clock.mockRestore())
 
-  test('allowed without capabilities defaults to sessions only', async () => {
-    setIdentityHookCommand(writeHook('default.sh', `cat >/dev/null; echo '{"allowed":true}'`))
-    const person = await resolvePerson({ actor: { platform: 'discord', id: 'b' } })
-    expect(person && [...person.capabilities]).toEqual(['sessions'])
+    test('0 disables caching', async () => {
+      usePeople({ a: { allowed: true, capabilities: new Set(['sessions'] as const), permissions: [], ttlSeconds: 0 } })
+      const actor = { platform: 'discord', id: 'a' }
+      await resolvePerson({ actor })
+      await resolvePerson({ actor })
+      expect(lookups).toBe(2)
+      expect(getCachedPerson(actor)).toBeUndefined()
+    })
+
+    test.each([
+      ['defaults to 300 seconds', undefined, 300],
+      ['is honored', 30, 30],
+      ['is capped at 3600 seconds', 99_999, 3600],
+    ])('the cache lifetime %s', async (_label, ttlSeconds, effective) => {
+      usePeople({ t: denied(ttlSeconds) })
+      const actor = { platform: 'discord', id: 't' }
+      const resolved = await resolvePerson({ actor })
+      // The TTL steers the cache only; it never lands on the person.
+      expect(resolved).not.toHaveProperty('ttlSeconds')
+      clock.mockReturnValue(now + effective * 1000 - 1)
+      expect(getCachedPerson(actor)).toBeDefined()
+      clock.mockReturnValue(now + effective * 1000)
+      expect(getCachedPerson(actor)).toBeUndefined()
+      await resolvePerson({ actor })
+      expect(lookups).toBe(2)
+    })
   })
 
   test.each([
-    ['non-zero exit', 'cat >/dev/null; exit 3'],
-    ['invalid JSON', 'cat >/dev/null; echo not-json'],
-    ['schema mismatch', `cat >/dev/null; echo '{"allowed":"yes"}'`],
-  ])('fails closed on %s', async (_label, body) => {
-    setIdentityHookCommand(writeHook(`bad-${_label.replace(/\W/g, '')}.sh`, body))
+    ['a throwing filter', (): Person => { throw new Error('host down') }],
+    ['a lookupFailed answer', (): Person => ({ allowed: false, capabilities: new Set(), permissions: [], lookupFailed: true })],
+  ])('fails closed on %s', async (_label, filter) => {
+    addFilter('person', filter)
     const person = await resolvePerson({ actor: { platform: 'discord', id: 'c' } })
     expect(person?.allowed).toBe(false)
+    expect(person?.lookupFailed).toBe(true)
   })
 
-  test('sends the versioned contract on stdin', async () => {
-    const out = path.join(dir, 'stdin.json')
-    setIdentityHookCommand(writeHook('echo.sh', `cat > ${out}; echo '{"allowed":false}'`))
+  test('passes the actor and context to the filter, starting from null', async () => {
+    const seen: unknown[] = []
+    addFilter('person', (person, input) => {
+      seen.push({ person, ...input })
+      return person
+    })
     await resolvePerson({
       actor: { platform: 'discord', id: 'd', name: 'Dee' },
       context: { guildId: 'g1', channelId: 'c1' },
     })
-    expect(JSON.parse(fs.readFileSync(out, 'utf8'))).toEqual({
-      version: 1,
+    expect(seen).toEqual([{
+      person: null,
       actor: { platform: 'discord', id: 'd', name: 'Dee' },
-      context: { guild_id: 'g1', channel_id: 'c1' },
-    })
+      context: { guildId: 'g1', channelId: 'c1' },
+    }])
   })
 })
 
-describe('permission gates with a hook', () => {
-  test('hook replaces role checks; shell and admin are separate capabilities', async () => {
-    setIdentityHookCommand(mappingHook)
+describe('permission gates with a person filter', () => {
+  test('the filter replaces role checks; shell and admin are separate capabilities', async () => {
+    useMapping()
     await resolvePerson({ actor: { platform: 'discord', id: 'owner' } })
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     await resolvePerson({ actor: { platform: 'discord', id: 'nobody' } })
 
-    // Members have no Discord roles or admin bits: only the hook can allow.
+    // Members have no Discord roles or admin bits: only the filter can allow.
     expect(hasRoadieBotPermission(member('owner'))).toBe(true)
     expect(hasRoadieShellPermission(member('owner'))).toBe(true)
     expect(hasRoadieAdminPermission(member('owner'))).toBe(true)
@@ -504,12 +524,11 @@ describe('permission gates with a hook', () => {
   })
 
   test('an actor that was never resolved is denied (fail closed)', () => {
-    setIdentityHookCommand(mappingHook)
+    useMapping()
     expect(hasRoadieBotPermission(member('owner'))).toBe(false)
   })
 
-  test('without a hook, shell follows bot permission as before', () => {
-    setIdentityHookCommand(null)
+  test('without a person filter, shell follows bot permission as before', () => {
     expect(hasRoadieShellPermission(member('nobody'))).toBe(
       hasRoadieBotPermission(member('nobody')),
     )
@@ -525,7 +544,7 @@ describe('applyPersonToIngress', () => {
   }
 
   test('adds person id, agent, model and permission rules for chat speakers', async () => {
-    setIdentityHookCommand(mappingHook)
+    useMapping()
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     expect(applyPersonToIngress({ ...base, permissions: ['edit:deny'] })).toMatchObject({
       personId: 'host:38',
@@ -536,18 +555,18 @@ describe('applyPersonToIngress', () => {
   })
 
   test('explicit agent and model win', async () => {
-    setIdentityHookCommand(mappingHook)
+    useMapping()
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     const out = applyPersonToIngress({ ...base, agent: 'plan', model: 'x/y' })
     expect(out.agent).toBe('plan')
     expect(out.model).toBe('x/y')
   })
 
-  test('CLI-asserted actors and hookless installs are untouched', async () => {
-    setIdentityHookCommand(mappingHook)
+  test('CLI-asserted actors and installs without a person filter are untouched', async () => {
+    useMapping()
     await resolvePerson({ actor: { platform: 'discord', id: 'team' } })
     expect(applyPersonToIngress({ ...base, actorVia: 'cli' })).toEqual({ ...base, actorVia: 'cli' })
-    setIdentityHookCommand(null)
+    resetHooks()
     expect(applyPersonToIngress(base)).toEqual(base)
   })
 })

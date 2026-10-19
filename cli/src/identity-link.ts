@@ -46,7 +46,7 @@ import { applyFiltersAsync } from './hooks.js'
 import {
   clearIdentityCache,
   IDENTITY_LOOKUP_FAILED_MESSAGE,
-  isIdentityHookConfigured,
+  isIdentityConfigured,
   resolvePerson,
   type IdentityActor,
   type IdentityContext,
@@ -119,7 +119,7 @@ export function isLinkCandidate({
   isBot?: boolean
 }): boolean {
   if (via !== 'chat' || isBot) return false
-  if (!isIdentityHookConfigured()) return false
+  if (!isIdentityConfigured()) return false
   if (!person) return false
   return !person.allowed && !person.lookupFailed
 }
@@ -403,7 +403,7 @@ export async function startIdentityLink({
   dataDir?: string
 }): Promise<IdentityLinkStarted | Error> {
   if (isBot) return new Error(LINK_NOT_AVAILABLE_MESSAGE)
-  if (!isIdentityHookConfigured()) return new Error(LINK_NOT_AVAILABLE_MESSAGE)
+  if (!isIdentityConfigured()) return new Error(LINK_NOT_AVAILABLE_MESSAGE)
   const person = await resolvePerson({ actor, context })
   if (person?.lookupFailed) return new Error(IDENTITY_LOOKUP_FAILED_MESSAGE)
   if (person?.allowed) return new Error(LINK_ALREADY_LINKED_MESSAGE)

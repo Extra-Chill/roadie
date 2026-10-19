@@ -1,6 +1,6 @@
 // Per-person MCP servers for agent sessions.
 //
-// The identity hook can name MCP servers for a person (`mcp_servers`). Each one
+// The person filter can name MCP servers for a person (`mcpServers`). Each one
 // is registered with the agent backend under a name scoped to that person, with
 // that person's own OAuth access token in the request headers:
 //

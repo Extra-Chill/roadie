@@ -37,7 +37,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
-import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
+import { getCachedPerson, isIdentityConfigured } from '../identity.js'
 import { registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelContextBinding } from '../channel-policy.js'
 import {
@@ -2798,7 +2798,7 @@ export class ThreadSessionRuntime {
    * A turn without a userId clears the actor. Failures are logged, never fatal.
    *
    * With credential pools enabled this also resolves the speaker's billing
-   * pool (person id, else `<platform>:<actorId>`, with the identity hook's
+   * pool (person id, else `<platform>:<actorId>`, with the person filter's
    * `credential_pool` override) onto the attribution row, and claims session
    * ownership for the first human speaker (insert-or-ignore).
    *
@@ -4562,7 +4562,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Connect the speaker's own MCP servers, authenticated with their stored
-   * credential. Only chat speakers allowed by the identity hook get any;
+   * credential. Only chat speakers allowed by the person filter get any;
    * their previously resolved person is read from cache. Turns without a
    * cached person get no speaker MCP servers. Never fatal.
    */
@@ -4573,7 +4573,7 @@ export class ThreadSessionRuntime {
     client: AgentBackend
     input: Pick<IngressInput, 'userId' | 'actorVia' | 'personId'>
   }): Promise<void> {
-    if (!isIdentityHookConfigured()) return
+    if (!isIdentityConfigured()) return
     if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
     const actor = { platform: this.chat.platform, id: input.userId }
     const person = getCachedPerson(actor)

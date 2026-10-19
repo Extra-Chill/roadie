@@ -136,7 +136,7 @@ describe.skipIf(!findPi())('/fork', () => {
   }
 
   test.each(['success', 'denied', 'setup-error'] as const)(
-    'acknowledges before a slow identity hook and completes the %s reply',
+    'acknowledges before a slow person filter and completes the %s reply',
     async (outcome) => {
       const source = await startSource()
       const before = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)

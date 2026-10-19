@@ -26,7 +26,7 @@ import { channelAllowsSpeaker, decideRespond } from './channel-policy.js'
 import type { SlackApi, SlackApiError } from './chat-platform/slack-api.js'
 import { slackText } from './chat-platform/slack-api.js'
 import {
-  isIdentityHookConfigured,
+  isIdentityConfigured,
   resolvePerson,
   type IdentityActor,
   type Person,
@@ -237,7 +237,7 @@ function commandActor(context: SlackPersonCommandContext): IdentityActor {
 /** `/roadie connect`: the speaker's own servers, ephemeral, with buttons. */
 export async function handleSlackConnectCommand(context: SlackPersonCommandContext): Promise<void | Error> {
   const { api } = context
-  if (!isIdentityHookConfigured()) return await replyToCommand(api, context, NOT_CONFIGURED)
+  if (!isIdentityConfigured()) return await replyToCommand(api, context, NOT_CONFIGURED)
   const actor = commandActor(context)
   const person = await slackPerson({ workspaceId: context.workspaceId, channelId: context.channelId, actor })
   if (!slackPersonCommandAllowed({ channelId: context.channelId, userId: context.userId, person }))
@@ -308,7 +308,7 @@ export async function handleSlackConnectAction(input: SlackConnectActionInput): 
     ? responseUrlReply(api, input.responseUrl)
     : await dmReply(api, input.user.id)
   if (reply instanceof Error) return reply
-  if (!isIdentityHookConfigured()) return await reply.show(NOT_CONFIGURED)
+  if (!isIdentityConfigured()) return await reply.show(NOT_CONFIGURED)
 
   const name = input.user.username ?? input.user.name
   const actor: IdentityActor = { platform: 'slack', id: input.user.id, ...(name ? { name } : {}) }

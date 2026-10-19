@@ -4,11 +4,11 @@
 // imported by the provider module that runs inside the OpenCode server
 // process (credentials/provider.ts) as well as by the bot process.
 //
-// The person key is the identity hook's person_id when present, otherwise
+// The person key is the person filter's personId when present, otherwise
 // `<platform>:<actorId>` (e.g. `discord:532385681268408341`). The pool id for
 // a person key is the key itself when it already satisfies POOL_ID_PATTERN,
 // else a deterministic hashed fallback, so any person id maps to a stable,
-// valid pool directory. Keys are never case-folded: identity-hook person ids
+// valid pool directory. Keys are never case-folded: person filter person ids
 // are opaque, and two ids differing only in case must never share a pool.
 
 import crypto from 'node:crypto'
@@ -27,7 +27,7 @@ export const CREDENTIALS_MODES: readonly CredentialsMode[] = [
 ]
 export const THREAD_BILLINGS: readonly ThreadBilling[] = ['owner', 'speaker']
 
-/** Person key: identity-hook person_id, else `<platform>:<actorId>`. */
+/** Person key: person filter personId, else `<platform>:<actorId>`. */
 export function personKeyFrom({
   personId,
   platform,
@@ -49,7 +49,7 @@ export function personKeyFrom({
  * Pool id for a person key: the key itself when it is already a valid pool id
  * (e.g. `discord:532385681268408341`), otherwise
  * `person-<first 24 hex of sha256(key)>`. Deterministic, and injective in
- * practice: keys are never case-folded, because identity-hook person ids are
+ * practice: keys are never case-folded, because person filter person ids are
  * opaque and `Ab` and `aB` may be different people who must never share a
  * pool.
  */
@@ -60,7 +60,7 @@ export function poolIdForPersonKey(personKey: string): string {
 }
 
 /**
- * Pool a person bills to: the identity hook's `credential_pool` override when
+ * Pool a person bills to: the person filter's `credentialPool` override when
  * present and valid, else the derived pool id. An invalid override is ignored
  * so hooks that send a bad value behave as if they sent none.
  */
@@ -100,7 +100,7 @@ export function resolveTurnBilling({
 }
 
 /**
- * Pool (and person key) for one person record — the identity hook's person
+ * Pool (and person key) for one person record — the person filter's person
  * (`person_id` plus its `credential_pool` override) or a bare platform actor.
  * The one shared helper for everything that resolves a person's pool: turn
  * routing (thread-session-runtime, slack-bot) and the /credentials command

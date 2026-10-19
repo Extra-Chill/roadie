@@ -1,7 +1,7 @@
 // Ingress input shape for ThreadSessionRuntime.enqueueIncoming and the
 // per-turn rewrites applied to it (person, channel policy, leading command).
 
-import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
+import { getCachedPerson, isIdentityConfigured } from '../identity.js'
 import { personMcpPermissions } from '../person-mcp.js'
 import { channelPolicyOverrides } from '../channel-policy.js'
 import { personKeyFrom } from '../credentials/person-pool.js'
@@ -36,13 +36,13 @@ export type PreprocessResult = {
 }
 
 /**
- * Apply the identity hook's per-person overrides to a chat turn. Only
+ * Apply the person filter's per-person overrides to a chat turn. Only
  * platform-authenticated speakers ('chat') get a person: a CLI-asserted actor
  * is never treated as that person. Explicit agent/model on the input win;
  * person permission rules are added to any explicit ones.
  */
 export function applyPersonToIngress(input: IngressInput): IngressInput {
-  if (!isIdentityHookConfigured()) return input
+  if (!isIdentityConfigured()) return input
   if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
   const person = getCachedPerson({ platform: input.actorPlatform ?? 'discord', id: input.userId })
   if (!person?.allowed) return input
@@ -62,7 +62,7 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
     ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
     ...(input.agent || !person.agent ? {} : { agent: person.agent }),
     ...(input.model || !person.model ? {} : { model: person.model }),
-    // The MCP pair goes before the hook's own rules, which may refine it.
+    // The MCP pair goes before the person's own rules, which may refine it.
     permissions: [...(input.permissions ?? []), ...mcpPermissions, ...person.permissions],
   }
 }
@@ -94,9 +94,9 @@ export type IngressInput = {
   // How userId was established: 'chat' (platform-authenticated author,
   // default) or 'cli' (asserted by a local `roadie send --user` caller).
   actorVia?: 'chat' | 'cli'
-  // Opaque host person id resolved by the identity hook for this turn.
+  // Opaque host person id resolved by the person filter for this turn.
   personId?: string
-  // Credential pool override from the identity hook (`credential_pool`),
+  // Credential pool override from the person filter (`credentialPool`),
   // applied to the speaker's billing pool when credential pools are enabled.
   credentialPool?: string
   // Discord message ID and thread ID for the source message, embedded in

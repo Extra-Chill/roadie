@@ -19,7 +19,7 @@ import {
 import { SHARED_POOL_ID } from './store.js'
 
 describe('personKeyFrom', () => {
-  test('prefers the identity-hook person id', () => {
+  test('prefers the person filter person id', () => {
     expect(personKeyFrom({ personId: 'wp:1', platform: 'discord', actorId: '42' })).toBe('wp:1')
   })
 
@@ -43,7 +43,7 @@ describe('poolIdForPersonKey', () => {
   })
 
   test('never case-folds: ids differing only in case get different pools', () => {
-    // Identity-hook person ids are opaque; folding case would let one person
+    // Person filter person ids are opaque; folding case would let one person
     // bill another's pool.
     expect(poolIdForPersonKey('Ab')).not.toBe(poolIdForPersonKey('aB'))
     expect(poolIdForPersonKey('Alice')).not.toBe('alice')
@@ -65,7 +65,7 @@ describe('poolIdForPersonKey', () => {
 })
 
 describe('resolvePersonPoolId', () => {
-  test('the identity hook override wins when it is a valid pool id', () => {
+  test('the person filter override wins when it is a valid pool id', () => {
     expect(resolvePersonPoolId({ personKey: 'alice', credentialPoolOverride: 'team' })).toBe('team')
     expect(resolvePersonPoolId({ personKey: 'alice', credentialPoolOverride: 'shared' })).toBe('shared')
   })
