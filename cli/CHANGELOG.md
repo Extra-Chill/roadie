@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.10] - 2026-10-19
+
+### Changed
+- Report fork notice failures accurately, clear orphan fork state, and survive orphaned gateway handshakes
+
 ## [0.73.9] - 2026-10-19
 
 ### Changed
