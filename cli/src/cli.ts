@@ -26,7 +26,7 @@ import taskCommands from './cli-commands/task.js'
 import threadCommands from './cli-commands/thread.js'
 import channelCommands from './cli-commands/channel.js'
 import userCommands from './cli-commands/user.js'
-import { isIdentityHookConfigured, setIdentityHookCommand } from './identity.js'
+import { isIdentityConfigured } from './identity.js'
 import {
   parseCredentialsModeStrict,
   parseThreadBillingStrict,
@@ -127,10 +127,6 @@ cli
     'Per-channel policy file (YAML/JSON): who the bot answers, when, threads, directory, agent, model, capabilities. Also ROADIE_CHANNELS_CONFIG',
   )
   .option(
-    '--identity-hook <command>',
-    'Command that maps a chat user to a person and their capabilities (JSON on stdin/stdout). Replaces role checks. Also ROADIE_IDENTITY_HOOK',
-  )
-  .option(
     '--restrict-directories',
     'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed',
   )
@@ -207,7 +203,6 @@ cli
       noCritique?: boolean
       enableFooterMentions?: boolean
       allowAllUsers?: boolean
-      identityHook?: string
       channelsConfig?: string
       promptConfig?: string
       contextProvider?: string
@@ -409,9 +404,6 @@ cli
           }
         }
 
-        if (options.identityHook) {
-          setIdentityHookCommand(options.identityHook)
-        }
         if (options.contextProvider) {
           setContextProviderCommand(options.contextProvider)
         }
@@ -426,9 +418,9 @@ cli
             `Channel policy enabled: ${getChannelsConfigPath()} (unconfigured channels are not answered)`,
           )
         }
-        if (isIdentityHookConfigured()) {
+        if (isIdentityConfigured()) {
           cliLogger.log(
-            'Identity hook enabled: access and capabilities come from the hook, not Discord roles',
+            'Identity enabled: access and capabilities come from the person filter, not Discord roles',
           )
         }
         if (options.allowAllUsers) {
@@ -579,6 +571,16 @@ cli.use(channelCommands)
 cli.use(userCommands)
 cli.use(sessionCommands)
 cli.use(maintenanceCommands)
+
+// The external identity command was removed (#312): identity comes only from
+// a plugin's `person` filter. Fail loudly instead of a bare unknown-option error.
+const removedIdentityFlag = process.argv.slice(2).find((arg) => /^--identity[-_]?hook(=|$)/i.test(arg))
+if (removedIdentityFlag) {
+  cliLogger.error(
+    `${removedIdentityFlag.split('=')[0]} was removed. Identity now comes only from the \`person\` filter: register it in a Roadie plugin with roadie.addFilter('person', ...) (see "Plugins and hooks" in the README).`,
+  )
+  process.exit(EXIT_NO_RESTART)
+}
 
 cli.version(getCurrentVersion())
 cli.help()

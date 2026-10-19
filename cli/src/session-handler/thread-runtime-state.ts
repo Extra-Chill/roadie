@@ -33,7 +33,7 @@ export type QueuedMessage = SessionTitleTurn & {
   // How userId was established: 'chat' (platform-authenticated author,
   // default) or 'cli' (asserted by a local `roadie send --user` caller).
   actorVia?: 'chat' | 'cli'
-  // Opaque host person id resolved by the identity hook for this turn.
+  // Opaque host person id resolved by the person filter for this turn.
   personId?: string
   // Image/file attachments extracted from the Discord message. Sent as
   // file parts alongside the prompt in the SDK call.

@@ -23,7 +23,7 @@ import { personKeyFrom } from './credentials/person-pool.js'
 import { listPersonMcpCredentials } from './credentials/person-mcp-store.js'
 import { claimPersonWelcome, releasePersonWelcome } from './database.js'
 import { applyFiltersAsync } from './hooks.js'
-import { isIdentityHookConfigured, type IdentityActor, type Person, type PersonMcpServer } from './identity.js'
+import { isIdentityConfigured, type IdentityActor, type Person, type PersonMcpServer } from './identity.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.DISCORD)
@@ -121,7 +121,7 @@ export function welcomePersonKey({
   isBot?: boolean
 }): string | null {
   if (via !== 'chat' || isBot) return null
-  if (!isIdentityHookConfigured()) return null
+  if (!isIdentityConfigured()) return null
   if (!person?.allowed) return null
   return personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
 }

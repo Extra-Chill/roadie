@@ -1,13 +1,14 @@
-// Per-person MCP servers: identity hook config, per-person token store,
+// Per-person MCP servers: person filter config, per-person token store,
 // backend registration and per-turn permission scoping.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { addFilter } from './hooks.js'
 import type { AgentBackend } from './agent-backend/types.js'
 import { evaluatePermission, parsePermissionRules } from './permission-policy.js'
-import { getIdentityHookCommand, resolvePerson, setIdentityHookCommand } from './identity.js'
+import { clearIdentityCache, resolvePerson, type PersonLookup } from './identity.js'
 import {
   getPersonMcpAccessToken,
   listPersonMcpCredentials,
@@ -28,31 +29,40 @@ let dataDir: string
 
 const MCP_URL = 'https://auth.example.com/wp-json/mcp'
 
-const hook = `input=$(cat)
-case "$input" in
-  *'"id":"alice"'*) echo '{"allowed":true,"person_id":"wp:1","mcp_servers":[{"name":"extrachill","url":"${MCP_URL}"}]}' ;;
-  *'"id":"bob"'*) echo '{"allowed":true,"person_id":"wp:2","mcp_servers":[{"name":"extrachill","url":"${MCP_URL}"}]}' ;;
-  *'"id":"carol"'*) echo '{"allowed":true,"person_id":"wp:3"}' ;;
-  *'"id":"mallory"'*) echo '{"allowed":false,"person_id":"wp:4","mcp_servers":[{"name":"extrachill","url":"${MCP_URL}"}]}' ;;
-  *'"id":"sloppy"'*) echo '{"allowed":true,"person_id":"wp:5","mcp_servers":[{"name":"Bad Name","url":"${MCP_URL}"},{"name":"plain","url":"http://evil.example.com/mcp"},{"name":"ok","url":"${MCP_URL}","credential":"shared-ref"},{"name":"ok","url":"${MCP_URL}"}]}' ;;
-  *) echo '{"allowed":false}' ;;
-esac`
+const extrachill = [{ name: 'extrachill', url: MCP_URL }]
+const sessions = new Set(['sessions'] as const)
+const people: Record<string, PersonLookup> = {
+  alice: { allowed: true, personId: 'wp:1', capabilities: sessions, permissions: [], mcpServers: extrachill },
+  bob: { allowed: true, personId: 'wp:2', capabilities: sessions, permissions: [], mcpServers: extrachill },
+  carol: { allowed: true, personId: 'wp:3', capabilities: sessions, permissions: [] },
+  mallory: { allowed: false, personId: 'wp:4', capabilities: new Set(), permissions: [], mcpServers: extrachill },
+  sloppy: {
+    allowed: true,
+    personId: 'wp:5',
+    capabilities: sessions,
+    permissions: [],
+    mcpServers: [
+      { name: 'Bad Name', url: MCP_URL },
+      { name: 'plain', url: 'http://evil.example.com/mcp' },
+      { name: 'ok', url: MCP_URL, credential: 'shared-ref' },
+      { name: 'ok', url: MCP_URL },
+    ],
+  },
+}
 
+let removePersonFilter: () => void
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-person-mcp-'))
   dataDir = path.join(dir, 'data')
-  const file = path.join(dir, 'hook.sh')
-  fs.writeFileSync(file, `#!/bin/sh\n${hook}\n`, { mode: 0o755 })
-  hookFile = file
+  removePersonFilter = addFilter('person', (person, { actor }) => people[actor.id] ?? person)
 })
 afterAll(() => {
+  removePersonFilter()
   fs.rmSync(dir, { recursive: true, force: true })
 })
 afterEach(() => {
-  setIdentityHookCommand(undefined)
+  clearIdentityCache()
 })
-
-let hookFile: string
 
 type AddCall = { directory: string; name: string; url: string; headers: Record<string, string> }
 
@@ -76,10 +86,8 @@ function fakeBackend() {
 }
 
 async function actorPerson(id: string) {
-  // Do not reset the hook here: setIdentityHookCommand clears the person cache.
-  if (getIdentityHookCommand() !== hookFile) setIdentityHookCommand(hookFile)
   const person = await resolvePerson({ actor: { platform: 'discord', id } })
-  if (!person) throw new Error('hook not configured')
+  if (!person) throw new Error('person filter not configured')
   return person
 }
 
@@ -96,7 +104,7 @@ async function registerFor(id: string, backend: AgentBackend) {
   })
 }
 
-describe('identity hook mcp_servers', () => {
+describe('person filter mcpServers', () => {
   test('allowed people get their servers, denied and plain people get none', async () => {
     expect((await actorPerson('alice')).mcpServers).toEqual([
       { name: 'extrachill', url: MCP_URL, credential: 'extrachill' },

@@ -28,7 +28,7 @@ import {
 } from 'discord.js'
 import { getDataDir } from '../config.js'
 import {
-  isIdentityHookConfigured,
+  isIdentityConfigured,
   resolvePerson,
   type IdentityActor,
   type Person,
@@ -127,7 +127,7 @@ async function personFor(interaction: ChatInputCommandInteraction | ButtonIntera
 }
 
 export async function handleConnectCommand({ command }: { command: ChatInputCommandInteraction }): Promise<void> {
-  if (!isIdentityHookConfigured()) {
+  if (!isIdentityConfigured()) {
     await command.reply({ content: 'Per-person services are not configured on this server.', flags: MessageFlags.Ephemeral })
     return
   }
@@ -150,7 +150,7 @@ export async function handleConnectButton(interaction: ButtonInteraction): Promi
   if (!parsed) return
   // In a guild the interaction listener has already deferred this privately.
   if (!interaction.deferred) await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-  if (!isIdentityHookConfigured()) {
+  if (!isIdentityConfigured()) {
     await interaction.editReply({ content: 'Per-person services are not configured on this server.' })
     return
   }

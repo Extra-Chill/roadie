@@ -41,7 +41,7 @@ wins over it.
   fallback. Use it when some people have subscriptions and others draw from a
   team account.
 
-A **person** is the identity hook's `person_id` when configured, otherwise
+A **person** is the `person` filter's `personId` when configured, otherwise
 `<platform>:<actorId>` (e.g. `discord:532385681268408341`). Each person gets
 their own pool directory under `<dataDir>/credentials/<poolId>/`, with its own
 lock, so people never contend with each other and an OAuth refresh for one
@@ -259,26 +259,25 @@ refresh); the answering candidate is then re-pinned for the rest of the turn.
 A TTL of 30 minutes bounds a missed idle event. Requests without a session
 resolve candidates fresh, exactly as before.
 
-## Identity hook: `credential_pool`
+## Person filter: `credentialPool`
 
-The identity hook (`--identity-hook <command>`, see
-[Plugins and hooks](README.md#plugins-and-hooks)) may return `credential_pool`
-for a person:
+The `person` filter (see [Plugins and hooks](../README.md#plugins-and-hooks))
+may return `credentialPool` for a person:
 
-```json
-{
-  "allowed": true,
-  "person_id": "wp:17",
-  "capabilities": ["sessions"],
-  "credential_pool": "shared"
-}
+```js
+roadie.addFilter('person', async () => ({
+  allowed: true,
+  personId: 'wp:17',
+  capabilities: new Set(['sessions']),
+  permissions: [],
+  credentialPool: 'shared',
+}))
 ```
 
 The override redirects everything that person bills: their pool becomes the
 named pool instead of the derived one. Uses: put a team on one pool, pin a
 guest to `shared`, or (combined with per-person mode) deny someone their own
-billing entirely. The field is optional and hooks that do not send it behave
-as before; an invalid pool id is ignored.
+billing entirely. The field is optional; an invalid pool id is ignored.
 
 ## Security
 
@@ -293,7 +292,7 @@ against other OS users, not against the agent your bot runs.
 - `global` mode is unaffected in practice: the credentials are the operator's
   own, the same exposure as Pi's own `auth.json`.
 - **Per-person servers should deny the `shell` capability to non-admins
-  through the identity hook** (`capabilities: ["sessions"]`, no `"shell"`),
+  through the `person` filter** (`capabilities: new Set(['sessions'])`, no `'shell'`),
   and keep `!` shell-prefixed messages and similar power tools admin-only.
 
 Phase 3 removes the exposure: the bot process's pool proxy holds every

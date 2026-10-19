@@ -130,7 +130,7 @@ Project-defined backend commands can be invoked through `/roadie <command>`.
 
 Personal commands need no thread and answer only the speaker (ephemeral):
 
-- `/roadie connect` lists the per-person MCP servers the identity hook names
+- `/roadie connect` lists the per-person MCP servers the `person` filter names
   for you, connected or not, with Connect and Disconnect buttons. Connect runs
   the OAuth device sign-in; the link and code replace that ephemeral message
   (through Slack's `response_url`) and the message updates again when the

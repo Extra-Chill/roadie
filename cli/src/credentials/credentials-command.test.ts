@@ -38,7 +38,7 @@ import {
 import { resetCatalogCacheForTests } from './provider-catalog.js'
 import { setDataDir } from '../config.js'
 import { store } from '../store.js'
-import { setIdentityHookCommand } from '../identity.js'
+import { clearIdentityCache } from '../identity.js'
 
 let dataDir: string
 
@@ -56,14 +56,14 @@ const TEST_CATALOG = {
 beforeEach(() => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-command-'))
   setDataDir(dataDir)
-  setIdentityHookCommand(null)
+  clearIdentityCache()
   store.setState({ credentialsMode: 'per-person' })
   resetCatalogCacheForTests(TEST_CATALOG)
 })
 
 afterEach(() => {
   store.setState({ credentialsMode: 'global' })
-  setIdentityHookCommand(null)
+  clearIdentityCache()
   resetCatalogCacheForTests()
 })
 

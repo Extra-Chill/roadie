@@ -8,7 +8,7 @@
 import * as discord from 'discord.js'
 import {
   getCachedPerson,
-  isIdentityHookConfigured,
+  isIdentityConfigured,
   personHas,
   type Capability,
 } from './identity.js'
@@ -66,23 +66,23 @@ function memberUserId(member: GuildMemberType | APIInteractionGuildMember): stri
 }
 
 /**
- * When an identity hook is configured, the hook decides. Entry points call
+ * When a person filter is configured, the filter decides. Entry points call
  * resolvePerson() first, so the person is cached by the time these synchronous
  * checks run; an uncached actor is denied (fail closed). Returns undefined
- * when no hook is configured, so callers keep the built-in role checks.
+ * when no person filter is configured, so callers keep the built-in role checks.
  */
 function hookCapability(
   member: GuildMemberType | APIInteractionGuildMember,
   capability: Capability,
 ): boolean | undefined {
-  if (!isIdentityHookConfigured()) return undefined
+  if (!isIdentityConfigured()) return undefined
   const person = getCachedPerson({ platform: 'discord', id: memberUserId(member) })
   return person ? personHas(person, capability) : false
 }
 
 /**
  * Whether this member may run raw shell commands (`!cmd`, /run-shell-command).
- * With an identity hook this is its own capability. Without one, Roadie keeps
+ * With a person filter this is its own capability. Without one, Roadie keeps
  * its built-in behavior: anyone with bot permission may run shell commands.
  */
 export function hasRoadieShellPermission(
@@ -166,12 +166,12 @@ export function hasRoadieAdminPermission(
 
 /**
  * Strictest admin check, for writes to the shared credential pool (/credentials
- * pool:shared): the identity hook's `admin` capability when a hook is
+ * pool:shared): the person filter's `admin` capability when one is
  * configured, otherwise Discord Administrator or Manage Server (the guild
  * owner passes, as in every other Roadie permission gate). Unlike
  * hasRoadieAdminPermission this never accepts the "Roadie" role and ignores
  * allowAllUsers: the shared pool holds everyone's billing credentials.
- * Uncached actors under a hook are denied (fail closed).
+ * Uncached actors under a person filter are denied (fail closed).
  */
 export function hasCredentialPoolAdminPermission(
   member: GuildMemberType | APIInteractionGuildMember | null,

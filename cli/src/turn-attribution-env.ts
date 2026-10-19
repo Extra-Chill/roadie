@@ -13,10 +13,10 @@
 //   ROADIE_ACTOR_NAME      display name, for display only
 //   ROADIE_ACTOR_VIA       "chat" = authenticated by the chat platform;
 //                          "cli" = asserted by a local `roadie send --user`
-//   ROADIE_PERSON_ID       opaque host person id from the identity hook
+//   ROADIE_PERSON_ID       opaque host person id from the person filter
 //
 // Attribution only. The actor is not authority: hosts that grant permissions
-// per person must map it through their own identity hook.
+// per person must map it through their own person filter.
 //
 // Extra shell variables: --shell-env <NAME=template> (repeatable) and
 // ROADIE_SHELL_ENV (JSON object) define additional variables as templates over
@@ -99,7 +99,7 @@ export const SHELL_ENV_TEMPLATES_ENV = 'ROADIE_SHELL_ENV'
  *   {channel_id}  the parent channel of that thread (turn attribution)
  *   {platform}    chat platform of the current turn's speaker
  *   {actor_id}    opaque platform user id of the current turn's speaker
- *   {person_id}   opaque host person id from the identity hook, recorded with
+ *   {person_id}   opaque host person id from the person filter, recorded with
  *                 the actor
  *
  * There is no {thread_url}: building one needs platform-specific context
