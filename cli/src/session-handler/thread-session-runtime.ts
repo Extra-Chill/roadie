@@ -14,7 +14,6 @@ import {
   RESTART_CONTINUATION_FAILED_NOTICE,
   RESTART_CONTINUATION_MAX_ATTEMPTS,
 } from '../service-lifecycle.js'
-import crypto from 'node:crypto'
 import type { ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
 import { createDiscordChatThread } from '../chat-platform/discord.js'
@@ -94,10 +93,6 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
   cancelSessionSleepForThread,
-  insertThreadQueueItem,
-  deleteThreadQueueItem,
-  deleteThreadQueueItems,
-  updateThreadQueueItemPayload,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -147,7 +142,6 @@ import {
   doesLatestUserTurnHaveNaturalCompletion,
   getContinuationTurnOutcome,
   didLatestUserTurnUseSleepTool,
-  didQuestionQueueHandoffSinceLatestQuestionAsked,
   getAssistantMessageIdsForLatestUserTurn,
   getCurrentTurnStartTime,
   isSessionBusy,
@@ -187,6 +181,7 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { TypingKeepalive } from './typing-keepalive.js'
 import { InteractiveUi } from './interactive-ui.js'
+import { MessageQueue } from './message-queue.js'
 import { resolveTurnContext, resolveTurnSystemPrompt } from './turn-context.js'
 import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
 import type { RuntimeOptions } from './runtime-registry.js'
@@ -208,7 +203,6 @@ import {
   getTimestampFromSnowflake,
   getTokenTotal,
   getWorkingDirectoryPromptKey,
-  parseQueuedMessagePayload,
   stripToastSessionId,
   toPromptFilePart,
   truncateSessionErrorMessage,
@@ -243,12 +237,13 @@ export class ThreadSessionRuntime {
 
   // Set to true by dispose(). Guards against queued work running after cleanup.
   private disposed = false
-  private dispatchingQueueId: string | undefined
 
   // Typing indicator scheduler (keepalive loop + repulse debounce).
   private readonly typing: TypingKeepalive
   // Permission and question prompts (question deferral + shown-request dedupe).
   private readonly interactiveUi: InteractiveUi
+  // Local per-thread message queue (persistence, drain, question handoff).
+  private readonly messageQueue: MessageQueue
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -352,6 +347,20 @@ export class ThreadSessionRuntime {
       isSessionBusy: (sessionId) => isSessionBusy({ events: this.eventBuffer, sessionId }),
       sendTyping: () => this.chat.sendTyping(),
     })
+    this.messageQueue = new MessageQueue({
+      threadId: this.threadId,
+      chat: this.chat,
+      isDisposed: () => this.disposed,
+      isBusy: () => this.isBusy(),
+      hasPendingQuestionUi: () => this.hasPendingQuestionUi(),
+      getEventBuffer: () => this.eventBuffer,
+      dispatchAction: (action) => this.dispatchAction(action),
+      markQueueDispatchBusy: (sessionId) => this.markQueueDispatchBusy(sessionId),
+      markQueueDispatchIdle: (sessionId) => this.markQueueDispatchIdle(sessionId),
+      markQuestionQueueHandoffStarted: (sessionId) => this.markQuestionQueueHandoffStarted(sessionId),
+      submitViaOpencodeQueue: (input) => this.submitViaOpencodeQueue(input),
+      dispatchPrompt: (input) => this.dispatchPrompt(input),
+    })
     this.interactiveUi = new InteractiveUi({
       threadId: this.thread.id,
       sdkDirectory: this.sdkDirectory,
@@ -366,7 +375,7 @@ export class ThreadSessionRuntime {
       flushCurrentTurnParts: (opts) => this.flushCurrentTurnParts(opts),
       dispatchAction: (action) => this.dispatchAction(action),
       onQuestionShown: (sessionId) => {
-        this.maybeHandoffQueuedItemForPendingQuestion({
+        this.messageQueue.maybeHandoffQueuedItemForPendingQuestion({
           sessionId,
           reason: 'question-shown',
         })
@@ -1222,7 +1231,7 @@ export class ThreadSessionRuntime {
   onInteractiveUiStateChanged(): void {
     this.typing.ensureTypingNow()
     void this.dispatchAction(() => {
-      return this.tryDrainQueue({ showIndicator: true })
+      return this.messageQueue.tryDrainQueue({ showIndicator: true })
     })
   }
 
@@ -2034,7 +2043,7 @@ export class ThreadSessionRuntime {
       // Drain any local-queue items that arrived while the session was busy
       // (e.g. slow preprocessing with a forced queue completing
       // during or just before idle). Same pattern as handleSessionError.
-      await this.tryDrainQueue({ showIndicator: true })
+      await this.messageQueue.tryDrainQueue({ showIndicator: true })
       return
     }
   }
@@ -2210,7 +2219,7 @@ export class ThreadSessionRuntime {
     // buffer in a "busy" state forever (no session.idle follows the error),
     // causing local-queue items to be stuck indefinitely. See #74.
     this.markQueueDispatchIdle(sessionId)
-    await this.tryDrainQueue({ showIndicator: true })
+    await this.messageQueue.tryDrainQueue({ showIndicator: true })
   }
 
   private handlePermissionReplied(properties: {
@@ -2260,78 +2269,10 @@ export class ThreadSessionRuntime {
     // Hand off only the next queued item to OpenCode immediately so the queue
     // resumes, but keep later items local so their `» user:` indicators still
     // appear one-by-one when they actually become active.
-    this.maybeHandoffQueuedItemForPendingQuestion({
+    this.messageQueue.maybeHandoffQueuedItemForPendingQuestion({
       sessionId,
       reason: 'question-replied',
     })
-  }
-
-  // Detached helper promise for the "question blocks while local queue has
-  // items" flow. Prevents overlapping single-item handoffs when the question is
-  // shown, answered, and new queued items arrive close together.
-  private questionQueueHandoffPromise: Promise<void> | null = null
-
-  private maybeHandoffQueuedItemForPendingQuestion({
-    sessionId,
-    reason,
-  }: {
-    sessionId: string | undefined
-    reason: 'question-shown' | 'question-replied' | 'queue-added-during-question'
-  }): void {
-    if (!sessionId) {
-      return
-    }
-    if (didQuestionQueueHandoffSinceLatestQuestionAsked({
-      events: this.eventBuffer,
-      sessionId,
-    })) {
-      return
-    }
-    if (this.getQueueLength() === 0) {
-      return
-    }
-    if (this.questionQueueHandoffPromise) {
-      return
-    }
-    logger.log(
-      `[QUESTION QUEUE HANDOFF] Queue has ${this.getQueueLength()} items, handing off first item (${reason})`,
-    )
-    this.questionQueueHandoffPromise = this.handoffQueuedItemForPendingQuestion({
-      sessionId,
-    }).catch((error) => {
-      logger.error('[QUESTION QUEUE HANDOFF] Failed to hand off queued message:', error)
-      if (error instanceof Error) {
-        void notifyError(error, 'Failed to hand off queued message during pending question')
-      }
-    }).finally(() => {
-      this.questionQueueHandoffPromise = null
-    })
-  }
-
-  private async handoffQueuedItemForPendingQuestion({
-    sessionId,
-  }: {
-    sessionId: string
-  }): Promise<void> {
-    if (this.disposed) {
-      return
-    }
-    if (this.state?.sessionId !== sessionId) {
-      logger.log(
-        `[QUESTION QUEUE HANDOFF] Session changed before queue handoff for thread ${this.threadId}`,
-      )
-      return
-    }
-
-    const next = threadState.dequeueItem(this.threadId)
-    if (!next) {
-      return
-    }
-
-    await this.sendQueueDrainIndicator(next)
-
-    this.markQuestionQueueHandoffStarted(sessionId)
-    await this.submitViaOpencodeQueue(next)
   }
 
   private async handleSessionStatus(event: {
@@ -2688,7 +2629,7 @@ export class ThreadSessionRuntime {
       const cleanupOnError = async (errorMessage: string) => {
         this.typing.stopTyping()
         await this.chat.sendMessage(errorMessage, { notify: true })
-        await this.tryDrainQueue({ showIndicator: true })
+        await this.messageQueue.tryDrainQueue({ showIndicator: true })
       }
 
       // ── Ensure session ──────────────────────────────────────
@@ -2977,10 +2918,6 @@ export class ThreadSessionRuntime {
   }
 
   /**
-   * Enqueue in roadie's local per-thread queue.
-   * Used for explicit queue workflows (slash commands, queueMessage=true).
-   */
-  /**
    * A new turn supersedes a pending sleep.
    *
    * Called from the two terminal routers rather than from the top of
@@ -3002,80 +2939,7 @@ export class ThreadSessionRuntime {
 
   private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
-    const queueId = crypto.randomBytes(8).toString('hex')
-    const queuedMessage: QueuedMessage = {
-      queueId,
-      prompt: input.prompt,
-      userId: input.userId,
-      username: input.username,
-      images: input.images,
-      appId: input.appId,
-      command: input.command,
-      agent: input.agent,
-      model: input.model,
-      variant: input.variant,
-      permissions: input.permissions,
-      injectionGuardPatterns: input.injectionGuardPatterns,
-      parentSessionId: input.parentSessionId,
-      sourceMessageId: input.sourceMessageId,
-      sourceThreadId: input.sourceThreadId,
-      sourceChannelId: input.sourceChannelId,
-      repliedMessage: input.repliedMessage,
-      sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
-      sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-      titlePrompt: input.titlePrompt,
-      noReply: input.noReply,
-      contextOnly: input.contextOnly,
-      isSleepWake: input.isSleepWake,
-      isRestartContinuation: input.isRestartContinuation,
-    }
-
-    let result: EnqueueResult = { queued: false, queueId }
-
-    await this.dispatchAction(async () => {
-      // Determine if the message will genuinely wait in queue
-      const position = (this.state?.queueItems.length ?? 0) + 1
-      result = this.isBusy()
-        ? { queued: true, position, queueId }
-        : { queued: false, queueId }
-
-      // Post the ack before the item is visible to any drain path.
-      const queueAckMessageId = result.queued && input.onLocalQueued
-        ? await input.onLocalQueued({ queueId, position }).catch((error) => {
-          logger.error(`[QUEUE] Failed to post queue ack for ${queueId}:`, error)
-          return undefined
-        })
-        : undefined
-      const item: QueuedMessage = queueAckMessageId
-        ? { ...queuedMessage, queueAckMessageId }
-        : queuedMessage
-
-      const persistResult = await insertThreadQueueItem({
-        queueId,
-        threadId: this.threadId,
-        payloadJson: JSON.stringify(item),
-      }).catch((error) => {
-        return new Error('Failed to persist queued message', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to persist queued message ${queueId} in thread ${this.threadId}: ${persistResult.message}`,
-        )
-        throw persistResult
-      }
-      threadState.enqueueItem(this.threadId, item)
-      const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-
-      if (this.hasPendingQuestionUi()) {
-        this.maybeHandoffQueuedItemForPendingQuestion({
-          sessionId: stateAfterEnqueue?.sessionId || this.state?.sessionId,
-          reason: 'queue-added-during-question',
-        })
-      }
-
-      await this.tryDrainQueue()
-    })
-    return result
+    return this.messageQueue.enqueueViaLocalQueue(input)
   }
 
   /**
@@ -3336,7 +3200,7 @@ export class ThreadSessionRuntime {
     // Enqueued synchronously, so it runs before the abort's session.idle can drain the queue.
     let cleared: threadState.QueuedMessage[] = []
     await this.dispatchAction(async () => {
-      cleared = await this.clearQueueNow()
+      cleared = await this.messageQueue.clearQueueNow()
     })
     return cleared
   }
@@ -3381,81 +3245,22 @@ export class ThreadSessionRuntime {
 
   /** Number of messages waiting in the queue. */
   getQueueLength(): number {
-    return this.state?.queueItems.length ?? 0
+    return this.messageQueue.getQueueLength()
   }
 
   /** Clear all queued messages. Returns the removed items. */
   async clearQueue(): Promise<threadState.QueuedMessage[]> {
-    let cleared: threadState.QueuedMessage[] = []
-    await this.dispatchAction(async () => {
-      cleared = await this.clearQueueNow()
-    })
-    return cleared
-  }
-
-  // Must run inside dispatchAction.
-  private async clearQueueNow(): Promise<threadState.QueuedMessage[]> {
-    const persistResult = await deleteThreadQueueItems(this.threadId).catch((error) => {
-      return new Error('Failed to clear persisted queue', { cause: error })
-    })
-    if (persistResult instanceof Error) {
-      logger.error(
-        `[QUEUE] Failed to clear persisted queue for thread ${this.threadId}: ${persistResult.message}`,
-      )
-      return []
-    }
-    return threadState.clearQueueItems(this.threadId)
+    return this.messageQueue.clearQueue()
   }
 
   /** Remove a queued message by its 1-based position. */
   async removeQueuePosition(position: number): Promise<threadState.QueuedMessage | undefined> {
-    let removed: threadState.QueuedMessage | undefined
-    await this.dispatchAction(async () => {
-      const current = this.state?.queueItems[position - 1]
-      if (!current) {
-        return
-      }
-      if (current.queueId) {
-        const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
-          return new Error('Failed to delete persisted queue item', { cause: error })
-        })
-        if (persistResult instanceof Error) {
-          logger.error(
-            `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
-          )
-          return
-        }
-      }
-      removed = threadState.removeQueueItemAtPosition(this.threadId, position)
-    })
-    return removed
+    return this.messageQueue.removeQueuePosition(position)
   }
 
   /** Remove a queued message by stable queue id. */
   async removeQueueItemById(queueId: string): Promise<threadState.QueuedMessage | undefined> {
-    let removed: threadState.QueuedMessage | undefined
-    await this.dispatchAction(async () => {
-      const persistResult = await deleteThreadQueueItem(queueId).catch((error) => {
-        return new Error('Failed to delete persisted queue item', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to delete persisted queue item ${queueId}: ${persistResult.message}`,
-        )
-        return
-      }
-      removed = threadState.removeQueueItemById(this.threadId, queueId)
-      if (!removed && persistResult) {
-        const parsed = parseQueuedMessagePayload({
-          queueId: persistResult.queue_id,
-          payloadJson: persistResult.payload_json,
-        })
-        if (!(parsed instanceof Error)) {
-          removed = parsed
-        }
-      }
-    })
-    return removed
+    return this.messageQueue.removeQueueItemById(queueId)
   }
 
   /**
@@ -3464,88 +3269,18 @@ export class ThreadSessionRuntime {
    * Returns { found: true, removed } if the item was in the queue,
    * or { found: false } if it was already dispatched or never queued.
    */
-  async updateQueuedMessage({
-    sourceMessageId,
-    newPrompt,
-  }: {
+  async updateQueuedMessage(input: {
     sourceMessageId: string
     newPrompt: string
-    }): Promise<{ found: boolean; removed: boolean }> {
-    let result: { found: boolean; removed: boolean } = { found: false, removed: false }
-    await this.dispatchAction(async () => {
-      const trimmed = newPrompt.trim()
-      const original = this.state?.queueItems.find((item) => {
-        return item.sourceMessageId === sourceMessageId
-      })
-      if (!original) {
-        result = { found: false, removed: false }
-        return
-      }
-      const queueId = original.queueId
-      if (queueId) {
-        const persistResult = trimmed
-          ? await updateThreadQueueItemPayload({
-            queueId,
-            payloadJson: JSON.stringify({ ...original, prompt: trimmed }),
-          }).catch((error) => {
-            return new Error('Failed to update persisted queue item', { cause: error })
-          })
-          : await deleteThreadQueueItem(queueId).catch((error) => {
-            return new Error('Failed to delete persisted queue item', { cause: error })
-          })
-        if (persistResult instanceof Error) {
-          logger.error(
-            `[QUEUE] Failed to persist queue update for ${queueId}: ${persistResult.message}`,
-          )
-          result = { found: true, removed: false }
-          return
-        }
-      }
-      threadState.updateQueueItemBySourceMessageId(
-        this.threadId,
-        sourceMessageId,
-        (item) => {
-          if (!trimmed) return null
-          return { ...item, prompt: trimmed }
-        },
-      )
-      result = trimmed
-        ? { found: true, removed: false }
-        : { found: true, removed: true }
-    })
-    return result
+  }): Promise<{ found: boolean; removed: boolean }> {
+    return this.messageQueue.updateQueuedMessage(input)
   }
 
   /** Remove a queued message identified by its Discord source message ID. */
   async removeQueuedMessage(
     sourceMessageId: string,
   ): Promise<threadState.QueuedMessage | undefined> {
-    let removed: threadState.QueuedMessage | undefined
-    await this.dispatchAction(async () => {
-      const current = this.state?.queueItems.find((item) => {
-        return item.sourceMessageId === sourceMessageId
-      })
-      if (!current) {
-        return
-      }
-      if (current.queueId) {
-        const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
-          return new Error('Failed to delete persisted queue item', { cause: error })
-        })
-        if (persistResult instanceof Error) {
-          logger.error(
-            `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
-          )
-          return
-        }
-      }
-      removed = threadState.updateQueueItemBySourceMessageId(
-        this.threadId,
-        sourceMessageId,
-        () => null,
-      )
-    })
-    return removed
+    return this.messageQueue.removeQueuedMessage(sourceMessageId)
   }
 
   async mergeRestoredQueueAndDrain(items: QueuedMessage[]): Promise<void> {
@@ -3559,7 +3294,7 @@ export class ThreadSessionRuntime {
     if (liveStatus === 'unavailable') {
       return
     }
-    await this.tryDrainQueue({ showIndicator: true })
+    await this.messageQueue.tryDrainQueue({ showIndicator: true })
   }
 
   private async hydrateLiveSessionStatus(): Promise<'idle' | 'busy' | 'unavailable'> {
@@ -3591,125 +3326,6 @@ export class ThreadSessionRuntime {
     }
     this.markQueueDispatchBusy(sessionId)
     return 'busy'
-  }
-
-  private async acknowledgeAcceptedQueueItem(item: QueuedMessage): Promise<void> {
-    if (!item.queueId) {
-      return
-    }
-    await this.dispatchAction(async () => {
-      const persistResult = await deleteThreadQueueItem(item.queueId!).catch((error) => {
-        return new Error('Failed to delete persisted queue item', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to persist accept of ${item.queueId}: ${persistResult.message}`,
-        )
-        return
-      }
-      threadState.removeQueueItemById(this.threadId, item.queueId!)
-    })
-  }
-
-  // Silent reply to the message that queued the item. Discord replies must
-  // reference a message in the same channel.
-  private async sendQueueDrainIndicator(item: QueuedMessage): Promise<void> {
-    const replyTarget = item.queueAckMessageId
-      ?? (item.sourceChannelId === this.threadId ? item.sourceMessageId : undefined)
-    const content = (() => {
-      if (replyTarget) {
-        return asSubtext('Executing queued prompt')
-      }
-      const preview = item.command
-        ? `/${item.command.name}`
-        : item.prompt.replace(/\s+/g, ' ').trim().slice(0, 150)
-      return asSubtext(`Executing queued prompt from ${item.username}: ${preview}`)
-    })()
-    const sendResult = await this.chat.sendNotice(content, replyTarget ? { replyTo: replyTarget } : undefined)
-    if (sendResult instanceof Error) {
-      discordLogger.error('Failed to send queue drain indicator:', sendResult)
-    }
-  }
-
-  // ── Queue Drain ─────────────────────────────────────────────
-
-  /**
-   * Check if we can dispatch the next queued message. If so, dequeue and
-   * start dispatchPrompt (detached — does not block the action queue).
-   * Called after enqueue, after run finishes, or after a blocker resolves.
-   *
-   * @param showIndicator - When true, shows "» username: prompt" in Discord.
-   *   Only set to true when draining after a previous run finishes or a
-   *   blocker resolves — not on the immediate first dispatch from enqueueIncoming.
-   */
-  private async tryDrainQueue({ showIndicator = false } = {}): Promise<void> {
-    const thread = threadState.getThreadState(this.threadId)
-    if (!thread) {
-      return
-    }
-    if (thread.queueItems.length === 0) {
-      return
-    }
-    // Interactive UI (action buttons, questions, permissions) does NOT block
-    // queue drain. The isSessionBusy check is sufficient: questions and
-    // permissions keep the agent session busy, so drain is naturally
-    // blocked. Action buttons are fire-and-forget (session already idle),
-    // so queued messages should dispatch immediately.
-
-    const sessionBusy = thread.sessionId
-      ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
-      : false
-    if (sessionBusy) {
-      return
-    }
-
-    if (this.dispatchingQueueId) return
-    const next = thread.queueItems[0]
-    if (!next) {
-      return
-    }
-    this.dispatchingQueueId = next.queueId
-
-    logger.log(
-      `[QUEUE DRAIN] Processing queued message from ${next.username}`,
-    )
-
-    // Show queued message indicator only for messages that actually waited
-    // behind a running request — not for the first immediate dispatch.
-    if (showIndicator) {
-      await this.sendQueueDrainIndicator(next)
-    }
-
-    // Start dispatch (detached — does not block the action queue).
-    // The prompt call is long-running. Events continue to flow through
-    // the action queue while the SDK call is in-flight. Event-derived busy
-    // gating prevents concurrent local-queue dispatches. Mark busy now to
-    // close the tiny window before the first session.status busy arrives.
-    const dispatchSessionId = thread.sessionId
-    if (dispatchSessionId) {
-      this.markQueueDispatchBusy(dispatchSessionId)
-    }
-    let accepted = false
-    void this.dispatchPrompt(next).then(async (ok) => {
-      accepted = ok
-      if (ok) {
-        await this.acknowledgeAcceptedQueueItem(next)
-      }
-    }).catch(async (err) => {
-      logger.error('[DISPATCH] Prompt dispatch failed:', err)
-      void notifyError(err, 'Runtime prompt dispatch failed')
-      if (dispatchSessionId) {
-        this.markQueueDispatchIdle(dispatchSessionId)
-      }
-    }).finally(() => {
-      this.dispatchingQueueId = undefined
-      if (!accepted) {
-        return
-      }
-      void this.dispatchAction(() => {
-        return this.tryDrainQueue({ showIndicator: true })
-      })
-    })
   }
 
   // ── Prompt Dispatch ─────────────────────────────────────────
