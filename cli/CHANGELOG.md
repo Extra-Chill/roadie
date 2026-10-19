@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.73.3] - 2026-10-19
+
+### Changed
+- Make the person filter the single identity input; remove the identity hook command
+- Route message components through one custom-id route table
+
 ## [0.73.2] - 2026-10-19
 
 ### Changed
