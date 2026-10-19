@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.4] - 2026-10-19
+
+### Changed
+- Move module-level code out of thread-session-runtime.ts (slice 1 of #310)
+
 ## [0.73.3] - 2026-10-19
 
 ### Changed
