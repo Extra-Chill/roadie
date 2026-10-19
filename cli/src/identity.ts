@@ -22,6 +22,12 @@
 //                              "credential": "extrachill" }], // optional token reference
 //            "ttl_seconds": 300 }                       // optional cache TTL
 //
+// Caching: an answer is reused for ttl_seconds (default 300). After that, an
+// allowed person is still answered from the last lookup (up to an hour old)
+// while a background lookup refreshes it, so a revocation takes effect at most
+// ttl_seconds plus one interaction later. ttl_seconds 0 disables caching and
+// gives immediate revocation. Denied actors always wait for a fresh lookup.
+//
 // Capabilities:
 //   sessions  start and continue sessions (default when allowed)
 //   shell     run raw shell commands (`!cmd`, /run-shell-command)
@@ -125,11 +131,12 @@ const LOOKUP_FAILED: Person = Object.freeze({ ...DENIED, lookupFailed: true })
 // transient failure clears quickly.
 const FAILURE_TTL_SECONDS = 10
 
-// How long the last successful lookup may stand in for a failed one. A
-// transient failure (a slow host lookup timing out) keeps a recently verified
-// person working instead of locking them out; revocations land on the next
-// successful lookup.
-const STALE_IF_ERROR_SECONDS = MAX_TTL_SECONDS
+// How long the last successful lookup may stand in for a fresh one: answered
+// while an expired entry is refreshed in the background (allowed people only),
+// and used when the refresh fails, so a slow or flaky host lookup neither
+// delays nor locks out a recently verified person. Revocations land on the
+// next successful lookup.
+const STALE_WINDOW_SECONDS = MAX_TTL_SECONDS
 
 type CacheEntry = { person: Person; expiresAt: number }
 
@@ -199,6 +206,12 @@ export function getCachedPerson(actor: IdentityActor): Person | undefined {
 /**
  * Resolve the person behind an actor. Returns null when no hook is
  * configured, so callers fall back to built-in checks.
+ *
+ * Stale-while-revalidate: once the cache entry expires, an actor last
+ * resolved as allowed within the stale window is answered from that lookup at
+ * once (held in the cache for the failure TTL so the synchronous checks see
+ * it) while one deduplicated lookup refreshes it in the background. Denied,
+ * never-resolved, uncached (ttl_seconds 0) and cleared actors wait.
  */
 export async function resolvePerson({
   actor,
@@ -215,8 +228,31 @@ export async function resolvePerson({
 
   const key = cacheKey(actor)
   const pending = inflight.get(key)
-  if (pending) return pending
+  const lookup = pending ?? startLookup({ command, key, actor, context })
+  const known = lastKnown.get(key)
+  const now = Date.now()
+  if (!known?.person.allowed || now - known.resolvedAt > STALE_WINDOW_SECONDS * 1000) return lookup
 
+  if (!pending) {
+    lookup.catch((error: unknown) => {
+      logger.warn(`[IDENTITY] background refresh failed for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
+  cache.set(key, { person: known.person, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
+  return known.person
+}
+
+function startLookup({
+  command,
+  key,
+  actor,
+  context,
+}: {
+  command: string | undefined
+  key: string
+  actor: IdentityActor
+  context: IdentityContext
+}): Promise<Person> {
   const generation = generations.get(key) ?? 0
   const base = command
     ? runHook({ command, actor, context })
@@ -237,16 +273,21 @@ export async function resolvePerson({
       const now = Date.now()
       if (failed || filtered.lookupFailed) {
         const known = lastKnown.get(key)
-        const stale = known && now - known.resolvedAt <= STALE_IF_ERROR_SECONDS * 1000 ? known.person : undefined
+        const stale = known && now - known.resolvedAt <= STALE_WINDOW_SECONDS * 1000 ? known.person : undefined
         if (stale) logger.warn(`[IDENTITY] lookup failed for ${key}; using the last successful lookup`)
         const resolved = stale ?? LOOKUP_FAILED
         if (current()) cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
         return resolved
       }
-      // A hook that disables caching (ttl_seconds 0) gets no stale fallback.
-      if (ttlSeconds > 0 && current()) {
-        cache.set(key, { person: filtered, expiresAt: now + ttlSeconds * 1000 })
-        lastKnown.set(key, { person: filtered, resolvedAt: now })
+      // A hook that disables caching (ttl_seconds 0) gets no stale answers.
+      if (current()) {
+        if (ttlSeconds > 0) {
+          cache.set(key, { person: filtered, expiresAt: now + ttlSeconds * 1000 })
+          lastKnown.set(key, { person: filtered, resolvedAt: now })
+        } else {
+          cache.delete(key)
+          lastKnown.delete(key)
+        }
       }
       return filtered
     })
@@ -255,34 +296,6 @@ export async function resolvePerson({
     })
   inflight.set(key, promise)
   return promise
-}
-
-/**
- * resolvePerson for interactions whose first response must come within
- * Discord's three-second deadline but cannot be deferred (modal openers).
- * An actor with a successful lookup within the stale window is answered from
- * it at once, held in the cache for the failure TTL so the synchronous checks
- * see it, while a fresh lookup refreshes it in the background. Only an actor
- * Roadie has never resolved waits for the lookup.
- */
-export async function resolvePersonPreferKnown(
-  args: { actor: IdentityActor; context?: IdentityContext },
-): Promise<Person | null> {
-  if (!getIdentityHookCommand() && !hasFilter('person')) return null
-  const cached = getCachedPerson(args.actor)
-  if (cached) return cached
-  const key = cacheKey(args.actor)
-  const known = lastKnown.get(key)
-  const now = Date.now()
-  if (!known || now - known.resolvedAt > STALE_IF_ERROR_SECONDS * 1000) {
-    return await resolvePerson(args)
-  }
-  // Start the refresh before seeding the cache, or it would hit the seed.
-  void resolvePerson(args).catch((error: unknown) => {
-    logger.warn(`[IDENTITY] background refresh failed for ${key}: ${error instanceof Error ? error.message : String(error)}`)
-  })
-  cache.set(key, { person: known.person, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
-  return known.person
 }
 
 /** Reply for an actor whose identity lookup failed (not a permission denial). */

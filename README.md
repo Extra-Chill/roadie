@@ -204,6 +204,8 @@ Plugins can also register a whole chat platform with `roadie.registerChatPlatfor
 
 Hosts that prefer external commands to code can use the flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 
+The resolved person is cached for the identity hook's `ttl_seconds` (default 300, max 3600). When that expires, a person last resolved as allowed is answered from that lookup (up to an hour old) while one background lookup refreshes it, so a slow host lookup never delays a message. A revocation therefore takes effect at most `ttl_seconds` plus one interaction later; return `ttl_seconds: 0` for immediate revocation (every interaction waits for the lookup). Denied and newly linked people always wait for a fresh lookup, so a new grant applies at once.
+
 Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROADIE_CHANNEL_ID` and `ROADIE_PERSON_ID`, so scripts the agent runs know who they are acting for.
 
 ### Per-person MCP servers

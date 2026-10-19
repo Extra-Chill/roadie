@@ -4,15 +4,15 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
 import {
   clearIdentityCache,
   getCachedPerson,
   isIdentityHookConfigured,
   personHas,
   resolvePerson,
-  resolvePersonPreferKnown,
   setIdentityHookCommand,
+  type Person,
 } from './identity.js'
 import { addFilter } from './hooks.js'
 import {
@@ -190,37 +190,180 @@ describe('identity hook', () => {
     }
   })
 
-  test('resolvePersonPreferKnown answers from the last known person and refreshes it', async () => {
-    const actor = { platform: 'discord', id: 'modal-opener' }
-    let release: () => void = () => undefined
-    let slow = false
-    let lookups = 0
-    const removeFilter = addFilter('person', async () => {
-      lookups++
-      if (slow) await new Promise<void>((resolve) => { release = resolve })
-      return { allowed: true, personId: slow ? 'wp:2' : 'wp:1', capabilities: new Set(['sessions'] as const), permissions: [] }
-    })
-    const now = Date.now()
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
-    try {
-      // A cold actor waits for the lookup.
-      expect((await resolvePersonPreferKnown({ actor }))?.personId).toBe('wp:1')
-      expect(lookups).toBe(1)
+  describe('stale-while-revalidate', () => {
+    const allowed = (personId: string): Person => ({ allowed: true, personId, capabilities: new Set(['sessions'] as const), permissions: [] })
+    const denied: Person = { allowed: false, capabilities: new Set(), permissions: [] }
 
-      // Expired: answered at once from the last lookup, visible to sync checks.
-      slow = true
-      clock.mockReturnValue(now + 301_000)
-      expect((await resolvePersonPreferKnown({ actor }))?.personId).toBe('wp:1')
-      expect(getCachedPerson(actor)?.personId).toBe('wp:1')
-      // The refresh runs in the background and replaces it.
-      await vi.waitFor(() => expect(lookups).toBe(2))
-      release()
-      await vi.waitFor(() => expect(getCachedPerson(actor)?.personId).toBe('wp:2'))
-    } finally {
-      clock.mockRestore()
-      removeFilter()
-      clearIdentityCache(actor)
+    // A `person` filter whose answer the test sets and whose lookups block
+    // until released.
+    function gatedFilter(initial: Person) {
+      const state = { answer: initial, gated: false, started: 0, release: () => {} }
+      const removeFilter = addFilter('person', async () => {
+        state.started++
+        if (state.gated) await new Promise<void>((resolve) => { state.release = resolve })
+        return state.answer
+      })
+      return { state, removeFilter }
     }
+
+    const isPending = async (promise: Promise<unknown>) => {
+      // Give the call a few microtasks to settle; a gated lookup never does.
+      let settled = false
+      void promise.then(() => { settled = true })
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+      return !settled
+    }
+
+    let clock: MockInstance<() => number>
+    let now: number
+    beforeEach(() => {
+      now = Date.now()
+      clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    })
+    afterEach(() => clock.mockRestore())
+    const expire = () => clock.mockReturnValue(now + 301_000)
+
+    test('an expired, allowed actor is answered at once and the refresh replaces it', async () => {
+      const actor = { platform: 'discord', id: 'swr-allowed' }
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        expect((await resolvePerson({ actor }))?.personId).toBe('wp:1')
+
+        expire()
+        state.gated = true
+        state.answer = allowed('wp:2')
+        const stale = resolvePerson({ actor })
+        expect(await isPending(stale)).toBe(false)
+        expect((await stale)?.personId).toBe('wp:1')
+        expect(getCachedPerson(actor)?.personId).toBe('wp:1')
+        expect(state.started).toBe(2)
+
+        state.release()
+        await vi.waitFor(() => expect(getCachedPerson(actor)?.personId).toBe('wp:2'))
+        expect((await resolvePerson({ actor }))?.personId).toBe('wp:2')
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('a refresh that denies the person applies from the next call', async () => {
+      const actor = { platform: 'discord', id: 'swr-revoked' }
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        await resolvePerson({ actor })
+        expire()
+        state.gated = true
+        state.answer = denied
+        const stale = resolvePerson({ actor })
+        expect(await isPending(stale)).toBe(false)
+        expect((await stale)?.allowed).toBe(true)
+        state.release()
+        await vi.waitFor(() => expect(getCachedPerson(actor)?.allowed).toBe(false))
+        expect((await resolvePerson({ actor }))?.allowed).toBe(false)
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('concurrent stale hits share one refresh', async () => {
+      const actor = { platform: 'discord', id: 'swr-concurrent' }
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        await resolvePerson({ actor })
+        expire()
+        state.gated = true
+        const stale = Promise.all([resolvePerson({ actor }), resolvePerson({ actor }), resolvePerson({ actor })])
+        expect(await isPending(stale)).toBe(false)
+        const people = await stale
+        expect(people.map((person) => person?.personId)).toEqual(['wp:1', 'wp:1', 'wp:1'])
+        // The seeded entry outlives its failure TTL while the refresh still runs.
+        clock.mockReturnValue(now + 312_000)
+        expect((await resolvePerson({ actor }))?.personId).toBe('wp:1')
+        expect(state.started).toBe(2)
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('a never-resolved actor waits for the lookup', async () => {
+      const actor = { platform: 'discord', id: 'swr-new' }
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        state.gated = true
+        const person = resolvePerson({ actor })
+        expect(await isPending(person)).toBe(true)
+        state.release()
+        expect((await person)?.personId).toBe('wp:1')
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('an expired denial waits, so a new grant applies at once', async () => {
+      const actor = { platform: 'discord', id: 'swr-denied' }
+      const { state, removeFilter } = gatedFilter(denied)
+      try {
+        expect((await resolvePerson({ actor }))?.allowed).toBe(false)
+        expire()
+        state.gated = true
+        state.answer = allowed('wp:1')
+        const person = resolvePerson({ actor })
+        expect(await isPending(person)).toBe(true)
+        state.release()
+        expect((await person)?.allowed).toBe(true)
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('a cleared actor waits for the lookup', async () => {
+      const actor = { platform: 'discord', id: 'swr-cleared' }
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        await resolvePerson({ actor })
+        clearIdentityCache(actor)
+        state.gated = true
+        state.answer = allowed('wp:2')
+        const person = resolvePerson({ actor })
+        expect(await isPending(person)).toBe(true)
+        state.release()
+        expect((await person)?.personId).toBe('wp:2')
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
+
+    test('a hook with ttl_seconds 0 always waits for the lookup', async () => {
+      setIdentityHookCommand(writeHook('swr-nocache.sh', `cat >/dev/null; echo '{"allowed":true,"person_id":"wp:1","ttl_seconds":0}'`))
+      const actor = { platform: 'discord', id: 'swr-uncached' }
+      // The filter keeps the hook's ttl_seconds 0 and gates the lookup.
+      const { state, removeFilter } = gatedFilter(allowed('wp:1'))
+      try {
+        expect((await resolvePerson({ actor }))?.personId).toBe('wp:1')
+        state.gated = true
+        const person = resolvePerson({ actor })
+        await vi.waitFor(() => expect(state.started).toBe(2))
+        expect(await isPending(person)).toBe(true)
+        state.release()
+        expect((await person)?.personId).toBe('wp:1')
+      } finally {
+        state.release()
+        removeFilter()
+        clearIdentityCache(actor)
+      }
+    })
   })
 
   test('no hook configured: resolvePerson returns null', async () => {
