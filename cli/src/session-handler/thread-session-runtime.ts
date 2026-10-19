@@ -43,7 +43,7 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
-import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
+import { getCachedPerson, isIdentityConfigured } from '../identity.js'
 import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
 import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
 import {
@@ -856,13 +856,13 @@ export type PreprocessResult = {
 }
 
 /**
- * Apply the identity hook's per-person overrides to a chat turn. Only
+ * Apply the person filter's per-person overrides to a chat turn. Only
  * platform-authenticated speakers ('chat') get a person: a CLI-asserted actor
  * is never treated as that person. Explicit agent/model on the input win;
  * person permission rules are added to any explicit ones.
  */
 export function applyPersonToIngress(input: IngressInput): IngressInput {
-  if (!isIdentityHookConfigured()) return input
+  if (!isIdentityConfigured()) return input
   if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
   const person = getCachedPerson({ platform: input.actorPlatform ?? 'discord', id: input.userId })
   if (!person?.allowed) return input
@@ -882,7 +882,7 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
     ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
     ...(input.agent || !person.agent ? {} : { agent: person.agent }),
     ...(input.model || !person.model ? {} : { model: person.model }),
-    // The MCP pair goes before the hook's own rules, which may refine it.
+    // The MCP pair goes before the person's own rules, which may refine it.
     permissions: [...(input.permissions ?? []), ...mcpPermissions, ...person.permissions],
   }
 }
@@ -914,9 +914,9 @@ export type IngressInput = {
   // How userId was established: 'chat' (platform-authenticated author,
   // default) or 'cli' (asserted by a local `roadie send --user` caller).
   actorVia?: 'chat' | 'cli'
-  // Opaque host person id resolved by the identity hook for this turn.
+  // Opaque host person id resolved by the person filter for this turn.
   personId?: string
-  // Credential pool override from the identity hook (`credential_pool`),
+  // Credential pool override from the person filter (`credentialPool`),
   // applied to the speaker's billing pool when credential pools are enabled.
   credentialPool?: string
   // Discord message ID and thread ID for the source message, embedded in
@@ -3620,7 +3620,7 @@ export class ThreadSessionRuntime {
    * A turn without a userId clears the actor. Failures are logged, never fatal.
    *
    * With credential pools enabled this also resolves the speaker's billing
-   * pool (person id, else `<platform>:<actorId>`, with the identity hook's
+   * pool (person id, else `<platform>:<actorId>`, with the person filter's
    * `credential_pool` override) onto the attribution row, and claims session
    * ownership for the first human speaker (insert-or-ignore).
    *
@@ -5384,7 +5384,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Connect the speaker's own MCP servers, authenticated with their stored
-   * credential. Only chat speakers allowed by the identity hook get any;
+   * credential. Only chat speakers allowed by the person filter get any;
    * their previously resolved person is read from cache. Turns without a
    * cached person get no speaker MCP servers. Never fatal.
    */
@@ -5395,7 +5395,7 @@ export class ThreadSessionRuntime {
     client: AgentBackend
     input: Pick<IngressInput, 'userId' | 'actorVia' | 'personId'>
   }): Promise<void> {
-    if (!isIdentityHookConfigured()) return
+    if (!isIdentityConfigured()) return
     if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
     const actor = { platform: this.chat.platform, id: input.userId }
     const person = getCachedPerson(actor)

@@ -245,7 +245,7 @@ async function migrateSchema({
     'ALTER TABLE session_sleeps ADD COLUMN delivery_id TEXT',
     'ALTER TABLE session_sleeps ADD COLUMN attempts INTEGER DEFAULT 0',
     'ALTER TABLE session_sleeps ADD COLUMN last_attempt_at DATETIME',
-    // session_actors shipped without person_id (identity hook added later).
+    // session_actors shipped without person_id (identity lookup added later).
     'ALTER TABLE session_actors ADD COLUMN person_id TEXT',
     // session_actors shipped without credential_pool (credential pools phase 2a).
     'ALTER TABLE session_actors ADD COLUMN credential_pool TEXT',

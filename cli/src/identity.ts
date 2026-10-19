@@ -1,57 +1,52 @@
-// Host identity hook: map a chat actor to a person and their permissions.
+// Identity: map a chat actor to a person and their permissions.
 //
 // Roadie knows *who spoke* (an actor authenticated by the chat platform). It
-// does not know who that is in the host's world. An optional host-supplied
-// command answers that question, so a host (e.g. one that maps Discord users
-// to accounts in its own system) can decide per person what they may do,
+// does not know who that is in the host's world. A host plugin answers that
+// question with the `person` filter, so a host (e.g. one that maps Discord
+// users to accounts in its own system) can decide per person what they may do,
 // without Roadie learning anything host-specific.
 //
-// Configure with ROADIE_IDENTITY_HOOK (or --identity-hook): a command run
-// through the shell. It receives one JSON object on stdin and must print one
-// JSON object on stdout.
+//   addFilter('person', async (person, { actor, context }) => ({
+//     allowed: true,
+//     personId: 'opaque-host-id',                 // optional
+//     capabilities: new Set(['sessions', 'shell', 'admin']),
+//     agent: '…', model: '…',                     // optional overrides
+//     permissions: ['bash:deny'],                 // session rules
+//     credentialPool: 'team-pool',                // optional pool override
+//     mcpServers: [{ name: 'extrachill',          // optional per-person MCP servers
+//                    url: 'https://…/mcp',        // https (http only for loopback)
+//                    credential: 'extrachill' }], // token reference
+//     ttlSeconds: 300,                            // optional cache TTL
+//   }))
 //
-//   stdin  { "version": 1, "actor": { "platform": "discord", "id": "…", "name": "…" },
-//            "context": { "guild_id": "…", "channel_id": "…" } }
-//   stdout { "allowed": true,
-//            "person_id": "opaque-host-id",            // optional
-//            "capabilities": ["sessions", "shell", "admin"],
-//            "agent": "…", "model": "…",                // optional overrides
-//            "permissions": ["bash:deny", …],           // optional session rules
-//            "mcp_servers": [{ "name": "extrachill",     // optional per-person MCP servers
-//                              "url": "https://…/mcp",    // https (http only for loopback)
-//                              "credential": "extrachill" }], // optional token reference
-//            "ttl_seconds": 300 }                       // optional cache TTL
+// The filter starts from null; returning null (nobody vouches for the actor)
+// denies. `actor` is { platform, id, name? }; `context` is { guildId?, channelId? }.
 //
-// Caching: an answer is reused for ttl_seconds (default 300). After that, an
-// allowed person is still answered from the last lookup (up to an hour old)
-// while a background lookup refreshes it, so a revocation takes effect at most
-// ttl_seconds plus one interaction later. ttl_seconds 0 disables caching and
-// gives immediate revocation. Denied actors always wait for a fresh lookup.
+// Caching: an answer is reused for ttlSeconds (default 300, max 3600). After
+// that, an allowed person is still answered from the last lookup (up to an
+// hour old) while a background lookup refreshes it, so a revocation takes
+// effect at most ttlSeconds plus one interaction later. ttlSeconds 0 disables
+// caching and gives immediate revocation. Denied actors always wait for a
+// fresh lookup.
 //
 // Capabilities:
-//   sessions  start and continue sessions (default when allowed)
+//   sessions  start and continue sessions
 //   shell     run raw shell commands (`!cmd`, /run-shell-command)
 //   admin     admin-only commands (credentials, server restart, …)
 //
-// No hook configured → resolvePerson returns null and callers keep Roadie's
-// built-in role checks unchanged. A configured hook that fails, times out or
-// returns invalid output denies access (fail closed) and logs why.
+// No `person` filter → resolvePerson returns null and callers keep Roadie's
+// built-in role checks unchanged. A filter that throws or returns
+// `lookupFailed` denies access (fail closed) and logs why.
 
 import { applyFiltersAsync, hasFilter } from './hooks.js'
-import { spawn } from 'node:child_process'
-import { z } from 'zod'
-import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { isValidPoolId } from './credentials/store.js'
 import { MCP_NAME_PATTERN, isAllowedMcpUrl } from './credentials/person-mcp-store.js'
 
 const logger = createLogger(LogPrefix.DISCORD)
 
-export const IDENTITY_HOOK_VERSION = 1
 const DEFAULT_TTL_SECONDS = 300
 const MAX_TTL_SECONDS = 3600
-const HOOK_TIMEOUT_MS = 10_000
-const MAX_OUTPUT_BYTES = 64 * 1024
 
 export type Capability = 'sessions' | 'shell' | 'admin'
 
@@ -86,38 +81,27 @@ export type Person = {
   model?: string
   permissions: string[]
   // Credential pool override for this person (credential pools phase 2a):
-  // puts a team on one pool or pins a guest to `shared`. Optional; hooks that
-  // do not send it behave as before. Invalid pool ids are ignored.
+  // puts a team on one pool or pins a guest to `shared`. Optional; invalid
+  // pool ids are ignored.
   credentialPool?: string
-  // Per-person MCP servers (identity hook `mcp_servers`). Empty or absent
-  // means the person gets no extra MCP servers.
+  // Per-person MCP servers. Empty or absent means the person gets no extra
+  // MCP servers; invalid entries are dropped, and denied people get none.
   mcpServers?: PersonMcpServer[]
-  // The identity hook or a `person` filter failed, so nobody could vouch for
-  // the actor. Denied like any unknown actor, but callers report the failure
-  // instead of a permission denial.
+  // The `person` filter failed, so nobody could vouch for the actor. Denied
+  // like any unknown actor, but callers report the failure instead of a
+  // permission denial.
   lookupFailed?: boolean
 }
 
-const hookOutputSchema = z.object({
-  allowed: z.boolean(),
-  person_id: z.string().min(1).max(200).optional(),
-  capabilities: z.array(z.enum(['sessions', 'shell', 'admin'])).optional(),
-  agent: z.string().min(1).max(200).optional(),
-  model: z.string().min(1).max(200).optional(),
-  permissions: z.array(z.string().min(1).max(500)).max(100).optional(),
-  credential_pool: z.string().min(1).max(200).optional(),
-  mcp_servers: z
-    .array(
-      z.object({
-        name: z.string(),
-        url: z.string().max(2000),
-        credential: z.string().optional(),
-      }),
-    )
-    .max(20)
-    .optional(),
-  ttl_seconds: z.number().int().min(0).max(MAX_TTL_SECONDS).optional(),
-})
+/**
+ * Value of the `person` filter: a person plus how long Roadie may cache it
+ * (seconds, default 300, max 3600; 0 disables caching). An MCP server's
+ * `credential` defaults to its `name`.
+ */
+export type PersonLookup = Omit<Person, 'mcpServers'> & {
+  mcpServers?: ReadonlyArray<{ name: string; url: string; credential?: string }>
+  ttlSeconds?: number
+}
 
 const DENIED: Person = Object.freeze({
   allowed: false,
@@ -147,25 +131,9 @@ const lastKnown = new Map<string, { person: Person; resolvedAt: number }>()
 // flight cannot write its (now outdated) answer back into the cache.
 const generations = new Map<string, number>()
 
-let hookCommandOverride: string | null | undefined
-
-/** Set or clear the hook command (CLI flag, tests). `undefined` = use env. */
-export function setIdentityHookCommand(command: string | null | undefined) {
-  hookCommandOverride = command
-  cache.clear()
-  inflight.clear()
-  lastKnown.clear()
-}
-
-export function getIdentityHookCommand(): string | undefined {
-  if (hookCommandOverride !== undefined) return hookCommandOverride ?? undefined
-  const fromEnv = getRoadieEnv('ROADIE_IDENTITY_HOOK')?.trim()
-  return fromEnv || undefined
-}
-
-/** True when an identity hook command or a `person` filter is in place. */
-export function isIdentityHookConfigured(): boolean {
-  return Boolean(getIdentityHookCommand()) || hasFilter('person')
+/** True when a `person` filter supplies identity. */
+export function isIdentityConfigured(): boolean {
+  return hasFilter('person')
 }
 
 function cacheKey(actor: IdentityActor): string {
@@ -190,7 +158,7 @@ export function clearIdentityCache(actor?: IdentityActor) {
 }
 
 /**
- * Cached person for an actor, without running the hook. Used by synchronous
+ * Cached person for an actor, without running the lookup. Used by synchronous
  * permission checks after an entry point has called resolvePerson.
  */
 export function getCachedPerson(actor: IdentityActor): Person | undefined {
@@ -204,14 +172,14 @@ export function getCachedPerson(actor: IdentityActor): Person | undefined {
 }
 
 /**
- * Resolve the person behind an actor. Returns null when no hook is
- * configured, so callers fall back to built-in checks.
+ * Resolve the person behind an actor. Returns null when no `person` filter is
+ * registered, so callers fall back to built-in checks.
  *
  * Stale-while-revalidate: once the cache entry expires, an actor last
  * resolved as allowed within the stale window is answered from that lookup at
  * once (held in the cache for the failure TTL so the synchronous checks see
  * it) while one deduplicated lookup refreshes it in the background. Denied,
- * never-resolved, uncached (ttl_seconds 0) and cleared actors wait.
+ * never-resolved, uncached (ttlSeconds 0) and cleared actors wait.
  */
 export async function resolvePerson({
   actor,
@@ -220,15 +188,14 @@ export async function resolvePerson({
   actor: IdentityActor
   context?: IdentityContext
 }): Promise<Person | null> {
-  const command = getIdentityHookCommand()
-  if (!command && !hasFilter('person')) return null
+  if (!isIdentityConfigured()) return null
 
   const cached = getCachedPerson(actor)
   if (cached) return cached
 
   const key = cacheKey(actor)
   const pending = inflight.get(key)
-  const lookup = pending ?? startLookup({ command, key, actor, context })
+  const lookup = pending ?? startLookup({ key, actor, context })
   const known = lastKnown.get(key)
   const now = Date.now()
   if (!known?.person.allowed || now - known.resolvedAt > STALE_WINDOW_SECONDS * 1000) return lookup
@@ -243,59 +210,67 @@ export async function resolvePerson({
 }
 
 function startLookup({
-  command,
   key,
   actor,
   context,
 }: {
-  command: string | undefined
   key: string
   actor: IdentityActor
   context: IdentityContext
 }): Promise<Person> {
   const generation = generations.get(key) ?? 0
-  const base = command
-    ? runHook({ command, actor, context })
-    : Promise.resolve({ person: null as Person | null, ttlSeconds: DEFAULT_TTL_SECONDS })
-  const promise = base
-    .then(async ({ person, ttlSeconds }) => {
-      // Plugins refine or supply the person. With an identity layer in place,
-      // an actor nobody vouches for is denied (fail closed).
-      // A failed hook or a throwing filter leaves nobody vouching for the
-      // actor: fall back to the last successful lookup, else deny as a lookup
-      // failure. Either way only for the short failure TTL, so the next
-      // message retries.
-      let failed = false
-      const current = () => (generations.get(key) ?? 0) === generation
-      const filtered = (await applyFiltersAsync('person', person, { actor, context }, {
-        onError: () => { failed = true },
-      })) ?? DENIED
-      const now = Date.now()
-      if (failed || filtered.lookupFailed) {
-        const known = lastKnown.get(key)
-        const stale = known && now - known.resolvedAt <= STALE_WINDOW_SECONDS * 1000 ? known.person : undefined
-        if (stale) logger.warn(`[IDENTITY] lookup failed for ${key}; using the last successful lookup`)
-        const resolved = stale ?? LOOKUP_FAILED
-        if (current()) cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
-        return resolved
-      }
-      // A hook that disables caching (ttl_seconds 0) gets no stale answers.
-      if (current()) {
-        if (ttlSeconds > 0) {
-          cache.set(key, { person: filtered, expiresAt: now + ttlSeconds * 1000 })
-          lastKnown.set(key, { person: filtered, resolvedAt: now })
-        } else {
-          cache.delete(key)
-          lastKnown.delete(key)
-        }
-      }
-      return filtered
-    })
-    .finally(() => {
-      if (inflight.get(key) === promise) inflight.delete(key)
-    })
+  const promise = lookupPerson({ key, actor, context, generation }).finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key)
+  })
   inflight.set(key, promise)
   return promise
+}
+
+async function lookupPerson({
+  key,
+  actor,
+  context,
+  generation,
+}: {
+  key: string
+  actor: IdentityActor
+  context: IdentityContext
+  generation: number
+}): Promise<Person> {
+  // The filter supplies the person. An actor nobody vouches for is denied
+  // (fail closed). A throwing filter leaves nobody vouching for the actor:
+  // fall back to the last successful lookup, else deny as a lookup failure.
+  // Either way only for the short failure TTL, so the next message retries.
+  let failed = false
+  const current = () => (generations.get(key) ?? 0) === generation
+  const result = await applyFiltersAsync('person', null, { actor, context }, {
+    onError: () => { failed = true },
+  })
+  // Leave `inflight` in the same step the answer is cached, so a call right
+  // after the lookup settles cannot pick up its (possibly stale) promise. A
+  // newer generation owns the entry instead.
+  if (current()) inflight.delete(key)
+  const now = Date.now()
+  if (failed || result?.lookupFailed) {
+    const known = lastKnown.get(key)
+    const stale = known && now - known.resolvedAt <= STALE_WINDOW_SECONDS * 1000 ? known.person : undefined
+    if (stale) logger.warn(`[IDENTITY] lookup failed for ${key}; using the last successful lookup`)
+    const resolved = stale ?? LOOKUP_FAILED
+    if (current()) cache.set(key, { person: resolved, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
+    return resolved
+  }
+  const { person, ttlSeconds } = result ? normalizeLookup(result) : { person: DENIED, ttlSeconds: DEFAULT_TTL_SECONDS }
+  // A lookup that disables caching (ttlSeconds 0) gets no stale answers.
+  if (current()) {
+    if (ttlSeconds > 0) {
+      cache.set(key, { person, expiresAt: now + ttlSeconds * 1000 })
+      lastKnown.set(key, { person, resolvedAt: now })
+    } else {
+      cache.delete(key)
+      lastKnown.delete(key)
+    }
+  }
+  return person
 }
 
 /** Reply for an actor whose identity lookup failed (not a permission denial). */
@@ -306,126 +281,44 @@ export function personHas(person: Person, capability: Capability): boolean {
   return person.allowed && person.capabilities.has(capability)
 }
 
-async function runHook({
-  command,
-  actor,
-  context,
-}: {
-  command: string
-  actor: IdentityActor
-  context: IdentityContext
-}): Promise<{ person: Person; ttlSeconds: number }> {
-  const input = JSON.stringify({
-    version: IDENTITY_HOOK_VERSION,
-    actor: { platform: actor.platform, id: actor.id, ...(actor.name ? { name: actor.name } : {}) },
-    context: {
-      ...(context.guildId ? { guild_id: context.guildId } : {}),
-      ...(context.channelId ? { channel_id: context.channelId } : {}),
-    },
-  })
-
-  const raw = await execHook({ command, input }).catch((e: unknown) => {
-    return e instanceof Error ? e : new Error(String(e))
-  })
-  if (raw instanceof Error) {
-    logger.warn(`[IDENTITY] hook failed for ${actor.platform}:${actor.id}, denying: ${raw.message}`)
-    return { person: LOOKUP_FAILED, ttlSeconds: FAILURE_TTL_SECONDS }
+/**
+ * Split a filter result into the cached person and its TTL. Drops an invalid
+ * credential pool and invalid MCP servers (denied people get none) instead of
+ * rejecting the whole person.
+ */
+function normalizeLookup(result: PersonLookup): { person: Person; ttlSeconds: number } {
+  const { ttlSeconds: rawTtl, credentialPool, mcpServers: rawServers, ...rest } = result
+  const ttlSeconds = typeof rawTtl === 'number' && Number.isFinite(rawTtl)
+    ? Math.min(MAX_TTL_SECONDS, Math.max(0, Math.floor(rawTtl)))
+    : DEFAULT_TTL_SECONDS
+  if (credentialPool && !isValidPoolId(credentialPool)) {
+    logger.warn('[IDENTITY] ignoring invalid credentialPool from the person filter')
   }
-
-  const parsed = (() => {
-    try {
-      return hookOutputSchema.safeParse(JSON.parse(raw))
-    } catch (e) {
-      return { success: false as const, error: e }
-    }
-  })()
-  if (!parsed.success) {
-    logger.warn(`[IDENTITY] hook returned invalid output for ${actor.platform}:${actor.id}, denying`)
-    return { person: LOOKUP_FAILED, ttlSeconds: FAILURE_TTL_SECONDS }
-  }
-
-  const out = parsed.data
-  const capabilities = new Set<Capability>(
-    out.allowed ? (out.capabilities ?? ['sessions']) : [],
-  )
-  const credentialPool = out.credential_pool && isValidPoolId(out.credential_pool)
-    ? out.credential_pool
-    : undefined
-  // A denied person never gets MCP servers. Invalid or duplicate entries are
-  // dropped individually (and logged), not the whole person.
-  const mcpServers = out.allowed ? parseMcpServers(out.mcp_servers) : []
+  const mcpServers = rest.allowed ? parseMcpServers(rawServers) : []
   const person: Person = {
-    allowed: out.allowed,
-    ...(out.person_id ? { personId: out.person_id } : {}),
-    capabilities,
-    ...(out.agent ? { agent: out.agent } : {}),
-    ...(out.model ? { model: out.model } : {}),
-    permissions: out.permissions ?? [],
-    ...(credentialPool ? { credentialPool } : {}),
+    ...rest,
+    ...(credentialPool && isValidPoolId(credentialPool) ? { credentialPool } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
   }
-  return { person, ttlSeconds: out.ttl_seconds ?? DEFAULT_TTL_SECONDS }
+  return { person, ttlSeconds }
 }
 
 function parseMcpServers(
-  raw: Array<{ name: string; url: string; credential?: string }> | undefined,
+  raw: ReadonlyArray<{ name: string; url: string; credential?: string }> | undefined,
 ): PersonMcpServer[] {
   const servers: PersonMcpServer[] = []
   for (const entry of raw ?? []) {
     const credential = entry.credential ?? entry.name
     if (!MCP_NAME_PATTERN.test(entry.name) || !MCP_NAME_PATTERN.test(credential)) {
-      logger.warn('[IDENTITY] ignoring mcp_servers entry with an invalid name or credential reference')
+      logger.warn('[IDENTITY] ignoring mcpServers entry with an invalid name or credential reference')
       continue
     }
     if (!isAllowedMcpUrl(entry.url)) {
-      logger.warn(`[IDENTITY] ignoring mcp_servers entry ${entry.name}: url must be https (http only for loopback)`)
+      logger.warn(`[IDENTITY] ignoring mcpServers entry ${entry.name}: url must be https (http only for loopback)`)
       continue
     }
     if (servers.some((server) => server.name === entry.name)) continue
     servers.push({ name: entry.name, url: entry.url, credential })
   }
   return servers
-}
-
-function execHook({ command, input }: { command: string; input: string }): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, {
-      shell: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      fn()
-    }
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL')
-      finish(() => reject(new Error(`timed out after ${HOOK_TIMEOUT_MS}ms`)))
-    }, HOOK_TIMEOUT_MS)
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
-      if (stdout.length > MAX_OUTPUT_BYTES) {
-        child.kill('SIGKILL')
-        finish(() => reject(new Error('output too large')))
-      }
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (stderr.length < 2048) stderr += chunk.toString('utf8')
-    })
-    child.on('error', (e) => finish(() => reject(e)))
-    child.on('close', (code) => {
-      finish(() => {
-        if (code === 0) resolve(stdout.trim())
-        else reject(new Error(`exited ${code}${stderr ? `: ${stderr.trim().slice(0, 300)}` : ''}`))
-      })
-    })
-    child.stdin.on('error', () => {})
-    child.stdin.end(input)
-  })
 }

@@ -269,7 +269,7 @@ export function registerInteractionHandler({
           await acknowledgeComponent(interaction, route)
         }
 
-        // Identity hook (if configured): resolve the person once, before the
+        // Person filter (if configured): resolve the person once, before the
         // synchronous permission checks below read the cached result. A known
         // person is answered at once while an expired lookup refreshes, so
         // modal openers stay within the deadline.

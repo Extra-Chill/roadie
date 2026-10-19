@@ -17,7 +17,7 @@ import { clearResolvedDefaultProvider, getAgentBackendProvider, resolveAgentBack
 import type { AgentBackendProvider } from './agent-backend/types.js'
 import { isChannelPolicyConfigured, resolveChannelPolicy, setChannelsConfigPath } from './channel-policy.js'
 import { isContextProviderConfigured, requestContext, setContextProviderCommand } from './context-provider.js'
-import { clearIdentityCache, getCachedPerson, isIdentityHookConfigured, resolvePerson, setIdentityHookCommand } from './identity.js'
+import { clearIdentityCache, getCachedPerson, isIdentityConfigured, resolvePerson } from './identity.js'
 import { getSystemMessage } from './system-message.js'
 
 const savedPlugins = process.env.ROADIE_PLUGINS
@@ -150,19 +150,18 @@ describe('built-in seams honor their filters', () => {
   })
 
   test('person can come from a plugin, and an unvouched actor is denied', async () => {
-    setIdentityHookCommand(null)
+    expect(isIdentityConfigured()).toBe(false)
     expect(await resolvePerson({ actor: { platform: 'discord', id: 'u1' } })).toBeNull()
     addFilter('person', async (person, { actor }) =>
       actor.id === 'u1'
         ? { allowed: true, personId: 'p1', capabilities: new Set(['sessions'] as const), permissions: [] }
         : person,
     )
-    expect(isIdentityHookConfigured()).toBe(true)
+    expect(isIdentityConfigured()).toBe(true)
     const person = await resolvePerson({ actor: { platform: 'discord', id: 'u1' } })
     expect(person?.personId).toBe('p1')
     expect(getCachedPerson({ platform: 'discord', id: 'u1' })?.personId).toBe('p1')
     expect((await resolvePerson({ actor: { platform: 'discord', id: 'u2' } }))?.allowed).toBe(false)
-    setIdentityHookCommand(undefined)
   })
 
   test('context_sections can add host context without a provider command', async () => {

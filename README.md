@@ -50,7 +50,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 ## Features
 
 - **All your models, including subscriptions.** Run `/login` to add an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription to a credential pool. Add several accounts and Roadie rotates between them on rate limits.
-- **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the identity hook's `credential_pool`, and the security limits.
+- **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the `person` filter's `credentialPool`, and the security limits.
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
 - **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
 - **Conversation intake.** Configure mention/command starts, natural participant follow-ups, and context-only messages with the same [intake policy](docs/conversation-intake.md) on Discord and Slack.
@@ -202,23 +202,46 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 
 Plugins can also register a whole chat platform with `roadie.registerChatPlatform({ id, start })` — the same registry Discord and Slack go through — and run it with `--platform <id>`, alone or alongside the built-in platforms. See [docs/chat-platforms.md](docs/chat-platforms.md).
 
-Hosts that prefer external commands to code can use the flags `--identity-hook`, `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
+Hosts that prefer external commands to code can use the flags `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 
-The resolved person is cached for the identity hook's `ttl_seconds` (default 300, max 3600). When that expires, a person last resolved as allowed is answered from that lookup (up to an hour old) while one background lookup refreshes it, so a slow host lookup never delays a message. A revocation therefore takes effect at most `ttl_seconds` plus one interaction later; return `ttl_seconds: 0` for immediate revocation (every interaction waits for the lookup). Denied and newly linked people always wait for a fresh lookup, so a new grant applies at once.
+#### Identity
+
+The `person` filter is Roadie's only identity input. It starts as `null` and returns the person behind a chat actor, or `null` to deny (nobody vouches for them). With no `person` filter registered, Roadie keeps its built-in Discord role checks.
+
+```js
+roadie.addFilter('person', async (person, { actor, context }) => {
+  // actor: { platform, id, name? }   context: { guildId?, channelId? }
+  const account = await lookupAccount(actor)
+  if (!account) return { allowed: false, capabilities: new Set(), permissions: [] }
+  return {
+    allowed: true,
+    personId: account.id,                         // optional opaque host id
+    capabilities: new Set(['sessions', 'shell']), // sessions, shell, admin
+    permissions: ['bash:deny'],                   // per-person session rules
+    ttlSeconds: 300,                              // optional cache lifetime
+  }
+})
+```
+
+Optional fields: `agent` and `model` (per-person defaults), `credentialPool` (see [Credential pools](docs/credential-pools.md)) and `mcpServers` (see below). An invalid `credentialPool` or `mcpServers` entry is ignored, not the whole person.
+
+A filter that throws (or returns `{ lookupFailed: true }`) is a lookup failure: the actor is denied with a "couldn't verify your account" reply, not a permission denial, and the lookup is retried after 10 seconds.
+
+The resolved person is cached for the result's `ttlSeconds` (default 300, max 3600). When that expires, a person last resolved as allowed is answered from that lookup (up to an hour old) while one background lookup refreshes it, so a slow host lookup never delays a message. A revocation therefore takes effect at most `ttlSeconds` plus one interaction later; return `ttlSeconds: 0` for immediate revocation (every interaction waits for the lookup). Denied and newly linked people always wait for a fresh lookup, so a new grant applies at once.
 
 Every turn's tool shells also receive `ROADIE_ACTOR_*`, `ROADIE_THREAD_ID`, `ROADIE_CHANNEL_ID` and `ROADIE_PERSON_ID`, so scripts the agent runs know who they are acting for.
 
 ### Per-person MCP servers
 
-The identity hook can name MCP servers for a person (`mcp_servers: [{ name, url, credential? }]`). Their tools are available only in that person's turns, authenticated with that person's own token. People connect their own account from chat with `/connect` on Discord or `/roadie connect` on Slack (or the Connect button in their welcome): Roadie discovers the authorization server from the MCP endpoint (RFC 9728 `WWW-Authenticate`/well-known metadata, RFC 8414), registers itself as a public client (RFC 7591, cached per server in `<data dir>/mcp-clients/`), and runs the OAuth device grant (RFC 8628), showing the sign-in link only to that person. Servers without a device authorization endpoint or client registration are reported as not connectable from chat; operators can still store a token with `roadie credentials mcp set`. Disconnecting removes the token and revokes it when the server has a revocation endpoint.
+The `person` filter can name MCP servers for a person (`mcpServers: [{ name, url, credential? }]`). Their tools are available only in that person's turns, authenticated with that person's own token. People connect their own account from chat with `/connect` on Discord or `/roadie connect` on Slack (or the Connect button in their welcome): Roadie discovers the authorization server from the MCP endpoint (RFC 9728 `WWW-Authenticate`/well-known metadata, RFC 8414), registers itself as a public client (RFC 7591, cached per server in `<data dir>/mcp-clients/`), and runs the OAuth device grant (RFC 8628), showing the sign-in link only to that person. Servers without a device authorization endpoint or client registration are reported as not connectable from chat; operators can still store a token with `roadie credentials mcp set`. Disconnecting removes the token and revokes it when the server has a revocation endpoint.
 
-Newly admitted people (identity hook `allowed: true`) get a one-time private welcome (a DM on Discord and Slack) with Connect buttons for any servers they have not connected yet. Override or disable the text with the `welcome_message` filter.
+Newly admitted people (`person` filter `allowed: true`) get a one-time private welcome (a DM on Discord and Slack) with Connect buttons for any servers they have not connected yet. Override or disable the text with the `welcome_message` filter.
 
 ### Self-serve identity linking
 
 People the identity layer denies can link their chat account themselves instead of sending an admin their ID. When the `identity_link_provider` filter returns a provider, a denied, platform-authenticated human (not a lookup failure, a CLI-asserted actor or a bot) who messages Roadie gets a private **Link your account** prompt: a DM on Discord, or, if their DMs are closed, a channel reply whose button only they can use. The prompt is shown at most once per person every 10 minutes; `/link` starts the same flow on demand. Clicking runs the OAuth device grant against the provider's authorization server (the sign-in link is shown only to the clicker), then hands the token to `link_identity`.
 
-On `{ linked: true }` Roadie drops the person's cached identity and asks the identity layer again. If they are now allowed and one of their `mcp_servers` has the provider's `url` (the provider's `credential` picks between several), the token is stored as that MCP credential, so one sign-in covers linking and `/connect`; then they get the first-contact welcome. If they are still denied they're told "Linked. You don't have access yet; ask an admin." On `{ linked: false, reason }` the reason is shown. A token Roadie does not store is revoked (best effort, when the server has a revocation endpoint) and never written to disk. The person is always whoever clicks or runs `/link`. Discord only for now; Slack does not offer linking yet.
+On `{ linked: true }` Roadie drops the person's cached identity and asks the identity layer again. If they are now allowed and one of their `mcpServers` has the provider's `url` (the provider's `credential` picks between several), the token is stored as that MCP credential, so one sign-in covers linking and `/connect`; then they get the first-contact welcome. If they are still denied they're told "Linked. You don't have access yet; ask an admin." On `{ linked: false, reason }` the reason is shown. A token Roadie does not store is revoked (best effort, when the server has a revocation endpoint) and never written to disk. The person is always whoever clicks or runs `/link`. Discord only for now; Slack does not offer linking yet.
 
 ### Shell env
 
@@ -242,7 +265,7 @@ Names come only from your configuration; Roadie never adds variables on its own 
 | `{channel_id}` | The parent channel of that thread |
 | `{platform}` | Chat platform of the current turn's speaker |
 | `{actor_id}` | Platform user id of the current turn's speaker |
-| `{person_id}` | Host person id from the identity hook, recorded with the actor |
+| `{person_id}` | Host person id from the `person` filter, recorded with the actor |
 
 There is no `{thread_url}`: building one needs platform-specific context (a Discord guild id, a Slack workspace) that Roadie does not track per turn. An invalid variable name or an unknown field stops startup with an error rather than exporting a wrong value, and a field with no value for a turn (no channel yet, a turn without a human speaker) leaves that variable unset.
 
@@ -264,7 +287,7 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/compact`, `/context-usage` | Compact the context; show how much is in use |
 | `/run-shell-command` | Run a shell command in the thread's working directory |
 | `/mcp` | List and manage MCP servers for this project |
-| `/connect` | Connect or disconnect your own account on the per-person MCP servers the identity hook names for you (OAuth device sign-in) |
+| `/connect` | Connect or disconnect your own account on the per-person MCP servers the `person` filter names for you (OAuth device sign-in) |
 | `/link` | Link your chat account to your account on the host with its own sign-in, when you are not admitted yet (see Self-serve identity linking) |
 | `/start` | Show the welcome and how to use Roadie, privately |
 

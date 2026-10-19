@@ -106,7 +106,7 @@ describe('speaker billing payer-change notice', () => {
     expect((await getSessionTurnAttribution(sessionId))?.credentialPool).toBe('discord:alice-id')
   })
 
-  test('identity-hook pool overrides count: the same override pool is not a change', async () => {
+  test('person filter pool overrides count: the same override pool is not a change', async () => {
     enableSpeakerBilling()
     const sessionId = 'ses-payer-change-2'
     const { runtime, notices } = runtimeWithChat()

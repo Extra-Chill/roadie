@@ -18,7 +18,7 @@ import type { AgentChildSessionStatus } from './agent-backend/events.js'
 import type { PermissionRulesContext } from './permission-policy.js'
 import type { ChannelPolicy } from './channel-policy.js'
 import type { ContextRequest, ContextSection } from './context-provider.js'
-import type { IdentityActor, IdentityContext, Person } from './identity.js'
+import type { IdentityActor, IdentityContext, PersonLookup } from './identity.js'
 import type { PromptSection } from './prompt-config.js'
 import type { WelcomeMessageContext } from './person-welcome.js'
 import type { IdentityLinkContext, IdentityLinkProvider, IdentityLinkResult } from './identity-link.js'
@@ -35,8 +35,12 @@ export interface RoadieFilters {
   conversation_intake: [IntakeDecision, { request: ConversationIntakeRequest; admission: ConversationAdmission | null; policy: ChannelPolicy | null | undefined }]
   /** The agent backend provider. Resolved once at startup. */
   agent_backend: [AgentBackendProvider, Record<string, never>]
-  /** The person behind a chat actor; null means no identity layer. */
-  person: [Person | null, { actor: IdentityActor; context: IdentityContext }]
+  /**
+   * The person behind a chat actor, the single identity input. Starts as null;
+   * null (nobody vouches for the actor) denies. `ttlSeconds` sets the cache
+   * lifetime (default 300, max 3600, 0 = no caching).
+   */
+  person: [PersonLookup | null, { actor: IdentityActor; context: IdentityContext }]
   /**
    * Text of the private welcome sent to a newly admitted person (and shown by
    * /start). The value starts as Roadie's generic default; null or '' disables it.

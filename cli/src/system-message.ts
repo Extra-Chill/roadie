@@ -584,7 +584,7 @@ Per-turn Discord metadata like the current user, current agent, and Discord thre
     { id: 'permissions', text: `
 ## permissions
 
-Who may talk to the bot is decided by the bot's configuration: Discord roles by default (server owner, Administrator, Manage Server, or the "Roadie" role), or the host's identity hook and per-channel policy when configured. Do not tell users which role to request; if someone lacks access, say they should ask an admin.
+Who may talk to the bot is decided by the bot's configuration: Discord roles by default (server owner, Administrator, Manage Server, or the "Roadie" role), or the host's identity layer and per-channel policy when configured. Do not tell users which role to request; if someone lacks access, say they should ask an admin.
 
 Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), it needs access the same way a user does.
 ` },

@@ -4,33 +4,24 @@
 // touches (own pool vs shared, admin-gated), and resolvePersonBillingPool is
 // the one helper routing and the command share, so they can never disagree.
 // hasCredentialPoolAdminPermission is the shared-pool admin gate. Pure checks
-// plus real identity-hook scripts; no Discord client, no real credentials.
+// plus a registered `person` filter; no Discord client, no real credentials.
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import type { Guild } from 'discord.js'
 import { resolveCredentialsTargetPool } from '../commands/credentials.js'
 import { resolvePersonBillingPool, resolveTurnBilling } from './person-pool.js'
 import { hasRoadieAdminPermission, hasCredentialPoolAdminPermission } from '../discord-utils.js'
-import { resolvePerson, setIdentityHookCommand } from '../identity.js'
-
-let dir: string
-
-beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-credentials-target-'))
-})
+import { clearIdentityCache, resolvePerson, type Person } from '../identity.js'
+import { addFilter, resetHooks } from '../hooks.js'
 
 afterEach(() => {
-  setIdentityHookCommand(null)
+  resetHooks()
+  clearIdentityCache()
 })
 
-const writeHook = (name: string, body: string) => {
-  const file = path.join(dir, name)
-  fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 })
-  return file
-}
+// A `person` filter answering from a fixed table; unknown actors stay null.
+const personFilter = (people: Record<string, Person>) =>
+  addFilter('person', (person, { actor }) => people[actor.id] ?? person)
 
 // Minimal API-shaped guild member: no roles, no admin bits by default.
 const member = (id: string, permissions = '0') =>
@@ -62,7 +53,7 @@ describe('resolveCredentialsTargetPool', () => {
     ).toEqual({ poolId: 'discord:42', shared: false })
   })
 
-  test('the identity hook credential_pool override wins, exactly like routing', () => {
+  test('the person filter credentialPool override wins, exactly like routing', () => {
     expect(
       resolveCredentialsTargetPool({
         requestShared: false,
@@ -165,35 +156,25 @@ describe('resolvePersonBillingPool matches routing', () => {
 })
 
 describe('hasCredentialPoolAdminPermission', () => {
-  test('the identity hook admin capability decides when a hook is configured', async () => {
-    setIdentityHookCommand(
-      writeHook(
-        'pool-admin.sh',
-        `input=$(cat)
-case "$input" in
-  *'"id":"pool-admin"'*) echo '{"allowed":true,"person_id":"wp:1","capabilities":["sessions","admin"]}' ;;
-  *'"id":"pool-peon"'*) echo '{"allowed":true,"person_id":"wp:2","capabilities":["sessions"]}' ;;
-esac`,
-      ),
-    )
+  test('the person filter admin capability decides when one is configured', async () => {
+    personFilter({
+      'pool-admin': { allowed: true, personId: 'wp:1', capabilities: new Set(['sessions', 'admin'] as const), permissions: [] },
+      'pool-peon': { allowed: true, personId: 'wp:2', capabilities: new Set(['sessions'] as const), permissions: [] },
+    })
     await resolvePerson({ actor: { platform: 'discord', id: 'pool-admin' } })
     await resolvePerson({ actor: { platform: 'discord', id: 'pool-peon' } })
     expect(hasCredentialPoolAdminPermission(member('pool-admin'))).toBe(true)
     expect(hasCredentialPoolAdminPermission(member('pool-peon'))).toBe(false)
   })
 
-  test('an actor the hook never resolved is denied (fail closed)', () => {
-    setIdentityHookCommand(
-      writeHook('anything.sh', `input=$(cat)
-case "$input" in
-  *'"id":"someone"'*) echo '{"allowed":true}' ;;
-esac`),
-    )
+  test('an actor the filter never resolved is denied (fail closed)', () => {
+    personFilter({
+      someone: { allowed: true, capabilities: new Set(['sessions'] as const), permissions: [] },
+    })
     expect(hasCredentialPoolAdminPermission(member('ghost'))).toBe(false)
   })
 
-  test('without a hook: Discord Administrator, Manage Server, or the guild owner', () => {
-    setIdentityHookCommand(null)
+  test('without a person filter: Discord Administrator, Manage Server, or the guild owner', () => {
     expect(hasCredentialPoolAdminPermission(member('a', '8'))).toBe(true)
     expect(hasCredentialPoolAdminPermission(member('b', '32'))).toBe(true)
     expect(hasCredentialPoolAdminPermission(member('c', '0'))).toBe(false)
@@ -205,7 +186,6 @@ esac`),
   })
 
   test('the Roadie role is not enough, unlike hasRoadieAdminPermission', () => {
-    setIdentityHookCommand(null)
     const roadieRoleMember = {
       user: { id: 'r1' },
       roles: ['role-1'],

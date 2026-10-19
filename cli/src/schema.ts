@@ -210,7 +210,7 @@ export const session_actors = sqliteCore.sqliteTable('session_actors', {
   // How the actor was established: 'chat' = the platform authenticated the
   // message author; 'cli' = asserted by a local `roadie send --user` caller.
   actor_via: sqliteCore.text('actor_via', { enum: ['chat', 'cli'] }),
-  // Opaque host person id from the identity hook, when one is configured.
+  // Opaque host person id from the person filter, when one is configured.
   person_id: sqliteCore.text('person_id'),
   // Credential pool the current speaker bills to (credential pools phase 2a).
   // Recorded only when credential pools are enabled; without the flag the
@@ -227,7 +227,7 @@ export const session_actors = sqliteCore.sqliteTable('session_actors', {
 export const credential_owners = sqliteCore.sqliteTable('credential_owners', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   pool_id: sqliteCore.text('pool_id').notNull(),
-  // Person key that resolved to the pool: identity-hook person_id, else
+  // Person key that resolved to the pool: person filter personId, else
   // `<platform>:<actorId>`. Null only for a shared default row.
   person_key: sqliteCore.text('person_key'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
