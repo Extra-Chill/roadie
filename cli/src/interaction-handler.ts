@@ -92,7 +92,7 @@ import {
   hasRoadieBotPermission,
   hasRoadieShellPermission,
 } from './discord-utils.js'
-import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, resolvePerson, resolvePersonPreferKnown } from './identity.js'
+import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, resolvePerson } from './identity.js'
 import {
   channelAllowsCapability,
   channelAllowsSpeaker,
@@ -324,11 +324,11 @@ export function registerInteractionHandler({
         }
 
         // Identity hook (if configured): resolve the person once, before the
-        // synchronous permission checks below read the cached result. A modal
-        // opener cannot wait for a slow lookup when the person is already
-        // known, so it uses the last successful lookup and refreshes it.
+        // synchronous permission checks below read the cached result. A known
+        // person is answered at once while an expired lookup refreshes, so
+        // modal openers stay within the deadline.
         if (interaction.guild) {
-          const person = await (modalComponent ? resolvePersonPreferKnown : resolvePerson)({
+          const person = await resolvePerson({
             actor: {
               platform: 'discord',
               id: interaction.user.id,

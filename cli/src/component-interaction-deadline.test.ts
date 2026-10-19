@@ -1,7 +1,7 @@
 // Component interactions must meet Discord's three-second initial response
 // deadline even when the identity lookup is slow (#306). The listener defers
-// buttons before resolvePerson(); modal openers answer from the last known
-// person instead of awaiting the lookup.
+// buttons before resolvePerson(); for modal openers resolvePerson() answers
+// from the last known person instead of awaiting the lookup.
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
