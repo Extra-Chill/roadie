@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.73.6] - 2026-10-19
+
+### Changed
+- Keep an env-supplied bot token out of the data directory
+
+### Fixed
+- a failing platform no longer stops the others
+
 ## [0.73.5] - 2026-10-19
 
 ### Changed
