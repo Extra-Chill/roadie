@@ -20,74 +20,39 @@ import {
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
 import { handleChannelCommand, isApplicationGuild } from './commands/channel.js'
-import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
 import {
   handleForkCommand,
   handleForkAutocomplete,
 } from './commands/fork.js'
-import {
-  handleForkSubagentCommand,
-  handleForkSubagentSelectMenu,
-} from './commands/fork-subagent.js'
-import {
-  handleModelCommand,
-  handleProviderSelectMenu,
-  handleModelSelectMenu,
-  handleModelScopeSelectMenu,
-} from './commands/model.js'
-import {
-  handleLoginCommand,
-  handleLoginSelect,
-} from './commands/login.js'
-import {
-  handleCredentialsCommand,
-  handleCredentialsApiKeyModalSubmit,
-  handleCredentialsOAuthCodeButton,
-  handleCredentialsOAuthCodeModalSubmit,
-  CREDENTIALS_APIKEY_MODAL_PREFIX,
-  CREDENTIALS_OAUTH_BUTTON_PREFIX,
-  CREDENTIALS_OAUTH_MODAL_PREFIX,
-} from './commands/credentials.js'
+import { handleForkSubagentCommand } from './commands/fork-subagent.js'
+import { handleModelCommand } from './commands/model.js'
+import { handleLoginCommand } from './commands/login.js'
+import { handleCredentialsCommand } from './commands/credentials.js'
 import {
   handleAgentCommand,
-  handleAgentSelectMenu,
   handleQuickAgentCommand,
   handleQuickAgentAutocomplete,
 } from './commands/agent.js'
-import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
-import {
-  handleFileUploadButton,
-  handleFileUploadModalSubmit,
-} from './commands/file-upload.js'
-import { handleActionButton } from './commands/action-buttons.js'
-import { handleOperatorRequestButton, OPERATOR_REQUEST_PREFIX } from './commands/operator-request.js'
-import { handleHtmlActionButton } from './html-actions.js'
 import { handleUserCommand } from './commands/user-command.js'
-import {
-  handleVerbosityCommand,
-  handleVerbositySelectMenu,
-} from './commands/verbosity.js'
+import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
-import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
-import {
-  CONNECT_BUTTON_PREFIX,
-  handleConnectButton,
-  handleConnectCommand,
-} from './commands/connect.js'
+import { handleMcpCommand } from './commands/mcp.js'
+import { handleConnectCommand } from './commands/connect.js'
 import { handleStartCommand, welcomeDiscordUser } from './commands/start.js'
-import { handleLinkButton, handleLinkCommand, LINK_BUTTON_PREFIX } from './commands/link.js'
-import { handleModelVariantSelectMenu } from './commands/model.js'
+import { handleLinkCommand } from './commands/link.js'
+import { handleModelVariantCommand } from './commands/model-variant.js'
 import {
-  handleModelVariantCommand,
-  handleVariantQuickSelectMenu,
-  handleVariantScopeSelectMenu,
-} from './commands/model-variant.js'
+  acknowledgeComponent,
+  isComponentInteraction,
+  routeForInteraction,
+  UNKNOWN_COMPONENT_MESSAGE,
+} from './component-routes.js'
 import {
   hasRoadieBotPermission,
   hasRoadieShellPermission,
@@ -173,19 +138,6 @@ async function isInteractionOwnedByThisMachine(
   return false
 }
 
-// Components whose first response must be showModal(), so the listener
-// cannot defer them (#306). login_select opens the API key modal for most
-// providers. Every other button and select menu is deferred up front.
-const MODAL_COMPONENT_PREFIXES = ['file_upload_btn:', CREDENTIALS_OAUTH_BUTTON_PREFIX, 'login_select:']
-
-// Components answered with a private reply of their own instead of an edit of
-// the clicked message: their buttons can sit on messages other people see.
-const PRIVATE_REPLY_COMPONENT_PREFIXES = [LINK_BUTTON_PREFIX, CONNECT_BUTTON_PREFIX]
-
-function opensModal(customId: string): boolean {
-  return MODAL_COMPONENT_PREFIXES.some((prefix) => customId.startsWith(prefix))
-}
-
 // Slash commands that act only on the calling user's own account and need no
 // project. They are answered in any channel of a guild this machine serves.
 const PERSON_SCOPED_COMMANDS = new Set(['link', 'connect', 'start'])
@@ -196,10 +148,7 @@ const PERSON_SCOPED_COMMANDS = new Set(['link', 'connect', 'start'])
  */
 export function isPersonScopedInteraction(interaction: Interaction): boolean {
   if (interaction.isChatInputCommand()) return PERSON_SCOPED_COMMANDS.has(interaction.commandName)
-  if (interaction.isButton()) {
-    return interaction.customId.startsWith(LINK_BUTTON_PREFIX) || interaction.customId.startsWith(CONNECT_BUTTON_PREFIX)
-  }
-  return false
+  return routeForInteraction(interaction)?.personScoped ?? false
 }
 
 async function channelGuildId(client: Client, channelId: string, fetch: boolean): Promise<string | undefined> {
@@ -261,6 +210,7 @@ export function registerInteractionHandler({
         : undefined
       await runInThreadIngressSlot(ingressSlot, async () => {
       try {
+        const route = routeForInteraction(interaction)
         interactionLogger.log(
           `[INTERACTION] Received: ${interaction.type} - ${
             interaction.isChatInputCommand()
@@ -271,17 +221,12 @@ export function registerInteractionHandler({
           }`,
         )
 
-        // Connect buttons sent in a welcome DM have no guild channel to own.
-        // The handler authorizes from the clicking user's own person (fail
-        // closed), so a DM button can only ever act on the clicker's account.
-        if (!interaction.guild && interaction.isButton() && interaction.customId.startsWith(CONNECT_BUTTON_PREFIX)) {
-          await handleConnectButton(interaction)
-          return
-        }
-        // Link buttons in a link-prompt DM (#292): the flow acts only for the
-        // clicking user, so a DM button can only link the clicker's account.
-        if (!interaction.guild && interaction.isButton() && interaction.customId.startsWith(LINK_BUTTON_PREFIX)) {
-          await handleLinkButton(interaction)
+        // Person-scoped buttons sent in a DM (welcome Connect buttons, #292
+        // link prompts) have no guild channel to own. Their handlers act only
+        // for the clicking user (fail closed), so a DM button can only ever
+        // act on the clicker's own account.
+        if (!interaction.guild && route?.personScoped && isComponentInteraction(interaction)) {
+          await route.handle(interaction, { channelBound: true })
           return
         }
 
@@ -311,16 +256,17 @@ export function registerInteractionHandler({
         if (interaction.isChatInputCommand() && interaction.commandName === 'fork') {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral })
         }
-        // Same for buttons and select menus (#306): the identity lookup below
-        // can outlast the deadline. Denials then go out as ephemeral
-        // follow-ups. Modal openers must answer with showModal() instead.
-        const modalComponent = interaction.isMessageComponent() && opensModal(interaction.customId)
-        if (interaction.isMessageComponent() && !modalComponent) {
-          if (PRIVATE_REPLY_COMPONENT_PREFIXES.some((prefix) => interaction.customId.startsWith(prefix))) {
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-          } else {
-            await interaction.deferUpdate()
+        // Same for components (#306): the identity lookup below can outlast
+        // the deadline, so each is acknowledged as its route says. Denials
+        // then go out as ephemeral follow-ups. Modal openers answer with
+        // showModal() instead. A component without a route is stale.
+        if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
+          if (!route) {
+            interactionLogger.warn(`[COMPONENT] No route for custom id ${interaction.customId}`)
+            await interaction.reply({ content: UNKNOWN_COMPONENT_MESSAGE, flags: MessageFlags.Ephemeral })
+            return
           }
+          await acknowledgeComponent(interaction, route)
         }
 
         // Identity hook (if configured): resolve the person once, before the
@@ -355,8 +301,8 @@ export function registerInteractionHandler({
           await handleLinkCommand({ command: interaction, channelBound: !unboundPersonScoped })
           return
         }
-        if (interaction.isButton() && interaction.customId.startsWith(LINK_BUTTON_PREFIX)) {
-          await handleLinkButton(interaction, { channelBound: !unboundPersonScoped })
+        if (route?.selfServe && isComponentInteraction(interaction)) {
+          await route.handle(interaction, { channelBound: !unboundPersonScoped })
           return
         }
 
@@ -623,178 +569,14 @@ export function registerInteractionHandler({
           return
         }
 
-        if (interaction.isButton()) {
+        if (route && isComponentInteraction(interaction)) {
           if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
             await replyOrEditInteraction(interaction,
               `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
             )
             return
           }
-
-          const customId = interaction.customId
-
-          if (customId.startsWith(CONNECT_BUTTON_PREFIX)) {
-            // Acts only on the clicking user's own person key and servers.
-            await handleConnectButton(interaction)
-            return
-          }
-
-          if (customId.startsWith(OPERATOR_REQUEST_PREFIX)) {
-            await handleOperatorRequestButton(interaction)
-            return
-          }
-
-          if (
-            customId.startsWith('permission_once:') ||
-            customId.startsWith('permission_always:') ||
-            customId.startsWith('permission_reject:')
-          ) {
-            await handlePermissionButton(interaction)
-            return
-          }
-
-          if (customId.startsWith('file_upload_btn:')) {
-            await handleFileUploadButton(interaction)
-            return
-          }
-
-          if (customId.startsWith(CREDENTIALS_OAUTH_BUTTON_PREFIX)) {
-            // Per-person command: the handler enforces admin itself when the
-            // interaction targets the shared pool.
-            await handleCredentialsOAuthCodeButton(interaction)
-            return
-          }
-
-          if (customId.startsWith('action_button:')) {
-            await handleActionButton(interaction)
-            return
-          }
-
-          if (customId.startsWith('html_action:')) {
-            await handleHtmlActionButton(interaction)
-            return
-          }
-
-          return
-        }
-
-        if (interaction.isStringSelectMenu()) {
-          if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await replyOrEditInteraction(interaction,
-              `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-            )
-            return
-          }
-
-          const customId = interaction.customId
-
-          if (customId.startsWith('fork_subagent_select:')) {
-            await handleForkSubagentSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('model_provider:')) {
-            await handleProviderSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('model_select:')) {
-            await handleModelSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('model_scope:')) {
-            await handleModelScopeSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('model_variant:')) {
-            await handleModelVariantSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('variant_quick:')) {
-            await handleVariantQuickSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('variant_scope:')) {
-            await handleVariantScopeSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('agent_select:')) {
-            await handleAgentSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('verbosity_select:')) {
-            await handleVerbositySelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('ask_question:')) {
-            await handleAskQuestionSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('mcp_toggle:')) {
-            await handleMcpSelectMenu(interaction)
-            return
-          }
-
-          if (customId.startsWith('login_select:')) {
-            if (!store.getState().credentialPoolsEnabled) {
-              // Stale menu: /login only exists when credential pools are enabled.
-              await replyOrEditInteraction(interaction, 'Credential pools are not enabled on this server.')
-              return
-            }
-            // The pool flow re-checks the shared-pool admin rule at every
-            // write (same handlers as /credentials).
-            await handleLoginSelect(interaction)
-            return
-          }
-          return
-        }
-
-        if (interaction.isModalSubmit()) {
-          if (!hasRoadieBotPermission(interaction.member, interaction.guild)) {
-            await replyOrEditInteraction(interaction,
-              `You don't have permission to use this.\nTo use Roadie, ask a server admin to give you the **Roadie** role.`,
-            )
-            return
-          }
-
-          const customId = interaction.customId
-
-          if (
-            customId.startsWith(CREDENTIALS_APIKEY_MODAL_PREFIX) ||
-            customId.startsWith(CREDENTIALS_OAUTH_MODAL_PREFIX)
-          ) {
-            // Per-person command: modal handlers re-resolve the target pool
-            // and re-check admin from this interaction, never trusting the click.
-            if (!store.getState().credentialPoolsEnabled) {
-              // Stale registration: /credentials only exists when
-              // --credential-pools is on. Fail closed rather than touch pools.
-              await interaction.reply({
-                content: 'Credential pools are not enabled on this server.',
-                flags: MessageFlags.Ephemeral,
-              })
-              return
-            }
-            if (customId.startsWith(CREDENTIALS_APIKEY_MODAL_PREFIX)) {
-              await handleCredentialsApiKeyModalSubmit(interaction)
-            } else {
-              await handleCredentialsOAuthCodeModalSubmit(interaction)
-            }
-            return
-          }
-
-          if (customId.startsWith('file_upload_modal:')) {
-            await handleFileUploadModalSubmit(interaction)
-            return
-          }
-          return
+          await route.handle(interaction, { channelBound: !unboundPersonScoped })
         }
       } catch (error) {
         interactionLogger.error(
