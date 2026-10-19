@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.5] - 2026-10-19
+
+### Changed
+- Move typing keepalive into its own collaborator (slice 2 of #310)
+
 ## [0.73.4] - 2026-10-19
 
 ### Changed
