@@ -25,8 +25,6 @@ import {
   type AgentEvent,
   type AgentMessage,
   type AgentPart,
-  type AgentPermissionRequest,
-  type AgentQuestionRequest,
   type AgentStatus,
 } from '../agent-backend/events.js'
 import { AgentRequestError, type AgentPromptPart } from '../agent-backend/types.js'
@@ -107,12 +105,10 @@ import { personKeyFrom, resolvePersonBillingPool } from '../credentials/person-p
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
-  arePatternsCoveredBy,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
-  findPendingQuestionContextForRequest,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
@@ -152,7 +148,6 @@ import {
   getContinuationTurnOutcome,
   didLatestUserTurnUseSleepTool,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
-  deriveLatestUnansweredQuestion,
   getAssistantMessageIdsForLatestUserTurn,
   getCurrentTurnStartTime,
   isSessionBusy,
@@ -190,8 +185,8 @@ import {
 
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
-import { createDebouncedTimeout } from '../debounce-timeout.js'
 import { TypingKeepalive } from './typing-keepalive.js'
+import { InteractiveUi } from './interactive-ui.js'
 import { resolveTurnContext, resolveTurnSystemPrompt } from './turn-context.js'
 import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
 import type { RuntimeOptions } from './runtime-registry.js'
@@ -202,7 +197,7 @@ import {
   type EnqueueResult,
   type IngressInput,
 } from './ingress-input.js'
-import { buildPermissionDedupeKey, cleanupPendingUiForThread, pendingPermissions } from './pending-ui.js'
+import { cleanupPendingUiForThread, pendingPermissions } from './pending-ui.js'
 import { isEssentialToolPart } from './essential-tools.js'
 import { deriveThreadNameFromSessionTitle } from './thread-name.js'
 import {
@@ -252,9 +247,8 @@ export class ThreadSessionRuntime {
 
   // Typing indicator scheduler (keepalive loop + repulse debounce).
   private readonly typing: TypingKeepalive
-  private readonly deferredQuestionShow: ReturnType<typeof createDebouncedTimeout>
-
-  private static DEFERRED_QUESTION_SHOW_MS = 1000
+  // Permission and question prompts (question deferral + shown-request dedupe).
+  private readonly interactiveUi: InteractiveUi
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -267,7 +261,6 @@ export class ThreadSessionRuntime {
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, AgentPart>>()
-  private shownQuestionRequestIds = new Set<string>()
 
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
@@ -359,14 +352,23 @@ export class ThreadSessionRuntime {
       isSessionBusy: (sessionId) => isSessionBusy({ events: this.eventBuffer, sessionId }),
       sendTyping: () => this.chat.sendTyping(),
     })
-    this.deferredQuestionShow = createDebouncedTimeout({
-      delayMs: ThreadSessionRuntime.DEFERRED_QUESTION_SHOW_MS,
-      callback: () => {
-        if (this.disposed) {
-          return
-        }
-        void this.dispatchAction(async () => {
-          await this.tryShowPendingQuestion({ ignoreUnfinishedText: true })
+    this.interactiveUi = new InteractiveUi({
+      threadId: this.thread.id,
+      sdkDirectory: this.sdkDirectory,
+      chat: this.chat,
+      isDisposed: () => this.disposed,
+      getSessionId: () => this.state?.sessionId,
+      getEventBuffer: () => this.eventBuffer,
+      getBufferedParts: (messageID) => this.getBufferedParts(messageID),
+      getSubtaskInfoForSession: (sessionId) => this.getSubtaskInfoForSession(sessionId),
+      getQueueLength: () => this.getQueueLength(),
+      stopTyping: () => this.typing.stopTyping(),
+      flushCurrentTurnParts: (opts) => this.flushCurrentTurnParts(opts),
+      dispatchAction: (action) => this.dispatchAction(action),
+      onQuestionShown: (sessionId) => {
+        this.maybeHandoffQueuedItemForPendingQuestion({
+          sessionId,
+          reason: 'question-shown',
         })
       },
     })
@@ -681,7 +683,7 @@ export class ThreadSessionRuntime {
     this.disposed = true
     unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
-    this.deferredQuestionShow.clear()
+    this.interactiveUi.dispose()
     this.typing.stopTyping()
 
     // Release large internal buffers so GC can reclaim memory immediately
@@ -689,7 +691,6 @@ export class ThreadSessionRuntime {
     this.eventBuffer = []
     this.nextEventIndex = 0
     this.partBuffer.clear()
-    this.shownQuestionRequestIds.clear()
     this.preprocessChain = Promise.resolve()
 
     // Don't clear actionQueue here — queued closures own resolve/reject for
@@ -1089,13 +1090,13 @@ export class ThreadSessionRuntime {
         this.handleChildSessionEvent(agentEvent)
         break
       case 'permission.asked':
-        await this.handlePermissionAsked(agentEvent.request)
+        await this.interactiveUi.handlePermissionAsked(agentEvent.request)
         break
       case 'permission.replied':
         this.handlePermissionReplied(agentEvent)
         break
       case 'question.asked':
-        await this.handleQuestionAsked(agentEvent.request)
+        await this.interactiveUi.handleQuestionAsked(agentEvent.request)
         break
       case 'question.replied':
         this.handleQuestionReplied(agentEvent)
@@ -1500,23 +1501,6 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async showInteractiveUi({
-    skipPartId,
-    show,
-  }: {
-    skipPartId?: string
-    flushMessageId?: string
-    show: () => Promise<void>
-  }): Promise<void> {
-    this.typing.stopTyping()
-    await this.flushCurrentTurnParts({
-      mode: 'interactive',
-      throughPartId: skipPartId,
-      skipPartId,
-    })
-    await show()
-  }
-
   private async ensureModelContextLimit({
     providerID,
     modelID,
@@ -1833,7 +1817,7 @@ export class ThreadSessionRuntime {
       part.tool.endsWith('roadie_action_buttons')
     ) {
       const sessionId = this.state?.sessionId
-      await this.showInteractiveUi({
+      await this.interactiveUi.showInteractiveUi({
         skipPartId: part.id,
         flushMessageId: part.messageId,
         show: async () => {
@@ -1946,7 +1930,7 @@ export class ThreadSessionRuntime {
     if (part.kind === 'text') {
       await this.flushCurrentTurnParts({ mode: 'progress' })
       if (part.endedAt) {
-        await this.tryShowPendingQuestion()
+        await this.interactiveUi.tryShowPendingQuestion()
       }
       return
     }
@@ -2229,97 +2213,6 @@ export class ThreadSessionRuntime {
     await this.tryDrainQueue({ showIndicator: true })
   }
 
-  private async handlePermissionAsked(
-    permission: AgentPermissionRequest,
-  ): Promise<void> {
-    const sessionId = this.state?.sessionId
-    const subtaskInfo = this.getSubtaskInfoForSession(permission.sessionId)
-    const isMainSession = permission.sessionId === sessionId
-    const isSubtaskSession = Boolean(subtaskInfo)
-
-    if (!isMainSession && !isSubtaskSession) {
-      logger.log(
-        `[PERMISSION IGNORED] Permission for unknown session (expected: ${sessionId} or subtask, got: ${permission.sessionId})`,
-      )
-      return
-    }
-
-    const subtaskLabel = subtaskInfo?.label
-
-    const dedupeKey = buildPermissionDedupeKey({
-      permission,
-      directory: this.sdkDirectory,
-    })
-    const threadPermissions = pendingPermissions.get(this.thread.id)
-    const existingPending = threadPermissions
-      ? Array.from(threadPermissions.values()).find((pending) => {
-          if (pending.dedupeKey === dedupeKey) {
-            return true
-          }
-          if (pending.directory !== this.sdkDirectory) {
-            return false
-          }
-          if (pending.permission.permission !== permission.permission) {
-            return false
-          }
-          return arePatternsCoveredBy({
-            patterns: permission.patterns,
-            coveringPatterns: pending.permission.patterns,
-          })
-        })
-      : undefined
-
-    if (existingPending) {
-      logger.log(
-        `[PERMISSION] Deduped permission ${permission.id} (matches pending ${existingPending.permission.id})`,
-      )
-      this.typing.stopTyping()
-      if (!pendingPermissions.has(this.thread.id)) {
-        pendingPermissions.set(this.thread.id, new Map())
-      }
-      pendingPermissions.get(this.thread.id)!.set(permission.id, {
-        permission,
-        messageId: existingPending.messageId,
-        directory: this.sdkDirectory,
-        contextHash: existingPending.contextHash,
-        dedupeKey,
-      })
-      const added = this.chat.interactions.addPermissionRequest({
-        contextHash: existingPending.contextHash,
-        requestId: permission.id,
-      })
-      if (!added) {
-        logger.log(
-          `[PERMISSION] Failed to attach duplicate request ${permission.id} to context`,
-        )
-      }
-      return
-    }
-
-    logger.log(
-      `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
-    )
-
-    this.typing.stopTyping()
-
-    const { messageId, contextHash } = await this.chat.interactions.permission({
-      permission,
-      directory: this.sdkDirectory,
-      subtaskLabel,
-    })
-
-    if (!pendingPermissions.has(this.thread.id)) {
-      pendingPermissions.set(this.thread.id, new Map())
-    }
-    pendingPermissions.get(this.thread.id)!.set(permission.id, {
-      permission,
-      messageId,
-      directory: this.sdkDirectory,
-      contextHash,
-      dedupeKey,
-    })
-  }
-
   private handlePermissionReplied(properties: {
     requestId: string
     reply: string
@@ -2354,96 +2247,12 @@ export class ThreadSessionRuntime {
     this.onInteractiveUiStateChanged()
   }
 
-  private hasUnfinishedTextPart(messageID: string): boolean {
-    return this.getBufferedParts(messageID).some((part) => {
-      return part.kind === 'text' && !part.endedAt
-    })
-  }
-
-  // OpenCode emits question.asked when the tool starts, often before the
-  // preceding text part gets time.end. Showing the dropdown on that event
-  // holds the action queue while Discord posts, so the later text-end cannot
-  // send and dumps after the queued » user: indicator. Wait for text-end.
-  private async tryShowPendingQuestion({
-    ignoreUnfinishedText = false,
-  } = {}): Promise<boolean> {
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return false
-    }
-
-    const request = deriveLatestUnansweredQuestion({
-      events: this.eventBuffer,
-      sessionId,
-    })
-    if (!request) {
-      this.deferredQuestionShow.clear()
-      return false
-    }
-    if (
-      this.shownQuestionRequestIds.has(request.id)
-      || findPendingQuestionContextForRequest({
-        threadId: this.thread.id,
-        requestId: request.id,
-      })
-    ) {
-      this.deferredQuestionShow.clear()
-      return true
-    }
-
-    const messageId = request.tool?.messageID
-    if (!ignoreUnfinishedText && messageId && this.hasUnfinishedTextPart(messageId)) {
-      return false
-    }
-
-    this.shownQuestionRequestIds.add(request.id)
-    await this.showInteractiveUi({
-      flushMessageId: messageId,
-      show: async () => {
-        await this.chat.interactions.question({
-          sessionId,
-          directory: this.sdkDirectory,
-          requestId: request.id,
-          input: { questions: request.questions },
-          silent: this.getQueueLength() > 0,
-        })
-      },
-    })
-    this.deferredQuestionShow.clear()
-    this.maybeHandoffQueuedItemForPendingQuestion({
-      sessionId,
-      reason: 'question-shown',
-    })
-    return true
-  }
-
-  private async handleQuestionAsked(
-    questionRequest: AgentQuestionRequest,
-  ): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (questionRequest.sessionId !== sessionId) {
-      logger.log(
-        `[QUESTION IGNORED] Question for different session (expected: ${sessionId}, got: ${questionRequest.sessionId})`,
-      )
-      return
-    }
-
-    logger.log(
-      `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
-    )
-
-    const shown = await this.tryShowPendingQuestion()
-    if (!shown) {
-      this.deferredQuestionShow.trigger()
-    }
-  }
-
   private handleQuestionReplied(properties: { sessionId: string }): void {
     const sessionId = this.state?.sessionId
     if (properties.sessionId !== sessionId) {
       return
     }
-    this.deferredQuestionShow.clear()
+    this.interactiveUi.clearDeferredQuestionShow()
     this.onInteractiveUiStateChanged()
 
     // When a question is answered and the local queue has items, the model may
@@ -3495,7 +3304,7 @@ export class ThreadSessionRuntime {
     )
 
     this.typing.stopTyping()
-    this.deferredQuestionShow.clear()
+    this.interactiveUi.clearDeferredQuestionShow()
 
     // The aborted run owns the question request, so the dropdown dies with it.
     // Questions have no TTL, so this is the only thing that clears them here.
