@@ -23,7 +23,10 @@ const logger = createLogger(LogPrefix.CLI)
 /**
  * Start shared services, then every requested platform. On success returns
  * the local Hrana URL and a stop handle; on failure shared services are torn
- * down again and the Error is returned.
+ * down again and the Error is returned. A single platform failing to start
+ * is not a failure here: startChatPlatforms (#304) records it for /health
+ * and returns an Error only when nothing started or a required platform
+ * failed.
  *
  * Shutdown: when Discord is among the platforms, its lifecycle handlers
  * (registerBotLifecycleHandlers) own process signals and stop the other

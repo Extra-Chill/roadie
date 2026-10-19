@@ -145,8 +145,16 @@ describe.skipIf(!findPi())('chat platform registry', () => {
     })
     if (registered instanceof Error) throw registered
 
+    // A platform that fails to start must not take the others down (#304);
+    // /health reports it under failedPlatforms instead.
+    const broken = registerChatPlatform({
+      id: 'broken-chat',
+      start: async () => new Error('broken-chat refused'),
+    })
+    if (broken instanceof Error) throw broken
+
     const started = await runChatPlatforms({
-      platformIds: ['discord', 'host-chat'],
+      platformIds: ['discord', 'host-chat', 'broken-chat'],
       options: {},
     })
     if (started instanceof Error) throw started
@@ -225,10 +233,15 @@ describe.skipIf(!findPi())('chat platform registry', () => {
     expect(await getThreadSession('host-chat:HOSTSPACE:HOSTCH1:root-1')).not.toBe(discordSession)
   }, 30_000)
 
-  test('/health reports every ready platform', async () => {
+  test('/health reports every ready platform and each failed start', async () => {
     const response = await fetch(new URL('/health', hranaUrl))
-    const health = (await response.json()) as { chatPlatforms: string[]; chatReady: boolean }
+    const health = (await response.json()) as {
+      chatPlatforms: string[]
+      chatReady: boolean
+      failedPlatforms: { id: string; error: string }[]
+    }
     expect(health.chatReady).toBe(true)
     expect([...health.chatPlatforms].sort()).toEqual(['discord', 'host-chat'])
+    expect(health.failedPlatforms).toEqual([{ id: 'broken-chat', error: 'broken-chat refused' }])
   }, 10_000)
 })
