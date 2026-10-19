@@ -39,13 +39,7 @@ import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '..
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
 import { getCachedPerson, isIdentityConfigured } from '../identity.js'
 import { registerPersonMcpServers } from '../person-mcp.js'
-import { applicationDirectory, channelContextBinding } from '../channel-policy.js'
-import {
-  isContextProviderConfigured,
-  renderContextSections,
-  requestContext,
-  speakerKey,
-} from '../context-provider.js'
+import { applicationDirectory } from '../channel-policy.js'
 import { writeInjectionGuardConfig } from '../injection-guard-config.js'
 import { isAbortError } from '../utils.js'
 import {
@@ -96,8 +90,6 @@ import {
   clearSessionModel,
   getVariantCascade,
   setSessionStartSource,
-  getSessionStartSource,
-  getScheduledTask,
   completeScheduledTaskRunsForSession,
   failScheduledTaskRunsForSession,
   startScheduledTaskRunSession,
@@ -141,9 +133,7 @@ import {
 } from './model-utils.js'
 import {
   getPromptContext,
-  getSystemMessage,
   systemPromptNamesOtherSession,
-  resolveSessionSystemPrompt,
   systemPromptHasParentSession,
   type AgentInfo,
   type WorkingDirectoryInfo,
@@ -202,6 +192,7 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
 import { TypingKeepalive } from './typing-keepalive.js'
+import { resolveTurnContext, resolveTurnSystemPrompt } from './turn-context.js'
 import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
 import type { RuntimeOptions } from './runtime-registry.js'
 import {
@@ -4297,144 +4288,43 @@ export class ThreadSessionRuntime {
     ScheduledTaskSystemContext | undefined
   >()
 
-  /**
-   * Resolve the scheduled-task context for the system message, once per
-   * session. The row in session_start_sources is immutable, so caching the
-   * result keeps the system prompt identical across turns (prompt-cache safe).
-   * One-shot 'at' tasks are deleted after their run, so only schedule_kind
-   * survives for them.
-   */
-  private async resolveScheduledTaskContext(
-    sessionId: string,
-  ): Promise<ScheduledTaskSystemContext | undefined> {
-    const cache = this.scheduledTaskContextCache
-    if (cache.has(sessionId)) {
-      return cache.get(sessionId)
-    }
-    const context = await (async (): Promise<
-      ScheduledTaskSystemContext | undefined
-    > => {
-      const source = await getSessionStartSource({ sessionId })
-      if (!source) {
-        return undefined
-      }
-      const task = source.scheduled_task_id
-        ? await getScheduledTask(source.scheduled_task_id)
-        : null
-      return {
-        taskId: source.scheduled_task_id ?? undefined,
-        scheduleKind: source.schedule_kind,
-        cronExpr: task?.cron_expr,
-        timezone: task?.timezone,
-      }
-    })().catch((error) => {
-      logger.warn(
-        `[SCHEDULED TASK CONTEXT] Failed to resolve for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
-    })
-    cache.set(sessionId, context)
-    return context
-  }
-
   // Speaker key of the last turn we fetched per-turn host context for.
   private lastContextSpeakerKey: string | undefined
 
-  private contextSpeaker(input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli' }) {
-    if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return {}
-    return {
-      actor: {
-        platform: this.chat.platform,
-        id: input.userId,
-        ...(input.username ? { name: input.username } : {}),
-      },
-      ...(input.personId ? { personId: input.personId } : {}),
-    }
-  }
-
-  /**
-   * Per-turn host context, fetched only when the speaker differs from the
-   * previous turn's. First/reconstructed turns have no successful speaker
-   * lookup, so they fetch too. Shared session context carries no speaker.
-   */
-  private async resolveTurnContext({
-    sessionId,
-    input,
-    isFirstTurn,
-  }: {
+  private resolveTurnContext(args: {
     sessionId: string
     input: { userId?: string; username?: string; personId?: string; actorVia?: 'chat' | 'cli'; contextOnly?: boolean }
     isFirstTurn: boolean
   }): Promise<string> {
-    if (input.contextOnly || !isContextProviderConfigured()) return ''
-    const speaker = this.contextSpeaker(input)
-    const key = speakerKey(speaker)
-    const previous = this.lastContextSpeakerKey
-    if (previous === key) return ''
-    if (key === 'none') {
-      this.lastContextSpeakerKey = key
-      return ''
-    }
-    const sections = await requestContext({
-      event: 'turn',
-      sessionId,
-      spaceId: this.chat.spaceId ?? undefined,
+    return resolveTurnContext({
+      ...args,
+      chat: this.chat,
       threadId: this.thread.id,
+      runtimeThreadId: this.threadId,
       channelId: this.channelId,
       directory: this.sdkDirectory,
-      ...channelContextBinding(this.channelId || this.threadId),
-      ...speaker,
+      lastSpeakerKey: this.lastContextSpeakerKey,
+      setLastSpeakerKey: (key) => {
+        this.lastContextSpeakerKey = key
+      },
     })
-    // Empty/error responses are not a successful refresh. Retry on the next
-    // turn rather than permanently caching the failed speaker lookup.
-    if (sections.length > 0) this.lastContextSpeakerKey = key
-    return renderContextSections(sections)
   }
 
-  /**
-   * Pinned system prompt for this turn. Generated only on the first turn of a
-   * session; forks start with the source session's pinned prompt.
-   */
-  private async resolveTurnSystemPrompt({
-    sessionId,
-    channelTopic,
-    agents,
-    input,
-  }: {
+  private resolveTurnSystemPrompt(args: {
     sessionId: string
     channelTopic: string | undefined
     agents: AgentInfo[]
     input: { username?: string; userId?: string; parentSessionId?: string }
   }) {
-    return resolveSessionSystemPrompt({
-      sessionId,
-      generate: async () => {
-        const base = getSystemMessage({
-          platform: this.chat.platform,
-          sessionId,
-          channelId: this.channelId,
-          guildId: this.chat.spaceId ?? undefined,
-          threadId: this.thread.id,
-          channelTopic,
-          agents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-          scheduledTask: await this.resolveScheduledTaskContext(sessionId),
-        })
-        // Host context for the whole session, pinned with the prompt so it
-        // stays cache-stable across turns.
-        const sections = await requestContext({
-          event: 'session_start',
-          sessionId,
-          spaceId: this.chat.spaceId ?? undefined,
-          threadId: this.thread.id,
-          channelId: this.channelId,
-          directory: this.sdkDirectory,
-          ...channelContextBinding(this.channelId || this.threadId),
-        })
-        return base + renderContextSections(sections)
-      },
+    return resolveTurnSystemPrompt({
+      ...args,
+      chat: this.chat,
+      threadId: this.thread.id,
+      runtimeThreadId: this.threadId,
+      channelId: this.channelId,
+      directory: this.sdkDirectory,
+      getState: () => this.state,
+      scheduledTaskContextCache: this.scheduledTaskContextCache,
     })
   }
 
