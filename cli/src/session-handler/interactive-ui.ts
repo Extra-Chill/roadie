@@ -3,7 +3,7 @@
 // patterns) and question dropdowns. Questions wait for the preceding text part
 // to finish, with a debounced fallback, so the dropdown never lands ahead of
 // the text that introduced it. The runtime owns this object and passes in the
-// callbacks it needs; queue handoff stays in the runtime.
+// callbacks it needs; queue handoff lives in message-queue.ts.
 
 import type { AgentPermissionRequest, AgentQuestionRequest, AgentPart } from '../agent-backend/events.js'
 import type { ChatThread } from '../chat-platform/types.js'
