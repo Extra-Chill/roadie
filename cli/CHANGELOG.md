@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.8] - 2026-10-19
+
+### Changed
+- Move interactive UI prompts into interactive-ui.ts (slice 4 of #310)
+
 ## [0.73.7] - 2026-10-19
 
 ### Changed
