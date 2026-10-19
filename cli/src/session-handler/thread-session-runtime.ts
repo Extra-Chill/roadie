@@ -201,6 +201,7 @@ import {
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
+import { TypingKeepalive } from './typing-keepalive.js'
 import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
 import type { RuntimeOptions } from './runtime-registry.js'
 import {
@@ -258,16 +259,10 @@ export class ThreadSessionRuntime {
   private disposed = false
   private dispatchingQueueId: string | undefined
 
-  // Typing indicator scheduler handles.
-  // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
-  // `typingRepulseDebounce` collapses clustered immediate re-pulses after bot
-  // messages into one last pulse, because Discord hides typing on the next bot
-  // message and showing multiple back-to-back POSTs is wasteful.
-  private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
-  private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
+  // Typing indicator scheduler (keepalive loop + repulse debounce).
+  private readonly typing: TypingKeepalive
   private readonly deferredQuestionShow: ReturnType<typeof createDebouncedTimeout>
 
-  private static TYPING_REPULSE_DEBOUNCE_MS = 500
   private static DEFERRED_QUESTION_SHOW_MS = 1000
 
   // Notification throttles for retry/context notices.
@@ -365,14 +360,13 @@ export class ThreadSessionRuntime {
         )
       },
     })
-    this.typingRepulseDebounce = createDebouncedTimeout({
-      delayMs: ThreadSessionRuntime.TYPING_REPULSE_DEBOUNCE_MS,
-      callback: () => {
-        if (!this.shouldTypeNow()) {
-          return
-        }
-        this.restartTypingKeepalive({ sendNow: true })
-      },
+    this.typing = new TypingKeepalive({
+      supportsTyping: () => this.chat.capabilities.typing,
+      isDisposed: () => this.disposed,
+      hasPendingInteractiveUi: () => this.hasPendingInteractiveUi(),
+      getSessionId: () => this.state?.sessionId,
+      isSessionBusy: (sessionId) => isSessionBusy({ events: this.eventBuffer, sessionId }),
+      sendTyping: () => this.chat.sendTyping(),
     })
     this.deferredQuestionShow = createDebouncedTimeout({
       delayMs: ThreadSessionRuntime.DEFERRED_QUESTION_SHOW_MS,
@@ -697,7 +691,7 @@ export class ThreadSessionRuntime {
     unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
     this.deferredQuestionShow.clear()
-    this.stopTyping()
+    this.typing.stopTyping()
 
     // Release large internal buffers so GC can reclaim memory immediately
     // instead of waiting for the runtime object itself to become unreachable.
@@ -1234,112 +1228,10 @@ export class ThreadSessionRuntime {
   }
 
   onInteractiveUiStateChanged(): void {
-    this.ensureTypingNow()
+    this.typing.ensureTypingNow()
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
     })
-  }
-
-  private shouldTypeNow(): boolean {
-    if (!this.chat.capabilities.typing) return false
-    if (this.disposed) {
-      return false
-    }
-    if (this.hasPendingInteractiveUi()) {
-      return false
-    }
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return false
-    }
-    return isSessionBusy({ events: this.eventBuffer, sessionId })
-  }
-
-  private async sendTypingPulse(): Promise<void> {
-    const result = await this.chat.sendTyping()
-    if (result instanceof Error) {
-      discordLogger.log(`Failed to send typing: ${result}`)
-    }
-  }
-
-  private clearTypingKeepalive(): void {
-    if (!this.typingKeepaliveTimeout) {
-      return
-    }
-    clearTimeout(this.typingKeepaliveTimeout)
-    this.typingKeepaliveTimeout = null
-  }
-
-  private armTypingKeepalive({
-    delayMs,
-  }: {
-    delayMs: number
-  }): void {
-    this.typingKeepaliveTimeout = setTimeout(() => {
-      const activeTimer = this.typingKeepaliveTimeout
-      if (!activeTimer) {
-        return
-      }
-      void (async () => {
-        if (!this.shouldTypeNow()) {
-          this.stopTyping()
-          return
-        }
-        await this.sendTypingPulse()
-        if (this.typingKeepaliveTimeout !== activeTimer) {
-          return
-        }
-        if (!this.shouldTypeNow()) {
-          this.stopTyping()
-          return
-        }
-        this.armTypingKeepalive({ delayMs: 7000 })
-      })()
-    }, delayMs)
-  }
-
-  private restartTypingKeepalive({
-    sendNow,
-  }: {
-    sendNow: boolean
-  }): void {
-    this.clearTypingKeepalive()
-    this.armTypingKeepalive({ delayMs: sendNow ? 0 : 7000 })
-  }
-
-  private ensureTypingNow(): void {
-    if (!this.shouldTypeNow()) {
-      this.stopTyping()
-      return
-    }
-    if (!this.typingKeepaliveTimeout && !this.typingRepulseDebounce.isPending()) {
-      this.armTypingKeepalive({ delayMs: 0 })
-      return
-    }
-    this.typingRepulseDebounce.trigger()
-  }
-
-  private ensureTypingKeepalive(): void {
-    if (!this.shouldTypeNow()) {
-      this.stopTyping()
-      return
-    }
-    if (this.typingKeepaliveTimeout || this.typingRepulseDebounce.isPending()) {
-      return
-    }
-    this.armTypingKeepalive({ delayMs: 7000 })
-  }
-
-  private stopTyping(): void {
-    this.typingRepulseDebounce.clear()
-    this.clearTypingKeepalive()
-  }
-
-  private requestTypingRepulse(): void {
-    if (!this.shouldTypeNow()) {
-      return
-    }
-    this.typingRepulseDebounce.trigger()
   }
 
   // ── Part Buffering & Output ─────────────────────────────────
@@ -1613,7 +1505,7 @@ export class ThreadSessionRuntime {
     this.lastSentPartKind = kind
     await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
     if (repulseTyping) {
-      this.requestTypingRepulse()
+      this.typing.requestTypingRepulse()
     }
   }
 
@@ -1625,7 +1517,7 @@ export class ThreadSessionRuntime {
     flushMessageId?: string
     show: () => Promise<void>
   }): Promise<void> {
-    this.stopTyping()
+    this.typing.stopTyping()
     await this.flushCurrentTurnParts({
       mode: 'interactive',
       throughPartId: skipPartId,
@@ -1886,7 +1778,7 @@ export class ThreadSessionRuntime {
     const sessionId = this.state?.sessionId
 
     if (part.kind === 'step-start') {
-      this.ensureTypingNow()
+      this.typing.ensureTypingNow()
       return
     }
 
@@ -2069,7 +1961,7 @@ export class ThreadSessionRuntime {
     }
 
     if (part.kind === 'step-finish') {
-      this.ensureTypingKeepalive()
+      this.typing.ensureTypingKeepalive()
     }
   }
 
@@ -2128,7 +2020,7 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
     await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-    this.requestTypingRepulse()
+    this.typing.requestTypingRepulse()
   }
 
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
@@ -2275,7 +2167,7 @@ export class ThreadSessionRuntime {
       )
     })
     if (!hasVisibleOutput) {
-      this.stopTyping()
+      this.typing.stopTyping()
       this.resetPerRunState()
       this.clearBufferedPartsForMessages(assistantMessageIds)
       logger.log(
@@ -2284,7 +2176,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    this.stopTyping()
+    this.typing.stopTyping()
 
     const turnStartTime = getCurrentTurnStartTime({
       events: this.eventBuffer,
@@ -2390,7 +2282,7 @@ export class ThreadSessionRuntime {
       logger.log(
         `[PERMISSION] Deduped permission ${permission.id} (matches pending ${existingPending.permission.id})`,
       )
-      this.stopTyping()
+      this.typing.stopTyping()
       if (!pendingPermissions.has(this.thread.id)) {
         pendingPermissions.set(this.thread.id, new Map())
       }
@@ -2417,7 +2309,7 @@ export class ThreadSessionRuntime {
       `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
     )
 
-    this.stopTyping()
+    this.typing.stopTyping()
 
     const { messageId, contextHash } = await this.chat.interactions.permission({
       permission,
@@ -2652,12 +2544,12 @@ export class ThreadSessionRuntime {
     }
 
     if (event.status.state === 'idle') {
-      this.stopTyping()
+      this.typing.stopTyping()
       return
     }
 
     if (event.status.state === 'busy') {
-      this.ensureTypingNow()
+      this.typing.ensureTypingNow()
       return
     }
 
@@ -2994,7 +2886,7 @@ export class ThreadSessionRuntime {
 
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
-        this.stopTyping()
+        this.typing.stopTyping()
         await this.chat.sendMessage(errorMessage, { notify: true })
         await this.tryDrainQueue({ showIndicator: true })
       }
@@ -3611,7 +3503,7 @@ export class ThreadSessionRuntime {
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} sessionBusy=${sessionIsBusy}`,
     )
 
-    this.stopTyping()
+    this.typing.stopTyping()
     this.deferredQuestionShow.clear()
 
     // The aborted run owns the question request, so the dropdown dies with it.
@@ -4041,7 +3933,7 @@ export class ThreadSessionRuntime {
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
     })
     if (sessionResult instanceof Error) {
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`✗ ${sessionResult.message}`, { notify: true })
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
@@ -4058,7 +3950,7 @@ export class ThreadSessionRuntime {
       permissions: input.permissions,
     })
     if (updatePermissionsResult instanceof Error) {
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`Failed to update session permissions: ${updatePermissionsResult.message}`, { notify: true })
       return false
     }
@@ -4082,7 +3974,7 @@ export class ThreadSessionRuntime {
         directory: this.sdkDirectory,
       })
       if (validatedModel instanceof Error) {
-        this.stopTyping()
+        this.typing.stopTyping()
         await this.chat.sendMessage(`Failed to resolve model: ${validatedModel.message}`, { notify: true })
         return false
       }
@@ -4107,7 +3999,7 @@ export class ThreadSessionRuntime {
       directory: this.sdkDirectory,
     }).catch((e) => new AgentBackendError({ operation: 'resolveAgent', cause: e }))
     if (earlyAgentResult instanceof Error) {
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`Failed to resolve agent: ${earlyAgentResult.message}`, { notify: true })
       return false
     }
@@ -4152,13 +4044,13 @@ export class ThreadSessionRuntime {
       }),
     ])
     if (earlyModelResult instanceof Error) {
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`Failed to resolve model: ${earlyModelResult.message}`, { notify: true })
       return false
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage('No AI provider connected. Configure a provider in OpenCode with `/connect` command.')
       return false
     }
@@ -4229,7 +4121,7 @@ export class ThreadSessionRuntime {
         `[DISPATCH] Failed to pin system prompt for session ${session.id}: ${system.message}`,
       )
       void notifyError(system, 'Failed to pin session system prompt')
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`✗ Failed to prepare system prompt: ${system.message}`, { notify: true })
       return false
     }
@@ -4316,13 +4208,13 @@ export class ThreadSessionRuntime {
           logger.log(
             `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
           )
-          this.stopTyping()
+          this.typing.stopTyping()
           return true
         }
         const apiError = new Error(`Agent error: ${errorMessage}`)
         logger.error(`[DISPATCH] ${apiError.message}`)
         void notifyError(apiError, 'Agent error during command')
-        this.stopTyping()
+        this.typing.stopTyping()
         await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
         return false
       }
@@ -4337,7 +4229,7 @@ export class ThreadSessionRuntime {
           logger.warn(
             `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
           )
-          this.stopTyping()
+          this.typing.stopTyping()
           await this.chat.sendMessage('✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.', { notify: true })
           return false
         }
@@ -4347,7 +4239,7 @@ export class ThreadSessionRuntime {
           logger.log(
             `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
           )
-          this.stopTyping()
+          this.typing.stopTyping()
           return true
         }
 
@@ -4355,7 +4247,7 @@ export class ThreadSessionRuntime {
           `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
         )
         void notifyError(commandResponse, 'Failed to send command to the agent')
-        this.stopTyping()
+        this.typing.stopTyping()
         await this.chat.sendMessage(`✗ Unexpected bot Error: ${commandResponse.message}`, { notify: true })
         return false
       }
@@ -4385,7 +4277,7 @@ export class ThreadSessionRuntime {
       const errorObject = promptResponse
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'Agent error during local queue prompt')
-      this.stopTyping()
+      this.typing.stopTyping()
       await this.chat.sendMessage(`✗ Agent error: ${errorMessage}`, { notify: true })
       return false
     }
@@ -5006,7 +4898,7 @@ export class ThreadSessionRuntime {
     const footerText = asSubtext(
       `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
     )
-    this.stopTyping()
+    this.typing.stopTyping()
 
     await this.chat.sendMessage(footerText, { notify: shouldNotifyUser })
     logger.log(
