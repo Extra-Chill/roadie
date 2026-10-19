@@ -1417,6 +1417,16 @@ export async function deleteChannelDirectoryById(
   return rows.length > 0
 }
 
+/** Removes the database rows a fork wrote for its thread before setup failed. */
+export async function cleanupForkSessionState({ threadId, sessionId }: { threadId: string; sessionId?: string }) {
+  const db = await getDb()
+  await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+  await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  if (sessionId) {
+    await db.delete(schema.session_fork_origins).where(orm.eq(schema.session_fork_origins.session_id, sessionId))
+  }
+}
+
 export async function cleanupDeletedThread(threadId: string) {
   const db = await getDb()
   const binding = await db.query.thread_sessions.findFirst({

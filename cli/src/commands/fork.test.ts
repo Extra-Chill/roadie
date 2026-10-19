@@ -21,7 +21,7 @@ vi.mock('../session-handler/runtime-registry.js', async (importOriginal) => {
 const { handleForkCommand } = await import('./fork.js')
 const { setAgentBackendProvider } = await import('../agent-backend/registry.js')
 const { closeDb } = await import('../db.js')
-const { setChannelDirectory, setThreadSession } = await import('../database.js')
+const { getSessionForkOrigin, getThreadSession, setChannelDirectory, setThreadSession } = await import('../database.js')
 import type { AgentBackend, AgentBackendProvider } from '../agent-backend/types.js'
 
 const PARENT_CHANNEL_ID = 'parent-channel-1'
@@ -208,5 +208,40 @@ describe('handleForkCommand backend routing', () => {
         expect.stringContaining('Failed to fork session: pi backend unavailable'),
       )
     })
+  })
+
+  test('a failed fork notice reports a Discord error and clears the fork binding', async () => {
+    const projectDirectory = fs.mkdtempSync(path.join(tempRoot, 'project-'))
+    const parent = createParentChannel()
+    const thread = createThread({ parent })
+    const forkThread = createForkThread()
+    vi.mocked(forkThread.send).mockRejectedValue(new Error('Connect Timeout Error'))
+    parent.threads = { create: vi.fn(async () => forkThread) } as never
+
+    await setChannelDirectory({
+      channelId: PARENT_CHANNEL_ID,
+      directory: projectDirectory,
+      channelType: 'text',
+      guildId: GUILD_ID,
+    })
+    await setThreadSession(THREAD_ID, 'source-session-1')
+
+    const backend = createStubBackend()
+    const deleteSpy = vi.spyOn(backend.sessions, 'delete')
+    const { provider } = createPiRoutingProviderStub({ backend })
+
+    await withProvider(provider, async () => {
+      const interaction = createInteraction({ channel: thread })
+      await handleForkCommand({ interaction, appId: "test-app" })
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Failed to fork session: Discord operation failed: send fork notice',
+      )
+    })
+    expect(forkThread.delete).toHaveBeenCalled()
+    expect(deleteSpy).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'forked-session-1' }))
+    expect(await getThreadSession('fork-thread-1')).toBeUndefined()
+    expect(await getSessionForkOrigin('forked-session-1')).toBeUndefined()
+    expect(await getThreadSession(THREAD_ID)).toBe('source-session-1')
   })
 })

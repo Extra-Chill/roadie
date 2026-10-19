@@ -24,6 +24,7 @@ import {
 } from 'discord.js'
 import {
   getThreadSession,
+  cleanupForkSessionState,
   getThreadWorkingDirectory,
   recordSessionForkOrigin,
   setThreadSession,
@@ -35,11 +36,11 @@ import {
   sendThreadMessage,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
-import { createLogger, LogPrefix } from '../logger.js'
+import { createLogger, formatErrorChain, LogPrefix } from '../logger.js'
 import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
-import { AgentBackendError } from '../errors.js'
+import { AgentBackendError, DiscordOperationError } from '../errors.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
 import { markPendingSessionTitle } from '../session-title.js'
@@ -208,6 +209,9 @@ export async function forkSessionToThread({
           if (result instanceof Error) forkLogger.warn(`Could not delete orphan fork session ${forkedSession.id}:`, result)
         }),
     ])
+    if (createdThread) await cleanupForkSessionState({ threadId: createdThread.id, sessionId: forkedSession?.id }).catch((error) => {
+      forkLogger.warn(`Could not clean up fork database state ${createdThread.id}:`, error)
+    })
     if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
   }
   if (!forkedSession) {
@@ -258,25 +262,29 @@ export async function forkSessionToThread({
 
   const copyMs = Date.now() - copyStartedAt
   const trimmedPrompt = prompt?.trim()
-  const bindingResult = await Promise.all([
+  const [bindingResult, , noticeResult] = await Promise.all([
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
-      await setThreadSession(thread.id, forkedSession.id)
-      await recordSessionForkOrigin({
-        sessionId: forkedSession.id,
-        sourceSessionId: sessionId,
-        sourceThreadId: sourceThread.id,
-      })
-      if (workspace.binding) {
-        await setThreadWorkingDirectory({ threadId: thread.id, ...workspace.binding })
-        return
+      try {
+        await setThreadSession(thread.id, forkedSession.id)
+        await recordSessionForkOrigin({
+          sessionId: forkedSession.id,
+          sourceSessionId: sessionId,
+          sourceThreadId: sourceThread.id,
+        })
+        if (workspace.binding) {
+          await setThreadWorkingDirectory({ threadId: thread.id, ...workspace.binding })
+          return
+        }
+        // The fork works where its source thread works.
+        const source = await getThreadWorkingDirectory(sourceThread.id)
+        if (!source) {
+          return
+        }
+        await setThreadWorkingDirectory({ ...source, threadId: thread.id, projectDirectory })
+      } catch (cause) {
+        return new Error('Could not save the fork thread binding', { cause })
       }
-      // The fork works where its source thread works.
-      const source = await getThreadWorkingDirectory(sourceThread.id)
-      if (!source) {
-        return
-      }
-      await setThreadWorkingDirectory({ ...source, threadId: thread.id, projectDirectory })
     })(),
     thread.members.add(userId).catch((error) => {
       forkLogger.warn('Could not add fork member:', error)
@@ -286,11 +294,15 @@ export async function forkSessionToThread({
       trimmedPrompt
         ? `Forked from ${sourceThreadLink}.\n${trimmedPrompt}`
         : `Forked from ${sourceThreadLink}. Continue the conversation here.`,
-    ),
-  ]).catch((cause) => new AgentBackendError({ operation: 'fork workspace binding', cause }))
+    ).catch((cause) => new DiscordOperationError({ operation: 'send fork notice', cause })),
+  ])
   if (bindingResult instanceof Error) {
     await cleanup()
     return bindingResult
+  }
+  if (noticeResult instanceof Error) {
+    await cleanup()
+    return noticeResult
   }
   if (workspace.binding) await sendThreadMessage(thread, forkWorkspaceNotice(workspace.binding))
 
@@ -389,7 +401,8 @@ export async function handleForkCommand({
       appId,
     })
     if (result instanceof Error) {
-      forkLogger.warn('Fork setup failed:', { sourceThreadId: threadChannel.id, workingDirectory: resolved.workingDirectory, error: result })
+      // The cause chain is logged on its own so the log argument cap cannot cut it off.
+      forkLogger.warn(`Fork setup failed (source thread ${threadChannel.id}, ${resolved.workingDirectory}): ${formatErrorChain(result)}`)
       await interaction.editReply(`Failed to fork session: ${result.message}`)
       return
     }

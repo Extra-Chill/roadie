@@ -112,6 +112,19 @@ function formatArg(arg: LogArg): string {
   return truncate(util.inspect(safeArg, { colors: true, depth: 4 }), MAX_LOG_ARG_LENGTH)
 }
 
+/** One-line `message ← cause ← cause` summary, short enough to survive the log argument cap. */
+export function formatErrorChain(error: unknown): string {
+  const seen = new Set<unknown>()
+  const parts: string[] = []
+  let current: unknown = error
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current)
+    parts.push(current instanceof Error ? `${current.name}: ${current.message}` : String(current))
+    current = current instanceof Error ? current.cause : undefined
+  }
+  return sanitizeSensitiveText(parts.join(' ← caused by '), { redactPaths: false })
+}
+
 export function formatErrorWithStack<T>(error: T): string {
   if (error instanceof Error) {
     const seen = new Set<Error>()

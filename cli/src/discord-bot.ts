@@ -18,6 +18,7 @@ import { stopActiveChatPlatforms } from './chat-platform/registry.js'
 import { mergeInterruptedSessions, recordInterruptedSessions } from './service-lifecycle.js'
 import { operatorRequestContinuations } from './operator-requests.js'
 import { DiscordOperationError } from './errors.js'
+import { isOrphanedGatewayHandshakeError } from './gateway-handshake-error.js'
 import {
   initDatabase,
   closeDatabase,
@@ -1517,6 +1518,12 @@ export async function startDiscordBot({
         'Ignoring uncaught exception during shutdown:',
         error?.message || String(error),
       )
+      return
+    }
+    // A gateway socket abandoned mid-handshake by @discordjs/ws reports its timeout
+    // with no listener; the shard has already reconnected on a fresh socket.
+    if (isOrphanedGatewayHandshakeError(error)) {
+      discordLogger.warn('Ignoring orphaned gateway handshake timeout:', formatErrorWithStack(error))
       return
     }
     discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
