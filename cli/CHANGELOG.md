@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.1] - 2026-10-19
+
+### Changed
+- Acknowledge component interactions before the identity lookup
+
 ## [0.73.0] - 2026-10-17
 
 ### Added
