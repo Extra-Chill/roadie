@@ -36,11 +36,11 @@ import {
   getRoadieMetadata,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
+import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
 import {
-  getOrCreateRuntime,
   releaseCurrentThreadIngress,
   waitForCurrentThreadIngress,
-} from '../session-handler/thread-session-runtime.js'
+} from '../session-handler/thread-ingress.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   formatModelSource,

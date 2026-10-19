@@ -1,6 +1,6 @@
 // Thin re-export shim for backward compatibility.
 // Logic lives in:
-//   - session-handler/thread-session-runtime.ts (runtime class + registry)
+//   - session-handler/thread-session-runtime.ts (runtime class)
 //   - session-handler/thread-runtime-state.ts (state transitions)
 //   - session-handler/model-utils.ts (getDefaultModel, types)
 //   - session-handler/agent-utils.ts (resolveValidatedAgentPreference)

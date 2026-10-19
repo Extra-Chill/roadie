@@ -18,7 +18,7 @@ import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
+import { getRuntime } from '../session-handler/runtime-registry.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ABORT)

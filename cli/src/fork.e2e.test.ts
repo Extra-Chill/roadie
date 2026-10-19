@@ -15,7 +15,11 @@ import { promisify } from 'node:util'
 import { addFilter } from './hooks.js'
 import { getThreadWorkingDirectory } from './database.js'
 import { setChannelDirectory } from './database.js'
-import { disposeRuntime, getRuntime, resumeInterruptedSessions } from './session-handler/thread-session-runtime.js'
+import {
+  disposeRuntime,
+  getRuntime,
+  resumeInterruptedSessions,
+} from './session-handler/runtime-registry.js'
 import { applyPendingSessionTitle } from './session-title.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { clearIdentityCache, type Person } from './identity.js'

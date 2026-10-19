@@ -26,7 +26,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { disposeGlobalEventListener } from './session-handler/global-event-listener.js'
-import { disposeRuntime, getRuntime } from './session-handler/thread-session-runtime.js'
+import { disposeRuntime, getRuntime } from './session-handler/runtime-registry.js'
 import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'

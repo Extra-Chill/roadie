@@ -111,7 +111,7 @@ import { readConversationAdmission, resolveConversationIntake, recordConversatio
 import {
   reserveThreadIngress,
   runInThreadIngressSlot,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/thread-ingress.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 

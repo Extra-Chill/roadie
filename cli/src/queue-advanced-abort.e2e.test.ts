@@ -7,9 +7,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import {
-  getRuntime,
-} from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 import { getThreadState } from './session-handler/thread-runtime-state.js'
 import { listThreadQueueItems, setSessionModel } from './database.js'
 import {

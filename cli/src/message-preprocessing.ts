@@ -11,7 +11,7 @@
 import type { Message, ThreadChannel } from 'discord.js'
 import { DiscordOperationError } from './errors.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
-import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
+import type { PreprocessResult } from './session-handler/ingress-input.js'
 import type { RepliedMessageContext } from './system-message.js'
 import {
   resolveMentions,

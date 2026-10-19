@@ -51,7 +51,7 @@ export async function runChatPlatforms(
     const [{ recordInterruptedSessions }, { snapshotBusyRuntimes }, { stopAgentBackend }] =
       await Promise.all([
         import('../service-lifecycle.js'),
-        import('../session-handler/thread-session-runtime.js'),
+        import('../session-handler/runtime-registry.js'),
         import('../agent-backend/registry.js'),
       ])
     let stopping = false

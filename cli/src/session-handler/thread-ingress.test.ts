@@ -6,7 +6,7 @@ import {
   reserveThreadIngress,
   runInThreadIngressSlot,
   waitForCurrentThreadIngress,
-} from './thread-session-runtime.js'
+} from './thread-ingress.js'
 
 describe('thread ingress FIFO', () => {
   test('later waiters stay behind an unreleased earlier slot', async () => {

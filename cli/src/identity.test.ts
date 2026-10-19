@@ -23,7 +23,7 @@ import {
 import {
   applyPersonToIngress,
   type IngressInput,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/ingress-input.js'
 
 let dir: string
 const writeHook = (name: string, body: string) => {

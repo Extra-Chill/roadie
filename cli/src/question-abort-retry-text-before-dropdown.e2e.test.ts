@@ -9,7 +9,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 import { getMessageVisibleText, waitForBotMessageContaining } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001043'

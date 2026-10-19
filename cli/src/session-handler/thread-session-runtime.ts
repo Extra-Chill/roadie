@@ -11,17 +11,13 @@ import { markPendingSessionTitle, sessionTitlePrompt, schedulePendingSessionTitl
 import { doAction } from '../hooks.js'
 import { parsePersistedEvents } from './persisted-events.js'
 import {
-  consumeInterruptedSessions,
   RESTART_CONTINUATION_FAILED_NOTICE,
   RESTART_CONTINUATION_MAX_ATTEMPTS,
-  restartContinuationPrompt,
-  type InterruptedSession,
 } from '../service-lifecycle.js'
 import crypto from 'node:crypto'
-import { AsyncLocalStorage } from 'node:async_hooks'
-import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
+import type { ThreadChannel } from 'discord.js'
 import type { ChatThread } from '../chat-platform/types.js'
-import { createDiscordChatChannel, createDiscordChatThread } from '../chat-platform/discord.js'
+import { createDiscordChatThread } from '../chat-platform/discord.js'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -32,20 +28,18 @@ import {
   type AgentPermissionRequest,
   type AgentQuestionRequest,
   type AgentStatus,
-  type AgentUsage,
 } from '../agent-backend/events.js'
 import { AgentRequestError, type AgentPromptPart } from '../agent-backend/types.js'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
-import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
 import { getCachedPerson, isIdentityHookConfigured } from '../identity.js'
-import { personMcpPermissions, registerPersonMcpServers } from '../person-mcp.js'
-import { applicationDirectory, channelPolicyOverrides, channelContextBinding, channelUsesChannelConversation } from '../channel-policy.js'
+import { registerPersonMcpServers } from '../person-mcp.js'
+import { applicationDirectory, channelContextBinding } from '../channel-policy.js'
 import {
   isContextProviderConfigured,
   renderContextSections,
@@ -61,14 +55,12 @@ import {
 } from './global-event-listener.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
-  SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
   resolveThreadFooterMentionUserId,
-  resolveWorkingDirectory,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
+import type { SessionPartKind } from '../message-formatting.js'
 import {
   asDiscordQuote,
   asSubtext,
@@ -113,7 +105,6 @@ import {
   getSessionEventSnapshot,
   cancelSessionSleepForThread,
   insertThreadQueueItem,
-  listAllThreadQueueItems,
   deleteThreadQueueItem,
   deleteThreadQueueItems,
   updateThreadQueueItemPayload,
@@ -125,23 +116,19 @@ import {
   showPermissionButtons,
   addPermissionRequestToContext,
   arePatternsCoveredBy,
-  pendingPermissionContexts,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
-  cancelPendingQuestion,
   findPendingQuestionContextForRequest,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
   pendingActionButtonContexts,
-  cancelPendingActionButtons,
 } from '../commands/action-buttons.js'
 import {
   pendingFileUploadContexts,
-  cancelPendingFileUpload,
 } from '../commands/file-upload.js'
 import {
   getCurrentModelInfo,
@@ -159,7 +146,6 @@ import {
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
   type AgentInfo,
-  type RepliedMessageContext,
   type WorkingDirectoryInfo,
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
@@ -201,23 +187,6 @@ import {
   type EventBufferEntry,
 } from './event-stream-state.js'
 
-// Track multiple pending permissions per thread (keyed by permission ID).
-// OpenCode handles blocking/sequencing — we just need to track all pending
-// permissions to avoid duplicates and properly clean up on reply/teardown.
-// The runtime is the sole owner of pending permissions per thread.
-export const pendingPermissions = new Map<
-  string, // threadId
-  Map<
-    string,
-    {
-      permission: AgentPermissionRequest
-      messageId: string
-      directory: string
-      contextHash: string
-      dedupeKey: string
-    }
-  > // permissionId -> data
->()
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
@@ -231,836 +200,45 @@ import {
 
 import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
-import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
-import { extractLeadingCommand } from '../leading-command-detection.js'
+import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
+import type { RuntimeOptions } from './runtime-registry.js'
+import {
+  applyChannelPolicyToIngress,
+  applyPersonToIngress,
+  maybeConvertLeadingCommand,
+  type EnqueueResult,
+  type IngressInput,
+} from './ingress-input.js'
+import { buildPermissionDedupeKey, cleanupPendingUiForThread, pendingPermissions } from './pending-ui.js'
+import { isEssentialToolPart } from './essential-tools.js'
+import { deriveThreadNameFromSessionTitle } from './thread-name.js'
+import {
+  delay,
+  extractToastSessionId,
+  formatSessionErrorFromProps,
+  getFallbackContextLimit,
+  getTimestampFromSnowflake,
+  getTokenTotal,
+  getWorkingDirectoryPromptKey,
+  parseQueuedMessagePayload,
+  stripToastSessionId,
+  toPromptFilePart,
+  truncateSessionErrorMessage,
+} from './runtime-helpers.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
-const DETERMINISTIC_CONTEXT_LIMIT = 100_000
-const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
-
-function extractToastSessionId({ message }: { message: string }): string | undefined {
-  const match = message.match(TOAST_SESSION_ID_REGEX)
-  return match?.[1]
-}
-
-function stripToastSessionId({ message }: { message: string }): string {
-  return message.replace(TOAST_SESSION_ID_REGEX, '').trimEnd()
-}
 
 const shouldLogSessionEvents =
   process.env['ROADIE_LOG_SESSION_EVENTS'] === '1' ||
   process.env['ROADIE_VITEST'] === '1'
-
-// ── Registry ─────────────────────────────────────────────────────
-// Runtime instances are kept in a plain Map (not Zustand — the Map
-// is not reactive state, just a lookup for resource handles).
-
-const runtimes = new Map<string, ThreadSessionRuntime>()
-
-// Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
-// Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
-// queues promptAsync. /model, /agent, and /compact are not on this queue.
-const threadIngressChains = new Map<string, Promise<void>>()
-const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
-
-export type ThreadIngressSlot = {
-  wait: Promise<void>
-  release: () => void
-}
-
-export function reserveThreadIngress(threadId: string): ThreadIngressSlot {
-  const previous = threadIngressChains.get(threadId) ?? Promise.resolve()
-  let released = false
-  let releaseHeld = () => {}
-  const held = new Promise<void>((resolve) => {
-    releaseHeld = resolve
-  })
-  threadIngressChains.set(
-    threadId,
-    previous.then(() => held),
-  )
-  return {
-    wait: previous,
-    release: () => {
-      if (released) {
-        return
-      }
-      released = true
-      releaseHeld()
-    },
-  }
-}
-
-export async function runInThreadIngressSlot<T>(
-  slot: ThreadIngressSlot | undefined,
-  run: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await threadIngressSlotAls.run(slot, run)
-  } finally {
-    slot?.release()
-  }
-}
-
-export async function waitForCurrentThreadIngress(): Promise<void> {
-  const slot = threadIngressSlotAls.getStore()
-  if (!slot) {
-    return
-  }
-  await slot.wait
-}
-
-export function releaseCurrentThreadIngress(): void {
-  threadIngressSlotAls.getStore()?.release()
-}
-
-export function getRuntime(
-  threadId: string,
-): ThreadSessionRuntime | undefined {
-  return runtimes.get(threadId)
-}
-
-export type RuntimeOptions = {
-  threadId: string
-  projectDirectory: string
-  sdkDirectory: string
-  channelId?: string
-  appId?: string
-  sessionId?: string
-} & ({ thread: ThreadChannel; chat?: never } | { chat: ChatThread; thread?: never })
-
-export function getOrCreateRuntime(
-  opts: RuntimeOptions,
-): ThreadSessionRuntime {
-  const existing = runtimes.get(opts.threadId)
-  if (existing) {
-    if (existing.sdkDirectory !== opts.sdkDirectory) {
-      logger.warn(
-        `[RUNTIME] Ignoring sdkDirectory change for existing thread ${opts.threadId}: ${existing.sdkDirectory} → ${opts.sdkDirectory}`,
-      )
-    }
-    if (opts.sessionId && !existing.state?.sessionId) {
-      threadState.setSessionId(opts.threadId, opts.sessionId)
-    }
-    return existing
-  }
-  threadState.ensureThread(opts.threadId) // add to global store
-  if (opts.sessionId) {
-    threadState.setSessionId(opts.threadId, opts.sessionId)
-  }
-  const runtime = new ThreadSessionRuntime(opts)
-  runtimes.set(opts.threadId, runtime)
-  return runtime
-}
-
-function groupQueueRowsByThread(
-  rows: Array<{ thread_id: string; queue_id: string; payload_json: string }>,
-): Map<string, QueuedMessage[]> {
-  const byThread = new Map<string, QueuedMessage[]>()
-  for (const row of rows) {
-    const parsed = parseQueuedMessagePayload({
-      queueId: row.queue_id,
-      payloadJson: row.payload_json,
-    })
-    if (parsed instanceof Error) {
-      logger.warn(
-        `[QUEUE] Skipping invalid queue row ${row.queue_id} in thread ${row.thread_id}: ${parsed.message}`,
-      )
-      continue
-    }
-    const items = byThread.get(row.thread_id) ?? []
-    items.push(parsed)
-    byThread.set(row.thread_id, items)
-  }
-  return byThread
-}
-
-/** Existing runtime for a thread, or one rebuilt from Discord and the DB after a restart. */
-async function ensureRuntimeForThread({
-  discordClient,
-  resolveRuntime,
-  threadId,
-  appId,
-  purpose,
-}: {
-  discordClient?: Client
-  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
-  threadId: string
-  appId?: string
-  purpose: string
-}): Promise<ThreadSessionRuntime | undefined> {
-  const existing = runtimes.get(threadId)
-  if (existing) {
-    return existing
-  }
-  if (resolveRuntime) return resolveRuntime(threadId)
-  if (!discordClient) return undefined
-  const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
-    logger.warn(
-      `[RUNTIME] Failed to fetch thread ${threadId} for ${purpose}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-    return null
-  })
-  // An inline channel conversation (`threads: none`) is keyed by its channel.
-  if (fetched?.type === ChannelType.GuildText && channelUsesChannelConversation(fetched.id)) {
-    const resolvedChannel = await resolveWorkingDirectory({ channel: fetched })
-    if (!resolvedChannel) {
-      logger.warn(`[RUNTIME] Skipping ${purpose} for channel ${threadId}: no project directory`)
-      return undefined
-    }
-    return getOrCreateRuntime({
-      threadId,
-      chat: createDiscordChatChannel(fetched),
-      projectDirectory: resolvedChannel.projectDirectory,
-      sdkDirectory: resolvedChannel.workingDirectory,
-      channelId: fetched.id,
-      appId,
-      sessionId: await getThreadSession(threadId),
-    })
-  }
-  if (!fetched?.isThread()) {
-    logger.warn(`[RUNTIME] Skipping ${purpose} for missing thread ${threadId}`)
-    return undefined
-  }
-  const resolved = await resolveWorkingDirectory({ channel: fetched })
-  if (!resolved) {
-    logger.warn(`[RUNTIME] Skipping ${purpose} for thread ${threadId}: no project directory`)
-    return undefined
-  }
-  const sessionId = await getThreadSession(threadId)
-  return getOrCreateRuntime({
-    threadId,
-    thread: fetched,
-    projectDirectory: resolved.projectDirectory,
-    sdkDirectory: resolved.workingDirectory,
-    channelId: fetched.parentId || fetched.id,
-    appId,
-    sessionId,
-  })
-}
-
-/** Threads whose main session has a run in progress right now. */
-export function snapshotBusyRuntimes(): InterruptedSession[] {
-  const busy: InterruptedSession[] = []
-  for (const [threadId, runtime] of runtimes) {
-    const sessionId = runtime.state?.sessionId
-    if (!sessionId || !runtime.isBusy()) {
-      continue
-    }
-    busy.push({
-      threadId,
-      sessionId,
-      userId: runtime.state?.sessionUserId,
-      username: runtime.state?.sessionUsername,
-    })
-  }
-  return busy
-}
-
-/**
- * Resume runs interrupted by the previous process's shutdown. Fresh records
- * get a continuation turn; stale ones only get a notice in their thread.
- */
-export async function resumeInterruptedSessions({
-  discordClient,
-  resolveRuntime,
-  appId,
-  consume = consumeInterruptedSessions,
-}: {
-  discordClient?: Client
-  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
-  appId?: string
-  consume?: typeof consumeInterruptedSessions
-}): Promise<{ resumed: string[]; notified: string[] }> {
-  const { resume, stale } = consume()
-  const resumed: string[] = []
-  const notified: string[] = []
-  for (const entry of stale) {
-    if (resolveRuntime) {
-      const runtime = await resolveRuntime(entry.threadId)
-      if (!runtime) continue
-      await runtime.chat.sendNotice('Roadie restarted while this session was running. Send a message to continue.')
-      notified.push(entry.threadId)
-      continue
-    }
-    const thread = await discordClient?.channels.fetch(entry.threadId).catch(() => null)
-    if (!thread?.isThread()) continue
-    await thread.send({
-      content: asSubtext('Roadie restarted while this session was running. It was too long ago to resume automatically; send a message to continue.'),
-      flags: SILENT_MESSAGE_FLAGS,
-    }).catch(() => undefined)
-    notified.push(entry.threadId)
-  }
-  for (const entry of resume) {
-    const runtime = await ensureRuntimeForThread({
-      discordClient,
-      resolveRuntime,
-      threadId: entry.threadId,
-      appId,
-      purpose: 'restart continuation',
-    })
-    if (!runtime) continue
-    // The thread was rebound (e.g. /resume) since the snapshot; the old run is not ours to continue.
-    if (runtime.state?.sessionId && runtime.state.sessionId !== entry.sessionId) {
-      logger.log(`[RUNTIME] Thread ${entry.threadId} moved to another session since the restart; not resuming`)
-      continue
-    }
-    await runtime.chat.sendNotice(asSubtext('Roadie restarted while this session was running. Resuming.'))
-    const result = await runtime.resumeAfterRestart({
-      prompt: restartContinuationPrompt(entry),
-      userId: entry.userId || discordClient?.user?.id || '',
-      username: entry.username || 'Roadie',
-      appId,
-      expectedSessionId: entry.sessionId,
-    }).catch((error: unknown) => {
-      logger.warn(
-        `[RUNTIME] Failed to resume thread ${entry.threadId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
-    })
-    if (result) resumed.push(entry.threadId)
-  }
-  if (resumed.length || notified.length) {
-    logger.log(`[RUNTIME] Restart continuation: resumed ${resumed.length}, notified ${notified.length}`)
-  }
-  return { resumed, notified }
-}
-
-export async function restorePersistedLocalQueues({
-  discordClient,
-  resolveRuntime,
-  appId,
-}: {
-  discordClient?: Client
-  resolveRuntime?: (threadId: string) => Promise<ThreadSessionRuntime | undefined>
-  appId?: string
-}): Promise<void> {
-  const rows = await listAllThreadQueueItems()
-  if (rows.length === 0) {
-    return
-  }
-
-  const byThread = groupQueueRowsByThread(rows)
-  for (const [threadId, items] of byThread) {
-    if (items.length === 0) {
-      continue
-    }
-    const runtime = await ensureRuntimeForThread({ discordClient, resolveRuntime, threadId, appId, purpose: 'restored queue' })
-    if (!runtime) {
-      continue
-    }
-    await runtime.dispatchAction(() => {
-      return runtime.mergeRestoredQueueAndDrain(items)
-    })
-  }
-}
-
-export function disposeRuntime(
-  threadId: string,
-  { abortActiveRun = false }: { abortActiveRun?: boolean } = {},
-): void {
-  const runtime = runtimes.get(threadId)
-  if (!runtime) {
-    return
-  }
-  if (abortActiveRun) {
-    runtime.abortDeletedDiscordResource()
-  }
-  runtime.dispose()
-  runtimes.delete(threadId)
-  threadState.removeThread(threadId) // remove from global store
-  threadIngressChains.delete(threadId)
-}
-
-export function disposeRuntimesForDirectory({
-  directory,
-  channelId,
-}: {
-  directory: string
-  channelId?: string
-}): number {
-  let count = 0
-  for (const [threadId, runtime] of runtimes) {
-    if (runtime.projectDirectory !== directory) {
-      continue
-    }
-    if (channelId && runtime.channelId !== channelId) {
-      continue
-    }
-    runtime.dispose()
-    runtimes.delete(threadId)
-    threadState.removeThread(threadId)
-    threadIngressChains.delete(threadId)
-    count++
-  }
-  return count
-}
-
-export function getRuntimeThreadIdsForChannel(channelId: string): string[] {
-  return Array.from(runtimes.entries())
-    .filter(([, runtime]) => runtime.channelId === channelId)
-    .map(([threadId]) => threadId)
-}
-
-/** Returns number of active runtimes (useful for diagnostics). */
-export function getRuntimeCount(): number {
-  return runtimes.size
-}
-
-export function disposeInactiveRuntimes({
-  idleMs,
-  nowMs = Date.now(),
-}: {
-  idleMs: number
-  nowMs?: number
-}): {
-  disposedThreadIds: string[]
-  disposedDirectories: string[]
-} {
-  const candidates = [...runtimes.entries()].filter(([, runtime]) => {
-    return runtime.isIdleForInactivityTimeout({ idleMs, nowMs })
-  })
-  const disposedDirectories = new Set<string>()
-  const disposedThreadIds: string[] = []
-
-  for (const [threadId, runtime] of candidates) {
-    runtime.dispose()
-    runtimes.delete(threadId)
-    threadState.removeThread(threadId)
-    threadIngressChains.delete(threadId)
-    disposedThreadIds.push(threadId)
-    disposedDirectories.add(runtime.projectDirectory)
-  }
-
-  return {
-    disposedThreadIds,
-    disposedDirectories: [...disposedDirectories],
-  }
-}
-
-// ── Pending UI cleanup ───────────────────────────────────────────
-// Clears all pending interactive UI state for a thread on dispose/delete.
-// Uses existing cancel functions which handle upstream replies (so OpenCode
-// doesn't hang waiting for answers that will never come).
-
-function cleanupPendingUiForThread(threadId: string): void {
-  // Permissions: reject each pending permission so OpenCode doesn't hang,
-  // then delete the per-thread tracking map.
-  const threadPerms = pendingPermissions.get(threadId)
-  if (threadPerms) {
-    for (const [, entry] of threadPerms) {
-      const ctx = pendingPermissionContexts.get(entry.contextHash)
-      if (ctx) {
-        const client = getAgentBackendProvider().getBackend(ctx.directory)
-        if (client) {
-          const requestIds: string[] = ctx.requestIds.length > 0
-            ? ctx.requestIds
-            : [ctx.permission.id]
-          void Promise.all(
-            requestIds.map((requestId) => {
-              return client.sessions.replyPermission({
-                requestId,
-                directory: ctx.directory,
-                reply: 'reject',
-              })
-            }),
-          ).catch(() => {})
-        }
-        pendingPermissionContexts.delete(entry.contextHash)
-      }
-    }
-    pendingPermissions.delete(threadId)
-  }
-
-  // Questions: cancel deletes pending context without replying to OpenCode.
-  void cancelPendingQuestion(threadId)
-
-  // Action buttons: resolves context and clears timer.
-  cancelPendingActionButtons(threadId)
-
-  // File uploads: resolves with empty files so OpenCode unblocks.
-  void cancelPendingFileUpload(threadId)
-
-  // HTML actions: clears registered action callbacks for this thread.
-  cancelHtmlActionsForThread(threadId)
-}
-
-// ── Helpers ──────────────────────────────────────────────────────
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
-function getTimestampFromSnowflake(snowflake: string): number | undefined {
-  const discordEpochMs = 1_420_070_400_000n
-  const snowflakeIdResult = errore.try(
-    { try: () => {
-      return BigInt(snowflake)
-    }, catch: () => {
-      return new Error('Invalid Discord snowflake')
-    } },
-  )
-  if (snowflakeIdResult instanceof Error) return undefined
-  const timestampBigInt = (snowflakeIdResult >> 22n) + discordEpochMs
-  const timestampMs = Number(timestampBigInt)
-  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
-    return undefined
-  }
-  return timestampMs
-}
-
-function toPromptFilePart(file: DiscordFileAttachment): AgentPromptPart {
-  return {
-    kind: 'file',
-    mime: file.mime,
-    url: file.url,
-    ...(file.filename && { filename: file.filename }),
-  }
-}
-
-function getTokenTotal(usage: AgentUsage): number {
-  return usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
-}
-
-/**
- * Built-in read-only tools that are hidden in default verbosity mode.
- * Any tool NOT in this list is considered "essential" and shown,
- * which means custom tools, MCP tools, and plugin tools are visible by default.
- */
-const HIDDEN_READONLY_TOOLS = [
-  'read',
-  'glob',
-  'grep',
-  'describe-media',
-  'todoread',
-]
-
-/** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
-export function isEssentialToolName(toolName: string): boolean {
-  // Hide known read-only built-in tools; show everything else
-  // (custom tools, MCP tools, plugin tools are visible by default)
-  return !HIDDEN_READONLY_TOOLS.some((name) => {
-    return toolName === name || toolName.endsWith(`_${name}`)
-  })
-}
-
-export function isEssentialToolPart(part: AgentPart): boolean {
-  if (part.kind !== 'tool') {
-    return false
-  }
-  if (!isEssentialToolName(part.tool)) {
-    return false
-  }
-  if (part.tool === 'bash') {
-    const hasSideEffect = part.input?.hasSideEffect
-    return hasSideEffect !== false
-  }
-  return true
-}
-
-// ── Thread title derivation ──────────────────────────────────────
-
-const DISCORD_THREAD_NAME_MAX = 100
-const PRESERVED_THREAD_PREFIXES: string[] = [
-  STATUS_PREFIX,
-  // Legacy prefix from the removed /btw command; existing threads keep it.
-  'btw: ',
-  'Fork: ',
-]
-
-function stripPreservedThreadPrefix(name: string) {
-  const matchedPrefix = PRESERVED_THREAD_PREFIXES.find((prefix) => {
-    return name.startsWith(prefix)
-  })
-  if (!matchedPrefix) return name
-  return name.slice(matchedPrefix.length).trim()
-}
-
-function getThreadNameCandidateFromSessionTitle({
-  sessionTitle,
-  currentName,
-}: {
-  sessionTitle: string | undefined | null
-  currentName: string
-}) {
-  const trimmed = sessionTitle
-    ?.replace(/<\/?callout\b[^>]*>/gi, '')
-    .trim()
-  if (!trimmed) {
-    return null
-  }
-  const withoutCopiedPrefix = stripPreservedThreadPrefix(trimmed)
-  if (!withoutCopiedPrefix) {
-    return null
-  }
-  if (/^new session\s*-/i.test(withoutCopiedPrefix)) {
-    return null
-  }
-  const matchedPrefix =
-    PRESERVED_THREAD_PREFIXES.find((p) => {
-      return p !== 'Fork: ' && currentName.startsWith(p)
-    }) ?? ''
-  return `${matchedPrefix}${withoutCopiedPrefix}`.slice(0, DISCORD_THREAD_NAME_MAX)
-}
-
-export function deriveThreadNameFromSessionTitle({
-  sessionTitle,
-  currentName,
-}: {
-  sessionTitle: string | undefined | null
-  currentName: string
-}): string | undefined {
-  const candidate = getThreadNameCandidateFromSessionTitle({
-    sessionTitle,
-    currentName,
-  })
-  if (candidate === null) {
-    return undefined
-  }
-  if (candidate === currentName) {
-    return undefined
-  }
-  return candidate
-}
-
-// ── Ingress input type ───────────────────────────────────────────
-
-export type EnqueueResult = {
-  /** True if the message is waiting in queue behind an active run. */
-  queued: boolean
-  /** Queue position (1-based). Only set when queued is true. */
-  position?: number
-  /** Stable queue entry id. Set when the item was placed in the local queue. */
-  queueId?: string
-}
-
-/**
- * Result of the preprocess callback. Returns the resolved prompt, images,
- * and mode after expensive async work (context fetch,
- * attachment download) completes.
- */
-export type PreprocessResult = {
-  prompt: string
-  images?: DiscordFileAttachment[]
-  repliedMessage?: RepliedMessageContext
-  /** Resolved ingress mode (queue suffix or forced queue). */
-  mode: 'direct' | 'local-queue'
-  /** When true, preprocessing determined the message should be silently dropped. */
-  skip?: boolean
-  /** Agent requested during preprocessing. Applied to the session if set. */
-  agent?: string
-}
-
-/**
- * Apply the identity hook's per-person overrides to a chat turn. Only
- * platform-authenticated speakers ('chat') get a person: a CLI-asserted actor
- * is never treated as that person. Explicit agent/model on the input win;
- * person permission rules are added to any explicit ones.
- */
-export function applyPersonToIngress(input: IngressInput): IngressInput {
-  if (!isIdentityHookConfigured()) return input
-  if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return input
-  const person = getCachedPerson({ platform: input.actorPlatform ?? 'discord', id: input.userId })
-  if (!person?.allowed) return input
-  // Every person turn resets the session's person-scoped MCP access to the
-  // speaker's own servers (none when they have no config).
-  const mcpPermissions = personMcpPermissions({
-    personKey: personKeyFrom({
-      personId: person.personId,
-      platform: input.actorPlatform ?? 'discord',
-      actorId: input.userId,
-    }) ?? undefined,
-    hasServers: (person.mcpServers?.length ?? 0) > 0,
-  })
-  return {
-    ...input,
-    ...(person.personId ? { personId: person.personId } : {}),
-    ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
-    ...(input.agent || !person.agent ? {} : { agent: person.agent }),
-    ...(input.model || !person.model ? {} : { model: person.model }),
-    // The MCP pair goes before the hook's own rules, which may refine it.
-    permissions: [...(input.permissions ?? []), ...mcpPermissions, ...person.permissions],
-  }
-}
-
-/**
- * Add the channel policy's session permission rules to a turn. Agent, model,
- * directory and verbosity come from the channel getters, which already read
- * the policy.
- */
-export function applyChannelPolicyToIngress({
-  input,
-  channelId,
-}: {
-  input: IngressInput
-  channelId: string
-}): IngressInput {
-  const { permissions } = channelPolicyOverrides(channelId)
-  if (!permissions || permissions.length === 0) return input
-  return { ...input, permissions: [...(input.permissions ?? []), ...permissions] }
-}
-
-export type IngressInput = {
-  /** Raw task text when a fork adds synthetic lineage instructions. */
-  titlePrompt?: string
-  actorPlatform?: string
-  prompt: string
-  userId: string
-  username: string
-  // How userId was established: 'chat' (platform-authenticated author,
-  // default) or 'cli' (asserted by a local `roadie send --user` caller).
-  actorVia?: 'chat' | 'cli'
-  // Opaque host person id resolved by the identity hook for this turn.
-  personId?: string
-  // Credential pool override from the identity hook (`credential_pool`),
-  // applied to the speaker's billing pool when credential pools are enabled.
-  credentialPool?: string
-  // Discord message ID and thread ID for the source message, embedded in
-  // <discord-user> synthetic context so the model knows which message it answers.
-  sourceMessageId?: string
-  sourceThreadId?: string
-  // Channel that holds the source message. Differs from the thread for the
-  // thread starter message, which lives in the parent channel.
-  sourceChannelId?: string
-  repliedMessage?: RepliedMessageContext
-  images?: DiscordFileAttachment[]
-  appId?: string
-  command?: { name: string; arguments: string }
-  /**
-   * `direct` (default): send straight to the backend, which serializes
-   * pending user turns itself.
-   * `local-queue`: keep in roadie's local queue (used by slash commands).
-   */
-  mode?: 'direct' | 'local-queue'
-  // Force a new assistant-part routing window by resetting run-state to
-  // running before enqueue. Used by model-switch retry flows where old
-  // assistant IDs can linger briefly after abort.
-  resetAssistantForNewRun?: boolean
-  // First-dispatch-only overrides (used when creating a new session)
-  agent?: string
-  model?: string
-  /**
-   * Thinking-level variant from `/xxx-agent variant:`. Applied after
-   * agent/model snapshot so it wins over cascade for this turn.
-   */
-  variant?: string
-  /**
-   * Raw permission rule strings from --permission flag ("tool:action" or
-   * "tool:pattern:action"). Parsed into PermissionRuleset entries by
-   * parsePermissionRules() and appended after buildSessionPermissions()
-   * so they win via opencode's findLast() evaluation. Only used on
-   * session creation (first dispatch).
-   */
-  permissions?: string[]
-  injectionGuardPatterns?: string[]
-  /**
-   * Parent session ID from explicit `roadie send --parent-session` only.
-   * Stored once on first ingress and injected into the child system message.
-   * Never set for /fork or task/subagent children (keeps system prompt cache).
-   */
-  parentSessionId?: string
-  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number; scheduledTaskRunId?: number }
-  /** Optional guard for retries: skip enqueue when session has changed. */
-  expectedSessionId?: string
-  /**
-   * When true, the message is added to the session context without triggering
-   * the AI agent loop. Used for messages that should be visible to the model
-   * on the next real turn but should not cause a response on their own
-   * (e.g. user-to-user replies in a thread).
-   */
-  noReply?: boolean
-  /** Intake data only: preserve execution identity and preferences as well as suppressing replies. */
-  contextOnly?: boolean
-  /**
-   * True only for the wake prompt posted by the roadie_sleep task runner.
-   * Every other ingress cancels a pending sleep; this one must not, because it
-   * is delivering that sleep rather than superseding it.
-   */
-  isSleepWake?: boolean
-  /** Synthetic recovery turn, never a new fork task. Preserved on retries. */
-  isRestartContinuation?: boolean
-  /**
-   * Lazy preprocessing callback. When set, the runtime serializes it via a
-   * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
-   * from the raw Discord message. This replaces the threadIngressQueue in
-   * discord-bot.ts: expensive async work (context fetch,
-   * attachment download) runs in arrival order but outside dispatchAction,
-   * so SSE event handling and permission UI are not blocked.
-   *
-   * The closure captures Discord objects (Message, ThreadChannel) so the
-   * runtime stays platform-agnostic — it just awaits the callback.
-   */
-  preprocess?: () => Promise<PreprocessResult>
-  /**
-   * Posts the "Queued message" ack and returns its Discord message ID. Runs
-   * inside the serialized enqueue, before any drain can start, so the drain
-   * indicator can always reply to it. Only called when the item really waits.
-   */
-  onLocalQueued?: (queued: { queueId: string; position: number }) => Promise<string>
-}
-
-function parseQueuedMessagePayload({
-  queueId,
-  payloadJson,
-}: {
-  queueId: string
-  payloadJson: string
-}): QueuedMessage | Error {
-  return errore.try(
-    { try: () => {
-      const parsed = JSON.parse(payloadJson) as QueuedMessage
-      if (!parsed || typeof parsed !== 'object') {
-        return new Error('Queued message payload is not an object')
-      }
-      if (typeof parsed.prompt !== 'string') {
-        return new Error('Queued message payload is missing prompt')
-      }
-      if (typeof parsed.userId !== 'string') {
-        return new Error('Queued message payload is missing userId')
-      }
-      if (typeof parsed.username !== 'string') {
-        return new Error('Queued message payload is missing username')
-      }
-      return { ...parsed, queueId }
-    }, catch: (error) => {
-      return new Error('Failed to parse queued message payload', { cause: error })
-    } },
-  )
-}
-
-// Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
-// when the prompt's leading token matches a registered opencode command.
-// Skip if a command is already set or there's no prompt to inspect.
-function maybeConvertLeadingCommand(input: IngressInput): IngressInput {
-  if (input.command) return input
-  if (!input.prompt) return input
-  const extracted = extractLeadingCommand(input.prompt)
-  if (!extracted) return input
-  return {
-    ...input,
-    prompt: '',
-    command: extracted.command,
-    mode: 'local-queue',
-  }
-}
 
 type AbortRunOutcome = {
   abortId: string
   reason: string
   apiAbortPromise: Promise<void> | undefined
 }
-
-function getWorkingDirectoryPromptKey(dir: WorkingDirectoryInfo | undefined): string | null {
-  if (!dir) {
-    return null
-  }
-  return [dir.workingDirectory, dir.label, dir.projectDirectory].join('::')
-}
-
 
 // ── Runtime class ────────────────────────────────────────────────
 
@@ -6031,57 +5209,4 @@ export class ThreadSessionRuntime {
     })
     return true
   }
-}
-
-// ── Module-level helpers ──────────────────────────────────────────
-
-function buildPermissionDedupeKey({
-  permission,
-  directory,
-}: {
-  permission: AgentPermissionRequest
-  directory: string
-}): string {
-  const normalizedPatterns = [...permission.patterns].sort((a, b) => {
-    return a.localeCompare(b)
-  })
-  return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
-}
-
-function getFallbackContextLimit({
-  providerID,
-}: {
-  providerID: string
-}): number | undefined {
-  if (providerID === 'deterministic-provider') {
-    return DETERMINISTIC_CONTEXT_LIMIT
-  }
-  return undefined
-}
-
-/** Format a session error from event properties for display. */
-function formatSessionErrorFromProps(error?: AgentError): string {
-  if (!error) {
-    return 'Unknown error'
-  }
-  const parts: string[] = []
-  // A backend error without a message carries only its name as the message.
-  if (error.message && error.message !== error.name) {
-    parts.push(error.message)
-  }
-  if (error.statusCode) {
-    parts.push(`(${error.statusCode})`)
-  }
-  if (error.provider) {
-    parts.push(`[${error.provider}]`)
-  }
-  return parts.length > 0 ? parts.join(' ') : error.name || 'Unknown error'
-}
-
-function truncateSessionErrorMessage(message: string): string {
-  const maxLength = 400
-  if (message.length <= maxLength) {
-    return message
-  }
-  return `${message.slice(0, maxLength - 1)}…`
 }

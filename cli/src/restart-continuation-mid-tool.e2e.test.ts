@@ -9,7 +9,7 @@ import {
   disposeRuntime,
   resumeInterruptedSessions,
   snapshotBusyRuntimes,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/runtime-registry.js'
 import { getThreadSession } from './database.js'
 import { waitForBotMessageContaining } from './test-utils.js'
 import { findPi } from './agent-backend/pi/find-pi.js'

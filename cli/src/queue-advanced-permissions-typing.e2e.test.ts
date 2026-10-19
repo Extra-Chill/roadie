@@ -12,7 +12,7 @@ import {
   waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
 } from './test-utils.js'
-import { pendingPermissions } from './session-handler/thread-session-runtime.js'
+import { pendingPermissions } from './session-handler/pending-ui.js'
 
 const TEXT_CHANNEL_ID = '200000000000001005'
 

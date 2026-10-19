@@ -37,7 +37,7 @@ import {
   getDefaultModel,
   resolveDisplayedModelId,
 } from '../session-handler/model-utils.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
+import { getRuntime } from '../session-handler/runtime-registry.js'
 import { resolveAgentPreference } from '../session-handler/agent-utils.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import {

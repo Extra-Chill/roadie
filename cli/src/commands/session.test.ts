@@ -7,8 +7,8 @@ import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ChannelType, type AutocompleteInteraction, type ChatInputCommandInteraction, type TextChannel, type ThreadChannel } from 'discord.js'
 
-vi.mock('../session-handler/thread-session-runtime.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../session-handler/thread-session-runtime.js')>()
+vi.mock('../session-handler/runtime-registry.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../session-handler/runtime-registry.js')>()
   return {
     ...original,
     getOrCreateRuntime: vi.fn(() => ({

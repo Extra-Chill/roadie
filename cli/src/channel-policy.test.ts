@@ -22,7 +22,7 @@ import {
   setChannelsConfigPath,
   type WhoSubject,
 } from './channel-policy.js'
-import { applyChannelPolicyToIngress, type IngressInput } from './session-handler/thread-session-runtime.js'
+import { applyChannelPolicyToIngress, type IngressInput } from './session-handler/ingress-input.js'
 
 // thread-1 → channel-ops → category-dev; channel-general → category-dev
 const parents: Record<string, string> = {

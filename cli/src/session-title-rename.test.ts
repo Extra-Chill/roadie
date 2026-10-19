@@ -3,9 +3,7 @@
 // OpenCode session title. Kept focused and deterministic; no Discord mocks.
 
 import { describe, test, expect } from 'vitest'
-import {
-  deriveThreadNameFromSessionTitle,
-} from './session-handler/thread-session-runtime.js'
+import { deriveThreadNameFromSessionTitle } from './session-handler/thread-name.js'
 
 describe('deriveThreadNameFromSessionTitle', () => {
   test('returns trimmed title for plain thread', () => {

@@ -43,9 +43,9 @@ import {
   disposeRuntime,
   resumeInterruptedSessions,
   restorePersistedLocalQueues,
-  type IngressInput,
-  type ThreadSessionRuntime,
-} from './session-handler/thread-session-runtime.js'
+} from './session-handler/runtime-registry.js'
+import type { IngressInput } from './session-handler/ingress-input.js'
+import type { ThreadSessionRuntime } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
 import { markPendingSessionTitle } from './session-title.js'

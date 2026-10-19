@@ -11,7 +11,7 @@ import {
 import { waitForBotMessageContaining } from './test-utils.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
 import { getThreadSession } from './database.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 
 const TEXT_CHANNEL_ID = '200000000000001032'
 
