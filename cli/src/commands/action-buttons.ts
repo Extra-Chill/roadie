@@ -7,7 +7,6 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  MessageFlags,
   type ButtonInteraction,
   type TextChannel,
   type ThreadChannel,
@@ -23,6 +22,7 @@ import {
   sendThreadMessage,
 } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
 import {
@@ -283,33 +283,24 @@ export async function handleActionButton(
 
   const [, contextHash, indexPart] = customId.split(':')
   if (!contextHash || !indexPart) {
-    await interaction.reply({
-      content: 'Invalid action button.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Invalid action button.')
     return
   }
 
   const context = pendingActionButtonContexts.get(contextHash)
   if (!context || context.resolved) {
-    await interaction.reply({
-      content: 'This action is no longer available.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'This action is no longer available.')
     return
   }
 
   const buttonIndex = Number.parseInt(indexPart, 10)
   const button = context.buttons[buttonIndex]
   if (!button) {
-    await interaction.reply({
-      content: 'This action is no longer available.',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'This action is no longer available.')
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the click (deferUpdate).
   const claimed = resolveContext(context)
   if (!claimed) {
     return

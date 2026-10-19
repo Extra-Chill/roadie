@@ -138,7 +138,7 @@ export async function handleVerbositySelectMenu(
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const channelId = customId.replace('verbosity_select:', '')
   const level = interaction.values[0] as VerbosityLevel | undefined

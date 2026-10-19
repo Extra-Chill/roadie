@@ -257,6 +257,34 @@ export async function resolvePerson({
   return promise
 }
 
+/**
+ * resolvePerson for interactions whose first response must come within
+ * Discord's three-second deadline but cannot be deferred (modal openers).
+ * An actor with a successful lookup within the stale window is answered from
+ * it at once, held in the cache for the failure TTL so the synchronous checks
+ * see it, while a fresh lookup refreshes it in the background. Only an actor
+ * Roadie has never resolved waits for the lookup.
+ */
+export async function resolvePersonPreferKnown(
+  args: { actor: IdentityActor; context?: IdentityContext },
+): Promise<Person | null> {
+  if (!getIdentityHookCommand() && !hasFilter('person')) return null
+  const cached = getCachedPerson(args.actor)
+  if (cached) return cached
+  const key = cacheKey(args.actor)
+  const known = lastKnown.get(key)
+  const now = Date.now()
+  if (!known || now - known.resolvedAt > STALE_IF_ERROR_SECONDS * 1000) {
+    return await resolvePerson(args)
+  }
+  // Start the refresh before seeding the cache, or it would hit the seed.
+  void resolvePerson(args).catch((error: unknown) => {
+    logger.warn(`[IDENTITY] background refresh failed for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+  })
+  cache.set(key, { person: known.person, expiresAt: now + FAILURE_TTL_SECONDS * 1000 })
+  return known.person
+}
+
 /** Reply for an actor whose identity lookup failed (not a permission denial). */
 export const IDENTITY_LOOKUP_FAILED_MESSAGE =
   `Couldn't verify your account: the identity lookup failed. Try again in a moment.`

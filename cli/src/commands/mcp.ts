@@ -190,7 +190,7 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.slice('mcp_toggle:'.length)
   const projectDirectory = pendingMcpContexts.get(contextHash)

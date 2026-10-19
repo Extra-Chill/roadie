@@ -32,6 +32,7 @@ import {
   type EventBufferEntry,
 } from '../session-handler/event-stream-state.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { replyOrEditInteraction } from '../interaction-reply.js'
 import {
   getThreadChannel,
   parsePersistedEventRows,
@@ -148,23 +149,18 @@ export async function handleForkSubagentSelectMenu(
 
   const [, parentSessionId] = customId.split(':')
   if (!parentSessionId) {
-    await interaction.reply({
-      content: 'Invalid selection data',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'Invalid selection data')
     return
   }
 
   const selectedSessionId = interaction.values[0]
   if (!selectedSessionId) {
-    await interaction.reply({
-      content: 'No subagent session selected',
-      flags: MessageFlags.Ephemeral,
-    })
+    await replyOrEditInteraction(interaction, 'No subagent session selected')
     return
   }
 
-  await interaction.deferReply()
+  // The interaction listener already acknowledged the selection (deferUpdate),
+  // so the replies below replace the (ephemeral) select menu message.
 
   const threadChannel = getThreadChannel(interaction.channel)
   if (threadChannel instanceof Error) {

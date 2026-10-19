@@ -148,7 +148,8 @@ export async function handleConnectCommand({ command }: { command: ChatInputComm
 export async function handleConnectButton(interaction: ButtonInteraction): Promise<void> {
   const parsed = parseConnectButtonCustomId(interaction.customId)
   if (!parsed) return
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  // In a guild the interaction listener has already deferred this privately.
+  if (!interaction.deferred) await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   if (!isIdentityHookConfigured()) {
     await interaction.editReply({ content: 'Per-person services are not configured on this server.' })
     return

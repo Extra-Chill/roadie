@@ -799,8 +799,7 @@ export async function handleProviderSelectMenu(
     return
   }
 
-  // Defer update immediately to avoid timeout
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.replace('model_provider:', '')
   const context = pendingModelContexts.get(contextHash)
@@ -973,8 +972,7 @@ export async function handleModelSelectMenu(
     return
   }
 
-  // Defer update immediately
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.replace('model_select:', '')
   const context = pendingModelContexts.get(contextHash)
@@ -1120,7 +1118,7 @@ export async function handleModelVariantSelectMenu(
     return
   }
 
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.replace('model_variant:', '')
   const context = pendingModelContexts.get(contextHash)
@@ -1241,8 +1239,7 @@ export async function handleModelScopeSelectMenu(
     return
   }
 
-  // Defer update immediately
-  await interaction.deferUpdate()
+  // The interaction listener already acknowledged the selection (deferUpdate).
 
   const contextHash = customId.replace('model_scope:', '')
   const context = pendingModelContexts.get(contextHash)

@@ -11,6 +11,7 @@ import {
   isIdentityHookConfigured,
   personHas,
   resolvePerson,
+  resolvePersonPreferKnown,
   setIdentityHookCommand,
 } from './identity.js'
 import { addFilter } from './hooks.js'
@@ -182,6 +183,39 @@ describe('identity hook', () => {
       const failed = await resolvePerson({ actor, context: { guildId: 'guild-1' } })
       expect(failed?.allowed).toBe(false)
       expect(failed?.lookupFailed).toBe(true)
+    } finally {
+      clock.mockRestore()
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
+  test('resolvePersonPreferKnown answers from the last known person and refreshes it', async () => {
+    const actor = { platform: 'discord', id: 'modal-opener' }
+    let release: () => void = () => undefined
+    let slow = false
+    let lookups = 0
+    const removeFilter = addFilter('person', async () => {
+      lookups++
+      if (slow) await new Promise<void>((resolve) => { release = resolve })
+      return { allowed: true, personId: slow ? 'wp:2' : 'wp:1', capabilities: new Set(['sessions'] as const), permissions: [] }
+    })
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      // A cold actor waits for the lookup.
+      expect((await resolvePersonPreferKnown({ actor }))?.personId).toBe('wp:1')
+      expect(lookups).toBe(1)
+
+      // Expired: answered at once from the last lookup, visible to sync checks.
+      slow = true
+      clock.mockReturnValue(now + 301_000)
+      expect((await resolvePersonPreferKnown({ actor }))?.personId).toBe('wp:1')
+      expect(getCachedPerson(actor)?.personId).toBe('wp:1')
+      // The refresh runs in the background and replaces it.
+      await vi.waitFor(() => expect(lookups).toBe(2))
+      release()
+      await vi.waitFor(() => expect(getCachedPerson(actor)?.personId).toBe('wp:2'))
     } finally {
       clock.mockRestore()
       removeFilter()
