@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.9] - 2026-10-19
+
+### Changed
+- Move local message queue into message-queue.ts (slice 5 of #310)
+
 ## [0.73.8] - 2026-10-19
 
 ### Changed
