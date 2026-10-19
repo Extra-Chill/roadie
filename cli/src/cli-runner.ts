@@ -34,8 +34,10 @@ import {
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
+  appIdFromToken,
   getBotToken,
   ensureServiceAuthToken,
+  registerEnvironmentBot,
   setBotToken,
   setChannelDirectory,
   findChannelsByDirectory,
@@ -178,27 +180,6 @@ export function stripBracketedPaste(value: string | undefined): string {
     .replace(/\x1b\[200~/g, '')
     .replace(/\x1b\[201~/g, '')
     .trim()
-}
-
-
-// Derive the Discord Application ID from a bot token.
-// Discord bot tokens have the format: base64(userId).timestamp.hmac
-// The first segment is the bot's user ID (= Application ID) base64-encoded.
-// Anything else returns undefined.
-export function appIdFromToken(token: string): string | undefined {
-  const segment = token.split('.')[0]
-  if (!segment) {
-    return undefined
-  }
-  try {
-    const decoded = Buffer.from(segment, 'base64').toString('utf8')
-    if (/^\d{17,20}$/.test(decoded)) {
-      return decoded
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
 }
 
 // Resolve bot token and app ID from env var or database.
@@ -935,7 +916,7 @@ export async function resolveCredentials({
       )
       process.exit(EXIT_NO_RESTART)
     }
-    await setBotToken(derivedAppId, envToken)
+    await registerEnvironmentBot(derivedAppId)
     cliLogger.log(`Using ROADIE_BOT_TOKEN env var (App ID: ${derivedAppId})`)
     return { appId: derivedAppId, token: envToken, credentialSource: 'env' }
   }

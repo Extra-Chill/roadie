@@ -3,8 +3,8 @@
 
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { REST } from 'discord.js'
+import { appIdFromToken } from './database.js'
 import {
-  appIdFromToken,
   backgroundInit,
   buildLongPromptMessage,
   getOpenUrlCommand,
