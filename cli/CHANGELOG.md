@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.7] - 2026-10-19
+
+### Changed
+- Move turn-context resolution into turn-context.ts (slice 3 of #310)
+
 ## [0.73.6] - 2026-10-19
 
 ### Changed
