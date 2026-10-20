@@ -255,7 +255,7 @@ function identityFields(record: Record<string, unknown>): { email?: string; acco
 
 /**
  * Map one ordered subrouter account entry onto the pool. Api-key accounts for
- * any catalog-resolvable provider, anthropic oauth accounts, and ChatGPT
+ * any catalog-resolvable provider, anthropic and xAI oauth accounts, and ChatGPT
  * (Codex) subscription accounts import; everything else is skipped with a
  * per-entry reason. Malformed entries (missing key/tokens) are skipped too,
  * with the entry's own reason, and never block the rest of the import.
@@ -271,7 +271,8 @@ export function planSubrouterAccount(
   const record = entry as Record<string, unknown>
   const display = accountDisplay(record)
   const identity = identityFields(record)
-  if (!isImportRoutableProvider(provider, catalog)) {
+  // xAI subscriptions have a fixed endpoint and do not depend on models.dev.
+  if (!(provider === 'xai' && record.type === 'oauth') && !isImportRoutableProvider(provider, catalog)) {
     return { action: 'skip', provider, display, reason: `no pool adapter for ${provider}` }
   }
   const type = record.type
@@ -290,7 +291,7 @@ export function planSubrouterAccount(
     // the pool's `openai-codex` adapter id (#198); platform API keys of the
     // same source provider stay under `openai`.
     const poolProvider = provider === CHATGPT_SOURCE_PROVIDER ? CODEX_POOL_PROVIDER : provider
-    if (provider !== 'anthropic' && provider !== CHATGPT_SOURCE_PROVIDER) {
+    if (provider !== 'anthropic' && provider !== CHATGPT_SOURCE_PROVIDER && provider !== 'xai') {
       return { action: 'skip', provider, display, reason: `no pool adapter for ${provider} oauth` }
     }
     const refresh = record.refresh

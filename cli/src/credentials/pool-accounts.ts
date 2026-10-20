@@ -48,7 +48,7 @@ import {
 import { resolveCatalog, validateCatalogProvider, type ModelsDevCatalog } from './provider-catalog.js'
 import { readRemotePoolConfig, remotePoolAccounts } from './remote-pool.js'
 
-export const POOL_OAUTH_PROVIDERS = ['anthropic', 'openai-codex'] as const
+export const POOL_OAUTH_PROVIDERS = ['anthropic', 'openai-codex', 'xai'] as const
 export type PoolOAuthProvider = (typeof POOL_OAUTH_PROVIDERS)[number]
 
 export function isPoolOAuthProvider(value: unknown): value is PoolOAuthProvider {
@@ -250,6 +250,7 @@ export function localPoolAccounts({
       const invalid = invalidPool(poolId)
       if (invalid) return invalid
       if (!isPoolOAuthProvider(provider)) return new Error(`Unsupported OAuth provider: ${String(provider)}`)
+      if (provider === 'xai') return new Error('Import an OpenCode xAI login with roadie credentials import-opencode; interactive xAI login is not supported.')
       const pkce = await generatePKCE()
       if (pkce instanceof Error) return pkce
       // Both providers redirect to a localhost page nothing listens on; the

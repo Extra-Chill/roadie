@@ -242,6 +242,16 @@ then the ChatGPT subscription), or imported from subrouter or OpenCode (below)
 Codex Responses endpoint with the account's bearer token and
 `chatgpt-account-id`.
 
+A SuperGrok subscription is imported from an OpenCode `xai` OAuth login
+(`auth.json` or `xai-oauth-accounts.json`), stored as `xai`, and serves rotation
+entries such as `xai/grok-4.6`. Requests use bearer authentication on
+`https://api.x.ai/v1/chat/completions`. Interactive xAI login is not supported.
+Refresh runs under the pool lock and persists the rotated refresh token.
+Because xAI refresh tokens are single-use, stop using the source OpenCode
+login after import: two independent holders cannot safely refresh it.
+HTTP 429 and xAI's 402 balance-exhausted / 403 spending-limit responses cool
+the account down and fail over to the next candidate.
+
 Only these subscriptions are supported; other providers' subscriptions are
 not (their OAuth is not public).
 
@@ -252,7 +262,7 @@ roadie credentials import-subrouter
 ```
 
 Copies `~/.subrouter/auth.json` accounts and presets into the `shared` pool:
-Anthropic OAuth accounts, ChatGPT subscriptions (the `openai` OAuth entry,
+Anthropic and xAI OAuth accounts, ChatGPT subscriptions (the `openai` OAuth entry,
 imported under the pool's `openai-codex` id), API keys for any
 catalog-resolvable provider, and each preset as a same-named rotation
 (`#variant` suffixes stripped; `openai/<model>` entries are kept as they are

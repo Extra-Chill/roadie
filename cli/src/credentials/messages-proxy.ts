@@ -26,6 +26,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import { markCooldown, type PoolCandidate } from './router.js'
 import { markUsed, readPoolRotationRecords, type PoolRotations, type PoolAccount } from './store.js'
 import { CODEX_RESPONSES_BASE_URL } from './adapters/openai-codex-oauth.js'
+import { XAI_API_BASE_URL } from './adapters/xai-oauth.js'
 import { clearSessionRoute, setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { POOL_CLIENT_SCOPE_PATTERN, poolClientSessionId, resolvePoolClient } from './pool-clients.js'
@@ -292,7 +293,11 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
         attempt = await serveTranslated({ res, request: translated, target, pin })
       }
       if (attempt.served) return
-      if (attempt.status === 429) {
+      const xaiExhausted = candidate.provider === 'xai' && (
+        (attempt.status === 402 && /Grok Build usage balance exhausted/i.test(attempt.message)) ||
+        (attempt.status === 403 && /personal-team-blocked:spending-limit/i.test(attempt.message))
+      )
+      if (attempt.status === 429 || xaiExhausted) {
         rateLimited = true
         await markCooldown({
           dataDir: options.dataDir,
@@ -357,13 +362,14 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
         headers: {},
       }
     }
-    if (account.type !== 'api') return new Error(`account ${account.id}: ${candidate.provider} OAuth accounts are not routable through the pool proxy`)
-    const catalog = await getCatalog()
-    const baseUrl = account.baseURL ?? (catalog instanceof Error ? undefined : catalog[candidate.provider]?.api)
+    const xaiOAuth = candidate.provider === 'xai' && account.type === 'oauth'
+    if (account.type !== 'api' && !xaiOAuth) return new Error(`account ${account.id}: ${candidate.provider} OAuth accounts are not routable through the pool proxy`)
+    const catalog = xaiOAuth ? undefined : await getCatalog()
+    const baseUrl = xaiOAuth ? XAI_API_BASE_URL : (account.type === 'api' ? account.baseURL : undefined) ?? (catalog instanceof Error ? undefined : catalog?.[candidate.provider]?.api)
     if (!baseUrl) return new Error(`provider ${candidate.provider} has no base URL in the models.dev catalog; add the account with a --base-url to route it as OpenAI-compatible`)
     return {
       model: piModelFor({ api: 'openai-completions', provider: candidate.provider, modelId: candidate.modelId, baseUrl: baseUrl.replace(/\/+$/, '') }),
-      apiKey: account.key,
+      apiKey: account.type === 'oauth' ? account.access : account.key,
       // OpenCode Go keys its prompt cache by session; derive a stable opaque one.
       headers: candidate.provider === 'opencode-go' ? { 'x-opencode-session': crypto.createHash('sha256').update(sessionId).digest('hex').slice(0, 32) } : {},
     }

@@ -34,10 +34,12 @@ import {
   wrapResponseStream,
 } from './adapters/anthropic-oauth.js'
 import { refreshCodexToken } from './adapters/openai-codex-oauth.js'
+import { refreshXaiToken } from './adapters/xai-oauth.js'
 
 /** OAuth providers the pool can refresh, by pool provider id. */
 const OAUTH_REFRESHERS: Record<string, (input: { refreshToken: string; fetchImpl: PoolFetch }) => Promise<{ refresh: string; access: string; expires: number } | Error>> = {
   anthropic: refreshAnthropicToken,
+  xai: refreshXaiToken,
   'openai-codex': refreshCodexToken,
 }
 
@@ -69,7 +71,7 @@ export function cooldownUntilFromRetryAfter({ retryAfter, now }: { retryAfter: s
 export type PoolFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
 /**
- * Refresh an Anthropic OAuth account whose access token expires within
+ * Refresh an OAuth account whose access token expires within
  * OAUTH_REFRESH_LEAD_MS. The check-and-refresh runs inside withPoolLock and
  * re-reads the account under the lock, so concurrent requests on one pool
  * trigger at most one refresh and every request sees the rotated tokens

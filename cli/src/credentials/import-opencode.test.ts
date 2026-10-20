@@ -186,6 +186,23 @@ describe('resolveOpencodeDataDir', () => {
 })
 
 describe('importOpencodeCredentials', () => {
+  test('imports xAI auth and rotation entries as xai OAuth without a catalog adapter', async () => {
+    const first = { type: 'oauth', refresh: 'xai-refresh-one', access: 'xai-access-one', expires: 1893456000001 }
+    fs.writeFileSync(path.join(opencodeData, 'auth.json'), JSON.stringify({ xai: first }))
+    fs.writeFileSync(path.join(opencodeData, 'xai-oauth-accounts.json'), JSON.stringify([
+      first,
+      { ...first, refresh: 'xai-refresh-two', access: 'xai-access-two', email: 'grok@example.com' },
+    ]))
+    const result = importResult(await importOpencodeCredentials({ dataDir, opencodeData }))
+    expect(result.accounts).toMatchObject({ imported: 2, alreadyPresent: 1, skipped: 0, failed: 0 })
+    expect(readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })).toMatchObject([
+      { provider: 'xai', type: 'oauth', refresh: first.refresh, access: first.access },
+      { provider: 'xai', type: 'oauth', refresh: 'xai-refresh-two', label: 'grok@example.com' },
+    ])
+    expect(reportText(result)).not.toContain(first.refresh)
+    expect(reportText(result)).not.toContain(first.access)
+  })
+
   test('imports auth.json and rotation accounts with labels, skipping un-adapted providers', async () => {
     writeOpencodeFixture()
     const result = importResult(await importOpencodeCredentials({ dataDir, opencodeData }))

@@ -138,6 +138,55 @@ function codexStream(text: string) {
   ])
 }
 
+test.each([
+  [402, 'Grok Build usage balance exhausted'],
+  [403, 'personal-team-blocked:spending-limit'],
+  [429, 'Too many requests'],
+] as const)('xAI OAuth uses chat completions and fails over with cooldown on %s', async (status, message) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-xai-'))
+  try {
+    const ids: string[] = []
+    for (const label of ['a', 'b']) {
+      const account = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'xai', refresh: `refresh-${label}`, access: `access-${label}`, expires: Date.now() + 3600000 })
+      if (account instanceof Error) throw account
+      ids.push(account.id)
+    }
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'xai-grok-4.6', entries: ['xai/grok-4.6'] })
+    const calls: Seen[] = []
+    proxy = await startMessagesProxy({
+      dataDir,
+      resolvePools: async () => SHARED_POOL_ID,
+      catalog: {},
+      fetchImpl: async (input, init) => {
+        calls.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) })
+        return calls.length === 1
+          ? Response.json({ error: { message } }, { status, headers: { 'retry-after': '120' } })
+          : chatStream({ text: 'Hello from Grok' })()
+      },
+    })
+    const key = proxy.issueKey(() => 'xai-session')
+    const response = await post(proxy.baseUrl, key, { model: 'xai-grok-4.6', max_tokens: 100, messages: [{ role: 'user', content: 'hi' }] })
+    expect(response.status).toBe(200)
+    expect(await response.text()).toContain('Hello from Grok')
+    expect(calls).toHaveLength(2)
+    expect(calls.map(call => call.headers.get('authorization'))).toEqual(['Bearer access-a', 'Bearer access-b'])
+    for (const call of calls) {
+      expect(call.url).toBe('https://api.x.ai/v1/chat/completions')
+      expect(call.body.model).toBe('grok-4.6')
+      expect(call.body.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'hi' }] })]))
+      expect(call.headers.get('x-api-key')).toBeNull()
+    }
+    const state = readPoolState({ dataDir, poolId: SHARED_POOL_ID })
+    if (state instanceof Error) throw state
+    expect(state.cooldowns[ids[0]!]).toBeGreaterThan(Date.now() + 60000)
+    expect(readSessionRoute({ dataDir, sessionId: 'xai-session', now: Date.now() })?.accountId).toBe(ids[1])
+  } finally {
+    await proxy?.close()
+    proxy = undefined
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
 type Call = { url: string; headers: Headers; body: string }
 
 async function mixedSetup(responses: Array<() => Response>, {
