@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.11] - 2026-10-20
+
+### Changed
+- Describe pool rotations and surface them as a model-rotations system prompt section
+
 ## [0.73.10] - 2026-10-19
 
 ### Changed
