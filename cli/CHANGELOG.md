@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.12] - 2026-10-20
+
+### Changed
+- Pi backend: always queue prompts and settle on agent_settled
+
 ## [0.73.11] - 2026-10-20
 
 ### Changed
