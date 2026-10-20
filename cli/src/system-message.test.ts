@@ -13,7 +13,6 @@ import {
   systemPromptHasParentSession,
   getPromptContext,
   getSystemMessage,
-  renderModelRotations,
   getSessionSystemPromptPath,
   ROADIE_SYSTEM_PROMPT_MARKER,
   readSessionSystemPrompt,
@@ -28,37 +27,6 @@ afterEach(async () => {
       return fs.promises.rm(dir, { recursive: true, force: true })
     }),
   )
-})
-
-describe('model-rotations section', () => {
-  const catalog = {
-    rotations: {
-      subagent: { entries: ['zai-coding-plan/glm-5.3-flash', 'openai/gpt-6-luna'] },
-      'cook-heavy': { entries: ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5-5'], description: 'Hard or architectural coding tasks' },
-      empty: { entries: [] },
-    },
-    adaptiveRotations: [],
-  }
-
-  test('lists every non-empty rotation with its fallback order and description, sorted', () => {
-    expect(renderModelRotations(catalog)).toBe(
-      '\n## Model rotations\n\n'
-      + '- roadie/cook-heavy: openai/gpt-6.1-sol → anthropic/claude-opus-5-5 — Hard or architectural coding tasks\n'
-      + '- roadie/subagent: zai-coding-plan/glm-5.3-flash → openai/gpt-6-luna\n'
-      + 'Pick a tier with --model roadie/<name>.\n',
-    )
-  })
-
-  test('renders nothing without rotations', () => {
-    expect(renderModelRotations(undefined)).toBe('')
-    expect(renderModelRotations({ rotations: { empty: { entries: [] } }, adaptiveRotations: [] })).toBe('')
-  })
-
-  test('appears in the Discord and Slack prompts only when a catalog is supplied', () => {
-    expect(getSystemMessage({ sessionId: 'ses_1', modelCatalog: catalog })).toContain('- roadie/cook-heavy:')
-    expect(getSystemMessage({ sessionId: 'ses_1', platform: 'slack', modelCatalog: catalog })).toContain('- roadie/cook-heavy:')
-    expect(getSystemMessage({ sessionId: 'ses_1' })).not.toContain('## Model rotations')
-  })
 })
 
 describe('system-message', () => {

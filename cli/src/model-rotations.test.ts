@@ -29,7 +29,7 @@ test('renders deterministic sorted tiers, descriptions and fallback order; skips
   expect(renderModelRotations({ rotations: {}, adaptiveRotations: [] })).toBe('')
 })
 
-test.each(['discord', 'slack'])('%s includes the section and honors disable, replace and disabled pools', (platform) => {
+test.each(['discord', 'slack'])('%s includes the section and honors disable and replace', (platform) => {
   store.setState({ credentialPoolsEnabled: true })
   setPromptConfigPath(null)
   const prompt = () => getSystemMessage({ platform, sessionId: 's', modelCatalog: catalog })
@@ -46,9 +46,6 @@ test.each(['discord', 'slack'])('%s includes the section and honors disable, rep
     setPromptConfigPath(replaced)
     expect(prompt()).toContain('Host model menu')
     expect(prompt()).not.toContain('roadie/heavy')
-    setPromptConfigPath(null)
-    store.setState({ credentialPoolsEnabled: false })
-    expect(prompt()).not.toContain('## Model rotations')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -84,7 +81,7 @@ test('new session catalog reads live local metadata and is absent with pools dis
   try {
     await setPoolRotation({ dataDir: dir, poolId: SHARED_POOL_ID, name: 'routine', entries: ['a/fast'], description: 'Small tasks' })
     expect(await sessionPoolCatalog()).toEqual({ rotations: { routine: { entries: ['a/fast'], description: 'Small tasks' } }, adaptiveRotations: [] })
-    expect(getSystemMessage({ sessionId: 's' })).toContain('roadie/routine: a/fast — Small tasks')
+    expect(getSystemMessage({ sessionId: 's', modelCatalog: await sessionPoolCatalog() })).toContain('roadie/routine: a/fast — Small tasks')
     store.setState({ credentialPoolsEnabled: false })
     expect(await sessionPoolCatalog()).toBeUndefined()
   } finally {
