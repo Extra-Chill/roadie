@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.73.13] - 2026-10-20
+
+### Changed
+- Credential pool: serve xAI (Grok) OAuth subscription accounts
+
 ## [0.73.12] - 2026-10-20
 
 ### Changed
