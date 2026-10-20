@@ -77,6 +77,7 @@ const configSchema = z
       directory: z.string().refine(path.isAbsolute, 'Use an absolute application directory'),
     }).strict().optional(),
     projects: z.record(z.string().min(1), policySchema.omit({ project: true })).optional(),
+    dm: policySchema.optional(),
     channels: z.record(z.string().min(1), policySchema),
   })
   .strict()
@@ -156,6 +157,9 @@ export function parseChannelsConfig(text: string): ChannelsConfig | Error {
       return new Error(`channels.${channelId}.project: unknown project "${policy.project}"`)
     }
   }
+  if (parsed.data.dm?.project && !parsed.data.projects?.[parsed.data.dm.project]) {
+    return new Error(`dm.project: unknown project "${parsed.data.dm.project}"`)
+  }
   if (parsed.data.application && !parsed.data.channels[parsed.data.application.channel]) {
     return new Error('application.channel must name an explicitly configured channel')
   }
@@ -224,7 +228,25 @@ function lookupChain(channelId: string): string[] {
  *   undefined → no config file: use Roadie's built-in settings
  *   null      → config file present but nothing matches: do not answer
  */
+// Discord registers authenticated DM channel IDs before any policy lookup.
+// Keep their policy isolated from channel ancestors, wildcard and host filters.
+const discordDmChannels = new Set<string>()
+export function registerDiscordDmChannel(channelId: string): void {
+  discordDmChannels.add(channelId)
+}
+
+export function resolveDmPolicy(): ChannelPolicy | null {
+  const config = currentConfig()
+  const dm = config?.dm
+  if (!dm) return null
+  const project = dm.project ? config?.projects?.[dm.project] : undefined
+  return { ...project, ...dm, threads: 'none',
+    ...(project?.intake || dm.intake ? { intake: { ...project?.intake, ...dm.intake } } : {}),
+  }
+}
+
 export function resolveChannelPolicy(channelId: string): ChannelPolicy | null | undefined {
+  if (discordDmChannels.has(channelId)) return resolveDmPolicy()
   const config = currentConfig()
   if (config?.application && !lookupChain(channelId).some((id) => id !== '*' && config.channels[id])) {
     return null

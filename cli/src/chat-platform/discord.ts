@@ -1,7 +1,7 @@
 // Discord implementation of the chat platform seam. Each method performs the
 // exact Discord call the session runtime made before the seam existed.
 
-import { ChannelType, Routes, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, Routes, type DMChannel, type PartialDMChannel, type TextChannel, type ThreadChannel } from 'discord.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
@@ -148,7 +148,7 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
  * channel id. It is never renamed, and each turn's first reply is anchored to
  * the message that started it so answers stay legible in a busy channel.
  */
-export function createDiscordChatChannel(channel: TextChannel): ChatThread {
+export function createDiscordChatChannel(channel: TextChannel | DMChannel | PartialDMChannel): ChatThread {
   // The interactive prompt helpers only use the members a text channel shares
   // with a thread (id, send, messages, client); thread-only fields such as
   // ownerId read as undefined.
@@ -172,13 +172,13 @@ export function createDiscordChatChannel(channel: TextChannel): ChatThread {
       return channel.id
     },
     get name() {
-      return channel.name
+      return channel.type === ChannelType.DM ? 'DM' : channel.name
     },
     get parentId() {
       return channel.id
     },
     get spaceId() {
-      return channel.guildId
+      return channel.type === ChannelType.DM ? channel.id : channel.guildId
     },
     get createdAt() {
       return channel.createdTimestamp
@@ -206,7 +206,7 @@ export function createDiscordChatChannel(channel: TextChannel): ChatThread {
       // Never rename a channel from a session title.
     },
     async channelTopic() {
-      return channel.topic?.trim() || undefined
+      return channel.type === ChannelType.DM ? undefined : channel.topic?.trim() || undefined
     },
     sendNotice: base.sendNotice,
     readMessageText: base.readMessageText,

@@ -21,6 +21,8 @@ import type {
   Message,
   REST as RESTType,
   TextChannel,
+  DMChannel,
+  PartialDMChannel,
   ThreadChannel,
 } from 'discord.js'
 const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
@@ -823,7 +825,7 @@ export function splitMarkdownForDiscord({
 }
 
 export async function sendThreadMessage(
-  thread: ThreadChannel | TextChannel,
+  thread: ThreadChannel | TextChannel | DMChannel | PartialDMChannel,
   content: string,
   options?: { flags?: number; replyTo?: string },
 ): Promise<Message> {
@@ -898,7 +900,7 @@ export async function sendThreadMessage(
 }
 
 export async function sendSessionPartMessage(
-  thread: ThreadChannel | TextChannel,
+  thread: ThreadChannel | TextChannel | DMChannel | PartialDMChannel,
   content: string,
   options?: {
     leadWithBlankLine?: boolean
