@@ -24,7 +24,8 @@ import {
   isValidPoolId,
   movePoolAccount,
   readPoolAccounts,
-  readPoolRotations,
+  readPoolRotationRecords,
+  type PoolRotations,
   readPoolState,
   removePoolAccount,
   seedPoolRotations,
@@ -74,7 +75,7 @@ export type PoolAccountView = {
 export type PoolListing = {
   poolId: string
   accounts: PoolAccountView[]
-  rotations: Record<string, string[]>
+  rotations: PoolRotations
 }
 
 export type PoolAccountAdded = {
@@ -96,7 +97,7 @@ export type PoolAccounts = {
   remove(input: { poolId: string; accountId: string }): Promise<boolean | Error>
   move(input: { poolId: string; accountId: string; position: number }): Promise<PoolAccountView[] | Error>
   /** Set (or replace) a named rotation; an empty entry list removes it. */
-  setRotation(input: { poolId: string; name: string; entries: string[] }): Promise<true | Error>
+  setRotation(input: { poolId: string; name: string; entries: string[]; description?: string }): Promise<true | Error>
 }
 
 /** Build the secret-free view. An allowlist: new account fields stay out until added here. */
@@ -206,7 +207,7 @@ export function localPoolAccounts({
       if (accounts instanceof Error) return accounts
       const state = readPoolState({ dataDir, poolId })
       if (state instanceof Error) return state
-      const rotations = readPoolRotations({ dataDir, poolId })
+      const rotations = readPoolRotationRecords({ dataDir, poolId })
       if (rotations instanceof Error) return rotations
       const timestamp = now()
       return {
@@ -316,11 +317,11 @@ export function localPoolAccounts({
       return ordered.map((account, index) => toPoolAccountView({ account, position: index + 1, now: timestamp }))
     },
 
-    async setRotation({ poolId, name, entries }) {
+    async setRotation({ poolId, name, entries, description }) {
       const invalid = invalidPool(poolId)
       if (invalid) return invalid
       // Never 'exists': onlyIfAbsent is off, so a set replaces any existing rotation.
-      const result = await setPoolRotation({ dataDir, poolId, name, entries })
+      const result = await setPoolRotation({ dataDir, poolId, name, entries, description })
       return result === 'exists' ? new Error(`Could not set rotation ${name}`) : result
     },
   }

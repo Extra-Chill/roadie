@@ -32,7 +32,8 @@ describe('pool provider', () => {
     })
     const catalog = poolCatalog({ dataDir, poolIds: [SHARED_POOL_ID] })
     const { rotations } = catalog
-    expect(rotations).toEqual(['claude-best', 'claude-legacy', 'glm-best', 'subagent'])
+    expect(Object.keys(rotations)).toEqual(['claude-best', 'claude-legacy', 'glm-best', 'subagent'])
+    expect(rotations['glm-best']).toEqual({ entries: ['zai-coding-plan/glm-5.3-flash'] })
     expect(catalog.adaptiveRotations).toEqual(['claude-best', 'subagent'])
     const agentDir = path.join(dataDir, 'agent')
     writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', ...catalog })
@@ -40,7 +41,7 @@ describe('pool provider', () => {
     expect(Object.keys(providers)).toEqual([PI_POOL_PROVIDER])
     const pool = providers[PI_POOL_PROVIDER]!
     expect(pool).toMatchObject({ api: 'anthropic-messages', baseUrl: 'http://127.0.0.1:47120' })
-    expect(pool.models.map((model) => model.id)).toEqual(rotations)
+    expect(pool.models.map((model) => model.id)).toEqual(Object.keys(rotations))
     expect(pool.models[0]).toMatchObject({ reasoning: true, input: ['text', 'image'] })
     const compat = Object.fromEntries(pool.models.map((model) => [model.id, model.compat]))
     // Adaptive thinking follows a rotation's adaptive Anthropic entry.
@@ -57,8 +58,9 @@ describe('pool provider', () => {
         'roadie-codex': { baseUrl: 'http://old', models: [] },
       },
     }))
-    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', rotations: ['claude-best'] })
+    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', rotations: { 'claude-best': { entries: ['anthropic/claude-opus-5-5'], description: 'Hard coding tasks' } } })
     const { providers } = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')) as { providers: Providers }
     expect(Object.keys(providers).sort()).toEqual(['fake', PI_POOL_PROVIDER])
+    expect(providers[PI_POOL_PROVIDER]!.models[0]).toMatchObject({ id: 'claude-best', name: 'claude-best — Hard coding tasks' })
   })
 })

@@ -34,6 +34,7 @@ function childEnv(mode: 'agent' | 'operator'): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const name of SCRUBBED_ENV_NAMES) delete env[name]
   env.ROADIE_DATA_DIR = dataDir
+  delete env.ROADIE_VITEST
   // Logs reach stderr so assertions see the CLI's own messages.
   env.ROADIE_TEST_LOGS = '1'
   // tsx creates its IPC pipe under TMPDIR; the checkouts here can sit inside
@@ -109,6 +110,13 @@ describe('operator-only commands refuse in agent mode', () => {
     expect(code).toBe(0)
     expect(stderr).toContain('Pool shared has no accounts')
   }, 30_000)
+
+  test('rotation set --description persists and credentials list shows it', async () => {
+    const set = await runCli(['credentials', 'rotation', 'set', 'cook-heavy', 'openai/gpt-6.1-sol', 'anthropic/claude-opus-5-5', '--description', 'Hard coding tasks'], 'operator')
+    expect(set.code, set.stderr).toBe(0)
+    const listed = await runCli(['credentials', 'list'], 'operator')
+    expect(listed.stderr).toContain('cook-heavy: openai/gpt-6.1-sol anthropic/claude-opus-5-5 — Hard coding tasks')
+  }, 60_000)
 
   test('credentials list sends exact argv and relays streamed output and exit code', async () => {
     const received: unknown[] = []

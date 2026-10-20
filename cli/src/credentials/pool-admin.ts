@@ -147,7 +147,12 @@ export function createPoolAdminHandler({
         fail(res, 400, 'name and an entries array of provider/model strings are required')
         return
       }
-      const set = await accounts.setRotation({ poolId, name, entries })
+      const description = body['description']
+      if (description !== undefined && typeof description !== 'string') {
+        fail(res, 400, 'description must be a string')
+        return
+      }
+      const set = await accounts.setRotation({ poolId, name, entries, description })
       respond(200, set instanceof Error ? set : { set })
       return
     }

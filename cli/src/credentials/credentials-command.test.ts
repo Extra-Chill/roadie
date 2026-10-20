@@ -460,6 +460,21 @@ describe('/credentials registration gating', () => {
   })
 })
 
+test('/credentials list shows rotation purpose and ordered fallbacks', async () => {
+  await setPoolRotation({ dataDir, poolId: OWN_POOL, name: 'routine', entries: ['openai/fast', 'anthropic/fallback'], description: 'Routine coding' })
+  const replies: string[] = []
+  const interaction = {
+    options: { getSubcommand: () => 'list', getString: () => null },
+    deferReply: async () => {},
+    editReply: async (options: EditReplyOptions) => { replies.push(options.content ?? '') },
+    guild: { id: 'guild-1' }, channelId: 'channel-1',
+    user: { id: USER_ID, displayName: 'Tester' },
+    member: { user: { id: USER_ID }, roles: [], permissions: '0' },
+  } as unknown as ChatInputCommandInteraction
+  await handleCredentialsCommand({ command: interaction })
+  expect(replies.join('\n')).toContain('routine: openai/fast anthropic/fallback — Routine coding')
+})
+
 describe('/credentials reorder', () => {
   function makeReorderCommandInteraction({
     accountId,

@@ -28,7 +28,7 @@ async function poolHost() {
   const dataDir = tempDir()
   const account = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', label: 'a', refresh: 'refresh-a', access: 'access-a', expires: Date.now() + 3_600_000 })
   if (account instanceof Error) throw account
-  await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'claude-best', entries: ['anthropic/claude-opus-4-8'] })
+  await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'claude-best', entries: ['anthropic/claude-opus-4-8'], description: 'Hard tasks' })
   const client = addPoolClient({ dataDir, name: 'mac-bot' })
   if (client instanceof Error) throw client
   const upstream: Array<{ url: string; headers: Headers }> = []
@@ -66,7 +66,7 @@ describe('pool host client endpoints', () => {
   test('the catalog lists what the client pools serve, for client keys only', async () => {
     const { key, host } = await poolHost()
     // Adaptive thinking travels with the rotation: only the host knows its entries.
-    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: ['claude-best'], adaptiveRotations: ['claude-best'] })
+    expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key } })).toEqual({ rotations: { 'claude-best': { entries: ['anthropic/claude-opus-4-8'], description: 'Hard tasks' } }, adaptiveRotations: ['claude-best'] })
     expect(await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key: 'wrong' } })).toBeInstanceOf(Error)
     // A Pi process's session key is not a client key.
     const sessionKey = host.issueKey(() => 'sess')
@@ -82,12 +82,12 @@ describe('remote catalog to Pi models', () => {
     const agentDir = path.join(tempDir(), 'agent')
     writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:1', ...catalog })
     const models = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')).providers[PI_POOL_PROVIDER].models as Array<{ id: string; compat?: unknown }>
-    expect(models).toEqual([expect.objectContaining({ id: 'claude-best', compat: { forceAdaptiveThinking: true } })])
+    expect(models).toEqual([expect.objectContaining({ id: 'claude-best', name: 'claude-best — Hard tasks', compat: { forceAdaptiveThinking: true } })])
   })
 
-  test('an older host without adaptiveRotations still yields its rotations', async () => {
-    const fetchImpl = async () => new Response(JSON.stringify({ rotations: ['claude-best'] }), { status: 200 })
-    expect(await fetchRemotePoolCatalog({ config: { url: 'http://pool', key: 'k' }, fetchImpl })).toEqual({ rotations: ['claude-best'], adaptiveRotations: [] })
+  test('drops malformed records and ignores adaptive names outside the catalog', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ rotations: { tier: { entries: ['a/m', 42], description: 'Routine' }, empty: { entries: [] }, broken: ['a/m'] }, adaptiveRotations: ['tier', 'missing'] }), { status: 200 })
+    expect(await fetchRemotePoolCatalog({ config: { url: 'http://pool', key: 'k' }, fetchImpl })).toEqual({ rotations: { tier: { entries: ['a/m'], description: 'Routine' } }, adaptiveRotations: ['tier'] })
   })
 })
 

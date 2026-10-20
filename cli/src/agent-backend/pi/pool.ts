@@ -15,28 +15,16 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseRotationEntry } from '../../credentials/router.js'
-import { readPoolRotations, SHARED_POOL_ID } from '../../credentials/store.js'
+import { readPoolRotations, SHARED_POOL_ID, type PoolRotations } from '../../credentials/store.js'
 
 export const PI_POOL_PROVIDER = 'roadie'
 export const PI_KEY_ENV = 'ROADIE_PI_KEY'
 
-/** Rotation names in the given pools: each is one `roadie/<rotation>` model. */
-export function poolRotations({ dataDir, poolIds = [SHARED_POOL_ID] }: { dataDir: string; poolIds?: string[] }): string[] {
-  const names = new Set<string>()
-  for (const poolId of poolIds) {
-    const rotations = readPoolRotations({ dataDir, poolId })
-    if (rotations instanceof Error) continue
-    for (const [name, entries] of Object.entries(rotations)) {
-      if (entries.length > 0) names.add(name)
-    }
-  }
-  return [...names].sort()
-}
-
-function poolModel(rotation: string) {
+function poolModel(rotation: string, description?: string) {
   return {
     id: rotation,
-    name: rotation,
+    // Pi's models.json schema exposes display metadata through `name`.
+    name: description ? `${rotation} — ${description}` : rotation,
     reasoning: true,
     input: ['text', 'image'],
     contextWindow: 200000,
@@ -66,7 +54,7 @@ export function adaptiveAnthropicRotations({ dataDir, poolIds, rotations }: { da
   return [...adaptive].sort()
 }
 
-export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }: { baseUrl: string; rotations: string[]; adaptiveRotations?: string[] }) {
+export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }: { baseUrl: string; rotations: PoolRotations; adaptiveRotations?: string[] }) {
   return {
     providers: {
       [PI_POOL_PROVIDER]: {
@@ -74,7 +62,7 @@ export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }:
         api: 'anthropic-messages',
         apiKey: 'roadie-pool-managed',
         headers: { 'x-roadie-key': `\${${PI_KEY_ENV}}` },
-        models: rotations.map((rotation) => ({ ...poolModel(rotation), ...(adaptiveRotations.includes(rotation) && { compat: { forceAdaptiveThinking: true } }) })),
+        models: Object.keys(rotations).sort().map((rotation) => ({ ...poolModel(rotation, rotations[rotation]?.description), ...(adaptiveRotations.includes(rotation) && { compat: { forceAdaptiveThinking: true } }) })),
       },
     },
   }
@@ -86,7 +74,7 @@ export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }:
  * there is kept. `adaptiveRotations` comes from whoever holds the rotation
  * entries: the local pool, or a remote pool host's catalog.
  */
-export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, adaptiveRotations = [] }: { agentDir: string; baseUrl: string; rotations: string[]; adaptiveRotations?: string[] }) {
+export function writePiPoolAgentDir({ agentDir, baseUrl, rotations, adaptiveRotations = [] }: { agentDir: string; baseUrl: string; rotations: PoolRotations; adaptiveRotations?: string[] }) {
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 })
   const file = path.join(agentDir, 'models.json')
   let existing: { providers?: Record<string, unknown> } = {}
