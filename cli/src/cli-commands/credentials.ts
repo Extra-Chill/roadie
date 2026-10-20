@@ -132,7 +132,8 @@ cli
     }
     cliLogger.log(`Pool ${poolId} rotations:`)
     for (const name of rotationNames) {
-      cliLogger.log(`${name}: ${(rotations[name] ?? []).join(' ')}`)
+      const rotation = rotations[name]!
+      cliLogger.log(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}`)
     }
     process.exit(0)
   })
@@ -287,12 +288,13 @@ cli
     'Set (or replace) a named rotation in a credential pool (default: shared) as ordered provider/model entries. Empty list removes the rotation.',
   )
   .option('--pool <id>', 'Pool to set the rotation in (default: shared)')
+  .option('--description <text>', 'When to use this rotation (empty string clears; omitted preserves)')
   .action(async (name: string, models: string[] | undefined, options) => {
     await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const entries = models ?? []
     const accounts = poolAccounts()
-    const result = await accounts.setRotation({ poolId, name, entries })
+    const result = await accounts.setRotation({ poolId, name, entries, description: options.description })
     if (result instanceof Error) exitWithError(result.message)
     const where = accounts.location === 'local' ? '' : ` on ${accounts.location}`
     if (entries.length === 0) {
@@ -444,9 +446,9 @@ cli
     const dataDir = getDataDir()
     const poolIds = resolvePoolIds(options.pools)
     const catalog = poolCatalog({ dataDir, poolIds })
-    if (catalog.rotations.length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no rotation`)
+    if (Object.keys(catalog.rotations).length === 0) exitWithError(`Pools ${poolIds.join(', ')} have no rotation`)
     writePiPoolAgentDir({ agentDir: dir, baseUrl: baseUrl.replace(/\/+$/, ''), ...catalog })
-    cliLogger.log(`Wrote Pi agent dir ${dir} (rotations: ${catalog.rotations.join(', ')})`)
+    cliLogger.log(`Wrote Pi agent dir ${dir} (rotations: ${Object.keys(catalog.rotations).join(', ')})`)
     process.exit(0)
   })
 

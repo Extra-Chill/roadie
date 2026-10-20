@@ -80,7 +80,7 @@ describe('pool admin API', () => {
     const listing = await call(adminKey, 'GET', 'accounts?pool=shared')
     expect(listing.status).toBe(200)
     expect(listing.json.accounts).toHaveLength(1)
-    expect(listing.json.rotations).toEqual({ default: ['openai/gpt-5'] })
+    expect(listing.json.rotations).toEqual({ default: { entries: ['openai/gpt-5'] } })
     for (const text of [added.text, listing.text]) {
       expect(text).not.toContain(TEST_KEY)
       expect(text).not.toContain('ZZ99')
@@ -142,13 +142,16 @@ describe('pool admin API', () => {
 
   test('sets and removes rotations; only admins, only their own pools (#275)', async () => {
     const { call, adminKey, plainKey, dataDir } = await host()
-    const set = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5', 'anthropic/claude-sonnet-4'] })
+    const set = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5', 'anthropic/claude-sonnet-4'], description: 'Hard tasks' })
     expect(set.status).toBe(200)
     expect(set.json).toEqual({ set: true })
     expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({ default: ['openai/gpt-5', 'anthropic/claude-sonnet-4'] })
 
-    // Replacing and removing (empty entries) work too.
+    // Replacing preserves metadata; clearing is explicit.
     expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5'] })).status).toBe(200)
+    expect((await call(adminKey, 'GET', 'accounts?pool=shared')).json.rotations).toEqual({ default: { entries: ['openai/gpt-5'], description: 'Hard tasks' } })
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: ['openai/gpt-5'], description: '' })).status).toBe(200)
+    expect((await call(adminKey, 'GET', 'accounts?pool=shared')).json.rotations).toEqual({ default: { entries: ['openai/gpt-5'] } })
     expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'default', entries: [] })).status).toBe(200)
     expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
 

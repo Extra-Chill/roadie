@@ -92,6 +92,16 @@ describe('system prompt with a config file', () => {
     expect(getSystemMessage({ sessionId: 'ses_1' })).toContain('## permissions')
   })
 
+  test('prompt config can disable the model-rotations section', () => {
+    const file = path.join(dir, 'prompt-rotations.yaml')
+    fs.writeFileSync(file, 'disable: [model-rotations]\n')
+    setPromptConfigPath(file)
+    const modelCatalog = { rotations: { subagent: { entries: ['openai/gpt-6-luna'], description: 'Routine work' } }, adaptiveRotations: [] }
+    expect(getSystemMessage({ sessionId: 'ses_1', modelCatalog })).not.toContain('## Model rotations')
+    setPromptConfigPath(null)
+    expect(getSystemMessage({ sessionId: 'ses_1', modelCatalog })).toContain('- roadie/subagent: openai/gpt-6-luna — Routine work')
+  })
+
   test('no config file leaves the built-in prompt and drops removed features', () => {
     setPromptConfigPath(null)
     const message = getSystemMessage({ sessionId: 'ses_1' })

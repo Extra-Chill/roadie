@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { setAgentBackendProvider } from './agent-backend/registry.js'
 import { PiBackendProvider } from './agent-backend/pi/backend.js'
+import { poolCatalog } from './credentials/messages-proxy.js'
 import { writePiPoolAgentDir } from './agent-backend/pi/pool.js'
 import { startMessagesProxy, type MessagesProxy } from './credentials/messages-proxy.js'
 import { SHARED_POOL_ID } from './credentials/store.js'
@@ -64,7 +65,7 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
       },
     })
     const agentDir = path.join(ctx.directories.root, 'pi-agent')
-    writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, rotations: [rotation] })
+    writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, ...poolCatalog({ dataDir: poolDir!, poolIds: [SHARED_POOL_ID] }) })
     pi = new PiBackendProvider({
       bin: bin!,
       sessionDir: path.join(ctx.directories.dataDir, 'pi-sessions'),

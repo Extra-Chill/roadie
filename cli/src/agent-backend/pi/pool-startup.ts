@@ -35,7 +35,7 @@ export async function startPiPool(): Promise<Error | {
   if (remote) {
     const catalog = await fetchRemotePoolCatalog({ config: remote })
     if (catalog instanceof Error) return catalog
-    if (catalog.rotations.length === 0) return new Error(`the pool host ${remote.url} serves this client no rotation`)
+    if (Object.keys(catalog.rotations).length === 0) return new Error(`the pool host ${remote.url} serves this client no rotation`)
     const relay = await startRemotePoolRelay({ config: remote }).catch((cause: unknown) => new Error('remote pool relay failed to start', { cause }))
     if (relay instanceof Error) return relay
     writePiPoolAgentDir({ agentDir, baseUrl: relay.baseUrl, ...catalog })
@@ -50,7 +50,7 @@ export async function startPiPool(): Promise<Error | {
     }
   }
   const catalog = poolCatalog({ dataDir, poolIds: [SHARED_POOL_ID] })
-  if (catalog.rotations.length === 0) return new Error('the shared pool has no rotation')
+  if (Object.keys(catalog.rotations).length === 0) return new Error('the shared pool has no rotation')
   const listen = piPoolListenOptions()
   if (listen instanceof Error) return listen
   const proxy = await startMessagesProxy({ dataDir, ...listen, resolvePools: (sessionId) => resolveSessionPoolHeader({ sessionId }) })

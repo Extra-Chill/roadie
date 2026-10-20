@@ -24,12 +24,12 @@ import { Readable } from 'node:stream'
 import { stream as piStream } from '@earendil-works/pi-ai/compat'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { markCooldown, type PoolCandidate } from './router.js'
-import { markUsed, type PoolAccount } from './store.js'
+import { markUsed, readPoolRotationRecords, type PoolRotations, type PoolAccount } from './store.js'
 import { CODEX_RESPONSES_BASE_URL } from './adapters/openai-codex-oauth.js'
 import { clearSessionRoute, setSessionRoute } from './routes.js'
 import { parsePoolListHeader } from './person-pool.js'
 import { POOL_CLIENT_SCOPE_PATTERN, poolClientSessionId, resolvePoolClient } from './pool-clients.js'
-import { adaptiveAnthropicRotations, poolRotations } from '../agent-backend/pi/pool.js'
+import { adaptiveAnthropicRotations } from '../agent-backend/pi/pool.js'
 import { resolveCatalog, type ModelsDevCatalog } from './provider-catalog.js'
 import {
   cooldownUntilFromRetryAfter,
@@ -58,11 +58,20 @@ export const POOL_ADMIN_PATH = '/roadie/pool/admin/'
  * holds their entries, and Opus 5.x returns no thinking or narration text
  * unless Pi requests adaptive thinking.
  */
-export type PoolCatalog = { rotations: string[]; adaptiveRotations: string[] }
+export type PoolCatalog = { rotations: PoolRotations; adaptiveRotations: string[] }
 
 export function poolCatalog({ dataDir, poolIds }: { dataDir: string; poolIds: string[] }): PoolCatalog {
-  const rotations = poolRotations({ dataDir, poolIds })
-  return { rotations, adaptiveRotations: adaptiveAnthropicRotations({ dataDir, poolIds, rotations }) }
+  const rotations: PoolRotations = {}
+  for (const poolId of poolIds) {
+    const records = readPoolRotationRecords({ dataDir, poolId })
+    if (records instanceof Error) continue
+    for (const name of Object.keys(records).sort()) {
+      const rotation = records[name]!
+      // Pool order is routing priority; use the first pool's menu metadata.
+      if (rotation.entries.length && !Object.hasOwn(rotations, name)) rotations[name] = rotation
+    }
+  }
+  return { rotations, adaptiveRotations: adaptiveAnthropicRotations({ dataDir, poolIds, rotations: Object.keys(rotations) }) }
 }
 
 /** Pool provider id for ChatGPT (Codex) subscription accounts. */

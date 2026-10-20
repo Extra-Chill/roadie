@@ -12,6 +12,7 @@ import {
   movePoolAccount,
   readPoolAccounts,
   readPoolRotations,
+  readPoolRotationRecords,
   readPoolState,
   removePoolAccount,
   setPoolRotation,
@@ -518,6 +519,22 @@ describe('pool state', () => {
 })
 
 describe('rotations', () => {
+  test('reads legacy arrays and migrates all records on write; preserves and clears descriptions', async () => {
+    const options = { dataDir, poolId: SHARED_POOL_ID }
+    const dir = getPoolDir(options)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'rotation.json')
+    fs.writeFileSync(file, JSON.stringify({ legacy: ['a/first', 'b/fallback'], other: ['c/model'] }))
+    expect(readPoolRotationRecords(options)).toEqual({ legacy: { entries: ['a/first', 'b/fallback'] }, other: { entries: ['c/model'] } })
+    await setPoolRotation({ ...options, name: 'legacy', entries: ['a/new'], description: 'Routine coding' })
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ legacy: { entries: ['a/new'], description: 'Routine coding' }, other: { entries: ['c/model'] } })
+    await setPoolRotation({ ...options, name: 'legacy', entries: ['b/new'] })
+    expect(readPoolRotationRecords(options)).toMatchObject({ legacy: { entries: ['b/new'], description: 'Routine coding' } })
+    expect(readPoolRotations(options)).toEqual({ legacy: ['b/new'], other: ['c/model'] })
+    await setPoolRotation({ ...options, name: 'legacy', entries: ['b/new'], description: '' })
+    expect(readPoolRotationRecords(options)).toMatchObject({ legacy: { entries: ['b/new'] } })
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).legacy).not.toHaveProperty('description')
+  })
   test('setPoolRotation stores ordered provider/model entries', async () => {
     const result = await setPoolRotation({
       dataDir,

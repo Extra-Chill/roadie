@@ -55,7 +55,7 @@ import {
   resolvePersonBillingPool,
   type CredentialsMode,
 } from '../credentials/person-pool.js'
-import { SHARED_POOL_ID } from '../credentials/store.js'
+import { SHARED_POOL_ID, type PoolRotations } from '../credentials/store.js'
 import {
   resolvePoolAccounts,
   type PoolAccountAdded,
@@ -221,7 +221,7 @@ function buildListContent({
   poolId: string
   location: string
   accounts: PoolAccountView[]
-  rotations: Record<string, string[]>
+  rotations: PoolRotations
   now: number
 }): string {
   const lines: string[] = [`Credentials pool ${poolId}${location === 'local' ? '' : ` on ${location}`}`]
@@ -238,7 +238,8 @@ function buildListContent({
   } else {
     lines.push('Rotations:')
     for (const name of rotationNames) {
-      lines.push(`${name}: ${(rotations[name] ?? []).join(' ')}`)
+      const rotation = rotations[name]!
+      lines.push(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}`)
     }
   }
   return lines.join('\n')

@@ -141,9 +141,23 @@ roadie credentials list --pool <poolId>
 echo <key> | roadie credentials add-key --provider <provider> [--pool <poolId>] [--base-url <url>]
 roadie credentials login <anthropic|openai-codex> --pool <poolId>
 roadie credentials remove <id> --pool <poolId>
-roadie credentials rotation set <name> <provider/model> ... --pool <poolId>
+roadie credentials rotation set <name> <provider/model> ... --pool <poolId> [--description <text>]
 roadie credentials import-subrouter
 ```
+
+Rotations are stored in `rotation.json` as `name: { entries: [...], description?: text }`.
+Legacy arrays are read and migrated on the next write. `--description` explains
+when to pick a tier; omitting it preserves the existing description and
+`--description ''` clears it. Both CLI and `/credentials list` show it.
+
+The local and remote pool catalogs carry the same entries and descriptions.
+New sessions include a deterministic `model-rotations` system prompt section
+with the fallback order, purpose and `--model roadie/<name>` selection hint.
+Disable or replace `model-rotations` using the host prompt config. Pools disabled
+or an empty catalog produce no section. Pi agent dirs put the purpose in each
+model's display `name` (the model ID and proxy routing stay unchanged).
+Pi's model picker displays that name. The currently installed Pi's
+`--list-models` table prints only IDs, not display names or descriptions.
 
 `list`, `add-key`, `login` and `remove` manage the pool host's accounts when
 this Roadie uses a remote pool (see below).

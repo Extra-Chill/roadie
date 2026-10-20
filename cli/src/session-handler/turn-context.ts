@@ -16,6 +16,7 @@ import { getScheduledTask, getSessionStartSource } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   getSystemMessage,
+  sessionPoolCatalog,
   resolveSessionSystemPrompt,
   type AgentInfo,
   type ScheduledTaskSystemContext,
@@ -175,6 +176,7 @@ export async function resolveTurnSystemPrompt({
     sessionId,
     generate: async () => {
       const base = getSystemMessage({
+        modelCatalog: await sessionPoolCatalog(),
         platform: chat.platform,
         sessionId,
         channelId,

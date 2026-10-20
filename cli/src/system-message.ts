@@ -20,6 +20,27 @@ import { applyPromptConfig, getPromptConfig, type PromptSection } from './prompt
 import { store } from './store.js'
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
 import { FilesystemOperationError } from './errors.js'
+import { poolCatalog, type PoolCatalog } from './credentials/messages-proxy.js'
+import { fetchRemotePoolCatalog, readRemotePoolConfig } from './credentials/remote-pool.js'
+import { SHARED_POOL_ID } from './credentials/store.js'
+
+/** Read once when generating a new session's pinned prompt, including remote hosts. */
+export async function sessionPoolCatalog(): Promise<PoolCatalog | undefined> {
+  if (!store.getState().credentialPoolsEnabled) return undefined
+  const remote = readRemotePoolConfig()
+  if (remote instanceof Error) return undefined
+  if (!remote) return poolCatalog({ dataDir: getDataDir(), poolIds: [SHARED_POOL_ID] })
+  const catalog = await fetchRemotePoolCatalog({ config: remote })
+  return catalog instanceof Error ? undefined : catalog
+}
+
+export function renderModelRotations(catalog?: PoolCatalog): string {
+  const lines = Object.entries(catalog?.rotations ?? {})
+    .filter(([, rotation]) => rotation.entries.length > 0)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([name, rotation]) => `- roadie/${name}: ${rotation.entries.join(' → ')}${rotation.description ? ` — ${rotation.description}` : ''}`)
+  return lines.length ? `\n## Model rotations\n\n${lines.join('\n')}\nPick a tier with --model roadie/<name>.\n` : ''
+}
 
 /**
  * Subfolder for pinned session system prompts. Not `session-system`: the old
@@ -485,6 +506,7 @@ export function getSystemMessage({
   userId,
   parentSessionId,
   scheduledTask,
+  modelCatalog,
 }: {
   platform?: string
   sessionId: string
@@ -509,7 +531,10 @@ export function getSystemMessage({
    * the session_start_sources row, so it stays identical across turns.
    */
   scheduledTask?: ScheduledTaskSystemContext
+  modelCatalog?: PoolCatalog
 }) {
+  // Session start reads the live catalog (local or remote) through sessionPoolCatalog().
+  const rotationsSection: SystemPromptSection = { id: 'model-rotations', text: renderModelRotations(modelCatalog) }
   if (platform === 'slack') {
     const sections: SystemPromptSection[] = [
       { id: 'chat-output', text: 'The user is reading your messages in Slack through Roadie. Use concise Markdown; Roadie converts it to native Slack formatting. Include original source links in your answers.' },
@@ -518,6 +543,7 @@ export function getSystemMessage({
       { id: 'interaction', text: 'For questions use question. For quick choices use roadie_action_buttons. Write the user-visible explanation before the interaction tool and call that tool last. Roadie renders native Slack selects, buttons and modals.' },
       { id: 'file-upload', text: `Upload screenshots, images and other artifacts with roadie upload-to-chat --session ${sessionId} <file paths>. Use roadie_file_upload to request files through Slack's native file picker. Local Markdown image paths are not visible to the user.` },
       { id: 'automation', text: `Use roadie send --platform slack --thread '${threadId ?? ''}' --prompt '<message>' to continue this thread. Use --channel '${channelId ?? ''}' to create a new session, --notify-only for notifications, --send-at for schedules, and roadie_sleep for a persistent wake. A new human message cancels a pending sleep.` },
+      rotationsSection,
       { id: 'channel-topic', text: channelTopic?.trim() ? `<channel-topic>\n${channelTopic.trim()}\n</channel-topic>` : '' },
       { id: 'agents', text: (agents ?? []).map((agent) => `${agent.name}: ${agent.description ?? ''}`).join('\n') },
     ]
@@ -1017,6 +1043,7 @@ Examples:
 - After completing edits: offer "Commit changes?"
 - If a plan has multiple strategy of implementation show these as options
 - After a genuinely ambiguous request where you cannot infer intent: offer the different approaches` },
+    rotationsSection,
     { id: 'channel-topic', text: `\n\n\n\n${topicContext}` },
   ]
   return applyPromptConfig({

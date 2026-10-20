@@ -7,8 +7,8 @@
 //     { id, provider, type: 'oauth', refresh, access, expires, label?, addedAt, lastUsed }
 //   state.json     (mode 0600) — per-account cooldowns and last used, keyed by
 //     account id with epoch-ms values
-//   rotation.json  (mode 0600) — named rotations, each an ordered list of
-//     `provider/model` strings
+//   rotation.json  (mode 0600) — named rotations: { entries, description? },
+//     entries are ordered `provider/model` strings
 //
 // Concurrency: one in-process lock per pool (promise chain), so different
 // pools never contend with each other. Every write goes through a temp file +
@@ -73,7 +73,8 @@ export type PoolState = {
 }
 
 type AccountsFile = { accounts: PoolAccount[] }
-type RotationFile = Record<string, string[]>
+export type PoolRotation = { entries: string[]; description?: string }
+export type PoolRotations = Record<string, PoolRotation>
 
 const EMPTY_POOL_STATE: PoolState = { cooldowns: {}, lastUsed: {} }
 
@@ -239,15 +240,20 @@ function readStateFile({ dataDir, poolId }: { dataDir: string; poolId: string })
   }
 }
 
-function readRotationFile({ dataDir, poolId }: { dataDir: string; poolId: string }): Record<string, string[]> {
-  const file = readJsonFile<RotationFile>(
+function readRotationFile({ dataDir, poolId }: { dataDir: string; poolId: string }): PoolRotations {
+  const file = readJsonFile<Record<string, unknown>>(
     path.join(getPoolDir({ dataDir, poolId }), 'rotation.json'),
   )
   if (!file || typeof file !== 'object') return {}
-  const rotations: Record<string, string[]> = {}
-  for (const [name, entries] of Object.entries(file)) {
-    if (Array.isArray(entries)) {
-      rotations[name] = entries.filter((entry): entry is string => typeof entry === 'string')
+  const rotations: PoolRotations = {}
+  for (const [name, value] of Object.entries(file)) {
+    // Only the on-disk reader accepts the legacy array shape.
+    const record: PoolRotation | null = Array.isArray(value) ? { entries: value } : value as PoolRotation | null
+    if (record && Array.isArray(record.entries)) {
+      rotations[name] = {
+        entries: record.entries.filter((entry): entry is string => typeof entry === 'string'),
+        ...(typeof record.description === 'string' && record.description && { description: record.description }),
+      }
     }
   }
   return rotations
@@ -654,6 +660,13 @@ export function readPoolRotations({ dataDir, poolId }: { dataDir: string; poolId
   if (!isValidPoolId(poolId)) {
     return new Error(`Invalid pool id: ${poolId}`)
   }
+  const rotations = readRotationFile({ dataDir, poolId })
+  return Object.fromEntries(Object.entries(rotations).map(([name, rotation]) => [name, rotation.entries]))
+}
+
+/** Rotation metadata for catalogs and menus; routing uses readPoolRotations. */
+export function readPoolRotationRecords({ dataDir, poolId }: { dataDir: string; poolId: string }): PoolRotations | Error {
+  if (!isValidPoolId(poolId)) return new Error(`Invalid pool id: ${poolId}`)
   return readRotationFile({ dataDir, poolId })
 }
 
@@ -666,12 +679,15 @@ export async function setPoolRotation({
   poolId,
   name,
   entries,
+  description,
   onlyIfAbsent = false,
 }: {
   dataDir: string
   poolId: string
   name: string
   entries: string[]
+  /** Omitted preserves the existing description; empty clears it. */
+  description?: string
   /** Checked under the pool lock: never replace an existing rotation. */
   onlyIfAbsent?: boolean
 }): Promise<true | 'exists' | Error> {
@@ -695,7 +711,8 @@ export async function setPoolRotation({
     if (entries.length === 0) {
       delete rotations[name]
     } else {
-      rotations[name] = [...entries]
+      const purpose = description === undefined ? rotations[name]?.description : description.trim()
+      rotations[name] = { entries: [...entries], ...(purpose && { description: purpose }) }
     }
     atomicWriteFileSync({
       filePath: path.join(getPoolDir({ dataDir, poolId }), 'rotation.json'),
@@ -734,11 +751,11 @@ export async function seedPoolRotations({
     const rotations = readRotationFile({ dataDir, poolId })
     if (Object.keys(rotations).length > 0) return 0
     const source = readRotationFile({ dataDir, poolId: sourcePoolId })
-    const names = Object.keys(source).filter((name) => (source[name] ?? []).length > 0)
+    const names = Object.keys(source).filter((name) => (source[name]?.entries.length ?? 0) > 0)
     if (names.length === 0) return 0
-    const seeded: Record<string, string[]> = {}
+    const seeded: PoolRotations = {}
     for (const name of names) {
-      seeded[name] = [...(source[name] ?? [])]
+      seeded[name] = source[name]!
     }
     atomicWriteFileSync({
       filePath: path.join(getPoolDir({ dataDir, poolId }), 'rotation.json'),

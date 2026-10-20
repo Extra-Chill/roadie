@@ -63,8 +63,15 @@ export async function fetchRemotePoolCatalog({ config, fetchImpl = fetch }: { co
   if (!response.ok) return new Error(`pool host ${config.url} refused the catalog request (HTTP ${response.status}); check this bot's client key`)
   const body = (await response.json().catch(() => undefined)) as Partial<PoolCatalog> | undefined
   const list = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
-  const rotations = list(body?.rotations)
-  return { rotations, adaptiveRotations: list(body?.adaptiveRotations).filter((rotation) => rotations.includes(rotation)) }
+  const rotations: PoolCatalog['rotations'] = {}
+  if (body?.rotations && typeof body.rotations === 'object' && !Array.isArray(body.rotations)) {
+    for (const [name, record] of Object.entries(body.rotations)) {
+      if (!record || !Array.isArray(record.entries)) continue
+      const entries = list(record.entries)
+      if (entries.length) rotations[name] = { entries, ...(typeof record.description === 'string' && record.description && { description: record.description }) }
+    }
+  }
+  return { rotations, adaptiveRotations: list(body?.adaptiveRotations).filter((rotation) => !!rotations[rotation]) }
 }
 
 export type RemotePoolRelay = {
@@ -205,8 +212,8 @@ export function remotePoolAccounts({ url, key, fetchImpl = fetch }: RemotePoolCo
       const result = await call<{ accounts: PoolAccountView[] }>('POST', 'accounts/reorder', { pool: poolId, accountId, position })
       return result instanceof Error ? result : result.accounts
     },
-    async setRotation({ poolId, name, entries }) {
-      const result = await call<{ set: boolean }>('POST', 'rotations', { pool: poolId, name, entries })
+    async setRotation({ poolId, name, entries, description }) {
+      const result = await call<{ set: boolean }>('POST', 'rotations', { pool: poolId, name, entries, description })
       if (result instanceof Error) return result
       return result.set === true || new Error(`pool host ${url} did not set rotation ${name}`)
     },
