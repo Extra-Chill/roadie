@@ -1,7 +1,8 @@
 // The Pi backend over a stubbed rpc process: noReply appends, agent
 // definitions reach the turn (system prompt, model, permission rules),
-// variants drive the thinking level, summarize honours its model, and abort
-// dismisses a session's open prompts even when the process is gone.
+// variants drive the thinking level, summarize honours its model, abort
+// dismisses a session's open prompts even when the process is gone, prompts
+// always ask Pi to queue, and busy lasts until agent_settled.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -24,6 +25,7 @@ type ProviderInternals = {
   pendingQuestions: Map<string, { sessionId: string; session: unknown }>
   subscribers: Set<(event: { events: AgentEvent[] }) => void>
   onUiRequest(s: unknown, r: unknown): void
+  onRecord(s: unknown, r: unknown): void
 }
 
 function internalsOf(provider: PiBackendProvider): ProviderInternals {
@@ -149,7 +151,7 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
     await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text: 'hi' }], agent: 'fast' })
     expect(first.process.requests).toEqual([
       { type: 'set_model', provider: 'fake', modelId: 'fake-fast' },
-      { type: 'prompt', message: 'hi' },
+      { type: 'prompt', message: 'hi', streamingBehavior: 'followUp' },
     ])
     const second = stubSession({ directory, model: { provider: 'fake', id: 'fake-1' } })
     await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text: 'hi' }], agent: 'fast', model: { providerId: 'fake', modelId: 'fake-2' } })
@@ -397,5 +399,86 @@ describe('PiBackend sessions.abort over a stubbed rpc process', () => {
     expect(internals.pendingQuestions.size).toBe(0)
     expect(process.sent).toEqual([{ type: 'extension_ui_response', id: 'ui-question', cancelled: true }])
     expect(events.some((event) => event.type === 'question.rejected' && event.requestId === 'ui-question')).toBe(true)
+  })
+})
+
+describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', () => {
+  const root = workspace()
+  const endedTurns: string[] = []
+  const provider = new PiBackendProvider({
+    bin: 'pi',
+    sessionDir: path.join(root, 'sessions'),
+    idleTimeoutMs: 0,
+    pool: { issueKey: () => 'pool-key', revokeKey: () => {}, endTurn: (sessionId) => endedTurns.push(sessionId) },
+  })
+
+  function stubSession() {
+    const process = {
+      requests: [] as Recorded[],
+      exited: false,
+      request: async (command: Recorded) => {
+        process.requests.push(command)
+        if (command.type === 'prompt') {
+          return { disposition: String(command.message ?? '').startsWith('/roadie:append') ? 'handled' : 'started' }
+        }
+        return undefined
+      },
+      send: () => {},
+      kill: () => {},
+    }
+    const dir = path.join(root, 'busy')
+    fs.mkdirSync(dir, { recursive: true })
+    const session = {
+      id: 'ses-pi', directory: dir, sessionFile: path.join(root, 'ses-pi.jsonl'),
+      systemFile: path.join(root, 'ses-pi.system.md'), mcpFile: path.join(root, 'ses-pi.mcp.json'),
+      shellEnvFile: path.join(root, 'ses-pi.shell-env.json'),
+      process, translator: new PiEventTranslator('ses-pi'), title: '', createdAt: 1, updatedAt: 1, busy: false,
+      idleWaiters: [] as Array<() => void>,
+    }
+    internalsOf(provider).sessions.set(session.id, session)
+    return { session, process, directory: dir }
+  }
+
+  const prompt = (text: string, directory: string) =>
+    provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text }] })
+
+  test('every prompt asks Pi to queue, so one sent while a run settles is not rejected', async () => {
+    const { session, process, directory } = stubSession()
+    const onRecord = (record: Recorded) => internalsOf(provider).onRecord(session, record)
+    let idle = false
+    session.idleWaiters.push(() => { idle = true })
+
+    expect(await prompt('one', directory)).toBeUndefined()
+    onRecord({ type: 'agent_start' })
+    expect(session.busy).toBe(true)
+    onRecord({ type: 'agent_end' })
+    // agent_end is not idle: Pi may still retry, compact or run queued
+    // continuations, and rejects a prompt without streamingBehavior (#327).
+    expect(session.busy).toBe(true)
+    expect(idle).toBe(false)
+    expect(endedTurns).toEqual([])
+    expect(await prompt('two', directory)).toBeUndefined()
+
+    onRecord({ type: 'agent_settled' })
+    expect(session.busy).toBe(false)
+    expect(idle).toBe(true)
+    expect(endedTurns).toEqual(['ses-pi'])
+    expect(await prompt('three', directory)).toBeUndefined()
+
+    expect(process.requests.filter((request) => request.type === 'prompt')).toEqual([
+      { type: 'prompt', message: 'one', streamingBehavior: 'followUp' },
+      { type: 'prompt', message: 'two', streamingBehavior: 'followUp' },
+      { type: 'prompt', message: 'three', streamingBehavior: 'followUp' },
+    ])
+  })
+
+  test('a noReply context append never marks the session busy', async () => {
+    const { session, process, directory } = stubSession()
+    const result = await provider.getBackend().sessions.prompt({
+      sessionId: 'ses-pi', directory, noReply: true, parts: [{ kind: 'text', text: 'context' }],
+    })
+    expect(result).toBeUndefined()
+    expect(session.busy).toBe(false)
+    expect(process.requests).toEqual([expect.objectContaining({ type: 'prompt', message: expect.stringContaining('/roadie:append') })])
   })
 })

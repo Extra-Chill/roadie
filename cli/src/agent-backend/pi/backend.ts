@@ -190,7 +190,7 @@ export type PiBackendOptions = {
   pool?: {
     issueKey(sessionId: () => string | undefined): string
     revokeKey(key: string): void
-    /** End the session's turn affinity (called when a run ends). */
+    /** End the session's turn affinity (called when a run settles). */
     endTurn?(sessionId: string): void
   }
   /**
@@ -227,6 +227,7 @@ type RunningSession = {
   title: string
   createdAt: number
   updatedAt: number
+  /** Pi has an active run: from agent_start until agent_settled (or process exit). */
   busy: boolean
   /** Git state last announced to the model (branch notes). */
   gitState?: GitState
@@ -762,7 +763,9 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.toolArgs.delete(String(record.toolCallId))
       if (!record.isError) this.recordFileEdit(session, String(record.toolName ?? ''), args)
     }
-    if (record.type === 'agent_end') {
+    if (record.type === 'agent_settled') {
+      // Pi's run stays active past agent_end while it retries, auto-compacts
+      // or runs queued continuations, so idle starts when it settles (#327).
       session.busy = false
       for (const resolve of session.idleWaiters.splice(0)) resolve()
       this.touch(session)
@@ -1289,11 +1292,14 @@ export class PiBackendProvider implements AgentBackendProvider {
         const branch = shouldInjectBranch({ previousGitState: session.gitState, currentGitState: gitState })
         if (branch.inject) session.gitState = gitState!
         const message = branch.inject ? `${typed}\n${branch.text}` : typed
+        // Always ask Pi to queue: it starts a run when idle and ignores
+        // streamingBehavior, and only Pi knows when its run (retries,
+        // compaction, queued continuations) has settled (#327).
         const accepted = await session.process.request({
           type: 'prompt',
           message,
           ...(images.length > 0 && { images }),
-          ...(session.busy && { streamingBehavior: 'followUp' }),
+          streamingBehavior: 'followUp',
         })
         if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
         this.touch(session)
