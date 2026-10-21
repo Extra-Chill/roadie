@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.74.0] - 2026-10-21
+
+### Added
+- accept opt-in Discord DM conversations
+
 ## [0.73.13] - 2026-10-20
 
 ### Changed
