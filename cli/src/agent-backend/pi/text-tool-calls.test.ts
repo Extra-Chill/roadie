@@ -15,7 +15,6 @@ test('wrapped, namespaced, multiple calls, unknown tools, prose and real calls',
     .toEqual({ text: 'Before  after', toolNames: ['bash', 'roadie_action_buttons'] })
   expect(cleanTextToolCalls('Use bash now', ['bash']).text).toBe('Use bash now')
   expect(cleanTextToolCalls(markup, ['bash']).text).toBe(markup)
-  expect(cleanTextToolCalls(markup, ['roadie_action_buttons'], true).text).toBe(markup)
   const message = { role: 'assistant', content: [{ type: 'text', text: markup }, { type: 'toolCall', name: 'bash' }] }
   expect(cleanMessageToolCalls(message, ['roadie_action_buttons']).message).toBe(message)
 })

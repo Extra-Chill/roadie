@@ -1,6 +1,5 @@
 /** Remove textual calls only for known tools; never interpret or execute their arguments. */
-export function cleanTextToolCalls(text: string, registeredTools: Iterable<string>, hasToolCall = false): { text: string; toolNames: string[] } {
-  if (hasToolCall) return { text, toolNames: [] }
+export function cleanTextToolCalls(text: string, registeredTools: Iterable<string>): { text: string; toolNames: string[] } {
   const registered = new Set(registeredTools)
   const detected = new Set<string>()
   const strip = (source: string) => source.replace(
