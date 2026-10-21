@@ -264,6 +264,11 @@ export class PiEventTranslator {
   private assistantId: string | undefined
   private assistantStartedAt: number | undefined
   private tools = new Map<string, ToolState>()
+  // Assistant text is held until it is known to be safe to show: either a
+  // real tool call follows in the same message (sanitizing never touches
+  // those), or message_end delivers the extension-sanitized final text.
+  private heldText = new Map<string, Extract<AgentPart, { kind: 'text' }>>()
+  private sentText = new Set<string>()
   private aborting = false
   private agent: string | undefined
 
@@ -404,9 +409,9 @@ export class PiEventTranslator {
     switch (event.type) {
       case 'text_start':
       case 'text_delta':
+        return []
       case 'text_end':
-        // Finalized assistant text is emitted at message_end, after extensions
-        // sanitize it. Streaming it could expose a partial textual tool call.
+        this.heldText.set(partId, { id: partId, sessionId, messageId, kind: 'text', text: String(event.content ?? ''), startedAt, endedAt: Date.now() })
         return []
       case 'thinking_start':
         return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'reasoning', text: '', startedAt: Date.now() } }]
@@ -417,7 +422,13 @@ export class PiEventTranslator {
       case 'toolcall_end': {
         const call = event.toolCall as { id: string; name: string; arguments?: Record<string, unknown> }
         this.tools.set(call.id, { messageId, tool: call.name, input: call.arguments ?? {} })
-        return [{ type: 'part', part: { id: call.id, sessionId, messageId, kind: 'tool', callId: call.id, tool: call.name, status: 'pending', input: call.arguments ?? {} } }]
+        // Lead-in text goes out ahead of the tool it introduces.
+        const leadIn = [...this.heldText.values()].filter((part) => part.messageId === messageId)
+        for (const part of leadIn) {
+          this.heldText.delete(part.id)
+          this.sentText.add(part.id)
+        }
+        return [...leadIn.map((part): AgentEvent => ({ type: 'part', part })), { type: 'part', part: { id: call.id, sessionId, messageId, kind: 'tool', callId: call.id, tool: call.name, status: 'pending', input: call.arguments ?? {} } }]
       }
       default:
         return []
@@ -452,12 +463,24 @@ export class PiEventTranslator {
           }]
         : []
     ))
+    // Remaining held text is emitted from the final (extension-sanitized)
+    // message. It must precede the completed message event: completion
+    // flushes the turn and decides whether there was visible output.
+    const text = contentList(assistant.content).flatMap((item, index): AgentEvent[] => {
+      const id = `${agentMessage.id}-${index}`
+      const held = this.heldText.get(id)
+      if (item.type !== 'text' || this.sentText.has(id)) return []
+      return [{ type: 'part', part: { id, sessionId, messageId: agentMessage.id, kind: 'text', text: item.text, startedAt: held?.startedAt ?? assistant.timestamp, endedAt: Date.now() } }]
+    })
+    for (const id of [...this.heldText.keys(), ...this.sentText]) {
+      if (id.startsWith(`${agentMessage.id}-`)) {
+        this.heldText.delete(id)
+        this.sentText.delete(id)
+      }
+    }
     return [
+      ...text,
       { type: 'message', message: agentMessage },
-      ...contentList(assistant.content).flatMap((item, index): AgentEvent[] => item.type === 'text' ? [{
-        type: 'part',
-        part: { id: `${agentMessage.id}-${index}`, sessionId, messageId: agentMessage.id, kind: 'text', text: item.text, startedAt: assistant.timestamp, endedAt: Date.now() },
-      }] : []),
       ...narration,
       {
         type: 'part',
