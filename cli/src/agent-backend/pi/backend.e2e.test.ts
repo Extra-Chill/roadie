@@ -51,6 +51,21 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
   beforeAll(async () => {
     server = await startFakeModelServer({ matchers: [
       { id: 'title-rejected', when: { latestUserTextIncludes: 'TITLE_MODEL_REJECTS', toolsEmpty: true }, then: { error: { status: 400, message: 'thinking is not supported for this model' } } },
+      // A run with several sequential tool calls: STEER_ONE starts it with a
+      // slow tool, a steered-in STEER_TWO queues a second tool, and once that
+      // tool's output is in the history the run answers with text.
+      { id: 'steer-first-tool', priority: 10, when: { latestUserTextIncludes: 'STEER_ONE' }, then: { parts: [
+        { type: 'tool-call', toolCallId: 'steer-bash-one', toolName: 'bash', input: JSON.stringify({ command: 'sleep 1 && echo steer-one-done' }) },
+        { type: 'finish', finishReason: 'tool-calls' },
+      ] } },
+      { id: 'steer-second-tool', priority: 9, when: { latestUserTextIncludes: 'STEER_TWO' }, then: { parts: [
+        { type: 'tool-call', toolCallId: 'steer-bash-two', toolName: 'bash', input: JSON.stringify({ command: 'echo steer-two-done' }) },
+        { type: 'finish', finishReason: 'tool-calls' },
+      ] } },
+      { id: 'steer-finish', priority: 11, when: { latestUserTextIncludes: 'STEER_TWO', rawPromptIncludes: 'steer-two-done' }, then: { parts: [
+        { type: 'text-delta', id: 'steer-done', delta: 'steered run finished' },
+        { type: 'finish', finishReason: 'stop' },
+      ] } },
     ] })
     root = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'roadie-pi-'))
     project = path.join(root, 'project')
@@ -117,6 +132,31 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const tool = events.findLast((e) => e.type === 'part' && e.part.kind === 'tool')
     expect(tool?.type === 'part' && tool.part.kind === 'tool' && tool.part.status).toBe('error')
   })
+
+  test('a prompt sent while a tool runs steers in at the tool boundary, before the run settles', async () => {
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const before = idleCount(session.id)
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'STEER_ONE start the run' }] })
+    // The scripted first tool call sleeps: the second prompt is sent while it runs.
+    await until(() => events.find((e) => e.type === 'part' && e.part.kind === 'tool' && e.part.sessionId === session.id && e.part.status === 'running'))
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'STEER_TWO mid-run note' }] })
+    await until(() => (idleCount(session.id) > before ? true : undefined))
+
+    // The steered message reached the model in the request that still carried
+    // the first tool's history — a tool boundary, before the second tool ran —
+    // and before the request that produced the run's final assistant reply,
+    // not after the run settled.
+    const steerAt = server.log.findIndex((entry) => entry.messages.some((m) => m.role === 'user' && JSON.stringify(m.content).includes('STEER_TWO')))
+    expect(steerAt).toBeGreaterThan(-1)
+    const steered = JSON.stringify(server.log[steerAt]!.messages)
+    expect(steered).toContain('STEER_ONE')
+    expect(steered).toContain('steer-one-done')
+    expect(steered).not.toContain('steer-two-done')
+    expect(server.log.findIndex((entry) => entry.matcher === 'steer-finish')).toBeGreaterThan(steerAt)
+    // One run: steering continued it instead of holding the message for a second run.
+    expect(idleCount(session.id)).toBe(before + 1)
+  }, 30_000)
 
   test('history matches what streamed, and the system prompt reached the model only through the extension', async () => {
     const history = await provider.getBackend().sessions.messages({ sessionId, directory: project })

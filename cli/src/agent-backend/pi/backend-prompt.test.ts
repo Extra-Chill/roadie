@@ -151,7 +151,7 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
     await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text: 'hi' }], agent: 'fast' })
     expect(first.process.requests).toEqual([
       { type: 'set_model', provider: 'fake', modelId: 'fake-fast' },
-      { type: 'prompt', message: 'hi', streamingBehavior: 'followUp' },
+      { type: 'prompt', message: 'hi', streamingBehavior: 'steer' },
     ])
     const second = stubSession({ directory, model: { provider: 'fake', id: 'fake-1' } })
     await provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text: 'hi' }], agent: 'fast', model: { providerId: 'fake', modelId: 'fake-2' } })
@@ -442,7 +442,7 @@ describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', (
   const prompt = (text: string, directory: string) =>
     provider.getBackend().sessions.prompt({ sessionId: 'ses-pi', directory, parts: [{ kind: 'text', text }] })
 
-  test('every prompt asks Pi to queue, so one sent while a run settles is not rejected', async () => {
+  test('every prompt asks Pi to queue and steers, so a busy-session prompt lands at the next tool boundary and one sent while a run settles is not rejected', async () => {
     const { session, process, directory } = stubSession()
     const onRecord = (record: Recorded) => internalsOf(provider).onRecord(session, record)
     let idle = false
@@ -466,9 +466,9 @@ describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', (
     expect(await prompt('three', directory)).toBeUndefined()
 
     expect(process.requests.filter((request) => request.type === 'prompt')).toEqual([
-      { type: 'prompt', message: 'one', streamingBehavior: 'followUp' },
-      { type: 'prompt', message: 'two', streamingBehavior: 'followUp' },
-      { type: 'prompt', message: 'three', streamingBehavior: 'followUp' },
+      { type: 'prompt', message: 'one', streamingBehavior: 'steer' },
+      { type: 'prompt', message: 'two', streamingBehavior: 'steer' },
+      { type: 'prompt', message: 'three', streamingBehavior: 'steer' },
     ])
   })
 

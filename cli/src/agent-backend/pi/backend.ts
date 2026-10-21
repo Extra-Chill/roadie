@@ -1294,12 +1294,16 @@ export class PiBackendProvider implements AgentBackendProvider {
         const message = branch.inject ? `${typed}\n${branch.text}` : typed
         // Always ask Pi to queue: it starts a run when idle and ignores
         // streamingBehavior, and only Pi knows when its run (retries,
-        // compaction, queued continuations) has settled (#327).
+        // compaction, queued continuations) has settled (#327). Steer, not
+        // followUp: Roadie's contract (#83) is next-step-boundary delivery,
+        // and Pi lands a steer after the current turn's tool calls, before
+        // the next LLM call, while a followUp holds the message until the
+        // whole run stops (#334).
         const accepted = await session.process.request({
           type: 'prompt',
           message,
           ...(images.length > 0 && { images }),
-          streamingBehavior: 'followUp',
+          streamingBehavior: 'steer',
         })
         if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
         this.touch(session)
