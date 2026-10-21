@@ -67,7 +67,10 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
         { type: 'finish', finishReason: 'stop' },
       ] } },
     ] })
-    root = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'roadie-pi-'))
+    // Pi records the physical cwd. TMPDIR may contain symlinks (including
+    // macOS /var and sandbox aliases), so use that same path for assertions
+    // and directory-filtered session lookups after a restart.
+    root = fs.realpathSync(fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'roadie-pi-')))
     project = path.join(root, 'project')
     fs.mkdirSync(project)
     fs.mkdirSync(path.join(root, 'agent'))
@@ -97,6 +100,42 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(text?.type === 'part' && text.part.kind === 'text' && text.part.text).toBe('hello from the fake model')
     const done = events.find((e) => e.type === 'message' && e.message.role === 'assistant' && e.message.completedAt)
     expect(done?.type === 'message' && done.message.finish).toBe('stop')
+  })
+
+  test('text-only tool_use is hidden and corrected into a real tool call', async () => {
+    const args = JSON.stringify({ buttons: [{ label: 'Proceed' }] })
+    const fake = await startFakeModelServer({ matchers: [
+      { id: 'malformed', when: { latestUserTextEquals: 'MALFORMED_CALL' }, then: { parts: [
+        { type: 'text-delta', id: 'bad', delta: `Ready. <invoke name="roadie_action_buttons"><parameter name="buttons">${args}</parameter></invoke>` },
+        { type: 'finish', finishReason: 'tool-calls' },
+      ] } },
+      { id: 'corrected', when: { latestUserTextIncludes: 'Your previous reply', lastMessageRole: 'user' }, then: { parts: [
+        { type: 'tool-call', toolCallId: 'real-buttons', toolName: 'roadie_action_buttons', input: args },
+        { type: 'finish', finishReason: 'tool-calls' },
+      ] } },
+    ] })
+    const agentDir = path.join(root, 'malformed-agent')
+    fs.mkdirSync(agentDir)
+    fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(fake.baseUrl.replace(/\/v1$/, ''), { api: 'anthropic-messages' }))
+    const target = new PiBackendProvider({ bin: bin!, sessionDir: path.join(root, 'malformed-sessions'), model: 'fake/fake-1', env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' } })
+    try {
+      await listen(target)
+      const session = await target.getBackend().sessions.create({ directory: project })
+      if (session instanceof Error) throw session
+      await target.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text: 'MALFORMED_CALL' }] })
+      const executed = await until(() => events.find((e) => e.type === 'part' && e.part.sessionId === session.id && e.part.kind === 'tool' && e.part.tool === 'roadie_action_buttons' && e.part.status === 'completed'))
+      // No chat thread is bound in this backend-only harness, but the actual
+      // Roadie tool implementation ran (rather than executing parsed markup).
+      expect(executed.type === 'part' && executed.part.kind === 'tool' && executed.part.output).toBe('Could not find thread for current session')
+      const output = events.filter((e) => e.type === 'part' && e.part.sessionId === session.id && e.part.kind === 'text')
+      expect(JSON.stringify(output)).not.toContain('<invoke')
+      expect(JSON.stringify(output)).toContain('Ready.')
+      expect(fake.log.filter((entry) => entry.matcher === 'corrected')).toHaveLength(1)
+      expect(JSON.stringify(fake.log[1]!.messages)).not.toContain('<invoke')
+    } finally {
+      await target.dispose()
+      await fake.close()
+    }
   })
 
   test('a tool call asks Roadie; an allow rule lets it run', async () => {

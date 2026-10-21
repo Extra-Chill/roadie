@@ -55,6 +55,7 @@ import {
 } from '../types.js'
 import { PiEventTranslator, finalAssistantText, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
+import { cleanMessageToolCalls } from './text-tool-calls.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { agentFor, piAgents } from './agents.js'
@@ -1231,7 +1232,8 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (session instanceof Error) return session
         const result = await session.process.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
         if (result instanceof Error) return new AgentRequestError({ detail: result.message })
-        const history = toAgentHistory({ messages: result.messages, sessionId })
+        const tools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'task', 'question', ...roadieToolSchemas().map((tool) => tool.name)]
+        const history = toAgentHistory({ messages: result.messages.map((message) => cleanMessageToolCalls(message, tools).message), sessionId })
         return limit !== undefined ? history.slice(-limit) : history
       },
       prompt: async ({ sessionId, directory, parts, system, agent, model, variant, noReply }) => {

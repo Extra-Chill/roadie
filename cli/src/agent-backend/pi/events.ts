@@ -403,14 +403,15 @@ export class PiEventTranslator {
     const partId = `${messageId}-${index}`
     switch (event.type) {
       case 'text_start':
-        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'text', text: '', startedAt: Date.now() } }]
+      case 'text_delta':
+      case 'text_end':
+        // Finalized assistant text is emitted at message_end, after extensions
+        // sanitize it. Streaming it could expose a partial textual tool call.
+        return []
       case 'thinking_start':
         return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'reasoning', text: '', startedAt: Date.now() } }]
-      case 'text_delta':
       case 'thinking_delta':
         return [{ type: 'part.delta', sessionId, messageId, partId, field: 'text', delta: String(event.delta ?? '') }]
-      case 'text_end':
-        return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'text', text: String(event.content ?? ''), startedAt, endedAt: Date.now() } }]
       case 'thinking_end':
         return [{ type: 'part', part: { id: partId, sessionId, messageId, kind: 'reasoning', text: String(event.content ?? ''), startedAt, endedAt: Date.now() } }]
       case 'toolcall_end': {
@@ -453,6 +454,10 @@ export class PiEventTranslator {
     ))
     return [
       { type: 'message', message: agentMessage },
+      ...contentList(assistant.content).flatMap((item, index): AgentEvent[] => item.type === 'text' ? [{
+        type: 'part',
+        part: { id: `${agentMessage.id}-${index}`, sessionId, messageId: agentMessage.id, kind: 'text', text: item.text, startedAt: assistant.timestamp, endedAt: Date.now() },
+      }] : []),
       ...narration,
       {
         type: 'part',

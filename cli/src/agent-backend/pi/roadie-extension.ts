@@ -30,6 +30,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { extractKittyGraphics } from 'kitty-graphics-agent/parser'
+import { cleanMessageToolCalls } from './text-tool-calls.js'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
@@ -146,7 +147,13 @@ type Context = {
 }
 type ToolSchema = { name: string; description: string; parameters: Record<string, unknown> }
 type ToolOutput = { content: Array<{ type: 'text'; text: string }>; details: { title?: string } }
+type RecoveryMessage = { role: string; content?: unknown; timestamp?: number; stopReason?: string }
 type ExtensionApi = {
+  getAllTools(): Array<{ name: string }>
+  sendUserMessage(content: string, options: { deliverAs: 'followUp' }): void
+  on(event: 'context', handler: (event: { messages: RecoveryMessage[] }) => Promise<{ messages: RecoveryMessage[] }>): void
+  on(event: 'message_end', handler: (event: { message: RecoveryMessage }) => Promise<{ message: RecoveryMessage } | undefined>): void
+  on(event: 'turn_end', handler: (event: { message: RecoveryMessage; outcome: string }) => Promise<void>): void
   registerMcpServer?(name: string, config: Record<string, unknown>): void
   unregisterMcpServer?(name: string): void
   registerTool(tool: {
@@ -485,6 +492,28 @@ async function injectionGuardJudge({ event, config, ctx }: { event: ToolResultEv
 }
 
 export default function roadieExtension(pi: ExtensionApi) {
+  const toolNames = () => pi.getAllTools().map((tool) => tool.name)
+  const pendingCorrections = new Map<number | undefined, string[]>()
+  const corrected = new Set<number | undefined>()
+
+  pi.on('context', async (event) => ({
+    messages: event.messages.map((message) => cleanMessageToolCalls(message, toolNames()).message),
+  }))
+  pi.on('message_end', async (event) => {
+    const result = cleanMessageToolCalls(event.message, toolNames())
+    if (!result.toolNames.length) return undefined
+    pendingCorrections.set(event.message.timestamp, result.toolNames)
+    return { message: result.message }
+  })
+  pi.on('turn_end', async (event) => {
+    const key = event.message.timestamp
+    const names = pendingCorrections.get(key)
+    pendingCorrections.delete(key)
+    if (!names || corrected.has(key) || event.outcome !== 'completed') return
+    corrected.add(key)
+    pi.sendUserMessage(`Your previous reply wrote a call to ${names.join(', ')} as text, so it did not run. Make the call now through the tool interface, without repeating the prose.`, { deliverAs: 'followUp' })
+  })
+
   const mcpServers = new Map<string, string>()
   syncMcpServers(pi, mcpServers)
 
