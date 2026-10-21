@@ -1,6 +1,7 @@
 // E2e test for busy-thread delivery (#83): a message sent while the agent is
-// running a slow tool never aborts that tool. Pi takes it as a follow-up
-// (streamingBehavior "followUp"): the run finishes its step, then answers it.
+// running a slow tool never aborts that tool. Pi steers it in at the next
+// step boundary (streamingBehavior "steer"): the run finishes its tool calls,
+// then answers it.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -147,10 +148,18 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
 
       const timeline = await th.text()
       expect(timeline).not.toMatch(/abort/i)
-      // The slow step finished first, then the steered message was answered.
-      expect(timeline.indexOf('tool done')).toBeGreaterThan(-1)
-      expect(timeline.indexOf('tool done')).toBeLessThan(timeline.indexOf('steer-received'))
+      // Steered delivery (#334): the steered message is answered at the next
+      // step boundary, so the turn that answers it is the same run's turn
+      // after the slow tool — the old post-tool "tool done" turn is gone.
+      // The tool's rendering precedes the reply, and the model request that
+      // answered it already carried the tool call: mid-run, not after settle.
+      expect(timeline.indexOf('boundary-tool-done.txt')).toBeGreaterThan(-1)
+      expect(timeline.indexOf('boundary-tool-done.txt')).toBeLessThan(timeline.indexOf('steer-received'))
       expect(timeline.match(/steer-received/g)?.length).toBe(1)
+      const steerRequest = ctx.modelServer!.log.find((entry) =>
+        entry.messages.some((m) => m.role === 'user' && JSON.stringify(m.content).includes('BOUNDARY_STEER_MARKER')))
+      expect(steerRequest).toBeDefined()
+      expect(JSON.stringify(steerRequest!.messages)).toContain('boundary-tool-done.txt')
     },
     20_000,
   )
