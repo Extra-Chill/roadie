@@ -89,6 +89,23 @@ export async function readConversationAdmission(
   }
 }
 
+/** Forget admission when an inline conversation explicitly starts afresh. */
+export async function resetConversationAdmission(scope: ConversationScope): Promise<void> {
+  const db = await getDb()
+  await db.batch([
+    db.delete(schema.conversation_participants).where(orm.and(
+      orm.eq(schema.conversation_participants.platform, scope.platform),
+      orm.eq(schema.conversation_participants.space_id, scope.spaceId),
+      orm.eq(schema.conversation_participants.thread_id, scope.threadId),
+    )),
+    db.delete(schema.conversation_admissions).where(orm.and(
+      orm.eq(schema.conversation_admissions.platform, scope.platform),
+      orm.eq(schema.conversation_admissions.space_id, scope.spaceId),
+      orm.eq(schema.conversation_admissions.thread_id, scope.threadId),
+    )),
+  ])
+}
+
 /** Hooks may refine response/admission for already eligible actors only. */
 export async function resolveConversationIntake(
   request: ConversationIntakeRequest,

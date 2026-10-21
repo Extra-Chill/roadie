@@ -100,7 +100,7 @@ export class DiscordGateway {
   broadcastMessageCreate(message: APIMessage, guildId: string): void {
     const data: GatewayMessageCreateDispatchData = {
       ...message,
-      guild_id: guildId,
+      ...(guildId ? { guild_id: guildId } : {}),
     }
     this.broadcast(GatewayDispatchEvents.MessageCreate, data)
   }

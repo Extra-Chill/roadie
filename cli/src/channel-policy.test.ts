@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import {
+  registerDiscordDmChannel,
   channelAllowsCapability,
   applicationDirectory,
   channelContextBinding,
@@ -58,6 +59,34 @@ beforeAll(() => {
 
 afterEach(() => {
   setChannelsConfigPath(undefined)
+})
+
+describe('Discord DM policy isolation', () => {
+  test('never uses wildcard, even when it permits everyone', () => {
+    registerDiscordDmChannel('dm-test')
+    write('channels:\n  "*":\n    respond: always\n    who: everyone\n')
+    expect(resolveChannelPolicy('dm-test')).toBeNull()
+    expect(decideRespond('dm-test')).toBe('ignore')
+    expect(decideRespond('guild-test')).toBe('answer')
+  })
+
+  test('resolves project defaults and user/person audience without guild roles', () => {
+    registerDiscordDmChannel('dm-test')
+    write(JSON.stringify({
+      projects: { private: { directory: '/srv/private', model: 'test/model', permissions: ['bash:deny'] } },
+      dm: { project: 'private', who: ['user:u1', 'person:p1'], agent: 'helper' },
+      channels: { '*': { respond: 'never', directory: '/srv/guild' } },
+    }))
+    expect(channelPolicyOverrides('dm-test')).toEqual({
+      directory: '/srv/private', model: 'test/model', permissions: ['bash:deny'], agent: 'helper',
+    })
+    expect(channelUsesChannelConversation('dm-test')).toBe(true)
+    expect(channelAllowsSpeaker('dm-test', subject())).toBe(true)
+    expect(channelAllowsSpeaker('dm-test', subject({ userId: 'other', personId: 'p1' }))).toBe(true)
+    expect(channelAllowsSpeaker('dm-test', subject({ userId: 'other' }))).toBe(false)
+    expect(decideRespond('guild-test')).toBe('ignore')
+    expect(parseChannelsConfig('dm: { project: missing }\nchannels: {}')).toBeInstanceOf(Error)
+  })
 })
 
 const CONFIG = `

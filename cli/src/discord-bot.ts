@@ -24,6 +24,7 @@ import {
   closeDatabase,
   getThreadWorkingDirectory,
   getThreadSession,
+  setThreadSession,
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
@@ -146,10 +147,11 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
-import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityConfigured, resolvePerson } from './identity.js'
+import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityConfigured, personHas, resolvePerson } from './identity.js'
 import { offerDiscordLinkPrompt } from './commands/link.js'
 import { welcomeDiscordUser } from './commands/start.js'
 import {
+  registerDiscordDmChannel,
   channelAllowsCapability,
   channelAllowsSpeaker,
   channelStartsThreads,
@@ -160,7 +162,7 @@ import {
   applicationDirectory,
 } from './channel-policy.js'
 import { createDiscordChatChannel } from './chat-platform/discord.js'
-import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
+import { readConversationAdmission, resetConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
@@ -296,6 +298,7 @@ export async function createDiscordClient() {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.DirectMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates,
     ],
@@ -322,7 +325,12 @@ async function allowShellCommand({
   message: Message
   isCliInjectedPrompt: boolean
 }): Promise<boolean> {
-  if (isCliInjectedPrompt || !message.guild) return true
+  if (isCliInjectedPrompt) return true
+  if (!message.guild) {
+    const person = getCachedPerson({ platform: 'discord', id: message.author.id })
+    return channelAllowsCapability(message.channelId, 'shell') &&
+      (!isIdentityConfigured() || Boolean(person && personHas(person, 'shell')))
+  }
   const member = await resolveGuildMessageMember(message)
   if (
     channelAllowsCapability(message.channelId, 'shell') &&
@@ -581,7 +589,7 @@ export async function startDiscordBot({
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     const threadIngressSlot =
-      message.channel.isThread() || message.channel.type === ChannelType.GuildText
+      message.channel.isThread() || message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.DM
         ? reserveThreadIngress(message.channel.id)
         : undefined
     await runInThreadIngressSlot(threadIngressSlot, async () => {
@@ -665,6 +673,37 @@ export async function startDiscordBot({
       // When mention mode is enabled, users without Roadie role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
+      const isDm = channel.type === ChannelType.DM
+      if (isDm) {
+        registerDiscordDmChannel(channel.id)
+        const policy = resolveChannelPolicy(channel.id)
+        // An explicit audience is required: an omitted who must not open a
+        // private host runtime to every Discord user. No guild roles in DMs.
+        if (!policy?.who || message.author.bot) return
+        const person = await resolvePerson({
+          actor: { platform: 'discord', id: message.author.id, name: message.author.displayName },
+          context: { channelId: channel.id },
+        })
+        if (person?.lookupFailed || (isIdentityConfigured() && (!person || !personHas(person, 'sessions')))) return
+        if (!channelAllowsSpeaker(channel.id, {
+          userId: message.author.id, personId: person?.personId,
+          isGuildOwner: false, roleNames: [], roleIds: [],
+        })) return
+      }
+      if (isDm && ['/new', '/abort'].includes(message.content.trim())) {
+        if (decideRespond(channel.id) === 'ignore') return
+        const runtime = getRuntime(channel.id)
+        await runtime?.abortActiveRunAndWait({ reason: 'DM conversation command' })
+        if (message.content.trim() === '/new') {
+          disposeRuntime(channel.id)
+          await setThreadSession(channel.id, '')
+          await resetConversationAdmission({ platform: 'discord', spaceId: channel.id, threadId: channel.id })
+          await message.reply('Started a fresh conversation.')
+        } else {
+          await message.reply('Request aborted.')
+        }
+        return
+      }
       const explicitIntake = Boolean(resolveChannelPolicy(channel.id)?.intake)
 
       // In text channels, messages starting with a mention to another user
@@ -687,7 +726,7 @@ export async function startDiscordBot({
           (respond === 'builtin' && channel.type === ChannelType.GuildText &&
             (await getChannelMentionMode(channel.id)))
         // Mentions only gate new conversations in channels; threads continue.
-        if (!explicitIntake && mentionRequired && channel.type === ChannelType.GuildText) {
+        if (!explicitIntake && mentionRequired && (channel.type === ChannelType.GuildText || isDm)) {
           const botMentioned =
             discordClient.user && message.mentions.has(discordClient.user.id)
           const isShellCommand = message.content?.startsWith('!')
@@ -1015,7 +1054,7 @@ export async function startDiscordBot({
         })
       }
 
-      if (channel.type === ChannelType.GuildText) {
+      if (channel.type === ChannelType.GuildText || channel.type === ChannelType.DM) {
         // `roadie send` posts a starter message with a `start` embed marker,
         // then creates the thread via REST. The ThreadCreate handler picks up
         // that thread and starts the session. If we don't skip here, this
@@ -1027,10 +1066,12 @@ export async function startDiscordBot({
         }
 
         voiceLogger.log(
-          `[GUILD_TEXT] Message in text channel #${channel.name} (${channel.id})`,
+          `[CHANNEL] Message in channel ${channel.id}`,
         )
 
-        const projectDirectory = (await getRoadieMetadata(channel)).projectDirectory
+        const projectDirectory = channel.type === ChannelType.DM
+          ? resolveChannelPolicy(channel.id)?.directory
+          : (await getRoadieMetadata(channel)).projectDirectory
 
         if (!projectDirectory) {
           const botMentioned = Boolean(
@@ -1048,7 +1089,7 @@ export async function startDiscordBot({
             return
           }
           voiceLogger.log(
-            `[IGNORED] Channel #${channel.name} has no project directory configured`,
+            `[IGNORED] Channel ${channel.id} has no project directory configured`,
           )
           return
         }
@@ -1099,7 +1140,8 @@ export async function startDiscordBot({
         // conversation. One long-running session keyed by the channel id;
         // replies stay inline, anchored to the message that started a turn.
         if (channelUsesChannelConversation(channel.id)) {
-          const scope = { platform: 'discord', spaceId: channel.guildId, threadId: channel.id }
+          const spaceId = channel.type === ChannelType.DM ? channel.id : channel.guildId
+          const scope = { platform: 'discord', spaceId, threadId: channel.id }
           const hasExistingSession = await getThreadSession(channel.id)
           const admission = await readConversationAdmission(scope)
           const botMentioned = Boolean(
@@ -1107,7 +1149,7 @@ export async function startDiscordBot({
           )
           const isNewConversation = !hasExistingSession && !admission
           const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
-            actor: { platform: 'discord', id: message.author.id }, spaceId: channel.guildId,
+            actor: { platform: 'discord', id: message.author.id }, spaceId,
             personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
             channelId: channel.id, threadId: channel.id, eligible: true,
             isNewConversation, createsThread: false,
@@ -1162,6 +1204,8 @@ export async function startDiscordBot({
           })
           return
         }
+
+        if (channel.type === ChannelType.DM) return
 
         // Channel policy `threads: existing-only`: channel messages never start
         // a new session thread; existing threads keep working.
