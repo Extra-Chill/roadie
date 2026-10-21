@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.74.1] - 2026-10-21
+
+### Changed
+- Pi backend: steer busy-thread prompts so they land at the next tool boundary
+
 ## [0.74.0] - 2026-10-21
 
 ### Added
