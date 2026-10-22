@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.76.0] - 2026-10-22
+
+### Added
+- hide pool rotations from the /model picker while keeping them routable
+
 ## [0.75.0] - 2026-10-22
 
 ### Added
