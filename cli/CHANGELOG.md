@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.75.0] - 2026-10-22
+
+### Added
+- choose and change channel behavior with /channel bind and /channel behavior
+
 ## [0.74.2] - 2026-10-22
 
 ### Fixed
