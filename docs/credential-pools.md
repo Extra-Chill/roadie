@@ -85,8 +85,8 @@ the pool account's real credentials.
 
 Each named rotation is one model, `roadie/<rotation>`, selectable with
 `/model`. A rotation is an ordered list of `provider/model` entries tried top
-to bottom, and it may mix providers freely. Pi speaks Anthropic Messages to the
-proxy; the proxy serves each entry in its own wire format:
+to bottom, and it may mix providers freely. Pi speaks Anthropic Messages to
+the proxy; the proxy serves each entry in its own wire format:
 
 - `anthropic/*`: forwarded as Anthropic Messages (OAuth shaping, betas).
 - API-key providers (models.dev catalog providers like z.ai, or an account's
@@ -104,6 +104,12 @@ is only ever sent to its own provider.
 
 Translated thinking comes back unsigned, so Pi replays it to the next request
 as plain text, the same way it treats another model's thinking.
+
+A rotation owned by the pool can be flagged `hidden`
+(`roadie credentials rotation set <name> ... --hidden`): it stays routable
+(every mechanism below keeps working) but the pool leaves it out of the
+`/model` menu, so plumbing rotations for Homeboy cooks don't clutter the
+picker. See the CLI section for the full flag semantics.
 
 ## Managing accounts
 
@@ -141,14 +147,22 @@ roadie credentials list --pool <poolId>
 echo <key> | roadie credentials add-key --provider <provider> [--pool <poolId>] [--base-url <url>]
 roadie credentials login <anthropic|openai-codex> --pool <poolId>
 roadie credentials remove <id> --pool <poolId>
-roadie credentials rotation set <name> <provider/model> ... --pool <poolId> [--description <text>]
+roadie credentials rotation set <name> <provider/model> ... --pool <poolId> [--description <text>] [--hidden|--shown]
 roadie credentials import-subrouter
 ```
 
-Rotations are stored in `rotation.json` as `name: { entries: [...], description?: text }`.
+Rotations are stored in `rotation.json` as `name: { entries: [...], description?: text, hidden?: true }`.
 Legacy arrays are read and migrated on the next write. `--description` explains
 when to pick a tier; omitting it preserves the existing description and
 `--description ''` clears it. Both CLI and `/credentials list` show it.
+`--hidden` keeps the rotation fully routable (`roadie/<name>`, `ROADIE_PI_MODEL`,
+Homeboy cooks, stored channel/session choices) but leaves it out of the Discord
+`/model` picker; `--shown` undoes it, and passing neither preserves the current
+value like `--description`. `/credentials list` marks hidden rotations. When
+every rotation is hidden, the picker falls back to showing all of them rather
+than an empty menu. Like the rotation list itself, the picker reads the flag
+from the catalog loaded at bot startup, so restart the bot (or client bots of
+a remote pool) after changing it.
 
 The local and remote pool catalogs carry the same entries and descriptions.
 New sessions include a deterministic `model-rotations` system prompt section

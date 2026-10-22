@@ -7,7 +7,7 @@
 //     { id, provider, type: 'oauth', refresh, access, expires, label?, addedAt, lastUsed }
 //   state.json     (mode 0600) — per-account cooldowns and last used, keyed by
 //     account id with epoch-ms values
-//   rotation.json  (mode 0600) — named rotations: { entries, description? },
+//   rotation.json  (mode 0600) — named rotations: { entries, description?, hidden? },
 //     entries are ordered `provider/model` strings
 //
 // Concurrency: one in-process lock per pool (promise chain), so different
@@ -73,7 +73,12 @@ export type PoolState = {
 }
 
 type AccountsFile = { accounts: PoolAccount[] }
-export type PoolRotation = { entries: string[]; description?: string }
+export type PoolRotation = {
+  entries: string[]
+  description?: string
+  /** Routable but left out of the /model picker menu (#343). */
+  hidden?: boolean
+}
 export type PoolRotations = Record<string, PoolRotation>
 
 const EMPTY_POOL_STATE: PoolState = { cooldowns: {}, lastUsed: {} }
@@ -253,6 +258,7 @@ function readRotationFile({ dataDir, poolId }: { dataDir: string; poolId: string
       rotations[name] = {
         entries: record.entries.filter((entry): entry is string => typeof entry === 'string'),
         ...(typeof record.description === 'string' && record.description && { description: record.description }),
+        ...(record.hidden === true && { hidden: true }),
       }
     }
   }
@@ -680,6 +686,7 @@ export async function setPoolRotation({
   name,
   entries,
   description,
+  hidden,
   onlyIfAbsent = false,
 }: {
   dataDir: string
@@ -688,6 +695,8 @@ export async function setPoolRotation({
   entries: string[]
   /** Omitted preserves the existing description; empty clears it. */
   description?: string
+  /** Omitted preserves the existing flag; true hides it from the /model picker, false shows it again (#343). */
+  hidden?: boolean
   /** Checked under the pool lock: never replace an existing rotation. */
   onlyIfAbsent?: boolean
 }): Promise<true | 'exists' | Error> {
@@ -712,7 +721,12 @@ export async function setPoolRotation({
       delete rotations[name]
     } else {
       const purpose = description === undefined ? rotations[name]?.description : description.trim()
-      rotations[name] = { entries: [...entries], ...(purpose && { description: purpose }) }
+      const hide = hidden === undefined ? rotations[name]?.hidden : hidden
+      rotations[name] = {
+        entries: [...entries],
+        ...(purpose && { description: purpose }),
+        ...(hide && { hidden: true }),
+      }
     }
     atomicWriteFileSync({
       filePath: path.join(getPoolDir({ dataDir, poolId }), 'rotation.json'),

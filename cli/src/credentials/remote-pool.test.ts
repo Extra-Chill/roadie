@@ -85,9 +85,29 @@ describe('remote catalog to Pi models', () => {
     expect(models).toEqual([expect.objectContaining({ id: 'claude-best', name: 'claude-best — Hard tasks', compat: { forceAdaptiveThinking: true } })])
   })
 
+  test('a hidden rotation rides the served catalog and its model stays in the Pi agent dir (#343)', async () => {
+    const dataDir = tempDir()
+    const account = await addPoolOAuthAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'anthropic', label: 'a', refresh: 'refresh-a', access: 'access-a', expires: Date.now() + 3_600_000 })
+    if (account instanceof Error) throw account
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'claude-best', entries: ['anthropic/claude-opus-4-8'], description: 'Hard tasks' })
+    await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'subagent', entries: ['anthropic/claude-haiku-4-5'], hidden: true })
+    const client = addPoolClient({ dataDir, name: 'mac-bot' })
+    if (client instanceof Error) throw client
+    host = await startMessagesProxy({ dataDir, resolvePools: async () => new Error('no sessions') })
+    const catalog = await fetchRemotePoolCatalog({ config: { url: host.baseUrl, key: client.key } })
+    if (catalog instanceof Error) throw catalog
+    expect(catalog.rotations['subagent']).toEqual({ entries: ['anthropic/claude-haiku-4-5'], hidden: true })
+    expect(catalog.rotations['claude-best']).toEqual({ entries: ['anthropic/claude-opus-4-8'], description: 'Hard tasks' })
+    // Still routable: the client bot writes the hidden rotation into its Pi agent dir.
+    const agentDir = path.join(tempDir(), 'agent')
+    writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:1', ...catalog })
+    const models = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')).providers[PI_POOL_PROVIDER].models as Array<{ id: string }>
+    expect(models.map((model) => model.id)).toEqual(['claude-best', 'subagent'])
+  })
+
   test('drops malformed records and ignores adaptive names outside the catalog', async () => {
-    const fetchImpl = async () => new Response(JSON.stringify({ rotations: { tier: { entries: ['a/m', 42], description: 'Routine' }, empty: { entries: [] }, broken: ['a/m'] }, adaptiveRotations: ['tier', 'missing'] }), { status: 200 })
-    expect(await fetchRemotePoolCatalog({ config: { url: 'http://pool', key: 'k' }, fetchImpl })).toEqual({ rotations: { tier: { entries: ['a/m'], description: 'Routine' } }, adaptiveRotations: ['tier'] })
+    const fetchImpl = async () => new Response(JSON.stringify({ rotations: { tier: { entries: ['a/m', 42], description: 'Routine', hidden: true }, empty: { entries: [] }, broken: ['a/m'], phony: { entries: ['a/m'], hidden: 'yes' } }, adaptiveRotations: ['tier', 'missing'] }), { status: 200 })
+    expect(await fetchRemotePoolCatalog({ config: { url: 'http://pool', key: 'k' }, fetchImpl })).toEqual({ rotations: { tier: { entries: ['a/m'], description: 'Routine', hidden: true }, phony: { entries: ['a/m'] } }, adaptiveRotations: ['tier'] })
   })
 })
 

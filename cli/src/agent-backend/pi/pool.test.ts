@@ -30,11 +30,20 @@ describe('pool provider', () => {
       'glm-best': ['zai-coding-plan/glm-5.3-flash'],
       subagent: ['zai-coding-plan/glm-5.3-flash', 'opencode-go/glm-5.3-flash', 'openai/gpt-6-luna', 'anthropic/claude-sonnet-5-5'],
     })
+    // A hidden rotation (#343): the catalog record carries the flag...
+    const hide = await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'subagent', entries: ['zai-coding-plan/glm-5.3-flash', 'opencode-go/glm-5.3-flash', 'openai/gpt-6-luna', 'anthropic/claude-sonnet-5-5'], hidden: true })
+    if (hide instanceof Error) throw hide
     const catalog = poolCatalog({ dataDir, poolIds: [SHARED_POOL_ID] })
+    expect(catalog.rotations['subagent']).toEqual({
+      entries: ['zai-coding-plan/glm-5.3-flash', 'opencode-go/glm-5.3-flash', 'openai/gpt-6-luna', 'anthropic/claude-sonnet-5-5'],
+      hidden: true,
+    })
+    expect(catalog.rotations['glm-best']).toEqual({ entries: ['zai-coding-plan/glm-5.3-flash'] })
     const { rotations } = catalog
     expect(Object.keys(rotations)).toEqual(['claude-best', 'claude-legacy', 'glm-best', 'subagent'])
-    expect(rotations['glm-best']).toEqual({ entries: ['zai-coding-plan/glm-5.3-flash'] })
     expect(catalog.adaptiveRotations).toEqual(['claude-best', 'subagent'])
+    // ...and the model stays in models.json: hidden rotations remain fully
+    // routable (ROADIE_PI_MODEL, Homeboy cooks); only the /model picker hides them.
     const agentDir = path.join(dataDir, 'agent')
     writePiPoolAgentDir({ agentDir, baseUrl: 'http://127.0.0.1:47120', ...catalog })
     const { providers } = JSON.parse(fs.readFileSync(path.join(agentDir, 'models.json'), 'utf8')) as { providers: Providers }
@@ -42,6 +51,7 @@ describe('pool provider', () => {
     const pool = providers[PI_POOL_PROVIDER]!
     expect(pool).toMatchObject({ api: 'anthropic-messages', baseUrl: 'http://127.0.0.1:47120' })
     expect(pool.models.map((model) => model.id)).toEqual(Object.keys(rotations))
+    expect(pool.models.map((model) => model.id)).toContain('subagent')
     expect(pool.models[0]).toMatchObject({ reasoning: true, input: ['text', 'image'] })
     const compat = Object.fromEntries(pool.models.map((model) => [model.id, model.compat]))
     // Adaptive thinking follows a rotation's adaptive Anthropic entry.

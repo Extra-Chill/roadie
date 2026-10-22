@@ -97,7 +97,14 @@ export type PoolAccounts = {
   remove(input: { poolId: string; accountId: string }): Promise<boolean | Error>
   move(input: { poolId: string; accountId: string; position: number }): Promise<PoolAccountView[] | Error>
   /** Set (or replace) a named rotation; an empty entry list removes it. */
-  setRotation(input: { poolId: string; name: string; entries: string[]; description?: string }): Promise<true | Error>
+  setRotation(input: {
+    poolId: string
+    name: string
+    entries: string[]
+    description?: string
+    /** Omitted preserves the existing flag; true hides the rotation from the /model picker (#343). */
+    hidden?: boolean
+  }): Promise<true | Error>
 }
 
 /** Build the secret-free view. An allowlist: new account fields stay out until added here. */
@@ -318,11 +325,11 @@ export function localPoolAccounts({
       return ordered.map((account, index) => toPoolAccountView({ account, position: index + 1, now: timestamp }))
     },
 
-    async setRotation({ poolId, name, entries, description }) {
+    async setRotation({ poolId, name, entries, description, hidden }) {
       const invalid = invalidPool(poolId)
       if (invalid) return invalid
       // Never 'exists': onlyIfAbsent is off, so a set replaces any existing rotation.
-      const result = await setPoolRotation({ dataDir, poolId, name, entries, description })
+      const result = await setPoolRotation({ dataDir, poolId, name, entries, description, hidden })
       return result === 'exists' ? new Error(`Could not set rotation ${name}`) : result
     },
   }

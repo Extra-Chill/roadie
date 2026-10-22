@@ -68,6 +68,19 @@ export function piPoolModelsJson({ baseUrl, rotations, adaptiveRotations = [] }:
   }
 }
 
+// Rotations hidden from the /model picker (#343), recorded from the catalog
+// the Pi agent dir was written from at pool startup. Like the rotation list
+// itself, a change takes effect on the next bot restart.
+let pickerHidden: string[] = []
+
+export function setPickerHiddenRotations(rotations: PoolRotations) {
+  pickerHidden = Object.keys(rotations).filter((name) => rotations[name]?.hidden === true)
+}
+
+export function pickerHiddenRotations(): string[] {
+  return pickerHidden
+}
+
 /**
  * Write the pool provider into a Roadie-owned Pi agent dir. Providers named
  * `roadie` or `roadie-*` are the pool's and are replaced; any other provider

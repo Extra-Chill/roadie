@@ -2,6 +2,7 @@
 
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { store } from '../store.js'
+import { PI_POOL_PROVIDER, pickerHiddenRotations } from '../agent-backend/pi/pool.js'
 import {
   ButtonBuilder,
   ButtonStyle,
@@ -28,7 +29,7 @@ import {
   setGlobalModel,
   getVariantCascade,
 } from '../database.js'
-import type { AgentBackend, AgentCatalogGetter } from '../agent-backend/types.js'
+import type { AgentBackend, AgentCatalogGetter, AgentProviderInfo } from '../agent-backend/types.js'
 
 // A fork's agent is read from its own history, newest page first.
 type ForkHistoryGetter = () => Pick<AgentBackend, 'catalog' | 'sessions'>
@@ -181,6 +182,40 @@ function parseModelId(
     return { providerID, modelID }
   }
   return undefined
+}
+
+// ── Pool rotation picker menu (#343) ─────────────────────────────
+
+/**
+ * Drop hidden pool rotations from the pool provider's picker menu. Hidden
+ * rotations stay fully routable (they remain in the generated Pi models.json,
+ * so ROADIE_PI_MODEL, Homeboy cooks like roadie/subagent, and stored
+ * channel/session choices keep working); they only leave this menu, and a
+ * session or channel currently using one still shows it as its current model
+ * (the header below reads the unfiltered providers). When every rotation is
+ * hidden, the menu falls back to all of them rather than an empty select.
+ */
+export function filterHiddenRotationsFromPicker({
+  providers,
+  hidden,
+}: {
+  providers: AgentProviderInfo[]
+  hidden: string[]
+}): AgentProviderInfo[] {
+  if (hidden.length === 0) return providers
+  const pool = providers.find((provider) => provider.id === PI_POOL_PROVIDER)
+  const rotationIds = Object.keys(pool?.models ?? {})
+  if (rotationIds.length === 0 || rotationIds.every((id) => hidden.includes(id))) return providers
+  return providers.map((provider) =>
+    provider.id === PI_POOL_PROVIDER
+      ? { ...provider, models: Object.fromEntries(Object.entries(provider.models).filter(([id]) => !hidden.includes(id))) }
+      : provider,
+  )
+}
+
+/** The /model picker's provider menu: hidden pool rotations dropped. */
+function pickerProviders(providers: AgentProviderInfo[]): AgentProviderInfo[] {
+  return filterHiddenRotationsFromPicker({ providers, hidden: pickerHiddenRotations() })
 }
 
 export async function ensureSessionPreferencesSnapshot({
@@ -583,10 +618,13 @@ export async function handleModelCommand({
 
     const { providers: allProviders, connected } = providersResponse
 
-    // Filter to only connected providers (have credentials)
-    const availableProviders = allProviders.filter((p) => {
-      return connected.includes(p.id)
-    })
+    // Filter to only connected providers (have credentials), then drop hidden
+    // pool rotations from the pool provider's menu (#343); they stay routable.
+    const availableProviders = pickerProviders(
+      allProviders.filter((p) => {
+        return connected.includes(p.id)
+      }),
+    )
 
     if (availableProviders.length === 0) {
       await interaction.editReply({
@@ -838,7 +876,7 @@ export async function handleProviderSelectMenu(
       return
     }
     const { providers: allProviders, connected } = providersResponse
-    const availableProviders = allProviders.filter((p) => connected.includes(p.id))
+    const availableProviders = pickerProviders(allProviders.filter((p) => connected.includes(p.id)))
     const allProviderOptions = [...availableProviders]
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
       .map((p) => {
@@ -885,7 +923,7 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const provider = providersResponse.providers.find(
+    const provider = (pickerProviders(providersResponse.providers)).find(
       (p) => p.id === selectedProviderId,
     )
 
@@ -1008,7 +1046,7 @@ export async function handleModelSelectMenu(
     const providersResponse = await getClient().catalog.providers({ directory: context.dir })
     const provider = providersResponse instanceof Error
       ? undefined
-      : providersResponse.providers.find((p) => p.id === context.providerId)
+      : (pickerProviders(providersResponse.providers)).find((p) => p.id === context.providerId)
     if (!provider) {
       await interaction.editReply({ content: 'Provider not found', components: [] })
       return
