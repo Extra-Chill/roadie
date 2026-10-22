@@ -280,6 +280,16 @@ export function buildStaticSlashCommands() {
       .addSubcommand((subcommand) => subcommand
         .setName('bind')
         .setDescription('Enable this application in an existing text channel')
+        .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel'))
+        .addStringOption((option) => option.setName('behavior').setDescription('Defaults to the application policy').addChoices(
+          { name: 'Always reply', value: 'always' }, { name: 'Mention only', value: 'mention' },
+          { name: 'Mention + listen', value: 'listen' }, { name: 'Off', value: 'off' })))
+      .addSubcommand((subcommand) => subcommand
+        .setName('behavior')
+        .setDescription('Change channel behavior without changing its other settings')
+        .addStringOption((option) => option.setName('behavior').setDescription('Channel behavior').setRequired(true).addChoices(
+          { name: 'Always reply', value: 'always' }, { name: 'Mention only', value: 'mention' },
+          { name: 'Mention + listen', value: 'listen' }, { name: 'Off', value: 'off' }))
         .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel')))
       .addSubcommand((subcommand) => subcommand
         .setName('unbind')

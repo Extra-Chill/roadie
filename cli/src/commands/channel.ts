@@ -1,6 +1,6 @@
 import { ChannelType, MessageFlags } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { applicationBinding, setApplicationChannelBinding } from '../channel-policy.js'
+import { applicationBinding, channelBehavior, resolveChannelPolicy, setApplicationChannelBinding, type ChannelBehavior } from '../channel-policy.js'
 import { hasRoadieAdminPermission } from '../discord-utils.js'
 import { disposeRuntime, getRuntimeThreadIdsForChannel } from '../session-handler/runtime-registry.js'
 
@@ -31,18 +31,21 @@ export async function handleChannelCommand({ command }: CommandContext): Promise
     await command.editReply('Choose an existing text channel in this server, or run the command in that channel')
     return
   }
-  const bound = command.options.getSubcommand() === 'bind'
-  const result = await setApplicationChannelBinding({ channelId: channel.id, bound, application })
+  const subcommand = command.options.getSubcommand()
+  const behavior = command.options.getString('behavior', subcommand === 'behavior') as ChannelBehavior | null
+  const bound = subcommand !== 'unbind' && behavior !== 'off'
+  const result = await setApplicationChannelBinding({ channelId: channel.id, bound, application, behavior: behavior ?? undefined })
   if (result instanceof Error) {
     await command.editReply(result.message)
     return
   }
-  if (!bound) {
+  if (!bound || (behavior && result.changed)) {
     for (const threadId of getRuntimeThreadIdsForChannel(channel.id)) {
       disposeRuntime(threadId, { abortActiveRun: true })
     }
   }
+  const active = channelBehavior(resolveChannelPolicy(channel.id))
   await command.editReply(bound
-    ? `${result.changed ? 'Bound' : 'Already bound:'} <#${channel.id}> to this application. Sessions use \`${application.directory}\` and the application default context.`
-    : `${result.changed ? 'Unbound' : 'Already unbound:'} <#${channel.id}>. Roadie will not respond here or in its threads. Channel and session history are preserved.`)
+    ? `${result.changed ? 'Bound' : 'Already bound:'} <#${channel.id}> to this application. Behavior: **${active}**. Sessions use \`${application.directory}\`.`
+    : `${result.changed ? 'Unbound' : 'Already unbound:'} <#${channel.id}>. Behavior: **${active}**. Roadie will not respond here or in its threads. Channel and session history are preserved.`)
 }

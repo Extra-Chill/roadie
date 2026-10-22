@@ -34,7 +34,6 @@ import {
   initDatabase,
   closeDatabase,
   setChannelDirectory,
-  setChannelMentionMode,
   setChannelVerbosity,
   type VerbosityLevel,
 } from './database.js'
@@ -305,7 +304,8 @@ describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
   test(
     'mention mode silently ignores empty project-channel messages without warning',
     async () => {
-      await setChannelMentionMode(MENTION_MODE_EMPTY_CONTENT_CHANNEL_ID, true)
+      const previousMentionMode = store.getState().defaultMentionMode
+      store.setState({ defaultMentionMode: true })
       await discord
         .channel(MENTION_MODE_EMPTY_CONTENT_CHANNEL_ID)
         .user(TEST_USER_ID)
@@ -325,6 +325,7 @@ describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
         .channel(MENTION_MODE_EMPTY_CONTENT_CHANNEL_ID)
         .getThreads()
       expect(threads).toHaveLength(0)
+      store.setState({ defaultMentionMode: previousMentionMode })
     },
     8_000,
   )

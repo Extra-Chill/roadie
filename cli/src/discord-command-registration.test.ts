@@ -23,6 +23,20 @@ describe('buildQuickAgentSlashCommand', () => {
 })
 
 describe('buildStaticSlashCommands', () => {
+  test('channel registers optional bind behavior and required behavior-change choices', () => {
+    const commands = buildStaticSlashCommands()
+    expect(commands.some((command) => command.name === 'toggle-mention-mode')).toBe(false)
+    const channel = commands.find((command) => command.name === 'channel')
+    expect(channel?.options?.map((option) => option.name)).toEqual(['bind', 'behavior', 'unbind'])
+    for (const name of ['bind', 'behavior']) {
+      const subcommand = channel?.options?.find((option) => option.name === name)
+      if (!subcommand || !('options' in subcommand)) throw new Error('Missing subcommand')
+      const behavior = subcommand.options?.find((option) => option.name === 'behavior')
+      expect(behavior?.required ?? false).toBe(name === 'behavior')
+      if (!behavior || !('choices' in behavior)) throw new Error('Missing choices')
+      expect(behavior.choices?.map((choice) => choice.value)).toEqual(['always', 'mention', 'listen', 'off'])
+    }
+  })
   test('fork registers prompt and from options without a workspace option', () => {
     const fork = buildStaticSlashCommands().find((command) => command.name === 'fork')
     expect(fork).toBeDefined()

@@ -30,9 +30,9 @@ beforeAll(async () => {
 
 afterAll(() => { setChannelsConfigPath(null); removePerson?.() })
 
-async function command(channelId: string, subcommand: 'bind' | 'unbind', expected: string, userId = TEST_USER_ID) {
+async function command(channelId: string, subcommand: 'bind' | 'unbind' | 'behavior', expected: string, userId = TEST_USER_ID, behavior?: string) {
   const channel = ctx.discord.channel(channelId)
-  const result = await channel.user(userId).runSlashCommand({ name: 'channel', options: [{ name: subcommand, type: 1 }] })
+  const result = await channel.user(userId).runSlashCommand({ name: 'channel', options: [{ name: subcommand, type: 1, ...(behavior ? { options: [{ name: 'behavior', type: 3, value: behavior }] } : {}) }] })
   await channel.waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
   return channel.waitForMessage({ timeout: 4_000, predicate: (message) => BigInt(message.id) > BigInt(result.id) && message.author.id === ctx.discord.botUserId && message.content.includes(expected) })
 }
@@ -78,6 +78,27 @@ test('bind bootstraps messages and slash sessions without a directory row; unbin
   await waitForFooterMessage({ discord: ctx.discord, threadId: first.id, afterMessageId: followup.id, timeout: 8_000 })
   expect(await getThreadSession(first.id)).toBe(session)
   await command(DEFAULT, 'unbind', 'default cannot be unbound')
+}, 40_000)
+
+test('mention binding ignores unmentioned roots, answers mentions and thread follow-ups, then always answers roots', async () => {
+  const source = await ctx.botClient.channels.fetch(DEFAULT)
+  if (source?.type !== ChannelType.GuildText) throw new Error('Missing default channel')
+  const id = (await source.guild.channels.create({ name: 'behavior-test', type: ChannelType.GuildText })).id
+  const channel = ctx.discord.channel(id)
+  await command(id, 'bind', '**mention**', TEST_USER_ID, 'mention')
+  await channel.user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: ignored-root' })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  expect(await channel.getThreads()).toHaveLength(0)
+  await channel.user(TEST_USER_ID).sendMessage({ content: `<@${ctx.discord.botUserId}> Reply with exactly: mentioned-root` })
+  const first = await channel.waitForThread({ timeout: 6_000 })
+  await waitForFooterMessage({ discord: ctx.discord, threadId: first.id, timeout: 8_000 })
+  const followup = await ctx.discord.thread(first.id).user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: unmentioned-followup' })
+  await waitForFooterMessage({ discord: ctx.discord, threadId: first.id, afterMessageId: followup.id, timeout: 8_000 })
+  await command(id, 'behavior', '**always**', TEST_USER_ID, 'always')
+  expect(getRuntime(first.id)).toBeUndefined()
+  await channel.user(TEST_USER_ID).sendMessage({ content: 'Reply with exactly: always-root' })
+  const second = await channel.waitForThread({ timeout: 6_000, predicate: (thread) => thread.id !== first.id })
+  await waitForFooterMessage({ discord: ctx.discord, threadId: second.id, timeout: 8_000 })
 }, 40_000)
 
 test('an unrelated guild with a legacy local mapping cannot bind itself to the application', async () => {
