@@ -205,7 +205,14 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
       const chunk = (delta: Record<string, unknown>, finish: string | null = null) => {
         if (!closed) res.write(`data: ${JSON.stringify({ id: 'fake', object: 'chat.completion.chunk', created: 0, model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
       }
-      chunk({ role: 'assistant' })
+      const anthropic = req.url?.split('?')[0]?.endsWith('/messages')
+      let blockIndex = 0
+      let anthropicStop = 'end_turn'
+      const event = (type: string, data: Record<string, unknown>) => {
+        if (!closed) res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`)
+      }
+      if (anthropic) event('message_start', { message: { id: 'fake', type: 'message', role: 'assistant', model, content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } })
+      else chunk({ role: 'assistant' })
       let toolIndex = 0
       let finished = false
       let usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
@@ -213,6 +220,18 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
         const delay = then?.partDelaysMs?.[index] ?? then?.defaultPartDelayMs ?? 0
         if (delay > 0) await sleep(delay)
         if (closed) return
+        if (anthropic) {
+          if (part.type === 'text-delta') {
+            event('content_block_start', { index: blockIndex, content_block: { type: 'text', text: '' } })
+            event('content_block_delta', { index: blockIndex, delta: { type: 'text_delta', text: part.delta } })
+            event('content_block_stop', { index: blockIndex++ })
+          } else if (part.type === 'tool-call') {
+            event('content_block_start', { index: blockIndex, content_block: { type: 'tool_use', id: `call_${state.requests}_${toolIndex++}`, name: part.toolName, input: {} } })
+            event('content_block_delta', { index: blockIndex, delta: { type: 'input_json_delta', partial_json: part.input } })
+            event('content_block_stop', { index: blockIndex++ })
+          } else if (part.type === 'finish') anthropicStop = part.finishReason === 'tool-calls' ? 'tool_use' : 'end_turn'
+          continue
+        }
         if (part.type === 'text-delta') chunk({ content: part.delta })
         else if (part.type === 'reasoning-delta') chunk({ reasoning_content: part.delta })
         else if (part.type === 'tool-call') {
@@ -225,6 +244,12 @@ export async function startFakeModelServer({ matchers = [] }: { matchers?: FakeM
           if (part.usage) usage = { prompt_tokens: part.usage.inputTokens, completion_tokens: part.usage.outputTokens, total_tokens: part.usage.totalTokens }
           chunk({}, FINISH_REASONS[part.finishReason])
         }
+      }
+      if (anthropic) {
+        event('message_delta', { delta: { stop_reason: anthropicStop, stop_sequence: null }, usage: { output_tokens: 5 } })
+        event('message_stop', {})
+        res.end()
+        return
       }
       if (!finished) chunk({}, toolIndex > 0 ? 'tool_calls' : 'stop')
       if (closed) return
@@ -263,13 +288,13 @@ export type FakeModel = {
  */
 export function fakeModelsJson(
   baseUrl: string,
-  { models = [{ id: 'fake-1' }, { id: 'fake-2' }] }: { models?: FakeModel[] } = {},
+  { models = [{ id: 'fake-1' }, { id: 'fake-2' }], api = 'openai-completions' }: { models?: FakeModel[]; api?: 'openai-completions' | 'anthropic-messages' } = {},
 ): string {
   return JSON.stringify({
     providers: {
       fake: {
         baseUrl,
-        api: 'openai-completions',
+        api,
         apiKey: 'fake',
         compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
         models: models.map(({ id, name, reasoning = false }) => ({ id, name: name ?? id.replace('fake-', 'Fake '), reasoning, input: ['text', 'image'], contextWindow: 100000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),

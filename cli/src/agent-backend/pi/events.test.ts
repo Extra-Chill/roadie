@@ -67,12 +67,12 @@ describe('PiEventTranslator on a recorded tool turn', () => {
     }
   })
 
-  test('text streams as deltas on a started part and closes with the full text', () => {
+  test('text is delivered in full only after the message is finalized', () => {
     const textParts = events.flatMap((e) => (e.type === 'part' && e.part.kind === 'text' && e.part.messageId.startsWith('pi-assistant') ? [e.part] : []))
     const closed = textParts.find((p) => p.kind === 'text' && p.endedAt)
     expect(closed?.kind === 'text' && closed.text).toMatch(/files/)
     const deltas = events.filter((e) => e.type === 'part.delta' && e.partId === closed?.id)
-    expect(deltas.map((e) => (e.type === 'part.delta' ? e.delta : '')).join('')).toBe(closed?.kind === 'text' ? closed.text : '')
+    expect(deltas).toEqual([])
   })
 
   test('every assistant message gets a step-finish part', () => {
@@ -390,8 +390,10 @@ describe('Pi 1.x stream shape', () => {
     const delta = translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi' } })
     const end = translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'hi' } })
     expect(started?.type === 'message' && started.message.id).toBe('pi-assistant-7')
-    expect(delta).toEqual([{ type: 'part.delta', sessionId: 'ses-pi', messageId: 'pi-assistant-7', partId: 'pi-assistant-7-0', field: 'text', delta: 'hi' }])
-    expect(end[0]?.type === 'part' && end[0].part.kind === 'text' && end[0].part.startedAt).toBe(7)
+    expect(delta).toEqual([])
+    expect(end).toEqual([])
+    const finalized = translator.translate({ type: 'message_end', message: { role: 'assistant', timestamp: 7, content: [{ type: 'text', text: 'hi' }] } })
+    expect(finalized.some((e) => e.type === 'part' && e.part.kind === 'text' && e.part.text === 'hi' && e.part.startedAt === 7)).toBe(true)
     expect(translator.translate({ type: 'agent_settled', aborted: false })).toEqual([])
   })
 })
