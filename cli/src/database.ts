@@ -771,6 +771,17 @@ export async function getThreadSession(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId } }))?.session_id
 }
 
+/** The thread name Roadie last applied, used to detect manual renames. */
+export async function getThreadLastSyncedName(threadId: string) {
+  const db = await getDb()
+  return (
+    await db.query.thread_sessions.findFirst({
+      where: { thread_id: threadId },
+      columns: { last_synced_name: true },
+    })
+  )?.last_synced_name ?? undefined
+}
+
 /** Records which session and thread a fork was created from. */
 export async function recordSessionForkOrigin({
   sessionId,
