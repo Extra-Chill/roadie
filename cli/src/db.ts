@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url'
 import { getDataDir, readRoadieSecret } from './config.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import * as schema from './schema.js'
-import { getChannelsConfigPath, applyChannelBehavior, type ChannelsConfig } from './channel-policy.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -195,21 +194,8 @@ async function migrateSchema({
   db: RoadieDb
   client: Client
 }): Promise<void> {
-  // Retire the old per-channel toggle once. An operator policy takes precedence;
-  // otherwise persist the legacy overrides as canonical channel policies.
-  if ((await tableColumns(client, 'channel_mention_mode')).size) {
-    const rows = (await client.execute('SELECT channel_id, enabled FROM channel_mention_mode')).rows
-    if (!getChannelsConfigPath() && rows.length) {
-      const config: ChannelsConfig = { channels: { '*': {} } }
-      for (const row of rows) config.channels[String(row.channel_id)] = applyChannelBehavior({}, Number(row.enabled) === 1 ? 'mention' : 'always')
-      const destination = path.join(getDataDir(), 'channel-policies.json')
-      fs.mkdirSync(path.dirname(destination), { recursive: true })
-      const temporary = `${destination}.${crypto.randomUUID()}.tmp`
-      fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
-      fs.renameSync(temporary, destination)
-    }
-    await client.execute('DROP TABLE channel_mention_mode')
-  }
+  // The per-channel mention toggle is retired; behavior lives in the channel policy (#342).
+  await client.execute('DROP TABLE IF EXISTS channel_mention_mode')
   // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
   // Rebuild first so CREATE INDEX (... id) does not hit the old queue_id table.
   await rebuildLegacyThreadQueueItems(client)

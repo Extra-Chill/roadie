@@ -21,8 +21,7 @@
 // Resolution walks thread → channel → category → "*" and merges fields, the
 // most specific value winning. Without a config file every getter returns
 // undefined and Roadie keeps its built-in per-channel settings (database
-// rows, --mention-mode, role checks). Legacy per-channel mention toggles are
-// migrated to a policy file. With a config file, a channel that
+// rows, --mention-mode, role checks). With a config file, a channel that
 // resolves to no policy at all is not answered.
 //
 // The file is re-read when its mtime changes (checked at most every 2s). An
@@ -36,7 +35,7 @@ import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import YAML from 'yaml'
 import { z } from 'zod'
-import { getDataDir, getRoadieEnv } from './config.js'
+import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import type { Capability } from './identity.js'
 
@@ -137,9 +136,7 @@ export function setChannelsConfigPath(path: string | null | undefined) {
 export function getChannelsConfigPath(): string | undefined {
   if (configPathOverride !== undefined) return configPathOverride ?? undefined
   const fromEnv = getRoadieEnv('ROADIE_CHANNELS_CONFIG')?.trim()
-  if (fromEnv) return fromEnv
-  const migrated = path.join(getDataDir(), 'channel-policies.json')
-  return fs.existsSync(migrated) ? migrated : undefined
+  return fromEnv || undefined
 }
 
 /**
