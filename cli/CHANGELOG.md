@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.74.2] - 2026-10-22
+
+### Fixed
+- hide text-emitted tool calls and nudge the model to make the real call
+
 ## [0.74.1] - 2026-10-21
 
 ### Changed
