@@ -68,7 +68,14 @@ export async function fetchRemotePoolCatalog({ config, fetchImpl = fetch }: { co
     for (const [name, record] of Object.entries(body.rotations)) {
       if (!record || !Array.isArray(record.entries)) continue
       const entries = list(record.entries)
-      if (entries.length) rotations[name] = { entries, ...(typeof record.description === 'string' && record.description && { description: record.description }) }
+      if (entries.length) {
+        rotations[name] = {
+          entries,
+          ...(typeof record.description === 'string' && record.description && { description: record.description }),
+          // Hidden rides along so a client bot's picker can filter its menu; the host keeps serving the rotation (#343).
+          ...(record.hidden === true && { hidden: true as const }),
+        }
+      }
     }
   }
   return { rotations, adaptiveRotations: list(body?.adaptiveRotations).filter((rotation) => !!rotations[rotation]) }
@@ -212,8 +219,9 @@ export function remotePoolAccounts({ url, key, fetchImpl = fetch }: RemotePoolCo
       const result = await call<{ accounts: PoolAccountView[] }>('POST', 'accounts/reorder', { pool: poolId, accountId, position })
       return result instanceof Error ? result : result.accounts
     },
-    async setRotation({ poolId, name, entries, description }) {
-      const result = await call<{ set: boolean }>('POST', 'rotations', { pool: poolId, name, entries, description })
+    async setRotation({ poolId, name, entries, description, hidden }) {
+      // JSON.stringify drops undefined fields, so an omitted hidden preserves the host's flag.
+      const result = await call<{ set: boolean }>('POST', 'rotations', { pool: poolId, name, entries, description, hidden })
       if (result instanceof Error) return result
       return result.set === true || new Error(`pool host ${url} did not set rotation ${name}`)
     },

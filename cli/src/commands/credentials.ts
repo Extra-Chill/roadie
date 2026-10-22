@@ -239,7 +239,7 @@ function buildListContent({
     lines.push('Rotations:')
     for (const name of rotationNames) {
       const rotation = rotations[name]!
-      lines.push(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}`)
+      lines.push(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}${rotation.hidden ? ' (hidden)' : ''}`)
     }
   }
   return lines.join('\n')

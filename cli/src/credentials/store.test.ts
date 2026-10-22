@@ -548,6 +548,27 @@ describe('rotations', () => {
     })
   })
 
+  test('hidden flag round-trips: set, preserved when omitted, cleared with false (#343)', async () => {
+    const options = { dataDir, poolId: SHARED_POOL_ID }
+    await setPoolRotation({ ...options, name: 'subagent', entries: ['anthropic/claude-opus-5-5'], description: 'Homeboy cook plumbing', hidden: true })
+    expect(readPoolRotationRecords(options)).toEqual({
+      subagent: { entries: ['anthropic/claude-opus-5-5'], description: 'Homeboy cook plumbing', hidden: true },
+    })
+    // Routing is untouched: the hidden rotation still serves its entries.
+    expect(readPoolRotations(options)).toEqual({ subagent: ['anthropic/claude-opus-5-5'] })
+    // Omitted keeps the flag, matching --description.
+    await setPoolRotation({ ...options, name: 'subagent', entries: ['anthropic/claude-sonnet-5-5'] })
+    expect(readPoolRotationRecords(options)).toEqual({
+      subagent: { entries: ['anthropic/claude-sonnet-5-5'], description: 'Homeboy cook plumbing', hidden: true },
+    })
+    // false shows it again and drops the key from the file.
+    await setPoolRotation({ ...options, name: 'subagent', entries: ['anthropic/claude-sonnet-5-5'], hidden: false })
+    expect(readPoolRotationRecords(options)).toEqual({
+      subagent: { entries: ['anthropic/claude-sonnet-5-5'], description: 'Homeboy cook plumbing' },
+    })
+    expect(JSON.parse(fs.readFileSync(path.join(getPoolDir(options), 'rotation.json'), 'utf8')).subagent).not.toHaveProperty('hidden')
+  })
+
   test('replaces an existing rotation and removes on empty entries', async () => {
     await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['a/m1'] })
     await setPoolRotation({ dataDir, poolId: SHARED_POOL_ID, name: 'default', entries: ['a/m2'] })

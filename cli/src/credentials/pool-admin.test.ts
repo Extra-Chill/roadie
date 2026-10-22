@@ -170,6 +170,23 @@ describe('pool admin API', () => {
     expect(readPoolRotations({ dataDir, poolId: SHARED_POOL_ID })).toEqual({})
   })
 
+  test('rotations accept the hidden flag; a non-boolean is refused (#343)', async () => {
+    const { call, adminKey } = await host()
+    const set = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'plumbing', entries: ['openai/gpt-5'], hidden: true })
+    expect(set.status).toBe(200)
+    expect((await call(adminKey, 'GET', 'accounts?pool=shared')).json.rotations).toEqual({
+      plumbing: { entries: ['openai/gpt-5'], hidden: true },
+    })
+    // Omitted keeps the flag; false clears it.
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'plumbing', entries: ['openai/gpt-6'] })).status).toBe(200)
+    expect((await call(adminKey, 'GET', 'accounts?pool=shared')).json.rotations.plumbing).toMatchObject({ hidden: true })
+    expect((await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'plumbing', entries: ['openai/gpt-6'], hidden: false })).status).toBe(200)
+    expect((await call(adminKey, 'GET', 'accounts?pool=shared')).json.rotations).toEqual({ plumbing: { entries: ['openai/gpt-6'] } })
+    const notBoolean = await call(adminKey, 'POST', 'rotations', { pool: 'shared', name: 'plumbing', entries: ['openai/gpt-6'], hidden: 'yes' })
+    expect(notBoolean.status).toBe(400)
+    expect(notBoolean.json.error.message).toContain('boolean')
+  })
+
   test('reorders and removes accounts', async () => {
     const { call, adminKey, dataDir } = await host()
     const first = await addPoolAccount({ dataDir, poolId: SHARED_POOL_ID, provider: 'openai', key: 'sk-test-first' })

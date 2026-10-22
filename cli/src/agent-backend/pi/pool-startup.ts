@@ -7,7 +7,7 @@ import { clearSessionRoute } from '../../credentials/routes.js'
 import { resolveSessionPoolHeader } from '../../credentials/session-pools.js'
 import { fetchRemotePoolCatalog, readRemotePoolConfig, startRemotePoolRelay } from '../../credentials/remote-pool.js'
 import { SHARED_POOL_ID } from '../../credentials/store.js'
-import { writePiPoolAgentDir } from './pool.js'
+import { setPickerHiddenRotations, writePiPoolAgentDir } from './pool.js'
 
 /** Fixed listen address for external pool clients (#171); ephemeral when unset. */
 export function piPoolListenOptions(env: NodeJS.ProcessEnv = process.env): { host?: string; port?: number } | Error {
@@ -39,6 +39,7 @@ export async function startPiPool(): Promise<Error | {
     const relay = await startRemotePoolRelay({ config: remote }).catch((cause: unknown) => new Error('remote pool relay failed to start', { cause }))
     if (relay instanceof Error) return relay
     writePiPoolAgentDir({ agentDir, baseUrl: relay.baseUrl, ...catalog })
+    setPickerHiddenRotations(catalog.rotations)
     return {
       baseUrl: relay.baseUrl,
       agentDir,
@@ -57,6 +58,7 @@ export async function startPiPool(): Promise<Error | {
     .catch((cause: unknown) => new Error('pool proxy failed to start', { cause }))
   if (proxy instanceof Error) return proxy
   writePiPoolAgentDir({ agentDir, baseUrl: proxy.baseUrl, ...catalog })
+  setPickerHiddenRotations(catalog.rotations)
   return {
     baseUrl: proxy.baseUrl,
     agentDir,

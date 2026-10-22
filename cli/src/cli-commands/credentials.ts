@@ -5,7 +5,7 @@
 //   roadie credentials add-key --provider <anthropic|openai|...> [--label] [--pool <id>]
 //   roadie credentials login <anthropic|openai-codex> [--label] [--pool <id>]
 //   roadie credentials remove <id> [--pool <id>]
-//   roadie credentials rotation set <name> <provider/model>... [--pool <id>]
+//   roadie credentials rotation set <name> <provider/model>... [--pool <id>] [--hidden|--shown]
 //   roadie credentials import-subrouter [--dry-run] [--subrouter-home <dir>]
 //   roadie credentials import-opencode --opencode-data <dir> [--pool <id>] [--dry-run]
 //   roadie credentials mcp set --person <key> --credential <name>   (OAuth token JSON on stdin)
@@ -133,7 +133,7 @@ cli
     cliLogger.log(`Pool ${poolId} rotations:`)
     for (const name of rotationNames) {
       const rotation = rotations[name]!
-      cliLogger.log(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}`)
+      cliLogger.log(`${name}: ${rotation.entries.join(' ')}${rotation.description ? ` — ${rotation.description}` : ''}${rotation.hidden ? ' (hidden)' : ''}`)
     }
     process.exit(0)
   })
@@ -289,18 +289,25 @@ cli
   )
   .option('--pool <id>', 'Pool to set the rotation in (default: shared)')
   .option('--description <text>', 'When to use this rotation (empty string clears; omitted preserves)')
+  .option('--hidden', 'Hide the rotation from the /model picker; it stays routable (roadie/<name>, ROADIE_PI_MODEL, cooks) (#343)')
+  .option('--shown', 'Show the rotation in the /model picker again (undoes --hidden)')
   .action(async (name: string, models: string[] | undefined, options) => {
     await refuseAgentMode()
     const poolId = resolvePoolId(options.pool)
     const entries = models ?? []
+    if (options.hidden === true && options.shown === true) {
+      exitWithError('Pass --hidden or --shown, not both')
+    }
+    // Neither flag preserves the current value, matching --description.
+    const hidden = options.hidden === true ? true : options.shown === true ? false : undefined
     const accounts = poolAccounts()
-    const result = await accounts.setRotation({ poolId, name, entries, description: options.description })
+    const result = await accounts.setRotation({ poolId, name, entries, description: options.description, hidden })
     if (result instanceof Error) exitWithError(result.message)
     const where = accounts.location === 'local' ? '' : ` on ${accounts.location}`
     if (entries.length === 0) {
       cliLogger.log(`Removed rotation ${name} from pool ${poolId}${where}`)
     } else {
-      cliLogger.log(`Set rotation ${name} in pool ${poolId}${where}: ${entries.join(' ')}`)
+      cliLogger.log(`Set rotation ${name} in pool ${poolId}${where}: ${entries.join(' ')}${hidden === true ? ' (hidden)' : ''}`)
     }
     process.exit(0)
   })
