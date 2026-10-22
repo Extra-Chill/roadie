@@ -27,7 +27,7 @@ jobs:
       # Pi is the agent backend; its e2e suites drive a real pi against the
       # scripted model server. Pinned to the version wp-coding-agents installs.
       - name: Install Pi
-        run: npm install -g @earendil-works/pi-coding-agent@1.2.0
+        run: npm install -g @earendil-works/pi-coding-agent@1.4.0
 
       - name: Verify Pi
         run: pi --version
