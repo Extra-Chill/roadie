@@ -194,6 +194,8 @@ async function migrateSchema({
   db: RoadieDb
   client: Client
 }): Promise<void> {
+  // The per-channel mention toggle is retired; behavior lives in the channel policy (#342).
+  await client.execute('DROP TABLE IF EXISTS channel_mention_mode')
   // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
   // Rebuild first so CREATE INDEX (... id) does not hit the old queue_id table.
   await rebuildLegacyThreadQueueItems(client)

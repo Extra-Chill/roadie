@@ -33,14 +33,6 @@ CREATE TABLE IF NOT EXISTS `channel_directories` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS `channel_mention_mode` (
-	`channel_id` text PRIMARY KEY,
-	`enabled` integer DEFAULT 0 NOT NULL,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_channel_mention_mode_channel_id_channel_directories_channel_id_fk` FOREIGN KEY (`channel_id`) REFERENCES `channel_directories`(`channel_id`) ON UPDATE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS `channel_models` (
 	`channel_id` text PRIMARY KEY,
 	`model_id` text NOT NULL,

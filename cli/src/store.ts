@@ -42,7 +42,7 @@ export type RoadieState = {
   // When true, the bot only responds to messages that @mention it in text
   // channels (threads are unaffected). Fallback when no channel override in DB.
   // Changes: set once at startup from --mention-mode CLI flag.
-  // Read by: database.ts (fallback in getChannelMentionMode), discord-bot.ts guard.
+  // Read by: native chat guards when no channel policy is configured.
   defaultMentionMode: boolean
 
 

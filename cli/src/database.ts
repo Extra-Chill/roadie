@@ -745,19 +745,6 @@ export async function setChannelVerbosity(channelId: string, verbosity: Verbosit
     .onConflictDoUpdate({ target: schema.channel_verbosity.channel_id, set: { verbosity, updated_at: new Date() } })
 }
 
-export async function getChannelMentionMode(channelId: string) {
-  const db = await getDb()
-  const row = await db.query.channel_mention_mode.findFirst({ where: { channel_id: channelId } })
-  return row ? row.enabled === 1 : store.getState().defaultMentionMode
-}
-
-export async function setChannelMentionMode(channelId: string, enabled: boolean) {
-  const db = await getDb()
-  await db.insert(schema.channel_mention_mode)
-    .values({ channel_id: channelId, enabled: enabled ? 1 : 0 })
-    .onConflictDoUpdate({ target: schema.channel_mention_mode.channel_id, set: { enabled: enabled ? 1 : 0, updated_at: new Date() } })
-}
-
 export async function getChannelDirectory(channelId: string): Promise<{ directory: string } | undefined> {
   const fromPolicy = channelPolicyOverrides(channelId).directory
   if (fromPolicy) return { directory: fromPolicy }
@@ -1403,7 +1390,6 @@ export async function deleteChannelDirectoryById(
     db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)),
     db.delete(schema.channel_worktrees).where(orm.eq(schema.channel_worktrees.channel_id, channelId)),
     db.delete(schema.channel_verbosity).where(orm.eq(schema.channel_verbosity.channel_id, channelId)),
-    db.delete(schema.channel_mention_mode).where(orm.eq(schema.channel_mention_mode.channel_id, channelId)),
   ] as const)
   if (preserveMapping) {
     return Boolean(await db.query.channel_directories.findFirst({

@@ -282,13 +282,6 @@ export const channel_verbosity = sqliteCore.sqliteTable('channel_verbosity', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
-export const channel_mention_mode = sqliteCore.sqliteTable('channel_mention_mode', {
-  channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
-  enabled: sqliteCore.integer('enabled', { mode: 'number' }).notNull().default(0),
-  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
-  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
-})
-
 export const global_models = sqliteCore.sqliteTable('global_models', {
   app_id: sqliteCore.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
   model_id: sqliteCore.text('model_id').notNull(),
@@ -430,7 +423,6 @@ export const relations = defineRelations({
   session_agents,
   channel_worktrees,
   channel_verbosity,
-  channel_mention_mode,
   global_models,
   scheduled_tasks,
   scheduled_task_runs,
@@ -476,7 +468,6 @@ export const relations = defineRelations({
     channel_agent: r.one.channel_agents({ from: r.channel_directories.channel_id, to: r.channel_agents.channel_id }),
     channel_worktree: r.one.channel_worktrees({ from: r.channel_directories.channel_id, to: r.channel_worktrees.channel_id }),
     channel_verbosity: r.one.channel_verbosity({ from: r.channel_directories.channel_id, to: r.channel_verbosity.channel_id }),
-    channel_mention_mode: r.one.channel_mention_mode({ from: r.channel_directories.channel_id, to: r.channel_mention_mode.channel_id }),
     scheduled_tasks: r.many.scheduled_tasks(),
   },
   channel_models: {
@@ -492,9 +483,6 @@ export const relations = defineRelations({
   },
   channel_verbosity: {
     channel: r.one.channel_directories({ from: r.channel_verbosity.channel_id, to: r.channel_directories.channel_id }),
-  },
-  channel_mention_mode: {
-    channel: r.one.channel_directories({ from: r.channel_mention_mode.channel_id, to: r.channel_directories.channel_id }),
   },
   global_models: {
     bot: r.one.bot_tokens({ from: r.global_models.app_id, to: r.bot_tokens.app_id }),

@@ -34,6 +34,28 @@ application's configured destinations.
 
 ## Discord channel commands
 
+`/channel bind [channel] [behavior]` accepts an optional behavior. Omit it to
+inherit the application default policy, or choose:
+
+| Behavior | Policy |
+| --- | --- |
+| `always` — Always reply | `respond: always`, `threads: per-message`, no intake override |
+| `mention` — Mention only | `respond: mention`, `threads: per-message`; thread follow-ups need no mention |
+| `listen` — Mention + listen | `respond: mention`, `threads: none`, `intake: { start: mention, continue: mention, other: context }` |
+| `off` — Off | `respond: never`; stops live runtimes, preserves history |
+
+`listen` uses one channel session; after a mention starts it, untagged messages
+are recorded as context without a reply (see [conversation intake](conversation-intake.md)).
+
+Use `/channel behavior <behavior> [channel]` to change behavior at any time,
+including enabling an unbound channel or turning one off. Only `respond`,
+`threads`, and `intake` change; context, audience, model and other settings are
+preserved. Live runtimes are disposed so the next message uses the new policy.
+Both commands report the active preset, or `custom` for other policies.
+
+`/toggle-mention-mode` is retired, and its per-channel rows are dropped at
+startup. Set channel behavior through the channel policy instead.
+
 Create an ordinary Discord text channel, then run `/channel bind` in it. You can
 also run `/channel bind channel:#work` from another channel in the same server.
 Roadie administrators can bind previously unconfigured channels; ordinary

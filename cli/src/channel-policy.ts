@@ -86,6 +86,30 @@ export type ChannelPolicy = z.infer<typeof policySchema>
 export type ChannelsConfig = z.infer<typeof configSchema>
 export type WhoEntry = z.infer<typeof whoEntrySchema>
 
+export const channelBehaviors = ['always', 'mention', 'listen', 'off'] as const
+export type ChannelBehavior = typeof channelBehaviors[number]
+
+export function applyChannelBehavior(policy: ChannelPolicy, behavior: ChannelBehavior): ChannelPolicy {
+  const { respond: _respond, threads: _threads, intake: _intake, ...rest } = policy
+  switch (behavior) {
+    case 'always': return { ...rest, respond: 'always', threads: 'per-message' }
+    case 'mention': return { ...rest, respond: 'mention', threads: 'per-message' }
+    case 'listen': return { ...rest, respond: 'mention', threads: 'none', intake: { start: 'mention', continue: 'mention', other: 'context' } }
+    case 'off': return { ...rest, respond: 'never' }
+  }
+}
+
+export function channelBehavior(policy: ChannelPolicy | null | undefined): ChannelBehavior | 'custom' {
+  if (!policy) return 'custom'
+  if (policy.respond === 'never') return 'off'
+  const fields = { respond: policy.respond, threads: policy.threads, intake: policy.intake }
+  for (const behavior of channelBehaviors) {
+    const preset = applyChannelBehavior({}, behavior)
+    if (isDeepStrictEqual(fields, { respond: preset.respond, threads: preset.threads, intake: preset.intake })) return behavior
+  }
+  return 'custom'
+}
+
 /** Returns a channel's parent id (thread → channel, channel → category). */
 export type ParentResolver = (channelId: string) => string | null | undefined
 
@@ -280,9 +304,10 @@ export function applicationBinding(): ChannelsConfig['application'] {
 // channel commands from overwriting each other's bindings.
 let bindingWrites: Promise<unknown> = Promise.resolve()
 
-export function setApplicationChannelBinding({ channelId, bound, application }: {
+export function setApplicationChannelBinding({ channelId, bound, application, behavior }: {
   channelId: string
   bound: boolean
+  behavior?: ChannelBehavior
   application: NonNullable<ChannelsConfig['application']>
 }): Promise<{ changed: boolean } | Error> {
   const write = bindingWrites.then(() => {
@@ -304,14 +329,17 @@ export function setApplicationChannelBinding({ channelId, bound, application }: 
       if (!bound && channelId === application.channel) return new Error('The application default cannot be unbound; change application.channel first')
       const previous = config.channels[channelId]
       const enabled = Boolean(previous && previous.respond !== 'never')
-      if (enabled === bound) return { changed: false }
+      if (!behavior && enabled === bound) return { changed: false }
       const source = config.channels[application.channel]!
-      if (bound && source.respond === 'never') return new Error('Enable the application default channel policy before binding another channel')
+      if (bound && !behavior && source.respond === 'never') return new Error('Enable the application default channel policy before binding another channel')
       // Disabling is a canonical respond: never policy, so category/wildcard
       // policies cannot re-enable an unbound channel or discard its settings.
-      const policy: ChannelPolicy = bound
-        ? { ...structuredClone(source), respond: source.respond ?? 'always' }
-        : { ...previous, respond: 'never' }
+      const policy: ChannelPolicy = behavior
+        ? applyChannelBehavior(structuredClone(previous ?? source), behavior)
+        : bound
+          ? { ...structuredClone(source), respond: source.respond ?? 'always' }
+          : { ...previous, respond: 'never' }
+      if (isDeepStrictEqual(previous, policy)) return { changed: false }
       config.channels[channelId] = policy
       const document = YAML.parseDocument(text)
       document.setIn(['channels', channelId], policy)
@@ -367,13 +395,17 @@ function configuredChannelPolicy(channelId: string): ChannelPolicy | null | unde
   if (matches.length === 0) return null
 
   // Least specific first so more specific entries override field by field.
+  // A complete named behavior replaces inherited intake as a unit. In
+  // particular, mention/always must not retain a parent's listen rules.
   const channel = matches
     .reverse()
     .reduce<ChannelPolicy>(
       (acc, policy) => ({
         ...acc,
         ...policy,
-        ...(acc.intake || policy.intake ? { intake: { ...acc.intake, ...policy.intake } } : {}),
+        ...(channelBehavior(policy) !== 'custom'
+          ? { intake: policy.intake }
+          : acc.intake || policy.intake ? { intake: { ...acc.intake, ...policy.intake } } : {}),
       }),
       {},
     )
@@ -381,9 +413,11 @@ function configuredChannelPolicy(channelId: string): ChannelPolicy | null | unde
   return {
     ...project,
     ...channel,
-    ...(project?.intake || channel.intake
-      ? { intake: { ...project?.intake, ...channel.intake } }
-      : {}),
+    ...(channelBehavior(channel) !== 'custom'
+      ? { intake: channel.intake }
+      : project?.intake || channel.intake
+        ? { intake: { ...project?.intake, ...channel.intake } }
+        : {}),
   }
 }
 

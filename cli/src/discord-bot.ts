@@ -25,7 +25,6 @@ import {
   getThreadWorkingDirectory,
   getThreadSession,
   setThreadSession,
-  getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
   cleanupDeletedThread,
@@ -724,7 +723,7 @@ export async function startDiscordBot({
         const mentionRequired =
           respond === 'needs-mention' ||
           (respond === 'builtin' && channel.type === ChannelType.GuildText &&
-            (await getChannelMentionMode(channel.id)))
+            store.getState().defaultMentionMode)
         // Mentions only gate new conversations in channels; threads continue.
         if (!explicitIntake && mentionRequired && (channel.type === ChannelType.GuildText || isDm)) {
           const botMentioned =
