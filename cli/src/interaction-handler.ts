@@ -27,7 +27,6 @@ import {
   handleForkAutocomplete,
 } from './commands/fork.js'
 import { handleModelCommand } from './commands/model.js'
-import { handleLoginCommand } from './commands/login.js'
 import { handleCredentialsCommand } from './commands/credentials.js'
 import {
   handleAgentCommand,
@@ -44,7 +43,6 @@ import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand } from './commands/mcp.js'
 import { handleConnectCommand } from './commands/connect.js'
 import { handleStartCommand, welcomeDiscordUser } from './commands/start.js'
-import { handleLinkCommand } from './commands/link.js'
 import { handleModelVariantCommand } from './commands/model-variant.js'
 import {
   acknowledgeComponent,
@@ -139,10 +137,10 @@ async function isInteractionOwnedByThisMachine(
 
 // Slash commands that act only on the calling user's own account and need no
 // project. They are answered in any channel of a guild this machine serves.
-const PERSON_SCOPED_COMMANDS = new Set(['link', 'connect', 'start'])
+const PERSON_SCOPED_COMMANDS = new Set(['connect', 'start'])
 
 /**
- * Person-scoped interactions (#301): /link, /connect, /start and the Link and
+ * Person-scoped interactions (#301): /connect, /start and the Link and
  * Connect/Disconnect buttons. Each acts only for the clicking user.
  */
 export function isPersonScopedInteraction(interaction: Interaction): boolean {
@@ -294,10 +292,10 @@ export function registerInteractionHandler({
         }
 
         // Self-serve identity linking (#292) is for people Roadie does not
-        // admit yet, so /link and Link buttons skip the permission and
+        // admit yet, so /connect and Link buttons skip the permission and
         // channel-audience checks below. Both act only for the clicking user.
-        if (interaction.isChatInputCommand() && interaction.commandName === 'link') {
-          await handleLinkCommand({ command: interaction, channelBound: !unboundPersonScoped })
+        if (interaction.isChatInputCommand() && interaction.commandName === 'connect') {
+          await handleConnectCommand({ command: interaction, channelBound: !unboundPersonScoped })
           return
         }
         if (route?.selfServe && isComponentInteraction(interaction)) {
@@ -464,21 +462,6 @@ export function registerInteractionHandler({
               await handleModelVariantCommand({ interaction, appId })
               return
 
-            case 'login':
-              if (!store.getState().credentialPoolsEnabled) {
-                // Stale registration: /login only exists when credential
-                // pools are enabled. Fail closed rather than touch pools.
-                await interaction.reply({
-                  content: 'Credential pools are not enabled on this server.',
-                  flags: MessageFlags.Ephemeral,
-                })
-                return
-              }
-              // The flow enforces the stricter shared-pool admin rule itself
-              // and per-person callers manage their own pool, like /credentials.
-              await handleLoginCommand({ interaction, appId })
-              return
-
             case 'credentials':
               if (!store.getState().credentialPoolsEnabled) {
                 // Stale registration: /credentials only exists when
@@ -531,10 +514,6 @@ export function registerInteractionHandler({
 
             case 'mcp':
               await handleMcpCommand({ command: interaction, appId })
-              return
-
-            case 'connect':
-              await handleConnectCommand({ command: interaction })
               return
 
             case 'start':

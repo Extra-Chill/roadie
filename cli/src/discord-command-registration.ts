@@ -91,19 +91,6 @@ export function buildQuickAgentSlashCommand({
 }
 
 /**
- * /login: add an account (OAuth or API key) to a credential pool. Registered
- * only when credential pools are enabled, like /credentials.
- */
-export function buildLoginSlashCommand() {
-  return new SlashCommandBuilder()
-    .setName('login')
-    .setDescription(
-      truncateCommandDescription('Add an AI provider account (OAuth or API key) to your credential pool'),
-    )
-    .setDMPermission(false)
-}
-
-/**
  * /credentials (credential pools phase 2b): manage your own credential pool.
  * Registered only when credential pools are enabled, so servers with pools
  * off see no change. The API key is only ever entered in a modal — there is
@@ -114,7 +101,7 @@ export function buildCredentialsSlashCommand() {
     .setName('credentials')
     .setDescription(
       truncateCommandDescription(
-        'Manage your AI credential pool: list accounts, add a key, Anthropic login, remove, reorder',
+        'Manage your AI credential pool: list, add accounts, remove, reorder',
       ),
     )
     .addSubcommand((subcommand) =>
@@ -134,38 +121,8 @@ export function buildCredentialsSlashCommand() {
     )
     .addSubcommand((subcommand) =>
       subcommand
-        .setName('add-key')
-        .setDescription(
-          truncateCommandDescription(
-            'Add an API key via a private modal (the key is never a command option)',
-          ),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('provider')
-            .setDescription(
-              truncateCommandDescription(
-                'Provider the key belongs to, as named in the models.dev catalog (anthropic, zai-coding-plan, groq, ...)',
-              ),
-            )
-            .setRequired(true)
-            .setMaxLength(64),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('pool')
-            .setDescription('Target the shared pool instead (admin only)')
-            .addChoices({ name: 'shared', value: 'shared' }),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('login-anthropic')
-        .setDescription(
-          truncateCommandDescription(
-            'Add a Claude Pro/Max subscription account via OAuth (private replies)',
-          ),
-        )
+        .setName('add')
+        .setDescription('Add a provider account (OAuth or API key) using the private provider picker')
         .addStringOption((option) =>
           option
             .setName('pool')
@@ -422,13 +379,8 @@ export function buildStaticSlashCommands() {
     new SlashCommandBuilder()
       .setName('connect')
       .setDescription(
-        truncateCommandDescription('Connect or disconnect your own accounts on the services your agent can use'),
+        truncateCommandDescription('Link your identity, then connect or disconnect your own tool accounts'),
       )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('link')
-      .setDescription(truncateCommandDescription('Link your chat account to your account on this server (privately)'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -441,7 +393,7 @@ export function buildStaticSlashCommands() {
 
 /**
  * The always-registered static commands plus the credential pool commands:
- * /login and /credentials are only registered when credential pools are
+ * /credentials is only registered when credential pools are
  * enabled (the default). With --no-credential-pools Pi's own agent-dir
  * auth.json applies and is managed with `pi` on the host.
  */
@@ -453,7 +405,7 @@ export function buildRegistrableStaticCommands({
   return [
     ...buildStaticSlashCommands(),
     ...(credentialPoolsEnabled
-      ? [buildLoginSlashCommand().toJSON(), buildCredentialsSlashCommand().toJSON()]
+      ? [buildCredentialsSlashCommand().toJSON()]
       : []),
   ]
 }

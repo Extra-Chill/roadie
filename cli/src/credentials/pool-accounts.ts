@@ -1,7 +1,7 @@
 // Pool account management seam (#238).
 //
 // Every caller that adds, lists, removes, reorders pool accounts or sets pool
-// rotations (the Discord /credentials and /login flows, the `roadie
+// rotations (the Discord /credentials and /credentials add flows, the `roadie
 // credentials` CLI and the pool host's admin API) goes through one
 // PoolAccounts implementation:
 //

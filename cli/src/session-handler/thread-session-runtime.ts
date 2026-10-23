@@ -2793,7 +2793,7 @@ export class ThreadSessionRuntime {
       const modelField = modelResult
       if (!modelField) {
         await cleanupOnError(
-          'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+          'No AI provider connected. Add a provider account with `/credentials add`.',
         )
         return
       }
@@ -3506,7 +3506,7 @@ export class ThreadSessionRuntime {
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
       this.typing.stopTyping()
-      await this.chat.sendMessage('No AI provider connected. Configure a provider in OpenCode with `/connect` command.')
+      await this.chat.sendMessage('No AI provider connected. Add a provider account with `/credentials add`.')
       return false
     }
 

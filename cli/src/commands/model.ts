@@ -630,7 +630,7 @@ export async function handleModelCommand({
       await interaction.editReply({
         content:
           store.getState().credentialPoolsEnabled
-            ? 'No providers with credentials found. Use `/login` to add a provider account to your credential pool.'
+            ? 'No providers with credentials found. Use `/credentials add` to add a provider account to your credential pool.'
             : 'No providers with credentials found. Sign in with `pi` on the host.',
       })
       return

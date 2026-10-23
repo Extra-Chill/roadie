@@ -4,14 +4,12 @@
 //
 // Subcommands:
 //   /credentials list                        — accounts + rotations (no secrets)
-//   /credentials add-key provider:<p>        — modal for the key (never an option)
-//                                              and an optional base URL override
-//   /credentials login-anthropic             — OAuth: authorize URL + paste modal
+//   /credentials add                         — provider picker: OAuth or API key
 //   /credentials remove account:<id>         — remove an account
 //   /credentials reorder account:<id> position:<n> — move an account in the
 //                                              pool order (router tiebreaker)
 //
-// /login (also registered only with credential pools on) reuses the two write flows
+// The provider picker reuses the two write flows
 // (startCredentialsApiKeyModal + startCredentialsAnthropicOAuth): same
 // target-pool resolution, same shared-pool admin rule, same ephemeral replies.
 //
@@ -27,7 +25,7 @@
 // Every reply is ephemeral (MessageFlags.Ephemeral): nothing about credentials
 // is ever posted in a channel, and no key, token or key fragment is ever
 // included in a reply. Pending state lives in memory keyed by a random hash
-// with a 10-minute TTL (same pattern as pendingLoginContexts in login.ts); the
+// with a 10-minute TTL (same pattern as pendingLoginContexts in credentials-add.ts); the
 // OAuth PKCE verifier stays inside the PoolAccounts flow, on the pool host
 // when the pool is remote.
 // Modal-submit handlers re-resolve the target pool and re-check permissions
@@ -47,6 +45,7 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
+import { handleCredentialsAdd } from './credentials-add.js'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
 import { resolvePerson, type Person } from '../identity.js'
@@ -226,7 +225,7 @@ function buildListContent({
 }): string {
   const lines: string[] = [`Credentials pool ${poolId}${location === 'local' ? '' : ` on ${location}`}`]
   if (accounts.length === 0) {
-    lines.push('No accounts yet. Use /credentials add-key or /credentials login-anthropic.')
+    lines.push('No accounts yet. Use /credentials add.')
   } else {
     for (const account of accounts) {
       lines.push(`${account.position}. ${account.id} | ${describeAccount({ account, now })}`)
@@ -269,11 +268,8 @@ export async function handleCredentialsCommand({
     case 'list':
       await handleCredentialsList(command)
       return
-    case 'add-key':
-      await handleCredentialsAddKey(command)
-      return
-    case 'login-anthropic':
-      await handleCredentialsLoginAnthropic(command)
+    case 'add':
+      await handleCredentialsAdd(command)
       return
     case 'remove':
       await handleCredentialsRemove(command)
@@ -326,22 +322,10 @@ async function handleCredentialsList(
   })
 }
 
-// ── add-key: modal only, the key is never a slash-command option ──
-
-async function handleCredentialsAddKey(
-  command: ChatInputCommandInteraction,
-): Promise<void> {
-  const provider = command.options.getString('provider', true)
-  await startCredentialsApiKeyModal({
-    command,
-    provider,
-    requestShared: requestSharedOption(command),
-  })
-}
+// ── API key: modal only, never a slash-command option ──
 
 /**
- * The /credentials add-key flow, shared with /login when credential pools are
- * on: resolve the target pool (fail fast before the modal; the modal submit
+ * Resolve the target pool (fail fast before the modal; the modal submit
  * re-checks everything), then collect the key in a modal — never as an option
  * and never in a reply.
  */
@@ -400,7 +384,7 @@ export async function handleCredentialsApiKeyModalSubmit(
   const context = getCredentialsContext(hash)
   if (!context || context.kind !== 'apikey') {
     await interaction.editReply({
-      content: 'This request expired. Run /credentials add-key again.',
+      content: 'This request expired. Run /credentials add again.',
     })
     return
   }
@@ -444,20 +428,10 @@ export async function handleCredentialsApiKeyModalSubmit(
   })
 }
 
-// ── login-anthropic: authorize URL + paste modal ────────────────
-
-async function handleCredentialsLoginAnthropic(
-  command: ChatInputCommandInteraction,
-): Promise<void> {
-  await startCredentialsAnthropicOAuth({
-    command,
-    requestShared: requestSharedOption(command),
-  })
-}
+// ── Subscription OAuth: authorize URL + paste modal ────────────
 
 /**
- * The /credentials login-anthropic flow, shared with /login when credential
- * pools are on: everything runs in an ephemeral reply so codes never land in a
+ * Everything runs in an ephemeral reply so codes never land in a
  * public channel, and the paste modal goes through the same pending-PKCE
  * context and button/modal handlers as the command.
  */
@@ -524,7 +498,7 @@ export async function handleCredentialsOAuthCodeButton(
   const context = getCredentialsContext(hash)
   if (!context || context.kind !== 'oauth') {
     await interaction.reply({
-      content: 'This request expired. Run /credentials login-anthropic again.',
+      content: 'This request expired. Run /credentials add again.',
       flags: MessageFlags.Ephemeral,
     })
     return
@@ -557,7 +531,7 @@ export async function handleCredentialsOAuthCodeModalSubmit(
   const context = getCredentialsContext(hash)
   if (!context || context.kind !== 'oauth') {
     await interaction.editReply({
-      content: 'This request expired. Run /credentials login-anthropic again.',
+      content: 'This request expired. Run /credentials add again.',
     })
     return
   }

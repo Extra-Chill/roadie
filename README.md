@@ -49,7 +49,7 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 
 ## Features
 
-- **All your models, including subscriptions.** Run `/login` to add an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription to a credential pool. Add several accounts and Roadie rotates between them on rate limits.
+- **All your models, including subscriptions.** Run `/credentials add` to add an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription to a credential pool. Add several accounts and Roadie rotates between them on rate limits.
 - **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the `person` filter's `credentialPool`, and the security limits.
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
 - **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
@@ -255,9 +255,9 @@ Newly admitted people (`person` filter `allowed: true`) get a one-time private w
 
 ### Self-serve identity linking
 
-People the identity layer denies can link their chat account themselves instead of sending an admin their ID. When the `identity_link_provider` filter returns a provider, a denied, platform-authenticated human (not a lookup failure, a CLI-asserted actor or a bot) who messages Roadie gets a private **Link your account** prompt: a DM on Discord, or, if their DMs are closed, a channel reply whose button only they can use. The prompt is shown at most once per person every 10 minutes; `/link` starts the same flow on demand. Clicking runs the OAuth device grant against the provider's authorization server (the sign-in link is shown only to the clicker), then hands the token to `link_identity`.
+People the identity layer denies can link their chat account themselves instead of sending an admin their ID. When the `identity_link_provider` filter returns a provider, a denied, platform-authenticated human (not a lookup failure, a CLI-asserted actor or a bot) who messages Roadie gets a private **Link your account** prompt: a DM on Discord, or, if their DMs are closed, a channel reply whose button only they can use. The prompt is shown at most once per person every 10 minutes; `/connect` starts the same flow on demand. Clicking runs the OAuth device grant against the provider's authorization server (the sign-in link is shown only to the clicker), then hands the token to `link_identity`.
 
-On `{ linked: true }` Roadie drops the person's cached identity and asks the identity layer again. If they are now allowed and one of their `mcpServers` has the provider's `url` (the provider's `credential` picks between several), the token is stored as that MCP credential, so one sign-in covers linking and `/connect`; then they get the first-contact welcome. If they are still denied they're told "Linked. You don't have access yet; ask an admin." On `{ linked: false, reason }` the reason is shown. A token Roadie does not store is revoked (best effort, when the server has a revocation endpoint) and never written to disk. The person is always whoever clicks or runs `/link`. Discord only for now; Slack does not offer linking yet.
+On `{ linked: true }` Roadie drops the person's cached identity and asks the identity layer again. If they are now allowed and one of their `mcpServers` has the provider's `url` (the provider's `credential` picks between several), the token is stored as that MCP credential, so one sign-in covers linking and `/connect`; then they get the first-contact welcome. When started with `/connect`, the private reply then shows their tool-account list with Connect/Disconnect buttons. If they are still denied they're told "Linked. You don't have access yet; ask an admin." On `{ linked: false, reason }` the reason is shown. A token Roadie does not store is revoked (best effort, when the server has a revocation endpoint) and never written to disk. The person is always whoever clicks or runs `/connect`. Discord only for now; Slack does not offer linking yet.
 
 ### Shell env
 
@@ -298,13 +298,12 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/abort` | Stop the current run |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
 | `/model`, `/agent` | Change the model or agent for this channel or session |
-| `/login` | Add a provider account (subscription or API key) to a credential pool. Registered only while credential pools are on (the default); with `--no-credential-pools`, Pi's own agent-dir `auth.json` applies and is managed with `pi` on the host |
+| `/credentials list\|add\|remove\|reorder` | Manage model accounts in your credential pool; `add` opens the subscription/API-key provider picker. Registered only while credential pools are on (the default); with `--no-credential-pools`, Pi's own agent-dir `auth.json` applies and is managed with `pi` on the host |
 | `/new-session`, `/last-sessions` | Start a session in this project; list recent ones |
 | `/compact`, `/context-usage` | Compact the context; show how much is in use |
 | `/run-shell-command` | Run a shell command in the thread's working directory |
 | `/mcp` | List and manage MCP servers for this project |
-| `/connect` | Connect or disconnect your own account on the per-person MCP servers the `person` filter names for you (OAuth device sign-in) |
-| `/link` | Link your chat account to your account on the host with its own sign-in, when you are not admitted yet (see Self-serve identity linking) |
+| `/connect` | Link your chat identity first if needed, then list your tool accounts with Connect/Disconnect buttons (OAuth device sign-in) |
 | `/start` | Show the welcome and how to use Roadie, privately |
 
 The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.

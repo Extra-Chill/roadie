@@ -1,4 +1,4 @@
-// Person-scoped commands (/link, /connect, /start and their buttons) are
+// Person-scoped commands (/connect, /start and their buttons) are
 // answered in unbound channels of a guild this machine serves (#301), while
 // unserved guilds and agent commands keep the silent multi-machine skip.
 import fs from 'node:fs'
@@ -72,11 +72,11 @@ async function expectNeverAcknowledged(channelId: string, interactionId: string)
   }
 }
 
-async function expectLinkAnswered(channelId: string, interactionId: string) {
+async function expectConnectAnswered(channelId: string, interactionId: string) {
   const channel = discord.channel(channelId)
   await channel.waitForInteractionAck({ interactionId })
   await channel.waitForBotReply()
-  expect(await channel.text()).toContain(LINK_NOT_AVAILABLE_MESSAGE)
+  expect(await channel.text()).toContain('Per-person services are not configured on this server.')
 }
 
 function bindInConfig() {
@@ -86,28 +86,28 @@ function bindInConfig() {
 }
 
 describe('person-scoped interactions in unbound channels', () => {
-  test('/link is answered in an unbound channel of a guild bound in the local directories', async () => {
+  test('/connect is answered in an unbound channel of a guild bound in the local directories', async () => {
     // Legacy rows carry no guild id: the guild is resolved through Discord.
     await setChannelDirectory({ channelId: boundChannelId, directory, channelType: 'text' })
-    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'link' })
-    await expectLinkAnswered(generalChannelId, id)
+    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'connect' })
+    await expectConnectAnswered(generalChannelId, id)
   })
 
-  test('/link is answered in an unbound channel of a guild bound only in the channels config', async () => {
+  test('/connect is answered in an unbound channel of a guild bound only in the channels config', async () => {
     bindInConfig()
-    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'link' })
-    await expectLinkAnswered(generalChannelId, id)
+    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'connect' })
+    await expectConnectAnswered(generalChannelId, id)
   })
 
-  test('/link in a guild this machine does not serve is left for the owning machine', async () => {
+  test('/connect in a guild this machine does not serve is left for the owning machine', async () => {
     await setChannelDirectory({ channelId: boundChannelId, directory, channelType: 'text', guildId: servedGuildId })
     bindInConfig()
-    const { id } = await discord.channel(otherChannelId).user(ownerId).runSlashCommand({ name: 'link', guildId: otherGuildId })
+    const { id } = await discord.channel(otherChannelId).user(ownerId).runSlashCommand({ name: 'connect', guildId: otherGuildId })
     await expectNeverAcknowledged(otherChannelId, id)
   })
 
-  test('/link is not answered anywhere when nothing is bound', async () => {
-    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'link' })
+  test('/connect is not answered anywhere when nothing is bound', async () => {
+    const { id } = await discord.channel(generalChannelId).user(ownerId).runSlashCommand({ name: 'connect' })
     await expectNeverAcknowledged(generalChannelId, id)
   })
 

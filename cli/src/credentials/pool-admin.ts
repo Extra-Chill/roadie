@@ -1,7 +1,7 @@
 // Pool host admin API (#238).
 //
 // A bot that uses a remote pool (ROADIE_POOL_URL) manages the host's accounts
-// through these routes, so /credentials and /login work from chat while the
+// through these routes, so /credentials and /credentials add work from chat while the
 // accounts and their refresh tokens stay on the host. Mounted by the pool host
 // (credentials/serve.ts) under POOL_ADMIN_PATH:
 //

@@ -3,7 +3,7 @@
 // Modal key handling (stored in the right pool, never echoed), the OAuth
 // paste flow's parsing and pending-PKCE TTL, rotation seeding for new person
 // pools, and the registration gating (/credentials only when credential
-// pools are on, /login untouched). Uses minimal interaction doubles; the
+// pools are on, /credentials add untouched). Uses minimal interaction doubles; the
 // only key ever used here is an obviously fake test string.
 
 import fs from 'node:fs'
@@ -140,7 +140,7 @@ function makeOAuthModalInteraction({
   return { interaction: interaction as unknown as ModalSubmitInteraction, replies }
 }
 
-describe('/credentials add-key modal', () => {
+describe('/credentials add modal', () => {
   test('stores the key in the caller own pool and never echoes it', async () => {
     const hash = createCredentialsContext({
       kind: 'apikey',
@@ -292,7 +292,7 @@ describe('/credentials add-key modal', () => {
   })
 })
 
-describe('/credentials login-anthropic paste modal', () => {
+describe('/credentials add paste modal', () => {
   test('parses code#state and a full redirect URL', () => {
     expect(parseManualInput('abc123#state-1')).toEqual({ code: 'abc123', state: 'state-1' })
     expect(
@@ -398,31 +398,30 @@ describe('/credentials registration gating', () => {
     expect(buildStaticSlashCommands().some((c) => c.name === 'login')).toBe(false)
   })
 
-  test('/credentials and /login are not registered when credential pools are off', () => {
+  test('/credentials and /credentials add are not registered when credential pools are off', () => {
     const names = buildRegistrableStaticCommands({ credentialPoolsEnabled: false }).map((c) => c.name)
     expect(names).not.toContain('credentials')
     expect(names).not.toContain('login')
   })
 
-  test('/login is registered once when credential pools are on', () => {
+  test('login is retired even when credential pools are on', () => {
     const names = buildRegistrableStaticCommands({ credentialPoolsEnabled: true }).map((c) => c.name)
-    expect(names.filter((n) => n === 'login')).toHaveLength(1)
+    expect(names).not.toContain('login')
   })
 
-  test('registered once when credential pools are on, with the five subcommands', () => {
+  test('registered once when credential pools are on, with the four subcommands', () => {
     const registered = buildRegistrableStaticCommands({ credentialPoolsEnabled: true })
     expect(registered.map((c) => c.name).filter((n) => n === 'credentials')).toHaveLength(1)
     const json = buildCredentialsSlashCommand().toJSON()
     expect((json.options ?? []).map((o) => o.name)).toEqual([
       'list',
-      'add-key',
-      'login-anthropic',
+      'add',
       'remove',
       'reorder',
     ])
   })
 
-  test('the key is never a slash-command option; provider is free text, never a fixed choice', () => {
+  test('add only takes the shared-pool choice, never a key or provider', () => {
     type RegisteredOption = {
       name: string
       required?: boolean
@@ -435,12 +434,10 @@ describe('/credentials registration gating', () => {
         expect(option.name).not.toBe('apikey')
       }
     }
-    const addKey = (json.options ?? []).find((o) => o.name === 'add-key')
+    const addKey = (json.options ?? []).find((o) => o.name === 'add')
     const options = ((addKey as unknown as { options?: RegisteredOption[] }).options ?? [])
-    const provider = options.find((o) => o.name === 'provider')
-    expect(provider?.required).toBe(true)
-    // Any models.dev provider must be addable: no hardcoded choice list.
-    expect(provider?.choices).toBeUndefined()
+    expect(options.map((o) => o.name)).toEqual(['pool'])
+    expect(options[0]?.choices).toEqual([{ name: 'shared', value: 'shared' }])
   })
 
   test('the reorder subcommand takes an account, a 1-based position and the pool choice', () => {

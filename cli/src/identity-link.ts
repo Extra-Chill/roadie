@@ -395,7 +395,7 @@ export async function startIdentityLink({
   context: IdentityContext
   /** Stop polling earlier than the code expiry (chat reply lifetime). */
   maxWaitMs: number
-  /** How to try again on this platform, e.g. "Run `/link` to try again." */
+  /** How to try again on this platform, e.g. "Run `/connect` to try again." */
   retryHint: string
   welcome: (person: Person) => Promise<unknown>
   onDone: (outcome: IdentityLinkOutcome) => Promise<void>

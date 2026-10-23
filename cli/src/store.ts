@@ -94,7 +94,7 @@ export type RoadieState = {
 
   // Whether credential pools are enabled: pool store under
   // <dataDir>/credentials/, the roadie provider (roadie/<rotation> models),
-  // and the Pi messages proxy. Also gates the /login and /credentials
+  // and the Pi messages proxy. Also gates the /credentials
   // commands. On by default since phase 4a; disable with
   // --no-credential-pools or ROADIE_CREDENTIAL_POOLS=0 to fall back to Pi's
   // own agent-dir auth.json, managed with `pi` on the host.
