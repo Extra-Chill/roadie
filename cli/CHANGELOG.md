@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.78.0] - 2026-10-23
+
+### Added
+- consolidate account commands into /credentials and /connect
+
 ## [0.77.0] - 2026-10-23
 
 ### Added
