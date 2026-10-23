@@ -64,3 +64,40 @@ export function deriveThreadNameFromSessionTitle({
   }
   return candidate
 }
+
+// True when the thread's current name no longer matches the name Roadie last
+// applied (persisted in thread_sessions.last_synced_name), ignoring Roadie's
+// preserved prefixes — i.e. a person renamed the thread by hand. A thread with
+// no stored name has never been renamed by Roadie, so it cannot have been
+// renamed manually.
+export function wasThreadManuallyRenamed({
+  currentName,
+  lastSyncedName,
+}: {
+  currentName: string
+  lastSyncedName: string | undefined | null
+}): boolean {
+  if (!lastSyncedName) return false
+  return stripPreservedThreadPrefix(currentName) !== stripPreservedThreadPrefix(lastSyncedName)
+}
+
+// Decide whether Roadie may rename the thread for this session title, and to
+// what. Returns the new name, or undefined when the rename must be skipped.
+//
+// Once a stored name exists, a mismatch with the thread's current name means
+// someone renamed the thread by hand, so Roadie leaves the name alone. With no
+// stored name, the first usable session title names the thread as before.
+export function resolveAutoThreadRename({
+  sessionTitle,
+  currentName,
+  lastSyncedName,
+}: {
+  sessionTitle: string | undefined | null
+  currentName: string
+  lastSyncedName: string | undefined | null
+}): string | undefined {
+  if (wasThreadManuallyRenamed({ currentName, lastSyncedName })) {
+    return undefined
+  }
+  return deriveThreadNameFromSessionTitle({ sessionTitle, currentName })
+}

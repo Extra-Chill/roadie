@@ -78,6 +78,7 @@ import {
   setPartMessage,
   getThreadSession,
   setThreadSession,
+  getThreadLastSyncedName,
   getThreadParentSessionId,
   setThreadParentSessionId,
   getSessionForkOrigin,
@@ -194,7 +195,7 @@ import {
 } from './ingress-input.js'
 import { cleanupPendingUiForThread, pendingPermissions } from './pending-ui.js'
 import { isEssentialToolPart } from './essential-tools.js'
-import { deriveThreadNameFromSessionTitle } from './thread-name.js'
+import { resolveAutoThreadRename } from './thread-name.js'
 import {
   delay,
   extractToastSessionId,
@@ -251,7 +252,9 @@ export class ThreadSessionRuntime {
   private userSystemByMessageId = new Map<string, string>()
 
   // Last agent session title we applied to Discord. Dedupes session.updated
-  // so we only call setName once per distinct title. Not persisted.
+  // so we only call setName once per distinct title. The applied name itself is
+  // persisted in thread_sessions.last_synced_name (Discord only) so the dedupe
+  // and manual-rename detection survive restarts; this field does not.
   private appliedOpencodeTitle: string | undefined
 
   // Part output buffering (write-side cache, not domain state)
@@ -2329,7 +2332,10 @@ export class ThreadSessionRuntime {
   // Discord rate-limits channel/thread renames heavily — reported as ~2 per
   // 10 minutes per thread (discord/discord-api-docs#1900, discordjs/discord.js#6651)
   // and discord.js setName() can block silently on the 3rd attempt. We therefore:
-  // - rename at most once per distinct title (deduped via appliedOpencodeTitle)
+  // - rename at most once per distinct title (deduped via appliedOpencodeTitle
+  //   in-process, thread_sessions.last_synced_name across restarts)
+  // - leave the name alone once a person has renamed the thread by hand
+  //   (detected against last_synced_name, ignoring preserved prefixes)
   // - race setName() against an AbortSignal.timeout() so a throttled call never
   //   blocks the event loop
   // - fail soft (log + continue) on timeout, 429, or any other error
@@ -2352,9 +2358,11 @@ export class ThreadSessionRuntime {
       this.appliedOpencodeTitle = normalizedTitle
       return
     }
-    const desiredName = deriveThreadNameFromSessionTitle({
+    const lastSyncedName = await getThreadLastSyncedName(this.threadId)
+    const desiredName = resolveAutoThreadRename({
       sessionTitle: info.title,
       currentName: this.chat.name,
+      lastSyncedName,
     })
     // Mark before setName so concurrent session.updated events don't stack
     // renames. Keep the mark on failure — retry is almost always a rate limit.
@@ -2383,6 +2391,17 @@ export class ThreadSessionRuntime {
         `[TITLE] Could not rename thread ${this.threadId}: ${renameResult.message}`,
       )
       return
+    }
+    // Record the name we applied so restarts dedupe against it and manual
+    // renames can be detected. Fail soft: the rename itself already succeeded.
+    try {
+      await (await getDb()).update(schema.thread_sessions)
+        .set({ last_synced_name: desiredName })
+        .where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
+    } catch (error) {
+      logger.warn(
+        `[TITLE] Could not record applied name for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
     logger.log(
       `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from agent session title`,
