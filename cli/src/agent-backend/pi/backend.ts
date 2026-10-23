@@ -58,7 +58,8 @@ import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { agentFor, piAgents } from './agents.js'
-import { ROADIE_APPEND_COMMAND } from './roadie-extension.js'
+import { FORM_TITLE, ROADIE_APPEND_COMMAND } from './roadie-extension.js'
+import { McpFormRequests } from './form-requests.js'
 import { permissionToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { appendFileEditEvents, isFileEditTool } from '../../file-edit-log.js'
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
@@ -71,11 +72,14 @@ import {
 } from '../../turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
 import { PI_KEY_ENV } from './pool.js'
+import { getCurrentVersion } from '../../upgrade.js'
 import { createLogger } from '../../logger.js'
 
 const logger = createLogger('PI')
 
 const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
+/** Roadie's version, for the native MCP client's clientInfo (extension reads the env). */
+const ROADIE_VERSION = getCurrentVersion()
 
 /** This process's environment without anything a tool shell must not see. */
 export function scrubbedProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -186,6 +190,11 @@ export type PiBackendOptions = {
    * the session's env) to scan matched tool results.
    */
   injectionGuardDir?: string
+  /**
+   * How long a pending MCP form elicitation waits for its person before it is
+   * answered cancel (0 disables). Default 10 minutes.
+   */
+  formTimeoutMs?: number
   /**
    * Bill model calls to Roadie's credential pools through the loopback proxy.
    * Each process gets a key in ROADIE_PI_KEY that the proxy maps to its session.
@@ -388,6 +397,14 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** Servers added through the backend (per-person MCP), and enabled-state overrides, by directory. */
   private addedMcp = new Map<string, Record<string, PiMcpServer>>()
   private mcpEnabled = new Map<string, Map<string, boolean>>()
+  /** The person key behind each added per-person server, by directory: form consent knows its person. */
+  private mcpOwners = new Map<string, Record<string, string>>()
+  /**
+   * Pending MCP form elicitations. Answered only by the asking person through
+   * replyForm; no permission rule reaches this path (form-requests.ts). Built
+   * in the constructor: its timeout comes from options.
+   */
+  private forms: McpFormRequests
   /** Permission rules from the selected agent for the current turn, by session id. */
   private turnAgentRules = new Map<string, AgentPermissionRule[]>()
   private backend: AgentBackend
@@ -397,6 +414,26 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   constructor(readonly options: PiBackendOptions) {
     fs.mkdirSync(options.sessionDir, { recursive: true })
+    this.forms = new McpFormRequests({
+      timeoutMs: options.formTimeoutMs ?? 10 * 60_000,
+      onAsked: (form) => this.emit([{
+        type: 'form.asked',
+        request: {
+          id: form.requestId,
+          sessionId: form.sessionId,
+          server: form.server,
+          tool: form.tool,
+          message: form.message,
+          schema: form.schema,
+        },
+      }], { type: 'form_asked' }),
+      onReplied: (reply) => this.emit([{
+        type: 'form.replied',
+        sessionId: reply.sessionId,
+        requestId: reply.requestId,
+        action: reply.action,
+      }], { type: 'form_replied' }),
+    })
     this.toolsFile = path.join(options.sessionDir, 'roadie-tools.json')
     fs.writeFileSync(this.toolsFile, JSON.stringify(roadieToolSchemas()))
     this.backend = {
@@ -408,8 +445,9 @@ export class PiBackendProvider implements AgentBackendProvider {
         commands: ({ directory }) => this.commands(directory),
       },
       mcp: {
-        addRemote: async ({ directory, name, url, headers }) => {
+        addRemote: async ({ directory, name, url, headers, owner }) => {
           this.addedMcp.set(directory, { ...this.addedMcp.get(directory), [name]: { url, headers, enabled: true, exposure: 'direct' } })
+          if (owner) this.mcpOwners.set(directory, { ...this.mcpOwners.get(directory), [name]: owner })
           this.refreshMcp(directory)
         },
         status: async ({ directory }) => Object.fromEntries(Object.entries(this.mcpServersFor(directory)).map(([name, server]) => [
@@ -589,6 +627,8 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** Stop every Pi process; resolves once they have all exited. */
   async dispose(): Promise<void> {
     const processes = [...this.sessions.values()].map((session) => session.process)
+    // Open forms must not outlive the backend: answer them cancel.
+    for (const sessionId of this.sessions.keys()) this.forms.cancelForSession(sessionId)
     this.sessions.clear()
     for (const key of this.shellPoolKeys.values()) this.options.pool?.revokeKey(key)
     this.shellPoolKeys.clear()
@@ -683,6 +723,8 @@ export class PiBackendProvider implements AgentBackendProvider {
         ROADIE_PI_SYSTEM_FILE: systemFile,
         ROADIE_PI_TOOLS_FILE: this.toolsFile,
         ROADIE_PI_MCP_FILE: mcpFile,
+        // The extension's native MCP client names Roadie in clientInfo.
+        ROADIE_VERSION,
         // The extension's injection guard reads per-session scan patterns
         // (`send --injection-guard`) from this directory.
         ...(this.options.injectionGuardDir && { ROADIE_PI_INJECTION_GUARD_DIR: this.options.injectionGuardDir }),
@@ -801,6 +843,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.onQuestion(session, uiId, String(record.placeholder ?? ''))
       return
     }
+    if (record.method === 'input' && record.title === FORM_TITLE) {
+      this.onForm(session, uiId, String(record.placeholder ?? ''))
+      return
+    }
     if (record.method === 'input' && record.title === TOOL_TITLE) {
       void this.runTool(session, uiId, String(record.placeholder ?? ''))
       return
@@ -860,6 +906,44 @@ export class PiBackendProvider implements AgentBackendProvider {
     }], record)
   }
 
+  /** Surface an MCP form elicitation as Roadie's form event; replyForm answers it. */
+  private onForm(session: RunningSession, uiId: string, request: string) {
+    let payload: { server?: unknown; tool?: unknown; message?: unknown; schema?: unknown }
+    try {
+      payload = JSON.parse(request)
+    } catch {
+      this.answerForm(session, uiId, { action: 'cancel' })
+      return
+    }
+    if (typeof payload.server !== 'string' || typeof payload.tool !== 'string') {
+      this.answerForm(session, uiId, { action: 'cancel' })
+      return
+    }
+    this.forms.ask({
+      requestId: uiId,
+      sessionId: session.id,
+      server: payload.server,
+      tool: payload.tool,
+      message: typeof payload.message === 'string' ? payload.message : '',
+      schema: payload.schema && typeof payload.schema === 'object' && !Array.isArray(payload.schema)
+        ? payload.schema as Record<string, unknown>
+        : {},
+      // Whose server asked: only this person may accept or decline.
+      owner: this.mcpOwners.get(session.directory)?.[payload.server],
+      answer: (answer) => this.answerForm(session, uiId, answer),
+    })
+  }
+
+  private answerForm(session: RunningSession, uiId: string, answer: { action: string; content?: Record<string, unknown>; noAnswer?: boolean }) {
+    if (answer.noAnswer) {
+      // A timeout or abort is not a person's answer: dismiss the ui request
+      // (cancel) so the extension can tell the model nobody answered.
+      session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
+      return
+    }
+    session.process.send({ type: 'extension_ui_response', id: uiId, value: JSON.stringify(answer) })
+  }
+
   /** Surface a `question` tool call as Roadie's question event; replyQuestion answers it. */
   private onQuestion(session: RunningSession, uiId: string, request: string) {
     let parsed: { callId?: string; questions?: AgentQuestion[] }
@@ -900,6 +984,8 @@ export class PiBackendProvider implements AgentBackendProvider {
       pending.cancelled = true
       pending.session.process.send({ type: 'extension_ui_response', id: uiId, cancelled: true })
     }
+    // A form left open by an abort is answered cancel: the server runs nothing.
+    this.forms.cancelForSession(sessionId)
     if (!permissions) return
     for (const [uiId, pending] of this.pendingPermissions) {
       if (pending.sessionId !== sessionId) continue
@@ -1097,6 +1183,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     if (timeout <= 0) return
     session.idleTimer = setTimeout(() => {
       const waiting = [...this.pendingPermissions.values(), ...this.pendingQuestions.values()].some((pending) => pending.session === session)
+        || this.forms.hasPendingFor(session.id)
       // Pi writes the session file with the first message; before that the
       // session could not be resumed, so it keeps its process.
       if (session.busy || waiting || !fs.existsSync(session.sessionFile)) {
@@ -1402,6 +1489,10 @@ export class PiBackendProvider implements AgentBackendProvider {
         pending.session.process.send({ type: 'extension_ui_response', id: requestId, value: JSON.stringify({ answers }) })
         this.emit([{ type: 'question.replied', sessionId: pending.sessionId, requestId, answers }], { type: 'question_replied' })
         return undefined
+      },
+      replyForm: async ({ requestId, action, content, personKey }) => {
+        // Consent only: rules and "always" decisions never reach the form.
+        return this.forms.reply({ requestId, action, content, personKey })
       },
       setTitle: async ({ sessionId, title }) => {
         this.titles.set(sessionId, title)

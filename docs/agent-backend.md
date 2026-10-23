@@ -26,6 +26,14 @@ Prompt templates and skills are Pi's own: `.pi/prompts`, `.pi/skills`, `.agents/
 
 `opencode.jsonc` is read as well as `opencode.json`.
 
+## Person-scoped MCP servers
+
+Per-person servers (credentials/person MCP, see `src/person-mcp.ts`) are registered under scoped names (`roadie_pm_<hash>_<name>`) and their tools surface as `mcp__<server>__<tool>`, so session permission rules and the `roadie_pm_*` deny/allow pair scope them per person.
+
+A remote person server that advertises protocol revision `2026-07-28` in `server/discover` is registered through Roadie's own stateless MCP client instead of Pi's built-in one: every request carries the revision envelope (`_meta`, `MCP-Protocol-Version`, `Mcp-Method`) and the person's bearer token stays in headers. Servers without the revision, or where discovery fails, keep the built-in client as before.
+
+Form elicitation: a `tools/call` answered with `elicitation/create` form requests surfaces as a `form.asked` event and a dialog (Discord) showing the server's message with Accept / Decline / Cancel plus fields for simple schemas (choice, boolean, string, number). Only the person the server was registered for can answer; nobody else's click is accepted, and the decision never goes through permission rules or "always" choices. Unrenderable schemas answer cancel with an explanatory tool result. Answers continue the same call (`inputResponses` + `requestState`) for up to five rounds; a timeout, an abort or a session end answers cancel so the server runs nothing.
+
 ## Plugins
 
 Plugins can replace or wrap the provider with the `agent_backend` filter; the default it receives is Pi. Per-directory catalog listings pass through the `agent_providers` and `agent_definitions` filters. See [Plugins and hooks](../README.md#plugins-and-hooks).
