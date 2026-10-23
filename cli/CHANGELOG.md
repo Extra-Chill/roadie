@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.76.3] - 2026-10-23
+
+### Fixed
+- let a turn's own speaker steer it; queue only other speakers
+
 ## [0.76.2] - 2026-10-23
 
 ### Fixed
