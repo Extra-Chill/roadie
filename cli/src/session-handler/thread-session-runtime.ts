@@ -2580,6 +2580,10 @@ export class ThreadSessionRuntime {
     }
   }
 
+  // Speaker whose permissions the session's Pi turns run under; set by the
+  // last prompt that applied them.
+  private permissionOwner: string | undefined
+
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
@@ -2597,9 +2601,13 @@ export class ThreadSessionRuntime {
         return
       }
 
-      // Pi steering shares the running model turn. Keep each speaker's
-      // permissions (including person-MCP) until that turn has settled.
-      if (getAgentBackendProvider().id === 'pi' && !input.noReply && this.isBusy()) {
+      // Pi steering shares the running model turn, so it stays with that
+      // turn's speaker. Another speaker's message waits for the turn to
+      // settle, keeping each speaker's permissions (including person-MCP).
+      if (
+        getAgentBackendProvider().id === 'pi' && !input.noReply && this.isBusy() &&
+        (input.personId ?? input.userId) !== this.permissionOwner
+      ) {
         deferPiTurn = true
         return
       }
@@ -3865,6 +3873,7 @@ export class ThreadSessionRuntime {
       return new Error('OpenCode rejected permission update', { cause: updateResult })
     }
     if (updateResult instanceof Error) return updateResult
+    if (pi) this.permissionOwner = owner
     return null
   }
 
