@@ -49,7 +49,7 @@ export type AgentSessionOperations = {
    * the backend resolve the session by id alone.
    */
   get(input: { sessionId: string; directory?: string }): Promise<AgentSession | undefined | Error>
-  setPermissions(input: { sessionId: string; permission: AgentPermissionRule[] }): Promise<void | Error>
+  setPermissions(input: { sessionId: string; permission: AgentPermissionRule[]; owner?: string }): Promise<void | Error>
   /**
    * Messages in order, oldest first. With `limit`, only the newest `limit`.
    * Omit `directory` to let the backend resolve the session by id alone.

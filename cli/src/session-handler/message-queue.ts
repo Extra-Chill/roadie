@@ -23,6 +23,7 @@ import {
   type EventBufferEntry,
 } from './event-stream-state.js'
 import type { EnqueueResult, IngressInput } from './ingress-input.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { parseQueuedMessagePayload } from './runtime-helpers.js'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
@@ -116,6 +117,10 @@ export class MessageQueue {
       return
     }
 
+    // Pi cannot switch speaker policies inside a running turn, even while
+    // waiting on a question. Leave the item for the normal idle drain.
+    if (getAgentBackendProvider().id === 'pi') return
+
     const next = threadState.dequeueItem(this.threadId)
     if (!next) {
       return
@@ -137,6 +142,8 @@ export class MessageQueue {
       queueId,
       prompt: input.prompt,
       userId: input.userId,
+      personId: input.personId,
+      actorVia: input.actorVia,
       username: input.username,
       images: input.images,
       appId: input.appId,

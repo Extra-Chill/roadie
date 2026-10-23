@@ -71,6 +71,9 @@ import {
 } from '../../turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
 import { PI_KEY_ENV } from './pool.js'
+import { createLogger } from '../../logger.js'
+
+const logger = createLogger('PI')
 
 const ROADIE_SESSION_ID_ENV = 'ROADIE_SESSION_ID'
 
@@ -229,6 +232,8 @@ type RunningSession = {
   updatedAt: number
   /** Pi has an active run: from agent_start until agent_settled (or process exit). */
   busy: boolean
+  /** Immutable speaker policy for the executing turn. */
+  turnPermissions?: { rules: AgentPermissionRule[]; owner?: string }
   /** Git state last announced to the model (branch notes). */
   gitState?: GitState
   idleTimer?: ReturnType<typeof setTimeout>
@@ -371,6 +376,7 @@ export class PiBackendProvider implements AgentBackendProvider {
   private starting = new Map<string, Promise<RunningSession | Error>>()
   private titles = new Map<string, string>()
   private permissionRules = new Map<string, AgentPermissionRule[]>()
+  private permissionOwners = new Map<string, string | undefined>()
   private pendingPermissions = new Map<string, PendingPermission & { session: RunningSession }>()
   /** Tool arguments by call id, from start to end (end does not repeat them). */
   private toolArgs = new Map<string, unknown>()
@@ -820,11 +826,21 @@ export class PiBackendProvider implements AgentBackendProvider {
     const decision = decidePermission({
       // The selected agent's rules first, so the session's Roadie rules still
       // win — OpenCode evaluates session rules after agent ones, last match wins.
-      rules: [...(this.turnAgentRules.get(session.id) ?? []), ...this.rulesFor(session.id)],
+      rules: [...(this.turnAgentRules.get(session.id) ?? []), ...(session.turnPermissions?.rules ?? this.rulesFor(session.id))],
       tool: call.tool,
       input: call.input,
       cwd: call.cwd || session.directory,
     })
+    if (decision.action !== 'allow') {
+      const rules = [...(this.turnAgentRules.get(session.id) ?? []), ...(session.turnPermissions?.rules ?? this.rulesFor(session.id))]
+      const matches = (decision.patterns.length ? decision.patterns : ['*']).map((target) => ({
+        pattern: target,
+        rule: rules.findLast((rule) =>
+          matchesPermissionPattern({ value: decision.permission, pattern: rule.permission })
+          && matchesPermissionPattern({ value: target, pattern: rule.pattern })),
+      }))
+      logger.warn(`[PERMISSION] ${JSON.stringify({ sessionId: session.id, tool: call.tool, action: decision.action, permission: decision.permission, matches, owner: (session.turnPermissions ? session.turnPermissions.owner : this.permissionOwners.get(session.id)) ?? 'unattributed', fallback: matches.some((match) => !match.rule) })}`)
+    }
     if (decision.action !== 'ask') {
       session.process.send({ type: 'extension_ui_response', id: uiId, confirmed: decision.action === 'allow' })
       return
@@ -952,7 +968,8 @@ export class PiBackendProvider implements AgentBackendProvider {
     child.childOf = session.id
     // Children run one level deep: the parent's rules plus a task deny, like
     // OpenCode's task children.
-    const childRules = [...this.rulesFor(session.id), { permission: 'task', pattern: '*', action: 'deny' as const }]
+    const childRules = [...(session.turnPermissions?.rules ?? this.rulesFor(session.id)), { permission: 'task', pattern: '*', action: 'deny' as const }]
+    child.turnPermissions = { rules: childRules, owner: session.turnPermissions?.owner }
     this.permissionRules.set(child.id, childRules)
     this.persistSessionState(child.id, { permissionRules: childRules })
     if (description) {
@@ -1222,7 +1239,8 @@ export class PiBackendProvider implements AgentBackendProvider {
           updatedAt: fs.statSync(file).mtimeMs,
         })
       },
-      setPermissions: async ({ sessionId, permission }) => {
+      setPermissions: async ({ sessionId, permission, owner }) => {
+        this.permissionOwners.set(sessionId, owner)
         this.permissionRules.set(sessionId, permission)
         this.persistSessionState(sessionId, { permissionRules: permission })
       },
@@ -1237,6 +1255,12 @@ export class PiBackendProvider implements AgentBackendProvider {
       prompt: async ({ sessionId, directory, parts, system, agent, model, variant, noReply }) => {
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
+        // Context-only ingress must not alter an executing speaker's policy,
+        // selected agent, system prompt or tool-shell attribution.
+        if (noReply) {
+          const { message, images } = promptText(parts)
+          return this.appendContextMessage(session, message, images)
+        }
         // The turn's agent: its system prompt, model and permission rules apply
         // like OpenCode applies an agent definition to a prompt. Unknown names
         // are rejected instead of silently running as the default agent.
@@ -1278,13 +1302,9 @@ export class PiBackendProvider implements AgentBackendProvider {
           if (!(reset instanceof Error)) session.thinking = session.defaultThinking
         }
         const { message: typed, images } = promptText(parts)
-        // Context-only message: record it without a model turn, so the agent
-        // sees it on the next turn (see appendContextMessage).
-        if (noReply) {
-          const recorded = await this.appendContextMessage(session, typed, images)
-          if (recorded) return recorded
-          this.touch(session)
-          return undefined
+        session.turnPermissions = {
+          rules: this.rulesFor(sessionId).map((rule) => ({ ...rule })),
+          owner: this.permissionOwners.get(sessionId),
         }
         // Branch awareness: a note when the
         // checkout's branch (or detached HEAD) differs from the last one announced.
@@ -1358,12 +1378,13 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (!pending) return new AgentRequestError({ detail: `No pending Pi permission request ${requestId}` })
         this.pendingPermissions.delete(requestId)
         if (reply === 'always') {
-          const rules = this.rulesFor(pending.sessionId)
+          const rules = pending.session.turnPermissions?.rules ?? this.rulesFor(pending.sessionId)
           const patterns = pending.patterns.length > 0 ? pending.patterns : ['*']
           const updated = [
             ...rules,
             ...patterns.map((pattern) => ({ permission: pending.permission, pattern, action: 'allow' as const })),
           ]
+          if (pending.session.turnPermissions) pending.session.turnPermissions.rules = updated
           this.permissionRules.set(pending.sessionId, updated)
           this.persistSessionState(pending.sessionId, { permissionRules: updated })
         }

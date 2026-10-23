@@ -7,11 +7,19 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import { personMcpPermissions, personMcpScope } from '../../person-mcp.js'
+import { parsePermissionRules } from '../../permission-policy.js'
 import { AgentRequestError } from '../types.js'
 import type { AgentEvent } from '../events.js'
 import { PiBackendProvider } from './backend.js'
 import { PiEventTranslator } from './events.js'
+
+const permissionLog = vi.hoisted(() => vi.fn())
+vi.mock('../../logger.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../logger.js')>()
+  return { ...original, createLogger: (prefix: string) => ({ ...original.createLogger(prefix), ...(prefix === 'PI' ? { warn: permissionLog } : {}) }) }
+})
 
 type Recorded = Record<string, unknown>
 
@@ -94,6 +102,53 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
     fs.mkdirSync(path.join(directory, '.opencode', 'agents'), { recursive: true })
     fs.writeFileSync(path.join(directory, '.opencode', 'agents', `${name}.md`), [`---`, ...frontmatter, `---`, ...body, ''].join('\n'))
   }
+
+  test('speaker rules and person-MCP scope stay bound to the executing turn (#340)', async () => {
+    const { session, process, directory } = stubSession()
+    const ops = provider.getBackend().sessions
+    const admin = parsePermissionRules(personMcpPermissions({ personKey: 'admin', hasServers: true }))
+    const seat = parsePermissionRules(['bash:deny', 'edit:deny', 'external_directory:deny', 'read:*wp-config.php:deny', 'grep:*wp-config.php:deny', ...personMcpPermissions({ personKey: 'seat', hasServers: true })])
+    const prompt = () => ops.prompt({ sessionId: session.id, directory, parts: [{ kind: 'text', text: 'work' }] })
+    const check = (tool: string, input: Recorded = {}) => {
+      internalsOf(provider).onUiRequest(session, { type: 'extension_ui_request', id: 'check', method: 'confirm', title: 'roadie:permission', message: JSON.stringify({ tool, input, cwd: directory }) })
+      return process.sent.at(-1)?.confirmed
+    }
+    await ops.setPermissions({ sessionId: session.id, permission: admin, owner: 'admin' })
+    await prompt()
+    internalsOf(provider).onRecord(session, { type: 'agent_start' })
+    await ops.setPermissions({ sessionId: session.id, permission: seat, owner: 'team-seat' })
+    // Even a context-only message must not alter this policy.
+    await ops.prompt({ sessionId: session.id, directory, noReply: true, parts: [{ kind: 'text', text: 'context' }] })
+    expect(check('bash', { command: 'true' })).toBe(true)
+    expect(check('read', { path: 'wp-config.php' })).toBe(true)
+    expect(check('write', { path: 'file.txt' })).toBe(true)
+    expect(check(`${personMcpScope('admin')}_mail_send`)).toBe(true)
+    permissionLog.mockClear()
+    const log = permissionLog
+    try {
+      expect(check(`${personMcpScope('seat')}_mail_send`)).toBe(false)
+      internalsOf(provider).onRecord(session, { type: 'agent_settled' })
+      await prompt()
+      expect(check('bash', { command: 'ls' })).toBe(false)
+      expect(check('read', { path: 'wp-config.php' })).toBe(false)
+      expect(check('write', { path: 'file.txt' })).toBe(false)
+      expect(check(`${personMcpScope('admin')}_mail_send`)).toBe(false)
+      expect(check(`${personMcpScope('seat')}_mail_send`)).toBe(true)
+      expect(log.mock.calls.flat().join(' ')).toContain('team-seat')
+      expect(log.mock.calls.flat().join(' ')).toContain('"permission":"bash"')
+      expect(log.mock.calls.flat().join(' ')).toContain('"rule":{"permission":"bash","pattern":"*","action":"deny"}')
+      internalsOf(provider).onRecord(session, { type: 'agent_settled' })
+      await ops.setPermissions({ sessionId: session.id, permission: parsePermissionRules(['bash:ask']), owner: 'ask-seat' })
+      await prompt()
+      check('bash', { command: 'true' })
+      expect(log.mock.calls.flat().join(' ')).toContain('"action":"ask"')
+      expect(log.mock.calls.flat().join(' ')).toContain('ask-seat')
+      await provider.getBackend().sessions.replyPermission({ requestId: 'check', directory, reply: 'reject' })
+    } finally {
+      log.mockClear()
+      await ops.setPermissions({ sessionId: session.id, permission: [] })
+    }
+  })
 
   test('noReply records the message through the append command instead of a prompt', async () => {
     const { process } = stubSession()
