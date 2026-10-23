@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.78.1] - 2026-10-23
+
+### Fixed
+- remove OpenCode leftovers from Pi-only runtime
+
 ## [0.78.0] - 2026-10-23
 
 ### Added
