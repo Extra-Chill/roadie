@@ -297,7 +297,8 @@ The most common Discord slash commands (Slack exposes the session commands throu
 |---|---|
 | `/abort` | Stop the current run |
 | `/fork [prompt] [from]` | Branch the session into a new thread; the original keeps running |
-| `/model`, `/agent` | Change the model or agent for this channel or session |
+| `/model` | Choose a model for the session, channel, or global default; use **Change thinking level** or **Clear override** buttons for the current model. Goes straight to models when only one provider has pickable models |
+| `/agent` | Change the agent for this channel or session |
 | `/credentials list\|add\|remove\|reorder` | Manage model accounts in your credential pool; `add` opens the subscription/API-key provider picker. Registered only while credential pools are on (the default); with `--no-credential-pools`, Pi's own agent-dir `auth.json` applies and is managed with `pi` on the host |
 | `/new-session`, `/last-sessions` | Start a session in this project; list recent ones |
 | `/compact`, `/context-usage` | Compact the context; show how much is in use |

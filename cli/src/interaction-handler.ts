@@ -43,7 +43,6 @@ import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand } from './commands/mcp.js'
 import { handleConnectCommand } from './commands/connect.js'
 import { handleStartCommand, welcomeDiscordUser } from './commands/start.js'
-import { handleModelVariantCommand } from './commands/model-variant.js'
 import {
   acknowledgeComponent,
   isComponentInteraction,
@@ -456,10 +455,6 @@ export function registerInteractionHandler({
 
             case 'model':
               await handleModelCommand({ interaction, appId })
-              return
-
-            case 'model-variant':
-              await handleModelVariantCommand({ interaction, appId })
               return
 
             case 'credentials':
