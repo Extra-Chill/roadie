@@ -134,7 +134,9 @@ export async function registerPersonMcpServers({
     const current = fingerprint(`${server.url}\n${token}`)
     const previous = known.get(key)
     if (previous !== current) {
-      const added = await backend.mcp.addRemote({ directory, name, url: server.url, headers })
+      // `owner` records whose server this is, so MCP forms raised through it
+      // can only be answered by this person (form-requests.ts).
+      const added = await backend.mcp.addRemote({ directory, name, url: server.url, headers, owner: personKey })
       if (added instanceof Error) {
         logger.warn(`[PERSON-MCP] could not add server ${server.name}: ${added.message}`)
         continue

@@ -30,6 +30,14 @@ import {
 import { handleAgentSelectMenu } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import {
+  handleMcpFormButton,
+  handleMcpFormFieldSelectMenu,
+  handleMcpFormModalSubmit,
+  MCP_FORM_BUTTON_PREFIX,
+  MCP_FORM_FIELD_PREFIX,
+  MCP_FORM_MODAL_PREFIX,
+} from './commands/mcp-form.js'
+import {
   handleFileUploadButton,
   handleFileUploadModalSubmit,
 } from './commands/file-upload.js'
@@ -147,6 +155,9 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
   button({ prefix: CREDENTIALS_OAUTH_BUTTON_PREFIX, ack: 'modal' }, handleCredentialsOAuthCodeButton),
   button({ prefix: 'action_button:', ack: 'update' }, handleActionButton),
   button({ prefix: 'html_action:', ack: 'update' }, handleHtmlActionButton),
+  // MCP form elicitation: answered only by the asking person (the backend
+  // refuses anyone else); refusals go to the clicker ephemerally.
+  button({ prefix: MCP_FORM_BUTTON_PREFIX, ack: 'update' }, handleMcpFormButton),
 
   // Select menus
   select({ prefix: 'model_provider:', ack: 'update' }, handleProviderSelectMenu),
@@ -158,6 +169,7 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
   select({ prefix: 'agent_select:', ack: 'update' }, handleAgentSelectMenu),
   select({ prefix: 'verbosity_select:', ack: 'update' }, handleVerbositySelectMenu),
   select({ prefix: 'ask_question:', ack: 'update' }, handleAskQuestionSelectMenu),
+  select({ prefix: MCP_FORM_FIELD_PREFIX, ack: 'update' }, handleMcpFormFieldSelectMenu),
   select({ prefix: 'mcp_toggle:', ack: 'update' }, handleMcpSelectMenu),
   // Opens the API key modal for most providers.
   select({ prefix: 'login_select:', ack: 'modal' }, async (interaction) => {
@@ -182,6 +194,7 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
     await handleCredentialsOAuthCodeModalSubmit(interaction)
   }),
   modal({ prefix: 'file_upload_modal:', ack: 'modal' }, handleFileUploadModalSubmit),
+  modal({ prefix: MCP_FORM_MODAL_PREFIX, ack: 'modal' }, handleMcpFormModalSubmit),
 ]
 
 // Stale registration: /credentials only exists when --credential-pools is

@@ -32,6 +32,7 @@ import prettyMilliseconds from 'pretty-ms'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
+import type { AgentFormRequest } from '../agent-backend/events.js'
 import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
 import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
 import { getCachedPerson, isIdentityConfigured } from '../identity.js'
@@ -106,6 +107,9 @@ import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
 } from '../commands/ask-question.js'
+import {
+  cancelPendingMcpFormsForRequest,
+} from '../commands/mcp-form.js'
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
@@ -1098,6 +1102,12 @@ export class ThreadSessionRuntime {
         break
       case 'question.replied':
         this.handleQuestionReplied(agentEvent)
+        break
+      case 'form.asked':
+        await this.handleFormAsked(agentEvent.request)
+        break
+      case 'form.replied':
+        this.handleFormReplied(agentEvent)
         break
       case 'status':
         await this.handleSessionStatus(agentEvent)
@@ -2252,8 +2262,67 @@ export class ThreadSessionRuntime {
     }
     this.interactiveUi.clearDeferredQuestionShow()
     this.onInteractiveUiStateChanged()
+  }
 
-    // Queued messages wait until the turn settles, preserving speaker policies.
+  /**
+   * An MCP form elicitation: show the server's message with Accept / Decline /
+   * Cancel. Platforms without a form UI get the form answered cancel, so a
+   * server never runs an operation nobody could approve. Forms are main-
+   * session only: a task child's rules deny person MCP anyway.
+   */
+  private async handleFormAsked(request: AgentFormRequest): Promise<void> {
+    const sessionId = this.state?.sessionId
+    if (request.sessionId !== sessionId) {
+      logger.log(
+        `[FORM IGNORED] Form for different session (expected: ${sessionId}, got: ${request.sessionId})`,
+      )
+      return
+    }
+    const show = this.chat.interactions.form
+    if (!show) {
+      logger.log(`[FORM] No form UI on ${this.chat.platform}; cancelling form ${request.id}`)
+      await this.answerFormCancel(request.id)
+      return
+    }
+    logger.log(`Form requested: id=${request.id}, server=${request.server}, tool=${request.tool}`)
+    try {
+      await this.interactiveUi.showInteractiveUi({
+        show: async () => {
+          await show({
+            sessionId,
+            directory: this.sdkDirectory,
+            requestId: request.id,
+            request,
+            silent: this.getQueueLength() > 0,
+          })
+        },
+      })
+    } catch (error) {
+      logger.error('Failed to show MCP form dialog:', error)
+      await this.answerFormCancel(request.id)
+    }
+  }
+
+  /**
+   * Answer a form cancel without a person (no form UI on this platform, or
+   * the dialog could not be shown): the backend settles it, the server runs
+   * nothing, and the tool result explains the cancel.
+   */
+  private async answerFormCancel(requestId: string): Promise<void> {
+    const client = getAgentBackendProvider().getBackend(this.sdkDirectory)
+    await client?.sessions.replyForm?.({ requestId, directory: this.sdkDirectory, action: 'cancel' })
+  }
+
+  /** The backend answered a form on its own (timeout, abort) or through a click: retire the dialog. */
+  private handleFormReplied(event: { sessionId: string; requestId: string; action: 'accept' | 'decline' | 'cancel' }): void {
+    if (event.sessionId !== this.state?.sessionId) {
+      return
+    }
+    void cancelPendingMcpFormsForRequest({
+      threadId: this.thread.id,
+      requestId: event.requestId,
+      action: event.action,
+    }).catch((error: unknown) => logger.warn('Could not retire MCP form dialog:', error))
   }
 
   private async handleSessionStatus(event: {

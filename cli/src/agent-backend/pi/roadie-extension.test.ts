@@ -1,11 +1,14 @@
 // The Roadie Pi extension's injection guard helpers (Pi parity of the
-// injection guard): pure functions, no `pi` process needed.
+// injection guard) and the native MCP form elicitation loop: pure functions,
+// no `pi` process needed.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
+  FORM_TITLE,
+  MAX_FORM_ROUNDS,
   ROADIE_INJECTION_GUARD_DIR_ENV,
   injectionGuardBlockedOutput,
   injectionGuardBuildUserMessage,
@@ -14,7 +17,144 @@ import {
   injectionGuardParseJudgeResponse,
   injectionGuardSessionPatterns,
   injectionGuardWildcardMatch,
+  nativeMcpToolName,
+  runNativeToolCall,
+  type NativeToolAsk,
 } from './roadie-extension.js'
+import type { NativeCallContinuation, NativeCallResult } from './mcp-native.js'
+
+describe('native MCP tool names', () => {
+  test('keeps the mcp__<server>__<tool> shape Pi\'s built-in client uses', () => {
+    expect(nativeMcpToolName('roadie_pm_abc123_wordpress', 'search')).toBe('mcp__roadie_pm_abc123_wordpress__search')
+    // Non-alphanumerics fold to _, like Pi's own naming.
+    expect(nativeMcpToolName('srv', 'buy-plan')).toBe('mcp__srv__buy_plan')
+  })
+})
+
+describe('runNativeToolCall (form elicitation)', () => {
+  const SERVER = 'roadie_pm_abc123def4567890_wordpress'
+
+  const formRequest = (): NativeCallResult => ({
+    content: [],
+    inputRequired: {
+      inputRequests: { k1: { method: 'elicitation/create', params: { mode: 'form', message: 'Buy the pro plan?', requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean' } } } } } },
+      requestState: 'signed-state',
+    },
+  })
+
+  const done = (text: string): NativeCallResult => ({ content: [{ type: 'text', text }] })
+
+  /** A call fake scripted per round; records continuations. */
+  function scriptedCall(rounds: NativeCallResult[], errors?: Error[]) {
+    const calls: Array<{ args: unknown; continuation: NativeCallContinuation | undefined }> = []
+    const call = async (args: Record<string, unknown>, continuation?: NativeCallContinuation) => {
+      calls.push({ args, continuation })
+      const error = errors?.[calls.length - 1]
+      if (error) throw error
+      return rounds[Math.min(calls.length - 1, rounds.length - 1)]!
+    }
+    return { call, calls }
+  }
+
+  test('accept continues the call with inputResponses and the request state', async () => {
+    const { call, calls } = scriptedCall([formRequest(), done('bought')])
+    const asks: unknown[] = []
+    const ask: NativeToolAsk = async (payload) => {
+      asks.push(payload)
+      return { action: 'accept', content: { confirm: true } }
+    }
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'buy-plan', args: { plan: 'pro' }, call, ask })
+    expect(outcome.notes).toEqual([])
+    expect(outcome.result.content).toEqual([{ type: 'text', text: 'bought' }])
+    expect(asks).toEqual([{
+      server: SERVER,
+      tool: 'buy-plan',
+      message: 'Buy the pro plan?',
+      schema: { type: 'object', properties: { confirm: { type: 'boolean' } } },
+    }])
+    expect(calls[1]?.continuation).toEqual({
+      inputResponses: { k1: { action: 'accept', content: { confirm: true } } },
+      requestState: 'signed-state',
+    })
+  })
+
+  test('decline and cancel are answered as given and reach the server', async () => {
+    const { call, calls } = scriptedCall([formRequest(), formRequest(), done('nothing done')])
+    let round = 0
+    const ask: NativeToolAsk = async () => {
+      round += 1
+      return round === 1 ? { action: 'decline' } : { action: 'cancel' }
+    }
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'buy-plan', args: {}, call, ask })
+    expect(outcome.notes).toEqual(['the approval form was cancelled, so the server ran nothing'])
+    expect(calls[1]?.continuation?.inputResponses.k1).toEqual({ action: 'decline' })
+    expect(calls[2]?.continuation?.inputResponses.k1).toEqual({ action: 'cancel' })
+  })
+
+  test('a dismissed, timed out or aborted form answers cancel and says so', async () => {
+    const { call, calls } = scriptedCall([formRequest(), done('cancelled by the server')])
+    const ask: NativeToolAsk = async () => undefined
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'buy-plan', args: {}, call, ask })
+    expect(calls[1]?.continuation?.inputResponses.k1).toEqual({ action: 'cancel' })
+    expect(outcome.notes.join(' ')).toContain('no answer')
+  })
+
+  test('an unrenderable form is answered cancel with the reason', async () => {
+    const unrenderable = (): NativeCallResult => ({
+      content: [],
+      inputRequired: {
+        inputRequests: { k1: { method: 'elicitation/create', params: { mode: 'form', message: 'Config?', requestedSchema: { type: 'object', properties: { meta: { type: 'object' } } } } } },
+        requestState: 'state-2',
+      },
+    })
+    const { call, calls } = scriptedCall([unrenderable(), done('ok')])
+    const ask: NativeToolAsk = async () => { throw new Error('Roadie must not ask what it cannot render') }
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'configure', args: {}, call, ask })
+    expect(outcome.notes.join(' ')).toContain('"meta"')
+    expect(calls[1]?.continuation?.inputResponses.k1).toEqual({ action: 'cancel' })
+  })
+
+  test('non-form elicitation requests are cancelled, not asked', async () => {
+    const urlMode = (): NativeCallResult => ({
+      content: [],
+      inputRequired: {
+        inputRequests: { u1: { method: 'elicitation/create', params: { mode: 'url', message: 'https://example.com/approve' } } },
+        requestState: 'state-3',
+      },
+    })
+    const { call, calls } = scriptedCall([urlMode(), done('ok')])
+    const ask: NativeToolAsk = async () => { throw new Error('Roadie must not ask a url mode') }
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'x', args: {}, call, ask })
+    expect(calls[1]?.continuation?.inputResponses.u1).toEqual({ action: 'cancel' })
+    expect(outcome.notes.join(' ')).toContain('non-form')
+  })
+
+  test('a malformed dialog answer answers cancel', async () => {
+    const { call, calls } = scriptedCall([formRequest(), done('ok')])
+    const ask: NativeToolAsk = async () => ({ nonsense: true })
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'buy-plan', args: {}, call, ask })
+    expect(calls[1]?.continuation?.inputResponses.k1).toEqual({ action: 'cancel' })
+    expect(outcome.result.content[0]?.text).toBe('ok')
+  })
+
+  test('rounds are bounded at 5 and the tool result explains the stop', async () => {
+    const { call, calls } = scriptedCall([formRequest()]) // every round asks again
+    const ask: NativeToolAsk = async () => ({ action: 'accept', content: { confirm: true } })
+    const outcome = await runNativeToolCall({ server: SERVER, tool: 'loop', args: {}, call, ask })
+    expect(calls).toHaveLength(MAX_FORM_ROUNDS + 1)
+    expect(outcome.notes.join(' ')).toContain('still asking for input after 5 rounds')
+  })
+
+  test('a transport error throws so the tool result is an error', async () => {
+    const { call } = scriptedCall([], [new Error('HTTP 503')])
+    const ask: NativeToolAsk = async () => undefined
+    await expect(runNativeToolCall({ server: SERVER, tool: 'buy-plan', args: {}, call, ask })).rejects.toThrow('HTTP 503')
+  })
+
+  test('the form dialog title is Roadie\'s form title', () => {
+    expect(FORM_TITLE).toBe('roadie:form')
+  })
+})
 
 describe('injectionGuardWildcardMatch', () => {
   test('matches exact values and * spans', () => {

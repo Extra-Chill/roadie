@@ -10,7 +10,7 @@
 // buttons, uploads) are not part of it yet.
 
 /** A message the platform accepted. */
-import type { AgentPermissionRequest } from '../agent-backend/events.js'
+import type { AgentFormRequest, AgentPermissionRequest } from '../agent-backend/events.js'
 import type { AskUserQuestionInput } from '../commands/ask-question.js'
 import type { ActionButtonOption } from '../commands/action-buttons.js'
 
@@ -19,6 +19,12 @@ export type ChatInteractions = {
   addPermissionRequest(input: { contextHash: string; requestId: string }): boolean
   clearPermission(contextHash: string): void
   question(input: { sessionId: string; directory: string; requestId: string; input: AskUserQuestionInput; silent?: boolean }): Promise<void>
+  /**
+   * An MCP form elicitation (form.asked): the server's message with Accept /
+   * Decline / Cancel. Optional: a platform without it gets the form answered
+   * cancel, so a server never runs on a form nobody could see.
+   */
+  form?(input: { sessionId: string; directory: string; requestId: string; request: AgentFormRequest; silent?: boolean }): Promise<void>
   actions(input: { sessionId: string; directory: string; buttons: ActionButtonOption[]; silent?: boolean }): Promise<void>
   upload(input: { sessionId: string; directory: string; prompt: string; maxFiles: number }): Promise<string[]>
   hasQuestion(): boolean

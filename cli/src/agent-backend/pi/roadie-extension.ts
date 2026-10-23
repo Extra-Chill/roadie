@@ -10,6 +10,13 @@
 //   roadie_sleep) from the schemas in ROADIE_PI_TOOLS_FILE. Each call is sent to
 //   Roadie as an `input` UI request titled ROADIE_TOOL_TITLE; Roadie runs the
 //   tool in the bot process and answers with the JSON result.
+// - Serves person-scoped remote MCP servers that speak the stateless
+//   2026-07-28 protocol revision with a small native client (./mcp-native.ts):
+//   their tools are registered under the same `mcp__<server>__<tool>` names
+//   Pi's built-in MCP uses, so Roadie's per-person permission scoping applies
+//   unchanged, and form elicitation becomes a `roadie:form` UI request
+//   (FORM_TITLE) that Roadie answers from the asking person only. Servers
+//   without the revision keep Pi's built-in MCP registration.
 // - Registers the ROADIE_APPEND_COMMAND command so the backend can record a
 //   context-only message (`noReply`) through `pi.sendMessage` with
 //   `triggerTurn: false`: it lands in the session history without starting a
@@ -30,11 +37,24 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { extractKittyGraphics } from 'kitty-graphics-agent/parser'
+import {
+  buildFormAnswer,
+  callTool,
+  discoverServer,
+  listTools,
+  parseFormSchema,
+  supportsNativeProtocol,
+  type NativeCallContinuation,
+  type NativeCallResult,
+  type NativeFormAnswer,
+} from './mcp-native.js'
 import { cleanMessageToolCalls } from './text-tool-calls.js'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
 export const ROADIE_QUESTION_TITLE = 'roadie:question'
+/** MCP form elicitation (form.asked); answered only by the asking person. */
+export const FORM_TITLE = 'roadie:form'
 /** Command the backend prompts with to record a message without a turn. */
 export const ROADIE_APPEND_COMMAND = 'roadie:append'
 /** customType marking the messages that command records (./events.ts maps them to user messages). */
@@ -142,11 +162,12 @@ type Context = {
   cwd: string
   ui: {
     confirm(title: string, message: string): Promise<boolean>
-    input(title: string, placeholder?: string): Promise<string | undefined>
+    input(title: string, placeholder?: string, opts?: UiInputOptions): Promise<string | undefined>
   }
 }
 type ToolSchema = { name: string; description: string; parameters: Record<string, unknown> }
 type ToolOutput = { content: Array<{ type: 'text'; text: string }>; details: { title?: string } }
+type UiInputOptions = { signal?: AbortSignal }
 type RecoveryMessage = { role: string; content?: unknown; timestamp?: number; stopReason?: string }
 type ExtensionApi = {
   getAllTools(): Array<{ name: string }>
@@ -161,6 +182,8 @@ type ExtensionApi = {
     label: string
     description: string
     parameters: Record<string, unknown>
+    /** Withdrawing a tool re-registers it hidden (tools cannot be unregistered). */
+    exposure?: string
     execute(callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: unknown, ctx: Context): Promise<ToolOutput>
   }): void
   on(event: 'before_agent_start', handler: (event: { systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>): void
@@ -183,33 +206,276 @@ function readToolSchemas(): ToolSchema[] {
   }
 }
 
-/** Register the MCP servers Roadie wrote for this process; re-read before each run so additions apply. */
-function syncMcpServers(pi: ExtensionApi, registered: Map<string, string>) {
+/** Register the MCP servers Roadie wrote for this process; re-read before each run so additions apply.
+ *
+ * Person-scoped remote servers that speak the 2026-07-28 protocol revision
+ * (server/discover advertises it) get a native stateless client instead of
+ * Pi's built-in MCP: their tools are registered one by one under the same
+ * `mcp__<server>__<tool>` names, so Roadie's per-person permission scoping
+ * applies unchanged, and form elicitation can be answered. Anything else —
+ * discover failing (including method-not-found), a server without the
+ * revision, stdio servers — keeps the built-in registration.
+ */
+async function syncMcpServers(pi: ExtensionApi, registered: Map<string, string>, native: Map<string, NativeRegistration>): Promise<void> {
+  // Serial: overlapping syncs (load, then an early run) must not double-register.
+  syncChain = syncChain.then(() => syncMcpServersOnce(pi, registered, native))
+  try {
+    await syncChain
+  } catch {
+    // Never fail the run over MCP registration; each server logs its own errors.
+  }
+}
+let syncChain: Promise<void> = Promise.resolve()
+
+async function syncMcpServersOnce(pi: ExtensionApi, registered: Map<string, string>, native: Map<string, NativeRegistration>): Promise<void> {
   const file = process.env['ROADIE_PI_MCP_FILE']
-  if (!file || !pi.registerMcpServer || !pi.unregisterMcpServer) return
-  let servers: Record<string, Record<string, unknown>> = {}
+  if (!file) return
+  let servers: Record<string, McpServerConfig> = {}
   try {
     servers = JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch {
     return
   }
+  const version = process.env['ROADIE_VERSION'] || '0.0.0'
   for (const [name, config] of Object.entries(servers)) {
     const key = JSON.stringify(config)
-    if (registered.get(name) === key) continue
+    if (registered.get(name) === key || native.get(name)?.configKey === key) continue
     if (config.enabled === false) {
-      if (registered.has(name)) pi.unregisterMcpServer(name)
+      if (registered.has(name)) pi.unregisterMcpServer?.(name)
       registered.delete(name)
+      withdrawNativeTools(pi, name, native)
       continue
     }
+    const candidate = nativeCandidate(name, config)
+    if (candidate) {
+      const discover = await discoverServer({ url: candidate.url, headers: candidate.headers, version })
+      if (discover instanceof Error || !supportsNativeProtocol(discover)) {
+        // No 2026-07-28 (or discover unavailable): Pi's built-in client, as before.
+        console.error(`[roadie-mcp] ${name}: native protocol unavailable (${discover instanceof Error ? discover.message : 'revision not advertised'}); using the built-in MCP client`)
+      } else {
+        const how = await registerNativeServer(pi, { name, configKey: key, url: candidate.url, headers: candidate.headers, version, native })
+        if (how === 'builtin') registered.set(name, key)
+        continue
+      }
+    }
+    withdrawNativeTools(pi, name, native)
+    native.delete(name)
+    if (!pi.registerMcpServer || !pi.unregisterMcpServer) continue
     pi.registerMcpServer(name, config)
     registered.set(name, key)
   }
   for (const name of [...registered.keys()]) {
     if (!(name in servers)) {
-      pi.unregisterMcpServer(name)
+      pi.unregisterMcpServer?.(name)
       registered.delete(name)
     }
   }
+  for (const name of [...native.keys()]) {
+    if (!(name in servers)) withdrawNativeTools(pi, name, native)
+  }
+}
+
+/** Config entry shape in Roadie's MCP file (the fields this extension reads). */
+type McpServerConfig = {
+  url?: string
+  headers?: Record<string, string>
+  enabled?: boolean
+}
+
+type NativeRegistration = { configKey: string; tools: string[] }
+
+/** Person-scoped remote servers are the native client's slice-1 targets. */
+function nativeCandidate(name: string, config: McpServerConfig): { url: string; headers: Record<string, string> } | undefined {
+  if (!name.startsWith('roadie_pm_')) return undefined
+  // Roadie's URL policy (isAllowedMcpUrl) already gates what gets registered;
+  // plain http is accepted here so a test server can pose as one.
+  if (typeof config.url !== 'string' || !/^https?:\/\//.test(config.url)) return undefined
+  if (!config.headers || typeof config.headers !== 'object') return undefined
+  return { url: config.url, headers: config.headers }
+}
+
+/** Pi names MCP tools `mcp__<server>__<tool>`, non-alphanumerics folded to `_`. */
+export function nativeMcpToolName(server: string, tool: string): string {
+  return `mcp__${server}__${tool.replace(/[^A-Za-z0-9_]/g, '_')}`
+}
+
+async function registerNativeServer(pi: ExtensionApi, input: {
+  name: string
+  configKey: string
+  url: string
+  headers: Record<string, string>
+  version: string
+  native: Map<string, NativeRegistration>
+}): Promise<'native' | 'builtin'> {
+  const { name, configKey, url, headers, version, native } = input
+  const tools = await listTools({ url, headers, version })
+  if (tools instanceof Error) {
+    // Discover promised the revision but the tool list failed: the built-in
+    // client surfaces its own error, as it would have without this probe.
+    console.error(`[roadie-mcp] ${name}: tools/list failed (${tools.message}); using the built-in MCP client`)
+    native.delete(name)
+    if (pi.registerMcpServer) pi.registerMcpServer(name, { url, headers, enabled: true })
+    return 'builtin'
+  }
+  // The same name may have been registered built-in before a config change:
+  // a registered MCP server overrides nothing here, so drop it first.
+  pi.unregisterMcpServer?.(name)
+  const names: string[] = []
+  for (const tool of tools) {
+    const toolName = nativeMcpToolName(name, tool.name)
+    names.push(toolName)
+    pi.registerTool({
+      name: toolName,
+      label: tool.name,
+      description: tool.description ?? tool.name,
+      parameters: tool.inputSchema ?? { type: 'object', properties: {} },
+      async execute(_callId, params, signal, _onUpdate, ctx) {
+        const outcome = await runNativeToolCall({
+          server: name,
+          tool: tool.name,
+          args: (params ?? {}) as Record<string, unknown>,
+          call: (args, continuation) => callTool({ url, headers, version, tool: tool.name, args, continuation, signal }),
+          ask: async (payload) => {
+            const answer = await ctx.ui.input(FORM_TITLE, JSON.stringify(payload), { signal })
+            if (answer === undefined) return undefined
+            try {
+              return JSON.parse(answer)
+            } catch {
+              return undefined
+            }
+          },
+        })
+        const text = outcome.result.content
+          .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : `[${part.type} content]`))
+          .join('\n')
+        const note = outcome.notes.length > 0 ? `\n\n[Roadie] ${outcome.notes.join('; ')}.` : ''
+        if (outcome.result.isError) throw new Error(`${text || 'The MCP tool call failed'}${note}`)
+        return {
+          content: [{ type: 'text', text: `${text}${note}` }],
+          details: { title: `${tool.name} (mcp: ${name.replace(/^roadie_pm_[0-9a-f]+_/, '')})` },
+        }
+      },
+    })
+  }
+  native.set(name, { configKey, tools: names })
+  return 'native'
+}
+
+/** Tools cannot be unregistered; withdrawing re-registers them hidden. */
+function withdrawNativeTools(pi: ExtensionApi, name: string, native: Map<string, NativeRegistration>) {
+  const registration = native.get(name)
+  if (!registration) return
+  native.delete(name)
+  for (const toolName of registration.tools) {
+    pi.registerTool?.({
+      name: toolName,
+      label: toolName,
+      description: `${toolName} is no longer available`,
+      parameters: { type: 'object', properties: {} },
+      exposure: 'hidden',
+      async execute() {
+        throw new Error(`${toolName} is no longer available`)
+      },
+    })
+  }
+}
+
+/** A form answer from the dialog, or cancel when it is not a usable answer. */
+function sanitizeFormAnswer(answer: unknown): NativeFormAnswer {
+  const action = (answer as { action?: unknown } | null)?.action
+  if (action !== 'accept' && action !== 'decline' && action !== 'cancel') return { action: 'cancel' }
+  const content = (answer as { content?: unknown }).content
+  const fields = content && typeof content === 'object' && !Array.isArray(content) ? content as Record<string, unknown> : undefined
+  return buildFormAnswer({ action, ...(fields && { content: fields }) })
+}
+
+// ── Form elicitation loop ────────────────────────────────────────
+// A 2026-07-28 server may answer tools/call with resultType input_required:
+// form elicitation requests plus a signed request state. Roadie asks its
+// person (the FORM_TITLE dialog; the backend emits form.asked and Discord
+// answers it, speaker only), then repeats the call with inputResponses and
+// the request state. Bounded rounds; dismissal, timeout and abort all answer
+// cancel, so the server runs nothing without the person's consent.
+
+/** Form rounds per tool call, so a server cannot loop Roadie forever. */
+export const MAX_FORM_ROUNDS = 5
+
+export type NativeToolAsk = (payload: {
+  server: string
+  tool: string
+  message: string
+  schema: Record<string, unknown>
+  /** The dialog's answer as sent by the backend, or undefined when it got none. */
+}) => Promise<unknown | undefined>
+
+export type NativeToolOutcome = {
+  result: NativeCallResult
+  /** Why forms were cancelled without the person's answer; reported in the tool result. */
+  notes: string[]
+}
+
+/** Drive one tools/call through any number of form rounds. */
+export async function runNativeToolCall({ server, tool, args, call, ask, maxRounds = MAX_FORM_ROUNDS }: {
+  server: string
+  tool: string
+  args: Record<string, unknown>
+  call(args: Record<string, unknown>, continuation?: NativeCallContinuation): Promise<NativeCallResult | Error>
+  ask: NativeToolAsk
+  maxRounds?: number
+}): Promise<NativeToolOutcome> {
+  const notes: string[] = []
+  let result = await call(args)
+  if (result instanceof Error) throw result
+  let rounds = 0
+  while (result.inputRequired && rounds < maxRounds) {
+    rounds += 1
+    const inputResponses: Record<string, NativeFormAnswer> = {}
+    for (const [key, request] of Object.entries(result.inputRequired.inputRequests)) {
+      inputResponses[key] = await formAnswerFor({ server, tool, request, ask, notes })
+    }
+    const next = await call(args, { inputResponses, requestState: result.inputRequired.requestState })
+    if (next instanceof Error) throw next
+    result = next
+  }
+  if (result.inputRequired) {
+    notes.push(`the server was still asking for input after ${maxRounds} rounds, so Roadie stopped`)
+  }
+  return { result, notes }
+}
+
+/** One elicitation request: ask Roadie's person, or cancel what Roadie cannot ask. */
+async function formAnswerFor({ server, tool, request, ask, notes }: {
+  server: string
+  tool: string
+  request: { method?: string; params?: { mode?: string; message?: string; requestedSchema?: Record<string, unknown> } }
+  ask: NativeToolAsk
+  notes: string[]
+}): Promise<NativeFormAnswer> {
+  const params = request.params ?? {}
+  if (request.method !== 'elicitation/create' || params.mode !== 'form') {
+    notes.push('a non-form input request was cancelled (Roadie answers forms only)')
+    return { action: 'cancel' }
+  }
+  const parsed = parseFormSchema(params.requestedSchema)
+  if (!parsed.ok) {
+    notes.push(`a form was cancelled because ${parsed.reason}`)
+    return { action: 'cancel' }
+  }
+  const answer = await ask({
+    server,
+    tool,
+    message: params.message ?? '',
+    schema: params.requestedSchema ?? {},
+  })
+  if (answer === undefined) {
+    notes.push('the approval form got no answer (dismissed, timed out or aborted) and was cancelled')
+    return { action: 'cancel' }
+  }
+  // The dialog's answer is untrusted wire input from the backend; anything
+  // that is not a usable accept/decline/cancel answers cancel.
+  const sanitized = sanitizeFormAnswer(answer)
+  if (sanitized.action === 'cancel') notes.push('the approval form was cancelled, so the server ran nothing')
+  return sanitized
 }
 
 /** Roadie's per-turn shell env (agent token, session id, turn attribution); read fresh per call. */
@@ -515,7 +781,11 @@ export default function roadieExtension(pi: ExtensionApi) {
   })
 
   const mcpServers = new Map<string, string>()
-  syncMcpServers(pi, mcpServers)
+  // Person-scoped remote servers on the 2026-07-28 revision become native
+  // tools; the rest use Pi's built-in MCP. Async: at load it settles in the
+  // background, and every run awaits it in before_agent_start first.
+  const nativeServers = new Map<string, NativeRegistration>()
+  void syncMcpServers(pi, mcpServers, nativeServers)
 
   // The backend's `noReply` prompts arrive here (an extension command runs
   // immediately, even mid-turn): the payload is the JSON-encoded message, and
@@ -598,7 +868,7 @@ export default function roadieExtension(pi: ExtensionApi) {
   }
 
   pi.on('before_agent_start', async (event) => {
-    syncMcpServers(pi, mcpServers)
+    await syncMcpServers(pi, mcpServers, nativeServers)
     const file = process.env['ROADIE_PI_SYSTEM_FILE']
     if (!file) return undefined
     let roadie = ''

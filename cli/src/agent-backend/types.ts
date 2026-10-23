@@ -140,6 +140,20 @@ export type AgentSessionOperations = {
     directory: string
     answers: string[][]
   }): Promise<void | Error>
+  /**
+   * Answer a pending MCP form elicitation (form.asked). Only the person whose
+   * server asked may accept or decline; the backend refuses anyone else.
+   * Never consults permission rules — the person's own consent is the gate.
+   */
+  replyForm?(input: {
+    requestId: string
+    directory: string
+    action: 'accept' | 'decline' | 'cancel'
+    /** Collected form fields, for accept. */
+    content?: Record<string, unknown>
+    /** The person answering, resolved by the chat layer from the click. */
+    personKey?: string
+  }): Promise<void | Error>
 }
 
 /** A question the agent asked and is blocked on. */
@@ -225,13 +239,17 @@ export type AgentMcpOperations = {
   disconnect(input: { directory: string; name: string }): Promise<void | Error>
   /**
    * Add or replace a remote MCP server for a project directory. `headers`
-   * carry the credential and must never be logged.
+   * carry the credential and must never be logged. `owner` names the person
+   * key the server is scoped to, when it is a per-person server; the backend
+   * records it so MCP forms raised by the server can be answered only by that
+   * person.
    */
   addRemote(input: {
     directory: string
     name: string
     url: string
     headers: Record<string, string>
+    owner?: string
   }): Promise<void | Error>
 }
 

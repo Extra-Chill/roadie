@@ -21,6 +21,7 @@
 //   permission.asked/replied  Roadie-owned policy (#50) via the tool_call hook;
 //                             Pi has no permission events of its own
 //   question.asked/replied    extension_ui_request select / extension_ui_response
+//   form.asked/replied        extension_ui_request input (roadie:form) / extension_ui_response
 //   notice                    extension_ui_request notify
 //   session.diff              no Pi equivalent; optional
 //
@@ -188,6 +189,26 @@ export type AgentQuestionRequest = {
   toolCall?: { messageId: string; callId: string }
 }
 
+/**
+ * An MCP form elicitation the agent is blocked on: a person-scoped server
+ * asked its question (the server's own approval form) and will only continue
+ * the tool call once the person answers. Rendered as the server's message
+ * with Accept / Decline / Cancel; answered through replyForm by the person
+ * whose server asked — never by permission rules.
+ */
+export type AgentFormRequest = {
+  id: string
+  sessionId: string
+  /** Person-scoped MCP server the form's tool belongs to (`roadie_pm_<hash>_<name>`). */
+  server: string
+  /** The MCP tool that triggered the form. */
+  tool: string
+  /** The server's form message, verbatim. */
+  message: string
+  /** The elicitation requestedSchema, as the server sent it. */
+  schema: Record<string, unknown>
+}
+
 export type AgentEvent =
   | { type: 'session.created' | 'session.updated' | 'session.deleted'; session: AgentSession }
   | { type: 'message'; message: AgentMessage }
@@ -236,6 +257,8 @@ export type AgentEvent =
   | { type: 'question.asked'; request: AgentQuestionRequest }
   | { type: 'question.replied'; sessionId: string; requestId: string; answers: string[][] }
   | { type: 'question.rejected'; sessionId: string; requestId: string }
+  | { type: 'form.asked'; request: AgentFormRequest }
+  | { type: 'form.replied'; sessionId: string; requestId: string; action: 'accept' | 'decline' | 'cancel' }
   /** A transient message for the user, not tied to a session. */
   | { type: 'notice'; title?: string; message: string; level: 'info' | 'success' | 'warning' | 'error' }
 
@@ -284,6 +307,7 @@ export function agentEventSessionId(event: AgentEvent): string | undefined {
       return event.part.sessionId
     case 'permission.asked':
     case 'question.asked':
+    case 'form.asked':
       return event.request.sessionId
     case 'error':
       return event.sessionId
