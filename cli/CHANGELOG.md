@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.76.2] - 2026-10-23
+
+### Fixed
+- respect manual Discord thread renames
+- bind permission rules to the executing turn's speaker
+
 ## [0.76.1] - 2026-10-23
 
 ### Fixed
