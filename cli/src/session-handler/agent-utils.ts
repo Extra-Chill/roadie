@@ -1,5 +1,5 @@
 // Agent preference resolution utility.
-// Validates agent preferences against the OpenCode API.
+// Validates agent preferences against the Pi agent catalog.
 // When a requested agent is not found, we fall back to the default agent
 // instead of throwing. This handles stale agent preferences from CLI send
 // commands or database references to agents that were removed from config.

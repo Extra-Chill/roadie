@@ -14,16 +14,16 @@
 //   context-only message (`noReply`) through `pi.sendMessage` with
 //   `triggerTurn: false`: it lands in the session history without starting a
 //   model turn, and the model sees it as a user message on the next turn.
-// - Registers the `task` tool (same name and argument contract as OpenCode's).
+// - Registers the `task` tool for delegated agent work.
 //   Its call goes to Roadie as an `input` UI request titled ROADIE_TASK_TITLE;
 //   Roadie spawns a child Pi session, prompts it, and answers with the child's
 //   final assistant text.
-// - Injection guard (parity with the OpenCode plugin): tool results whose tool
+// - Injection guard: tool results whose tool
 //   and arguments match the session's `--injection-guard` patterns are scanned
 //   by an LLM judge (a plain, tool-less model call through Pi's own model
 //   registry) and replaced with a BLOCKED notice when injection is detected,
 //   so the model never sees the flagged output.
-// - Kitty graphics (parity with the OpenCode plugin): Kitty Graphics Protocol
+// - Kitty graphics: Kitty Graphics Protocol
 //   images in bash output are extracted as image content and the escape
 //   sequences stripped from the text, so CLIs can hand images to the model.
 
@@ -41,7 +41,7 @@ export const ROADIE_APPEND_COMMAND = 'roadie:append'
 export const ROADIE_CONTEXT_TYPE = 'roadie:context'
 export const ROADIE_TASK_TITLE = 'roadie:task'
 
-// Same contract as OpenCode's `question` tool, so prompts and the chat UI match.
+// Question tool contract shared by prompts and the chat UI.
 const QUESTION_DESCRIPTION = `Use this tool when you need to ask the user questions during execution. This allows you to:
 1. Gather user preferences or requirements
 2. Clarify ambiguous instructions
@@ -85,7 +85,7 @@ const QUESTION_PARAMETERS = {
   },
 }
 
-// Same contract as OpenCode's `task` tool, so delegation prompts match.
+// Task tool contract used by delegation prompts.
 const TASK_DESCRIPTION = `Launch a new agent to handle complex, multistep tasks autonomously.
 
 When using the task tool, you must specify a subagent_type parameter to select which agent type to use.
@@ -233,15 +233,15 @@ export function shellEnvPrefix(env: Record<string, string>): string {
 }
 
 // ── Injection guard ──────────────────────────────────────────────
-// Pi parity of the OpenCode injection guard plugin (opencode-injection-guard,
-// MIT; its judge prompt is adapted from OpenAI Guardrails Python). A security
-// feature, so it must work on Pi too: tool results whose tool name and
+// Injection guard with the existing OpenCode-format project config contract.
+// The judge prompt is adapted from OpenAI Guardrails Python (MIT).
+// Tool results whose tool name and
 // serialized arguments match the scan patterns are judged by a small model,
 // and flagged output is replaced with a BLOCKED notice before the model sees
 // it. The judge is a plain model call through Pi's own registry — no tools,
-// so it cannot execute anything, like the OpenCode judge's deny-all session.
+// so it cannot execute anything.
 //
-// Opt-in contract, same sources and priority as the OpenCode plugin:
+// Opt-in contract, with sources in priority order:
 //   1. Per-session scan patterns from Roadie's `--injection-guard`, written by
 //      the session runtime to <ROADIE_PI_INJECTION_GUARD_DIR>/<sessionId>.json
 //   2. OPENCODE_INJECTION_GUARD env var (JSON), then the find-up
@@ -257,7 +257,7 @@ const INJECTION_GUARD_DEFAULTS = {
   maxOutputLength: 8000,
 }
 
-/** Cheap/fast judge models, first configured one wins (from opencode-injection-guard). */
+/** Cheap/fast judge models, first configured one wins. */
 const INJECTION_GUARD_MODEL_PRIORITY = [
   'openai/gpt-4.1-nano',
   'openai/gpt-4.1-mini',
@@ -324,7 +324,7 @@ export function injectionGuardBuildUserMessage({ tool, args, output, maxLength }
 
 /**
  * Wildcard match where "*" spans any substring, case-insensitive; segments
- * must appear in order (from opencode-injection-guard's matcher).
+ * must appear in order.
  */
 export function injectionGuardWildcardMatch(pattern: string, value: string): boolean {
   const lowerPattern = pattern.toLowerCase()
@@ -360,7 +360,7 @@ export function injectionGuardMatchesScanPatterns({ tool, args, patterns }: { to
   })
 }
 
-/** The BLOCKED text replacing flagged output (same wording as the OpenCode plugin). */
+/** The BLOCKED text replacing flagged output. */
 export function injectionGuardBlockedOutput({ confidence, observation }: { confidence: number; observation?: string }): ContentPart[] {
   return [{
     type: 'text',
@@ -372,7 +372,7 @@ export function injectionGuardBlockedOutput({ confidence, observation }: { confi
   }]
 }
 
-/** Parse the judge model's JSON reply; loose text fallback like the OpenCode plugin. */
+/** Parse the judge model's JSON reply; loose text fallback is supported. */
 export function injectionGuardParseJudgeResponse(text: string): { flagged: boolean; confidence: number; observation?: string } {
   const cleaned = text.trim()
   const fenced = cleaned.split('\n')
@@ -427,7 +427,7 @@ function injectionGuardFileConfig(cwd: string): InjectionGuardGlobalConfig | nul
 
 /**
  * The guard's effective config for a tool result, or null when the guard is
- * off for this session. Global opt-in merges like the OpenCode plugin
+ * off for this session. Global opt-in merges the configuration sources
  * (defaults, then the find-up file, then OPENCODE_INJECTION_GUARD per key);
  * session patterns (Roadie's --injection-guard) replace the global patterns.
  */
@@ -449,7 +449,7 @@ export function injectionGuardConfig({ sessionId, cwd, env = process.env }: { se
   }
 }
 
-/** "provider/model" with the OpenCode plugin's openai fallback for bare ids. */
+/** "provider/model" with an openai fallback for bare ids. */
 function injectionGuardParseModelId(model: string): { provider: string; id: string } {
   const slash = model.indexOf('/')
   if (slash === -1) return { provider: 'openai', id: model }
@@ -485,7 +485,7 @@ async function injectionGuardJudge({ event, config, ctx }: { event: ToolResultEv
     if (reply.stopReason === 'error') throw new Error(reply.errorMessage || 'judge model error')
     return injectionGuardParseJudgeResponse(reply.content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join(''))
   } catch (error) {
-    // Fail open like the OpenCode plugin's error path: report and keep the output.
+    // Fail open on judge errors: report and keep the output.
     console.error(`[injection-guard] judge failed for ${event.toolName}: ${error instanceof Error ? error.message : String(error)}`)
     return undefined
   }

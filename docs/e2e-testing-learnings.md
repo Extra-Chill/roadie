@@ -2,59 +2,16 @@
 title: E2E Testing Learnings
 description: >
   Hard-won lessons from writing and debugging roadie's Discord e2e tests.
-  Covers caching behavior, flaky test patterns, timeouts, polling strategies,
-  and the CachedOpencodeProviderProxy.
-prompt: |
-  Document testing learnings from the thread-message-queue e2e test debugging
-  sessions. Covers: proxy caching behavior (cache hits vs misses),
-  streamChunkDelayMs only affecting cache hits, why tests should be run
-  twice on failure, content-aware polling vs count-based polling, and
-  timeout guidelines. Based on @cli/src/thread-message-queue.e2e.test.ts
-  and the debugging sessions that led to the fixes in commit 64a1f59.
+  Covers Pi's scripted model server, flaky test patterns, timeouts and polling.
 ---
 
 # E2E Testing Learnings
 
-> E2E suites now run real `pi` processes against the scripted fake model
-> server (`cli/src/pi-test-backend.ts`); there is no provider cache. The
-> caching section below describes the retired OpenCode harness and is kept
-> for history.
-
-## CachedOpencodeProviderProxy and caching
-
-Tests use `CachedOpencodeProviderProxy` which sits between the bot and
-the real AI provider (Gemini). It caches request/response pairs in a local
-SQLite DB (`provider-cache.db`).
-
-**First run = all cache misses.** Responses stream at upstream provider
-speed. On subsequent runs, identical requests hit the cache and stream
-from the local DB instead.
-
-This means test behavior can differ between first and second runs:
-
-- **First run**: slower, real provider latency, `streamChunkDelayMs` has
-  no effect (it only applies to cache hits)
-- **Second run**: faster, cached responses, `streamChunkDelayMs` controls
-  how fast cached chunks are replayed
-
-**Always run a failing e2e test at least twice before investigating.**
-The first run populates the cache. The second run exercises the cached
-path which is the steady-state behavior. Many flaky tests only reproduce
-on cache misses (first run) or only on cache hits (second run). Running
-twice covers both paths.
-
-## streamChunkDelayMs only affects cache hits
-
-`proxy.setStreamChunkDelayMs(500)` makes cached responses stream slowly
-(500ms between chunks). This is used to keep a session "busy" so we can
-test interrupts. But on the first run with an empty cache, this setting
-does nothing — the response streams at whatever speed the upstream
-provider delivers.
-
-Design tests so the core assertion holds regardless of cache state.
-For interrupt tests, send the interrupt message quickly (e.g. 200ms
-after the message being interrupted) so it fires while the session is
-still processing regardless of how fast the response streams.
+E2E suites run real `pi` processes against the scripted fake model server
+(`cli/src/pi-test-backend.ts`); there is no provider cache or external model
+credential requirement. Use scripted tool calls to keep a turn busy rather
+than relying on model latency. Rerun a failure to distinguish timing races
+from a deterministic regression.
 
 ## Content-aware polling over count-based polling
 
@@ -99,7 +56,7 @@ there is no interruption or abort involved.
   This covers cold agent starts.
 - **beforeAll timeout**: 60_000 (1 minute) for test setup (starting
   proxy, discord-digital-twin, hrana server, bot client).
-- **Never use short timeouts** (5-10s) in e2e tests. Even cached
+- **Never use short timeouts** (5-10s) in e2e tests. Even scripted
   responses take time due to Discord message routing, agent session
   creation, and tool execution.
 

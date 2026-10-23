@@ -1,7 +1,7 @@
 // The base system prompt for Roadie's Pi sessions (#51). Replaces Pi's own
 // default (its tool list, guidelines and Pi docs pointers) so Roadie owns the
 // prompt: this base, then Roadie's per-session prompt (appended by
-// ./roadie-extension.ts), then the project's AGENTS.md files, like OpenCode
+// ./roadie-extension.ts), then the project's AGENTS.md files
 // sessions. Tool definitions reach the model through the API's tool list, so
 // they are not repeated here.
 

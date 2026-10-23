@@ -7,7 +7,7 @@
 // Everything is read from the session events the running bot persists, never
 // from an agent backend this process starts. The bot is the one running the
 // session: a second backend here cannot see a Pi session (Pi has no shared
-// server; a CLI that cannot run `pi` even routed Pi ids to OpenCode, #217),
+// server),
 // and the persisted stream is the same normalized events for every backend.
 
 import type { AgentMessage, AgentSession } from './agent-backend/events.js'

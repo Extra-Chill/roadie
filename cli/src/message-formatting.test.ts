@@ -711,8 +711,8 @@ describe('formatBashToolTitle', () => {
     ).toMatchInlineSnapshot(`" _pnpm test…_"`)
   })
 
-  test('no description field (new opencode) with multiline command', () => {
-    // This is the exact scenario that was broken: opencode removed `description`
+  test('multiline command without a description field', () => {
+    // Regression: tool inputs can omit `description`
     // from the bash tool schema, so multiline commands rendered as just "┣ bash"
     const command = 'git diff HEAD~1 --stat && git log --oneline -5'
     expect(formatBashToolTitle({ command: command + '\n' + 'echo done' })).toMatchInlineSnapshot(

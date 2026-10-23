@@ -98,7 +98,7 @@ export type AgentToolStatus = 'pending' | 'running' | 'completed' | 'error'
 
 /**
  * Backend-normalized delegation info on a tool part: this call spawned a child
- * session (OpenCode: the task tool). Presence of the field marks the part as a
+ * session (the task tool). Presence of the field marks the part as a
  * delegation regardless of how far the call has progressed; childSessionId
  * only appears once the backend reports which session it spawned.
  */

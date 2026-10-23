@@ -132,7 +132,7 @@ export type IngressInput = {
    * Raw permission rule strings from --permission flag ("tool:action" or
    * "tool:pattern:action"). Parsed into PermissionRuleset entries by
    * parsePermissionRules() and appended after buildSessionPermissions()
-   * so they win via opencode's findLast() evaluation. Only used on
+   * so they win via last-match-wins evaluation. Only used on
    * session creation (first dispatch).
    */
   permissions?: string[]
@@ -184,7 +184,7 @@ export type IngressInput = {
 }
 
 // Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
-// when the prompt's leading token matches a registered opencode command.
+// when the prompt's leading token matches a registered session command.
 // Skip if a command is already set or there's no prompt to inspect.
 export function maybeConvertLeadingCommand(input: IngressInput): IngressInput {
   if (input.command) return input

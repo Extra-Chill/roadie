@@ -1,5 +1,5 @@
 // Root-only e2e for --isolate-shells (credential pools phase 3, step 2):
-// with the OpenCode server started with SHELL pointing at the generated
+// with Pi's shellPath pointing at the generated
 // setpriv wrapper, a bash tool call must run as the unprivileged agent user
 // and must not be able to read the server's /proc/<pid>/environ.
 //
@@ -95,7 +95,7 @@ const canRunRoadieEndpointE2e =
   canRunRootE2e && (await globalRoadieSupportsAgentEndpoints())
 
 // The probe writes its findings to files because Discord shows the bash tool
-// line, not its output. $PPID inside the tool shell is the OpenCode server
+// line, not its output. $PPID inside the tool shell is the Pi
 // process, which is exactly the /proc/<server pid>/environ read #145 asserts
 // on.
 const PROBE_COMMAND = [
@@ -275,7 +275,7 @@ describe.skipIf(!canRunRootE2e)('isolated shells (--isolate-shells)', () => {
     const uid = fs.readFileSync(path.join(PROBE_DIR, 'uid.txt'), 'utf8').trim()
     expect(uid).toMatchInlineSnapshot(`"nobody"`)
 
-    // Reading the OpenCode server's environment must fail for the agent user:
+    // Reading the Pi process's environment must fail for the agent user:
     // that is the OS boundary #145 adds on top of #144's scoped endpoints.
     const environ = fs.readFileSync(path.join(PROBE_DIR, 'environ.txt'), 'utf8')
     expect(environ).toContain('Permission denied')

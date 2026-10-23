@@ -27,7 +27,7 @@
 // `triggerTurn: false`): they land in the session history without a model
 // turn, and the model reads them as user messages on the next turn.
 //
-// Delegation: the extension's `task` tool (OpenCode's argument contract) asks
+// Delegation: the extension's `task` tool (Roadie's delegation contract) asks
 // Roadie through a `roadie:task` UI request. The backend spawns a child Pi
 // session in the same directory, prompts it, and answers with its final
 // assistant text. Children inherit the parent's permission rules plus a task
@@ -59,7 +59,7 @@ import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { agentFor, piAgents } from './agents.js'
 import { ROADIE_APPEND_COMMAND } from './roadie-extension.js'
-import { openCodeToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
+import { permissionToolName, projectMcpServers, writeMcpFile, type PiMcpServer } from './mcp.js'
 import { appendFileEditEvents, isFileEditTool } from '../../file-edit-log.js'
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
@@ -165,7 +165,7 @@ export type PiBackendOptions = {
   titleModel?: string
   /** Base system prompt replacing Pi's default. Defaults to ROADIE_PI_BASE_PROMPT. */
   systemPrompt?: string
-  /** Load the project's AGENTS.md / CLAUDE.md files, like OpenCode. Default true. */
+  /** Load the project's AGENTS.md / CLAUDE.md files. Default true. */
   contextFiles?: boolean
   /**
    * How long the model catalog (credential pools and models Pi reports) is
@@ -259,7 +259,7 @@ function extensionPath(): string {
  * piece starting with a single `/` counts — redirects (`> /etc/hosts`), quoted
  * paths and `VAR=/path` assignments included, while `https://…` URL remainders
  * (a leading `//`) are not filesystem paths. Not a shell parser: computed
- * paths (`> "$OUT"`) stay invisible, so like OpenCode's own bash gate this is
+ * paths (`> "$OUT"`) stay invisible, so the bash gate is
  * a safety net, not a sandbox.
  */
 export function bashCommandPaths({ command }: { command: string }): string[] {
@@ -276,7 +276,7 @@ export function bashExternalDirectories({ command, cwd }: { command: string; cwd
   }))]
 }
 
-/** Which permission and targets a Pi tool call asks for, in OpenCode's vocabulary. */
+/** Which permission and targets a Pi tool call asks for, using project permission names. */
 export function permissionForToolCall({ tool, input, cwd }: { tool: string; input: Record<string, unknown>; cwd: string }): Array<{ permission: string; targets: string[] }> {
   const filePath = typeof input.path === 'string' ? input.path : typeof input.file_path === 'string' ? input.file_path : undefined
   const checks: Array<{ permission: string; targets: string[] }> = []
@@ -287,13 +287,13 @@ export function permissionForToolCall({ tool, input, cwd }: { tool: string; inpu
     // Bash has no path argument, so unlike the file tools its external paths
     // need a scan of the command itself (best effort, see bashCommandPaths):
     // absolute paths outside the session directory get the same
-    // external_directory check OpenCode applies to its bash tool.
+    // external_directory check for shell commands.
     const external = bashExternalDirectories({ command, cwd })
     if (external.length > 0) checks.push({ permission: 'external_directory', targets: external })
   }
   else if (tool === 'edit' || tool === 'write') checks.push({ permission: 'edit', targets: filePath ? [filePath] : [] })
   else if (tool === 'read' || tool === 'grep' || tool === 'find' || tool === 'ls') checks.push({ permission: tool === 'read' ? 'read' : tool, targets: filePath ? [filePath] : [] })
-  else checks.push({ permission: openCodeToolName(tool), targets: [] })
+  else checks.push({ permission: permissionToolName(tool), targets: [] })
   if (filePath) {
     const resolved = path.resolve(cwd, filePath)
     const inside = resolved === cwd || resolved.startsWith(`${cwd}${path.sep}`)
@@ -312,8 +312,8 @@ export function decidePermission({ rules, tool, input, cwd }: {
   let asked: { permission: string; patterns: string[] } | undefined
   for (const check of checks) {
     // Per-person MCP tools are denied unless the session's own rules allow
-    // them (the per-turn pair from person-mcp.ts), matching OpenCode's
-    // server-wide deny of PERSON_MCP_TOOL_GLOB.
+    // them (the per-turn pair from person-mcp.ts). PERSON_MCP_TOOL_GLOB
+    // has a deny fallback independent of project config.
     const fallback = matchesPermissionPattern({ value: check.permission, pattern: PERSON_MCP_TOOL_GLOB }) ? 'deny' : 'allow'
     const action = evaluatePermission({ rules, permission: check.permission, targets: check.targets, fallback })
     if (action === 'deny') return { action, permission: check.permission, patterns: check.targets }
@@ -626,7 +626,7 @@ export class PiBackendProvider implements AgentBackendProvider {
    * The --isolate-shells gate, resolved once per provider: without a
    * Roadie-owned agent dir Pi sessions are refused (the user's ~/.pi/agent is
    * not Roadie's to edit); otherwise the wrapper is ensured with the same
-   * setup the OpenCode server start runs, and shellPath is written into the
+   * setup used for isolated tool shells, and shellPath is written into the
    * agent dir's settings.json so Pi's bash tool execs it.
    */
   private prepareShellIsolation(): Promise<true | Error> {
@@ -825,7 +825,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     }
     const decision = decidePermission({
       // The selected agent's rules first, so the session's Roadie rules still
-      // win — OpenCode evaluates session rules after agent ones, last match wins.
+      // win — session rules follow agent ones, last match wins.
       rules: [...(this.turnAgentRules.get(session.id) ?? []), ...(session.turnPermissions?.rules ?? this.rulesFor(session.id))],
       tool: call.tool,
       input: call.input,
@@ -927,7 +927,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /**
    * Run the task tool: spawn a child Pi session in the same directory, prompt
-   * it, and answer with its final assistant text (OpenCode's task contract).
+   * it, and answer with its final assistant text (the task tool contract).
    * The parent's tool part carries `subagent`, from which child_session_*
    * events and lineage derive. Children inherit the parent's permission rules
    * plus a task deny; aborting the parent aborts its running children.
@@ -967,7 +967,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     }
     child.childOf = session.id
     // Children run one level deep: the parent's rules plus a task deny, like
-    // OpenCode's task children.
+    // delegated task children.
     const childRules = [...(session.turnPermissions?.rules ?? this.rulesFor(session.id)), { permission: 'task', pattern: '*', action: 'deny' as const }]
     child.turnPermissions = { rules: childRules, owner: session.turnPermissions?.owner }
     this.permissionRules.set(child.id, childRules)
@@ -1024,7 +1024,7 @@ export class PiBackendProvider implements AgentBackendProvider {
   }
 
   /**
-   * The per-turn tool-shell environment, as OpenCode's shell.env hook builds it:
+   * The per-turn tool-shell environment, for the active speaker:
    * the session's scoped agent token, ROADIE_SESSION_ID, the current turn's
    * attribution and the configured --shell-env templates. The extension
    * prepends it to every bash command.
@@ -1262,7 +1262,7 @@ export class PiBackendProvider implements AgentBackendProvider {
           return this.appendContextMessage(session, message, images)
         }
         // The turn's agent: its system prompt, model and permission rules apply
-        // like OpenCode applies an agent definition to a prompt. Unknown names
+        // applying the selected agent definition to the prompt. Unknown names
         // are rejected instead of silently running as the default agent.
         let turnSystem = system
         if (agent !== undefined) {

@@ -51,7 +51,7 @@ describe.skipIf(!findPi())('queue advanced: question tool answer', () => {
     // User sends a text message while question is pending.
     // This should:
     // 1. Dismiss the pending question (cleanup context)
-    // 2. Abort the blocked session so OpenCode unblocks
+    // 2. Abort the blocked session so Pi unblocks
     // 3. Enqueue the message as a normal user prompt (not consumed as answer)
     const answer = 'Reply with exactly: question-text-answer-done'
     await th.user(TEST_USER_ID).sendMessage({

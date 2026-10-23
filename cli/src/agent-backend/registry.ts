@@ -151,7 +151,7 @@ export function getAgentBackendProvider(): AgentBackendProvider {
 
 /**
  * Whether `sessionId` is retired: the backend does not own it (e.g. a session
- * from the removed OpenCode backend, #177). Its thread starts a new session,
+ * from a retired backend). Its thread starts a new session,
  * seeded from the thread, on the next prompt.
  */
 export function isRetiredSession(sessionId: string): boolean {

@@ -84,7 +84,7 @@ export async function handleCompactCommand({
   const client = provider.getBackend(workingDirectory)
   if (!client?.sessions.summarize) {
     await command.reply({
-      content: 'Failed to get OpenCode client',
+      content: 'Failed to initialize Pi',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return

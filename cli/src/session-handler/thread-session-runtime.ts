@@ -255,7 +255,7 @@ export class ThreadSessionRuntime {
   // so we only call setName once per distinct title. The applied name itself is
   // persisted in thread_sessions.last_synced_name (Discord only) so the dedupe
   // and manual-rename detection survive restarts; this field does not.
-  private appliedOpencodeTitle: string | undefined
+  private appliedSessionTitle: string | undefined
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, AgentPart>>()
@@ -353,15 +353,11 @@ export class ThreadSessionRuntime {
     this.messageQueue = new MessageQueue({
       threadId: this.threadId,
       chat: this.chat,
-      isDisposed: () => this.disposed,
       isBusy: () => this.isBusy(),
-      hasPendingQuestionUi: () => this.hasPendingQuestionUi(),
       getEventBuffer: () => this.eventBuffer,
       dispatchAction: (action) => this.dispatchAction(action),
       markQueueDispatchBusy: (sessionId) => this.markQueueDispatchBusy(sessionId),
       markQueueDispatchIdle: (sessionId) => this.markQueueDispatchIdle(sessionId),
-      markQuestionQueueHandoffStarted: (sessionId) => this.markQuestionQueueHandoffStarted(sessionId),
-      submitViaOpencodeQueue: (input) => this.submitViaOpencodeQueue(input),
       dispatchPrompt: (input) => this.dispatchPrompt(input),
     })
     this.interactiveUi = new InteractiveUi({
@@ -377,12 +373,6 @@ export class ThreadSessionRuntime {
       stopTyping: () => this.typing.stopTyping(),
       flushCurrentTurnParts: (opts) => this.flushCurrentTurnParts(opts),
       dispatchAction: (action) => this.dispatchAction(action),
-      onQuestionShown: (sessionId) => {
-        this.messageQueue.maybeHandoffQueuedItemForPendingQuestion({
-          sessionId,
-          reason: 'question-shown',
-        })
-      },
     })
   }
 
@@ -875,10 +865,6 @@ export class ThreadSessionRuntime {
 
   private markQueueDispatchIdle(sessionId: string): void {
     this.appendEventToBuffer({ type: 'idle', sessionId })
-  }
-
-  private markQuestionQueueHandoffStarted(sessionId: string): void {
-    this.appendEventToBuffer({ type: 'queue.question-handoff-started', sessionId })
   }
 
   /**
@@ -1588,7 +1574,7 @@ export class ThreadSessionRuntime {
     const sessionId = this.state?.sessionId
 
     // A user message appearing in the main session while messages are pending
-    // means OpenCode promoted the oldest one at a step boundary.
+    // means the backend promoted the oldest one at a step boundary.
     if (
       msg.role === 'user' &&
       msg.sessionId === sessionId &&
@@ -2267,15 +2253,7 @@ export class ThreadSessionRuntime {
     this.interactiveUi.clearDeferredQuestionShow()
     this.onInteractiveUiStateChanged()
 
-    // When a question is answered and the local queue has items, the model may
-    // continue the same run without ever reaching the local-queue idle gate.
-    // Hand off only the next queued item to OpenCode immediately so the queue
-    // resumes, but keep later items local so their `» user:` indicators still
-    // appear one-by-one when they actually become active.
-    this.messageQueue.maybeHandoffQueuedItemForPendingQuestion({
-      sessionId,
-      reason: 'question-replied',
-    })
+    // Queued messages wait until the turn settles, preserving speaker policies.
   }
 
   private async handleSessionStatus(event: {
@@ -2327,12 +2305,12 @@ export class ThreadSessionRuntime {
     }
   }
 
-  // Rename the Discord thread to match the OpenCode-generated session title.
+  // Rename the Discord thread to match the generated session title.
   //
   // Discord rate-limits channel/thread renames heavily — reported as ~2 per
   // 10 minutes per thread (discord/discord-api-docs#1900, discordjs/discord.js#6651)
   // and discord.js setName() can block silently on the 3rd attempt. We therefore:
-  // - rename at most once per distinct title (deduped via appliedOpencodeTitle
+  // - rename at most once per distinct title (deduped via appliedSessionTitle
   //   in-process, thread_sessions.last_synced_name across restarts)
   // - leave the name alone once a person has renamed the thread by hand
   //   (detected against last_synced_name, ignoring preserved prefixes)
@@ -2348,14 +2326,14 @@ export class ThreadSessionRuntime {
       return
     }
     const normalizedTitle = info.title.trim()
-    if (this.appliedOpencodeTitle === normalizedTitle) {
+    if (this.appliedSessionTitle === normalizedTitle) {
       return
     }
     if (!this.chat.capabilities.rename) {
       await (await getDb()).update(schema.thread_sessions).set({ last_synced_name: normalizedTitle }).where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
       const synced = await this.chat.syncTitle?.(normalizedTitle)
       if (synced instanceof Error) logger.warn('Could not synchronize native chat title:', synced)
-      this.appliedOpencodeTitle = normalizedTitle
+      this.appliedSessionTitle = normalizedTitle
       return
     }
     const lastSyncedName = await getThreadLastSyncedName(this.threadId)
@@ -2366,7 +2344,7 @@ export class ThreadSessionRuntime {
     })
     // Mark before setName so concurrent session.updated events don't stack
     // renames. Keep the mark on failure — retry is almost always a rate limit.
-    this.appliedOpencodeTitle = normalizedTitle
+    this.appliedSessionTitle = normalizedTitle
     if (!desiredName) {
       return
     }
@@ -2374,7 +2352,7 @@ export class ThreadSessionRuntime {
     const renameResult = await raceDiscordRename({
       rename: this.chat.rename(desiredName)
         .catch((e) =>
-          new Error('Failed to rename thread from OpenCode title', {
+          new Error('Failed to rename thread from session title', {
             cause: e,
           }),
         ),
@@ -2437,7 +2415,7 @@ export class ThreadSessionRuntime {
   // ── Ingress API ─────────────────────────────────────────────
 
   /**
-   * Submit a user turn directly to opencode's internal session queue.
+   * Submit a user turn directly to Pi, steering a running turn when permitted.
    * This is the default path for normal Discord messages.
    *
    * Mirrors dispatchPrompt's preference resolution, abort handling, and error
@@ -2584,7 +2562,7 @@ export class ThreadSessionRuntime {
   // last prompt that applied them.
   private permissionOwner: string | undefined
 
-  private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+  private async submitToSession(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
     let deferPiTurn = false
@@ -2605,7 +2583,7 @@ export class ThreadSessionRuntime {
       // turn's speaker. Another speaker's message waits for the turn to
       // settle, keeping each speaker's permissions (including person-MCP).
       if (
-        getAgentBackendProvider().id === 'pi' && !input.noReply && this.isBusy() &&
+        !input.noReply && this.isBusy() &&
         (input.personId ?? input.userId) !== this.permissionOwner
       ) {
         deferPiTurn = true
@@ -2689,7 +2667,6 @@ export class ThreadSessionRuntime {
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
         sessionId: session.id,
-        createdNewSession,
         permissions: input.permissions,
         noReply: input.noReply,
         owner: input.personId ?? input.userId,
@@ -2705,7 +2682,7 @@ export class ThreadSessionRuntime {
 
       // Explicit agent prompts (for example /plan-agent <prompt>) must update
       // the session preference before dispatch. Otherwise the model can resolve
-      // from the requested agent while OpenCode keeps running the old agent.
+      // from the requested agent while Pi keeps running the old agent.
       if (input.agent) {
         await setSessionAgent(session.id, input.agent)
         await clearSessionModel(session.id)
@@ -2793,7 +2770,7 @@ export class ThreadSessionRuntime {
       const modelField = modelResult
       if (!modelField) {
         await cleanupOnError(
-          'No AI provider connected. Add a provider account with `/credentials add`.',
+          'No model account available. Add an account to the credential pool with `/credentials add`.',
         )
         return
       }
@@ -2925,7 +2902,7 @@ export class ThreadSessionRuntime {
           this.pendingDeliveryMessageIds = this.pendingDeliveryMessageIds.filter((id) => id !== pendingMessageId)
           void this.setPendingReaction(pendingMessageId, false)
         }
-        void notifyError(promptResult, 'promptAsync failed in submitViaOpencodeQueue')
+        void notifyError(promptResult, 'promptAsync failed in submitToSession')
         await cleanupOnError(`✗ Agent error: ${promptResult.message}`)
         return
       }
@@ -2982,7 +2959,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Ingress API for Discord handlers and commands.
-   * Defaults to opencode queue mode; local queue mode is explicit.
+   * Defaults to direct session submission; local queue mode is explicit.
    *
    * When input.preprocess is set, the preprocessor runs inside dispatchAction
    * (serialized) to resolve prompt/images/mode before routing. This replaces
@@ -3010,7 +2987,7 @@ export class ThreadSessionRuntime {
     }
     // If the prompt starts with `/cmdname ...` (and no explicit command is
     // already set), rewrite it into a command invocation so it goes through
-    // opencode's session.command API instead of being sent to the model as
+    // the session command API instead of being sent to the model as
     // plain text. Covers Discord chat messages, /new-session, CLI
     // `roadie send --prompt`, and scheduled tasks — all funnel through here.
     if (!input.contextOnly) input = maybeConvertLeadingCommand(input)
@@ -3021,7 +2998,7 @@ export class ThreadSessionRuntime {
       // Commands wait in the local queue until the current run finishes.
       return this.enqueueViaLocalQueue(input)
     }
-    return this.submitViaOpencodeQueue(input)
+    return this.submitToSession(input)
   }
 
   /**
@@ -3118,17 +3095,17 @@ export class ThreadSessionRuntime {
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
-        // noReply messages always go through the opencode path so the flag
+        // noReply messages always go through direct submission so the flag
         // reaches promptAsync; local queue doesn't support noReply.
         const enqueueResult = resolvedInput.noReply
-          ? await this.submitViaOpencodeQueue({
+          ? await this.submitToSession({
               ...resolvedInput,
               mode: 'direct',
               command: undefined,
             })
           : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
             ? await this.enqueueViaLocalQueue(resolvedInput)
-            : await this.submitViaOpencodeQueue(resolvedInput)
+            : await this.submitToSession(resolvedInput)
         resolveOuter(enqueueResult)
       } catch (err) {
         rejectOuter(err)
@@ -3344,7 +3321,7 @@ export class ThreadSessionRuntime {
     const getClient = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory, { channelId: this.channelId })
     if (getClient instanceof Error) {
       logger.warn(
-        `[QUEUE] OpenCode unavailable while restoring queue for ${this.threadId}: ${getClient.message}`,
+        `[QUEUE] Pi unavailable while restoring queue for ${this.threadId}: ${getClient.message}`,
       )
       return 'unavailable'
     }
@@ -3367,7 +3344,7 @@ export class ThreadSessionRuntime {
   }
 
   // ── Prompt Dispatch ─────────────────────────────────────────
-  // Resolve session, build system message, send to OpenCode.
+  // Resolve session, build system message, submit to Pi.
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
@@ -3400,7 +3377,6 @@ export class ThreadSessionRuntime {
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
       sessionId: session.id,
-      createdNewSession,
       permissions: input.permissions,
       owner: input.personId ?? input.userId,
     })
@@ -3416,7 +3392,7 @@ export class ThreadSessionRuntime {
 
     // Explicit agent prompts (for example /plan-agent <prompt>) must update
     // the session preference before dispatch. Otherwise the model can resolve
-    // from the requested agent while OpenCode keeps running the old agent.
+    // from the requested agent while Pi keeps running the old agent.
     if (input.agent) {
       await setSessionAgent(session.id, input.agent)
       await clearSessionModel(session.id)
@@ -3506,7 +3482,7 @@ export class ThreadSessionRuntime {
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
       this.typing.stopTyping()
-      await this.chat.sendMessage('No AI provider connected. Add a provider account with `/credentials add`.')
+      await this.chat.sendMessage('No model account available. Add an account to the credential pool with `/credentials add`.')
       return false
     }
 
@@ -3838,31 +3814,25 @@ export class ThreadSessionRuntime {
   private async updateExistingSessionPermissions({
     client,
     sessionId,
-    createdNewSession,
     permissions,
     noReply,
     owner,
   }: {
     client: AgentBackend
     sessionId: string
-    createdNewSession: boolean
     permissions?: string[]
     noReply?: boolean
     owner?: string
   }) {
-    const pi = getAgentBackendProvider().id === 'pi'
-    if (noReply || (createdNewSession && !pi)) {
+    if (noReply) {
       return null
     }
 
     const rules = resolveSessionPermissionRules({
       directory: this.sdkDirectory,
       requested: permissions,
-      phase: pi ? 'create' : 'update',
+      phase: 'create',
     })
-    if (rules.length === 0 && !pi) {
-      return null
-    }
 
     const updateResult = await client.sessions.setPermissions({
       sessionId,
@@ -3870,10 +3840,10 @@ export class ThreadSessionRuntime {
       owner,
     })
     if (updateResult instanceof AgentRequestError) {
-      return new Error('OpenCode rejected permission update', { cause: updateResult })
+      return new Error('Pi rejected permission update', { cause: updateResult })
     }
     if (updateResult instanceof Error) return updateResult
-    if (pi) this.permissionOwner = owner
+    this.permissionOwner = owner
     return null
   }
 
@@ -4089,7 +4059,7 @@ export class ThreadSessionRuntime {
   }
 
   /**
-   * Emit the model + agent banner once, before the first prompt or OpenCode
+   * Emit the model + agent banner once, before the first prompt or session
    * command can produce visible output in a newly-created session thread.
    */
   private async sendNewSessionModelInfo({
@@ -4284,11 +4254,7 @@ export class ThreadSessionRuntime {
     messageId: string
   }): Promise<void> {
     // Only the first reply after a user prompt can show a cold cache. Later steps re-read the turn's own writes.
-    // TODO: send this before step 1 tools finish. Tokens arrive only with step-finish, after tools in v1 and v2.
-    // OpenCode v2 publishes `session.step.streamed` at stream end (before tools settle) but without tokens, and
-    // packages/ai drops Anthropic `message_start` usage (onMessageStart returns NO_EVENTS). Needs upstream:
-    // add tokens to Step.Streamed, or emit a usage event on message_start for a notice right after the prompt.
-    // https://github.com/anomalyco/opencode/blob/v2/packages/schema/src/session-event.ts
+    // Usage arrives at step finish, so this notice may follow the first tools.
     const [firstAssistantId] = this.getAssistantMessageIdsForCurrentTurn({ sessionId })
     if (firstAssistantId !== messageId) {
       return
@@ -4361,7 +4327,7 @@ export class ThreadSessionRuntime {
   /**
    * Abort the active run and immediately send an empty user prompt.
    *
-   * Used by /model and /unset-model so opencode can restart from the
+   * Used by /model and /unset-model so Pi can restart from the
    * current session history with the updated model preference, without
    * replaying/fetching the last user message in roadie.
    */
@@ -4417,7 +4383,7 @@ export class ThreadSessionRuntime {
       `[RETRY] Re-submitting with empty prompt for session ${sessionId}`,
     )
 
-    // 2. Re-submit with empty prompt so opencode continues from session history.
+    // 2. Re-submit with empty prompt so Pi continues from session history.
     await this.enqueueIncoming({
       prompt: '',
       userId: '',
@@ -4443,7 +4409,7 @@ export class ThreadSessionRuntime {
    *
    * Used when a question is answered after its run was aborted elsewhere:
    * the original run is dead, so question.reply is a no-op. We instead feed
-   * the answer back as a fresh prompt so opencode continues from history.
+   * the answer back as a fresh prompt so Pi continues from history.
    */
   async resumeWithText({ text }: { text: string }): Promise<boolean> {
     const sessionId = this.state?.sessionId

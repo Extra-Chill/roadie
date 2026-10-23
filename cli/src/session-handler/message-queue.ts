@@ -1,10 +1,9 @@
 // Local per-thread message queue for one thread runtime.
 // Owns queue item persistence (insert/update/delete in SQLite plus the
 // in-memory thread state), the local queue drain, accepted-item acks, the
-// "Executing queued prompt" indicator and the single-item handoff to the agent
-// backend while a question is pending. The runtime owns this object and passes
-// in the callbacks it needs; the serial action queue, prompt dispatch and
-// opencode submission stay in the runtime.
+// "Executing queued prompt" indicator. Items wait locally until Pi is idle,
+// including while a question is pending, so speaker policies stay isolated.
+// The runtime owns prompt submission and the serial action queue.
 
 import crypto from 'node:crypto'
 import type { ChatThread } from '../chat-platform/types.js'
@@ -18,12 +17,10 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { asSubtext } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
 import {
-  didQuestionQueueHandoffSinceLatestQuestionAsked,
   isSessionBusy,
   type EventBufferEntry,
 } from './event-stream-state.js'
 import type { EnqueueResult, IngressInput } from './ingress-input.js'
-import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { parseQueuedMessagePayload } from './runtime-helpers.js'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
@@ -34,15 +31,11 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 export type MessageQueueOptions = {
   threadId: string
   chat: ChatThread
-  isDisposed: () => boolean
   isBusy: () => boolean
-  hasPendingQuestionUi: () => boolean
   getEventBuffer: () => EventBufferEntry[]
   dispatchAction: (action: () => Promise<void>) => Promise<void>
   markQueueDispatchBusy: (sessionId: string) => void
   markQueueDispatchIdle: (sessionId: string) => void
-  markQuestionQueueHandoffStarted: (sessionId: string) => void
-  submitViaOpencodeQueue: (input: IngressInput) => Promise<EnqueueResult>
   dispatchPrompt: (input: QueuedMessage) => Promise<boolean>
 }
 
@@ -51,11 +44,6 @@ export class MessageQueue {
   private readonly threadId: string
   private dispatchingQueueId: string | undefined
 
-  // Detached helper promise for the "question blocks while local queue has
-  // items" flow. Prevents overlapping single-item handoffs when the question is
-  // shown, answered, and new queued items arrive close together.
-  private questionQueueHandoffPromise: Promise<void> | null = null
-
   constructor(opts: MessageQueueOptions) {
     this.opts = opts
     this.threadId = opts.threadId
@@ -63,73 +51,6 @@ export class MessageQueue {
 
   private get state(): threadState.ThreadRunState | undefined {
     return threadState.getThreadState(this.threadId)
-  }
-
-  maybeHandoffQueuedItemForPendingQuestion({
-    sessionId,
-    reason,
-  }: {
-    sessionId: string | undefined
-    reason: 'question-shown' | 'question-replied' | 'queue-added-during-question'
-  }): void {
-    if (!sessionId) {
-      return
-    }
-    if (didQuestionQueueHandoffSinceLatestQuestionAsked({
-      events: this.opts.getEventBuffer(),
-      sessionId,
-    })) {
-      return
-    }
-    if (this.getQueueLength() === 0) {
-      return
-    }
-    if (this.questionQueueHandoffPromise) {
-      return
-    }
-    logger.log(
-      `[QUESTION QUEUE HANDOFF] Queue has ${this.getQueueLength()} items, handing off first item (${reason})`,
-    )
-    this.questionQueueHandoffPromise = this.handoffQueuedItemForPendingQuestion({
-      sessionId,
-    }).catch((error) => {
-      logger.error('[QUESTION QUEUE HANDOFF] Failed to hand off queued message:', error)
-      if (error instanceof Error) {
-        void notifyError(error, 'Failed to hand off queued message during pending question')
-      }
-    }).finally(() => {
-      this.questionQueueHandoffPromise = null
-    })
-  }
-
-  private async handoffQueuedItemForPendingQuestion({
-    sessionId,
-  }: {
-    sessionId: string
-  }): Promise<void> {
-    if (this.opts.isDisposed()) {
-      return
-    }
-    if (this.state?.sessionId !== sessionId) {
-      logger.log(
-        `[QUESTION QUEUE HANDOFF] Session changed before queue handoff for thread ${this.threadId}`,
-      )
-      return
-    }
-
-    // Pi cannot switch speaker policies inside a running turn, even while
-    // waiting on a question. Leave the item for the normal idle drain.
-    if (getAgentBackendProvider().id === 'pi') return
-
-    const next = threadState.dequeueItem(this.threadId)
-    if (!next) {
-      return
-    }
-
-    await this.sendQueueDrainIndicator(next)
-
-    this.opts.markQuestionQueueHandoffStarted(sessionId)
-    await this.opts.submitViaOpencodeQueue(next)
   }
 
   /**
@@ -201,14 +122,6 @@ export class MessageQueue {
         throw persistResult
       }
       threadState.enqueueItem(this.threadId, item)
-      const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-
-      if (this.opts.hasPendingQuestionUi()) {
-        this.maybeHandoffQueuedItemForPendingQuestion({
-          sessionId: stateAfterEnqueue?.sessionId || this.state?.sessionId,
-          reason: 'queue-added-during-question',
-        })
-      }
 
       await this.tryDrainQueue()
     })

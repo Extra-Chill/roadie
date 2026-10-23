@@ -1,7 +1,7 @@
 // Per-turn attribution for tool processes.
 //
 // The bot records who is speaking before every prompt/command dispatch
-// (`setSessionTurnAttribution`). The OpenCode plugin's shell.env hook reads
+// (`setSessionTurnAttribution`). The Pi backend reads
 // that row and exports it to every shell the agent runs, so tools can see the
 // current speaker and conversation without parsing the prompt.
 //
@@ -21,7 +21,7 @@
 // Extra shell variables: --shell-env <NAME=template> (repeatable) and
 // ROADIE_SHELL_ENV (JSON object) define additional variables as templates over
 // the same session fields, applied wherever Roadie builds the agent shell
-// environment (OpenCode's shell.env hook and the Pi backend's shell env file).
+// environment (the Pi backend's shell env file).
 // Names come only from configuration; Roadie knows no consumers.
 
 import {

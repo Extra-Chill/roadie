@@ -1,7 +1,7 @@
-// IPC polling bridge between the opencode plugin and the Discord bot.
+// IPC polling bridge between agent tools and the chat bot.
 // The plugin inserts rows into ipc_requests (via Drizzle). This module polls
 // that table, claims pending rows atomically, and dispatches them by type.
-// DB-backed IPC lets the OpenCode plugin request Discord UI interactions.
+// DB-backed IPC lets agent tools request chat UI interactions.
 
 import * as errore from 'errore'
 import type { Client } from 'discord.js'

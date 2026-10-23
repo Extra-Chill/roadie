@@ -385,10 +385,8 @@ describe.skipIf(!findPi())('/fork', () => {
     } finally { remove() }
   }, 25_000)
 
-  // OpenCode could bind a fork only to a discoverable Git worktree and failed
-  // closed on a plain directory. Pi resumes a session wherever its header
-  // points, so a plain-directory workspace is a real target; what must hold on
-  // any backend is that the task never runs in the source checkout.
+  // Pi resumes a session wherever its header points, so a plain-directory
+  // workspace is a real target. The task must never run in the source checkout.
   test('a plain-directory workspace runs the fork there, never in the source checkout', async () => {
     const source = await startSource()
     const sourceFile = path.join(ctx.directories.projectDirectory, 'fork-result.txt')

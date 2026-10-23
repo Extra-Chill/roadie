@@ -1,6 +1,6 @@
 // Scoped agent endpoints for tool shells.
 //
-// An agent tool shell runs inside the OpenCode server's environment but must
+// An agent tool shell runs inside Pi's tool environment but must
 // not hold the bot's database credentials (the shell.env hook blanks them and
 // exports ROADIE_AGENT_TOKEN instead, see agent-token.ts). The `roadie`
 // subcommands agents are told to run — send, session list/search/read/wait/

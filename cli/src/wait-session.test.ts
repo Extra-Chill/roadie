@@ -1,7 +1,7 @@
 // `send --wait` / `session wait` judge completion and render output from the
 // session events the bot persists, never from a backend the CLI starts (#217).
 // The streams below are shaped like the bot's normalized events for a Pi
-// session (a non-`ses_` id), which the old OpenCode-polling waiter rejected.
+// session (a non-`ses_` id), which a backend-specific polling waiter would reject.
 
 import { describe, expect, test } from 'vitest'
 import type { AgentEvent, AgentMessage, AgentPart } from './agent-backend/events.js'

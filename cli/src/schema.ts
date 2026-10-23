@@ -196,7 +196,7 @@ export const session_models = sqliteCore.sqliteTable('session_models', {
 })
 
 // Current-turn actor per agent session. Written by the bot before every
-// prompt/command dispatch and read by the OpenCode plugin's shell.env hook so
+// prompt/command dispatch and read by the Pi backend's shell environment builder so
 // tool processes see who is speaking right now. One row per session, replaced
 // each turn; a turn without a human speaker clears the actor columns so a
 // previous speaker is never reported as stale. Attribution only, not authority.

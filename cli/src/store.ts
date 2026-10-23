@@ -15,7 +15,7 @@ import {
 
 // Registered user commands, populated by registerCommands() in cli.ts.
 // discordCommandName is the full sanitized Discord slash command name
-// (including -cmd or -skill suffix), while name is the original OpenCode
+// (including -cmd or -skill suffix), while name is the original session
 // command name (may contain :, /, etc).
 export type RegisteredUserCommand = {
   name: string
@@ -72,14 +72,13 @@ export type RoadieState = {
   // user is expected to add their own `deny`/`ask` rules in opencode.json for
   // folders they want to protect.
   // Changes: set once at startup from --restrict-directories CLI flag.
-  // Read by: opencode.ts (server config default + buildSessionPermissions).
+  // Read by: permission-policy.ts (external directory checks).
   restrictExternalDirectories: boolean
 
   // Permission button TTL in milliseconds. When a permission prompt is shown
   // in Discord, buttons remain active for this duration before auto-rejecting.
-  // Defaults to 10 minutes. With continue_loop_on_deny enabled in the opencode
-  // config, a timeout rejection lets the model continue (try alternatives or
-  // explain it couldn't proceed) instead of killing the session.
+  // Defaults to 10 minutes. A timeout rejection lets the model continue
+  // (try alternatives or explain it couldn't proceed).
   // Changes: set once at startup from --permission-timeout-minutes CLI flag.
   // Read by: commands/permissions.ts showPermissionButtons().
   permissionTimeoutMs: number
@@ -109,26 +108,26 @@ export type RoadieState = {
   // read when credentialPoolsEnabled is on. Opt-in via --credentials or
   // ROADIE_CREDENTIALS; default global.
   // Changes: set once at startup.
-  // Read by: opencode.ts when passing ROADIE_CREDENTIALS to the server.
+  // Read by: credential pool routing.
   credentialsMode: CredentialsMode
 
   // Who pays for a thread in per-person modes: `owner` bills every turn to
   // the session owner, `speaker` bills each turn to whoever sent it. Opt-in
   // via --thread-billing or ROADIE_THREAD_BILLING; default owner.
   // Changes: set once at startup.
-  // Read by: opencode.ts when passing ROADIE_THREAD_BILLING to the server.
+  // Read by: per-turn credential pool attribution.
   threadBilling: ThreadBilling
 
   // Unprivileged user that agent tool shells run as (opt-in shell isolation,
-  // phase 3 step 2). When set, opencode.ts generates a setpriv + env -i
-  // wrapper under <dataDir>/bin/isolated-shell/bash and starts the OpenCode
-  // server with SHELL pointing at it, so bash tool calls run as this user
+  // phase 3 step 2). When set, the Pi backend generates a setpriv + env -i
+  // wrapper under <dataDir>/bin/isolated-shell/bash and sets Pi's shellPath
+  // to it, so bash tool calls run as this user
   // with an allowlisted environment. Null (default, --isolate-shells unset)
   // keeps today's behavior: shells run as the bot's own OS user and SHELL is
   // unchanged.
   // Changes: set once at startup from --isolate-shells or
   // ROADIE_ISOLATE_SHELLS.
-  // Read by: opencode.ts startSingleServer().
+  // Read by: agent-backend/registry.ts and the Pi backend.
   isolateShellsUser: string | null
 
   // Base URL for Discord REST API calls (default https://discord.com).
@@ -141,8 +140,7 @@ export type RoadieState = {
   // Validated at startup (invalid names or unknown template fields stop the
   // bot). Empty when nothing is configured.
   // Changes: set once at startup from --shell-env and ROADIE_SHELL_ENV.
-  // Read by: opencode.ts (forwarded to the server process as ROADIE_SHELL_ENV
-  // for the shell.env hook) and the Pi backend options (registry.ts).
+  // Read by: the Pi backend options (registry.ts).
   shellEnvTemplates: Record<string, string>
 
   // Service auth token (client_id:client_secret) used to authenticate
@@ -154,7 +152,7 @@ export type RoadieState = {
 
   // User-defined slash commands registered with Discord, populated after
   // registerCommands() completes during startup. Maps sanitized Discord
-  // command names back to original OpenCode command names.
+  // command names back to original session command names.
   // Changes: set once during startup after Discord API registration.
   // Read by: user-command handler dispatch and /command detection.
   registeredUserCommands: RegisteredUserCommand[]

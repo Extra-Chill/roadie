@@ -3,7 +3,7 @@
 // Roadie owns the Pi agent directory and writes one provider into its
 // models.json, `roadie` (api `anthropic-messages`), against the pool proxy
 // (../../credentials/messages-proxy.ts), with one model per pool rotation,
-// like OpenCode's `roadie/<rotation>`. The proxy serves every rotation entry
+// through `roadie/<rotation>` model aliases. The proxy serves every rotation entry
 // behind that one wire format (#276): Anthropic natively, API-key providers
 // and ChatGPT subscriptions translated, so a rotation falls through its
 // entries in order whatever their provider.

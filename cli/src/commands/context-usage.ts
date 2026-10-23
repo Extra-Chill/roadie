@@ -139,7 +139,7 @@ export async function handleContextUsageCommand({
   const backend = getAgentBackendProvider().getBackend(workingDirectory)
   if (!backend) {
     await command.reply({
-      content: 'Failed to get OpenCode client',
+      content: 'Failed to initialize Pi',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return

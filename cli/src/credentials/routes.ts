@@ -1,6 +1,6 @@
 // Session route store: turn affinity for credential pools.
 //
-// Maps an opencode session id to the live route (pool, account,
+// Maps a Pi session id to the live route (pool, account,
 // provider/model) its turn was pinned to. The pool provider
 // (credentials/provider.ts) pins the route on every successful dispatch and
 // prefers the held candidate on the next request, so tool follow-ups inside
@@ -14,9 +14,8 @@
 // cycles; this is routes' own lock, not a pool lock, so route writes never
 // contend with pool writes.
 //
-// Like the rest of credentials/, this module is imported by the provider
-// module that runs inside the OpenCode server process, so it must stay
-// dependency-free: only node builtins (plus the store's file-mode constants),
+// Like the rest of credentials/, this module is shared by the CLI and pool
+// proxy, so it must stay dependency-free: only node builtins (plus the store's file-mode constants),
 // and every function takes the data directory explicitly instead of importing
 // cli/src/config.ts.
 

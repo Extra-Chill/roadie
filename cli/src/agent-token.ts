@@ -2,10 +2,9 @@
 //
 // The bot's local HTTP server exposes scoped agent endpoints (see
 // agent-remote.ts) so `roadie` subcommands inside an agent tool shell never
-// need the raw database credentials. The OpenCode plugin's shell.env hook
+// need the raw database credentials. The Pi backend's shell environment
 // exports ROADIE_AGENT_TOKEN — an HMAC of the agent session id under a
-// secret shared only between the bot and the OpenCode server process — and
-// blanks the database credentials in the same hook output. The bot verifies
+// secret held by the bot — and blanks the database credentials. The bot verifies
 // the HMAC per request and never accepts an agent token on the hrana /v2
 // routes or any admin route.
 //
@@ -22,9 +21,8 @@ export const AGENT_TOKEN_ENV = 'ROADIE_AGENT_TOKEN'
 export const AGENT_TOKEN_SECRET_ENV = 'ROADIE_AGENT_TOKEN_SECRET'
 
 /**
- * Credentials a tool shell must never hold. The shell.env hook blanks these
- * by setting them to '' because OpenCode merges hook env over the inherited
- * env; plugins in the server process keep their access.
+ * Credentials a tool shell must never hold. The shell environment overlay
+ * blanks these by setting them to ''; the bot keeps its own access.
  */
 /** Set to 1 in every agent tool shell. */
 export const AGENT_SHELL_ENV = 'ROADIE_AGENT_SHELL'
@@ -73,20 +71,9 @@ export function verifyAgentToken({
 }
 
 /**
- * Secret shared between the bot and the OpenCode server process. Persisted
- * under <dataDir>/secrets so minted tokens keep working across bot restarts;
- * opencode.ts also passes it to the server process through
- * ROADIE_AGENT_TOKEN_SECRET so the shell.env hook can mint tokens there.
- * Tool shells only ever receive the derived per-session token: the hook
- * blanks the secret again in the same env it writes the token to.
- */
-/**
- * Secret shared between the bot and the OpenCode server process. Persisted
- * under <dataDir>/secrets so minted tokens keep working across bot restarts;
- * opencode.ts also passes it to the server process through
- * ROADIE_AGENT_TOKEN_SECRET so the shell.env hook can mint tokens there.
- * Tool shells only ever receive the derived per-session token: the hook
- * blanks the secret again in the same env it writes the token to.
+ * Bot-side token minting secret, persisted under <dataDir>/secrets so tokens
+ * keep working across restarts. ROADIE_AGENT_TOKEN_SECRET can override it.
+ * Tool shells receive only a derived per-session token; the secret is blanked.
  */
 export function ensureAgentTokenSecret(): string {
   const fromEnv = process.env[AGENT_TOKEN_SECRET_ENV]?.trim()
@@ -104,9 +91,9 @@ export function ensureAgentTokenSecret(): string {
 }
 
 /**
- * shell.env contract: blank the database/service credentials and export the
- * per-session agent token. OpenCode merges hook env over the inherited env,
- * so writing '' blanks inherited values. The minting secret is removed so a
+ * Shell environment contract: blank database/service credentials and export
+ * the per-session agent token. The overlay merges over inherited values,
+ * so writing '' blanks them. The minting secret is removed so a
  * shell can never mint tokens for another session, and a stale
  * ROADIE_AGENT_TOKEN never survives into a session-less shell.
  */

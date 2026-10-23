@@ -10,7 +10,7 @@ import { cancelPendingFileUpload } from '../commands/file-upload.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 
 // Track multiple pending permissions per thread (keyed by permission ID).
-// OpenCode handles blocking/sequencing — we just need to track all pending
+// Pi handles blocking/sequencing — we just need to track all pending
 // permissions to avoid duplicates and properly clean up on reply/teardown.
 // The runtime is the sole owner of pending permissions per thread.
 export const pendingPermissions = new Map<
@@ -29,11 +29,11 @@ export const pendingPermissions = new Map<
 
 // ── Pending UI cleanup ───────────────────────────────────────────
 // Clears all pending interactive UI state for a thread on dispose/delete.
-// Uses existing cancel functions which handle upstream replies (so OpenCode
+// Uses existing cancel functions which handle upstream replies (so Pi
 // doesn't hang waiting for answers that will never come).
 
 export function cleanupPendingUiForThread(threadId: string): void {
-  // Permissions: reject each pending permission so OpenCode doesn't hang,
+  // Permissions: reject each pending permission so Pi doesn't hang,
   // then delete the per-thread tracking map.
   const threadPerms = pendingPermissions.get(threadId)
   if (threadPerms) {
@@ -61,13 +61,13 @@ export function cleanupPendingUiForThread(threadId: string): void {
     pendingPermissions.delete(threadId)
   }
 
-  // Questions: cancel deletes pending context without replying to OpenCode.
+  // Questions: cancel deletes pending context without replying to Pi.
   void cancelPendingQuestion(threadId)
 
   // Action buttons: resolves context and clears timer.
   cancelPendingActionButtons(threadId)
 
-  // File uploads: resolves with empty files so OpenCode unblocks.
+  // File uploads: resolves with empty files so Pi unblocks.
   void cancelPendingFileUpload(threadId)
 
   // HTML actions: clears registered action callbacks for this thread.

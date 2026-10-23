@@ -296,7 +296,7 @@ export class PiEventTranslator {
   /**
    * Record that a tool call spawned a child session (the task tool; Roadie's
    * backend answers the extension's roadie:task request). The stored info rides
-   * on every later part update for the call, like OpenCode's task parts. The
+   * on every later part update for the call. The
    * returned running update makes child_session_started fire even though the
    * earlier running part predated the child session.
    */

@@ -1,6 +1,6 @@
 // The Pi backend's per-turn shell env file carries the configured
-// --shell-env / ROADIE_SHELL_ENV templates, exactly like the OpenCode
-// backend's shell.env hook. Unit-level: writeShellEnv runs without a `pi`
+// --shell-env / ROADIE_SHELL_ENV templates. Unit-level: writeShellEnv
+// runs without a `pi`
 // process, so this does not need the ROADIE_PI_BIN e2e harness.
 
 import fs from 'node:fs'

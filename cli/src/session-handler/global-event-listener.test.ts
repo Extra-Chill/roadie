@@ -1,5 +1,5 @@
 // The global listener consumes events through the agent backend seam, so a
-// fake provider fully drives it: no OpenCode server involved.
+// fake provider fully drives it: no Pi process involved.
 
 import { afterEach, describe, expect, test } from 'vitest'
 import type { AgentBackendEvent, AgentBackendProvider } from '../agent-backend/types.js'

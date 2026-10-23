@@ -12,7 +12,7 @@ import {
   type AgentUsage,
 } from '../agent-backend/events.js'
 
-/** Buffer-only marker: a queued prompt was handed to a pending question. */
+/** Legacy buffer marker, retained only to read persisted event streams. */
 export type QueueQuestionHandoffStartedEvent = {
   type: 'queue.question-handoff-started'
   sessionId: string
@@ -43,7 +43,7 @@ function isCompactionContinuePart(part: AgentPart): boolean {
   return part.synthetic === true && part.metadata?.compaction_continue === true
 }
 
-function isInternalOpenCodeUserMessageId({
+function isInternalUserMessageId({
   events,
   sessionId,
   messageId,
@@ -247,36 +247,6 @@ export function resolveActionParentSessionId({
   return isChildSession(eventSessionId) ? mainSessionId : undefined
 }
 
-export function didQuestionQueueHandoffSinceLatestQuestionAsked({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    const eventSessionId = getEventBufferSessionId(event)
-    if (eventSessionId !== sessionId) {
-      continue
-    }
-    if (event.type === 'queue.question-handoff-started') {
-      return true
-    }
-    if (event.type === 'question.asked') {
-      return false
-    }
-  }
-  return false
-}
-
 export type DerivedUnansweredQuestion = {
   id: string
   questions: Array<{
@@ -294,7 +264,7 @@ export type DerivedUnansweredQuestion = {
   }
 }
 
-// OpenCode emits question.asked when the tool starts, often before the
+// Pi emits question.asked when the tool starts, often before the
 // preceding text part gets time.end. Discord must wait for that end event
 // or the question UI posts first and the text dumps later.
 export function isAssistantTextReadyForQuestion({
@@ -500,7 +470,7 @@ export function getLatestUserMessage({
     if (info.sessionId !== sessionId || info.role !== 'user') {
       continue
     }
-    if (isInternalOpenCodeUserMessageId({
+    if (isInternalUserMessageId({
       events,
       sessionId,
       messageId: info.id,
@@ -683,7 +653,7 @@ function getSessionInfoTokenUsage({
 // updates are not double-counted. Scoped to sessionId so subagent idles
 // report their own usage. Child task sessions often have no user message in
 // the buffer; fall back to all assistant messages, then Session.tokens on
-// session.updated (OpenCode projects per-session usage there).
+// session.updated (per-session usage snapshots).
 export function getLatestTurnTokenUsage({
   events,
   sessionId,
@@ -1163,7 +1133,7 @@ export function getAssistantMessageIdsForLatestUserTurn({
       if (messageIndex < latestUserMessageIndex) {
         continue
       }
-      if (isInternalOpenCodeUserMessageId({
+      if (isInternalUserMessageId({
         events,
         sessionId,
         messageId,
@@ -1839,7 +1809,7 @@ export function getContinuationTurnOutcome({
   const latestById = new Map<string, AgentMessage>()
   let producedOutput = false
   let seenContinuation = false
-  // OpenCode can report the abort as a session error before the aborted
+  // Pi can report the abort as a session error before the aborted
   // assistant message update arrives, sometimes only after the idle.
   let abortErrorAfterContinuation = false
   for (const entry of events) {

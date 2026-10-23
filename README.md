@@ -131,7 +131,7 @@ channels:
 
 Sessions run on **Pi**. Roadie needs the `pi` binary (1.x or newer) on `PATH` or in `ROADIE_PI_BIN`; if it is missing or too old, startup fails with an error. Pi-related variables: `ROADIE_PI_BIN` (executable, default `pi`), `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
 
-A thread bound to a session Pi does not own (for example one started on the removed OpenCode backend) continues in a new Pi session on its next message, seeded with the thread's recent chat history. See [Agent backend](docs/agent-backend.md) for the details.
+A thread bound to a session Pi does not own (for example one started on a retired backend) continues in a new Pi session on its next message, seeded with the thread's recent chat history. See [Agent backend](docs/agent-backend.md) for the details.
 
 ## Running as a service
 

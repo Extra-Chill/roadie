@@ -7,7 +7,7 @@ import type { AgentEvent, AgentPart } from '../events.js'
 import { PiEventTranslator, finalAssistantText, isNarrationThinking, piMessageId, toAgentHistory, type PiMessage } from './events.js'
 import { splitRecords, type PiRecord } from './rpc.js'
 import { bashCommandPaths, decidePermission, permissionForToolCall } from './backend.js'
-import { fromOpenCodeMcp, openCodeToolName } from './mcp.js'
+import { convertProjectMcpServers, permissionToolName } from './mcp.js'
 import { PERSON_MCP_TOOL_GLOB, personMcpPermissions, personMcpScope } from '../../person-mcp.js'
 import { parsePermissionRules } from '../../permission-policy.js'
 
@@ -319,7 +319,7 @@ describe('decidePermission', () => {
   test('Pi defaults to allow', () => {
     expect(decidePermission({ rules: [], tool: 'bash', input: { command: 'ls' }, cwd }).action).toBe('allow')
   })
-  test('session rules apply by OpenCode permission name and pattern, last match wins', () => {
+  test('session rules apply by permission name and pattern, last match wins', () => {
     const rules = [
       { permission: 'bash', pattern: '*', action: 'ask' as const },
       { permission: 'bash', pattern: 'git status*', action: 'allow' as const },
@@ -399,8 +399,8 @@ describe('Pi 1.x stream shape', () => {
 })
 
 describe('MCP config for Pi', () => {
-  test('OpenCode mcp entries convert to Pi servers with direct exposure', () => {
-    expect(fromOpenCodeMcp({
+  test('OpenCode-format project config mcp entries convert to Pi servers with direct exposure', () => {
+    expect(convertProjectMcpServers({
       fs: { type: 'local', command: ['npx', '-y', 'server-fs', '.'], environment: { TOKEN: '{env:FS_TOKEN}' } },
       docs: { type: 'remote', url: 'https://x/mcp', headers: { Authorization: 'Bearer {env:DOCS}' }, enabled: false },
     })).toEqual({
@@ -408,9 +408,9 @@ describe('MCP config for Pi', () => {
       docs: { url: 'https://x/mcp', headers: { Authorization: 'Bearer ${DOCS}' }, enabled: false, exposure: 'direct' },
     })
   })
-  test('Pi MCP tool names map to OpenCode names, so person-scoped rules still match', () => {
-    expect(openCodeToolName('mcp__roadie_pm_abc_jira__search')).toBe('roadie_pm_abc_jira_search')
-    expect(openCodeToolName('bash')).toBe('bash')
+  test('Pi MCP tool names map to permission rule names, so person-scoped rules still match', () => {
+    expect(permissionToolName('mcp__roadie_pm_abc_jira__search')).toBe('roadie_pm_abc_jira_search')
+    expect(permissionToolName('bash')).toBe('bash')
     const rules = [{ permission: 'roadie_pm_*', pattern: '*', action: 'deny' as const }]
     expect(decidePermission({ rules, tool: 'mcp__roadie_pm_abc_jira__search', input: {}, cwd: '/r' }).action).toBe('deny')
   })

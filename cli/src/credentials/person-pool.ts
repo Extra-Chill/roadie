@@ -1,8 +1,7 @@
 // Person -> pool id derivation and per-person routing lists.
 //
 // Pure module: only node builtins plus credentials/store.js, so it can be
-// imported by the provider module that runs inside the OpenCode server
-// process (credentials/provider.ts) as well as by the bot process.
+// shared by the pool proxy and bot process.
 //
 // The person key is the person filter's personId when present, otherwise
 // `<platform>:<actorId>` (e.g. `discord:532385681268408341`). The pool id for

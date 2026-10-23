@@ -15,7 +15,7 @@ The startup log line names the backend: `Agent backend: pi`.
 
 ## Sessions Pi does not own
 
-A thread bound to a session Pi does not own — for example one started on the removed OpenCode backend — starts a new Pi session on its next prompt. The new session is seeded with one context-only message: the thread's recent chat history (bounded), plus a note that files, tool results and the earlier transcript did not carry over.
+A thread bound to a session Pi does not own — for example one started on a retired backend — starts a new Pi session on its next prompt. The new session is seeded with one context-only message: the thread's recent chat history (bounded), plus a note that files, tool results and the earlier transcript did not carry over.
 
 ## Project configuration
 

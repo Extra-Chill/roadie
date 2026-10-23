@@ -37,7 +37,6 @@ export const LogPrefix = {
   MCP: 'MCP',
   MODEL: 'MODEL',
   OPENAI: 'OPENAI',
-  OPENCODE: 'OPENCODE',
   PERMISSIONS: 'PERMS',
   QUEUE: 'QUEUE',
   REMOVE_PROJECT: 'RM_PROJ',
@@ -85,7 +84,7 @@ export function initLogFile(dataDir: string): void {
 
 /**
  * Set the log file path without truncating. Use this in child processes
- * (like the opencode plugin) that should append to the same log file
+ * (like the Pi extension) that should append to the same log file
  * the bot process already created with initLogFile().
  */
 export function setLogFilePath(dataDir: string): void {
