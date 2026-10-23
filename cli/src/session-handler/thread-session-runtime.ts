@@ -2564,6 +2564,7 @@ export class ThreadSessionRuntime {
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
+    let deferPiTurn = false
 
     await this.dispatchAction(async () => {
       if (
@@ -2574,6 +2575,13 @@ export class ThreadSessionRuntime {
           `[ENQUEUE] Skipping stale promptAsync enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
         )
         skippedBySessionGuard = true
+        return
+      }
+
+      // Pi steering shares the running model turn. Keep each speaker's
+      // permissions (including person-MCP) until that turn has settled.
+      if (getAgentBackendProvider().id === 'pi' && !input.noReply && this.isBusy()) {
+        deferPiTurn = true
         return
       }
 
@@ -2656,6 +2664,8 @@ export class ThreadSessionRuntime {
         sessionId: session.id,
         createdNewSession,
         permissions: input.permissions,
+        noReply: input.noReply,
+        owner: input.personId ?? input.userId,
       })
       if (updatePermissionsResult instanceof Error) {
         await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
@@ -2911,6 +2921,7 @@ export class ThreadSessionRuntime {
       }
     })
 
+    if (deferPiTurn) return this.enqueueViaLocalQueue(input)
     if (skippedBySessionGuard) {
       return { queued: false }
     }
@@ -3364,6 +3375,7 @@ export class ThreadSessionRuntime {
       sessionId: session.id,
       createdNewSession,
       permissions: input.permissions,
+      owner: input.personId ?? input.userId,
     })
     if (updatePermissionsResult instanceof Error) {
       this.typing.stopTyping()
@@ -3801,28 +3813,34 @@ export class ThreadSessionRuntime {
     sessionId,
     createdNewSession,
     permissions,
+    noReply,
+    owner,
   }: {
     client: AgentBackend
     sessionId: string
     createdNewSession: boolean
     permissions?: string[]
+    noReply?: boolean
+    owner?: string
   }) {
-    if (createdNewSession) {
+    const pi = getAgentBackendProvider().id === 'pi'
+    if (noReply || (createdNewSession && !pi)) {
       return null
     }
 
     const rules = resolveSessionPermissionRules({
       directory: this.sdkDirectory,
       requested: permissions,
-      phase: 'update',
+      phase: pi ? 'create' : 'update',
     })
-    if (rules.length === 0) {
+    if (rules.length === 0 && !pi) {
       return null
     }
 
     const updateResult = await client.sessions.setPermissions({
       sessionId,
       permission: rules,
+      owner,
     })
     if (updateResult instanceof AgentRequestError) {
       return new Error('OpenCode rejected permission update', { cause: updateResult })
