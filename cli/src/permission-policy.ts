@@ -6,9 +6,8 @@
 // layer, and plugins (the `permission_rules` filter). The last matching rule
 // wins, so later sources override earlier ones.
 //
-// Backends with their own permission engine (OpenCode) receive the rules on
-// session create/update. Backends without one call `evaluatePermission` before
-// running a tool: "ask" means Roadie shows an approval prompt in chat.
+// Pi calls `evaluatePermission` before running a tool: "ask" means Roadie
+// shows an approval prompt in chat.
 
 import { applyFilters } from './hooks.js'
 import type { AgentPermissionRule } from './agent-backend/types.js'
@@ -18,20 +17,13 @@ export type PermissionAction = AgentPermissionRule['action']
 /**
  * Build the per-session permission ruleset passed to session.create/update.
  *
- * Keep this list minimal. Session rules are the LAST ruleset opencode
- * evaluates — `Permission.merge(agent.permission, session.permission)` in
- * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
- * here silently overrides the user's own opencode.json. Only rules that must
- * beat user config belong here.
+ * Keep this list minimal. Session rules follow agent rules, so every rule
+ * here overrides OpenCode-format project config. Only rules that must beat
+ * project config belong here.
  *
- * In particular, directory *allow* rules must NOT go here. They live in the
- * server config so a project opencode.json can still deny or ask for specific
- * folders. Putting an `external_directory: '*' allow` rule here would make
- * every user `deny` rule a no-op.
- *
- * The session's own working directory never needs a rule either: opencode skips
- * the external_directory gate entirely for paths inside the active instance
- * (`containsPath` in tool/external-directory.ts).
+ * Directory *allow* rules must NOT go here: a blanket allow would make every
+ * project deny rule a no-op. Pi skips the external_directory gate for paths
+ * inside the session's working directory.
  *
  * That leaves one rule: checkout isolation. A thread bound to a separate git
  * checkout (`--cwd`) is denied the origin checkout so it does not edit the main repo.

@@ -390,7 +390,7 @@ describe('scheduled task execution options', () => {
     `)
   })
 
-  test('tracks active runs until their OpenCode session completes', async () => {
+  test('tracks active runs until their Pi session completes', async () => {
     const taskId = await createScheduledTask({
       scheduleKind: 'cron',
       cronExpr: '*/5 * * * *',

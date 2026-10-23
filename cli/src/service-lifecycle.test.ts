@@ -32,7 +32,7 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-lifecycle-'))
 }
 
-/** A long-lived process whose command line reads like `... opencode serve`. */
+/** A long-lived process with configurable command-line arguments. */
 function spawnIdle(extraArgs: string[]): ChildProcess {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', ...extraArgs], { stdio: 'ignore' })
   children.push(child)

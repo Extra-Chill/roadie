@@ -14,7 +14,7 @@ type ChatMessage = { role: string; content?: unknown; tool_call_id?: string }
 
 /**
  * One streamed piece of a scripted reply. Same shape as the AI SDK stream
- * parts the OpenCode deterministic provider took, so its matchers port as-is.
+ * parts the deterministic provider took, so its matchers port as-is.
  * `stream-start` and the text-start/end markers emit nothing; they keep
  * per-part delays aligned with the old scripts.
  */

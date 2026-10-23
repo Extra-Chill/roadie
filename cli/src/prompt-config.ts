@@ -32,7 +32,7 @@ import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 
-const logger = createLogger(LogPrefix.OPENCODE)
+const logger = createLogger(LogPrefix.SESSION)
 
 export const BUILTIN_PROMPT_SECTION_IDS = [
   'discord-output',

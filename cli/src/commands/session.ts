@@ -192,7 +192,7 @@ export async function handleSessionCommand({
     mode: 'direct',
   }).catch(async (error) => {
     logger.error('New session dispatch failed:', error)
-    await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')
+    await sendThreadMessage(thread, 'Could not send the request to Pi. Send your request again in this thread.')
   })
 }
 

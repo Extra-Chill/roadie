@@ -100,7 +100,7 @@ describe('ensureAgentTokenSecret', () => {
     const secret = ensureAgentTokenSecret()
     const token = mintAgentToken({ secret, sessionId: 'ses_live' })
     // The secrets file is the only state shared with a restarted bot process
-    // or the OpenCode server process.
+    // or the Pi process.
     const persisted = fs
       .readFileSync(path.join(dir, 'secrets', 'agent-token-secret'), 'utf8')
       .trim()
@@ -155,8 +155,8 @@ describe('applyAgentShellEnv (shell.env contract)', () => {
   })
 })
 
-describe('applyAgentShellEnv as OpenCode merges it', () => {
-  // OpenCode's ShellTool.shellEnv returns {...process.env, ...hookEnv}; assert
+describe('applyAgentShellEnv as an inherited environment overlay', () => {
+  // Tool shells receive {...process.env, ...hookEnv}; assert
   // on that merged result, which is what a tool shell actually receives.
   const serverEnv = {
     PATH: '/usr/bin',
@@ -189,7 +189,7 @@ describe('applyAgentShellEnv as OpenCode merges it', () => {
 })
 
 describe('agent mode detection', () => {
-  test('resolveAgentCredentials requires the opencode process marker, a token, and no database credential', async () => {
+  test('resolveAgentCredentials requires the agent shell marker, a token, and no database credential', async () => {
     const { resolveAgentCredentials } = await import('./agent-remote.js')
     useTempDataDir()
     await closeDb()

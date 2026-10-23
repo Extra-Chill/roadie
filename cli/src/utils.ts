@@ -92,7 +92,7 @@ export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
 }
 
 // Delegates to errore.isAbortError (walks cause chain for AbortError instances),
-// then falls back to opencode server-specific abort patterns that aren't
+// then falls back to backend abort patterns that aren't
 // errore.AbortError but still represent aborted operations.
 export function isAbortError(error: unknown): error is Error {
   if (errore.isAbortError(error)) return true

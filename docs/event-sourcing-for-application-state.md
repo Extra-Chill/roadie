@@ -132,7 +132,7 @@ function isAssistantMessageNaturalCompletion(message: {
 }
 ```
 
-every possible piece of state is now computed as a pure function that takes as input the last 1000 opencode session events
+every possible piece of state is now computed as a pure function that takes as input the last 1000 normalized session events
 
 ```typescript
 function shouldShowFooter(events: SessionEvent[]): boolean {
@@ -159,13 +159,13 @@ also, this style is much easier for models to work with. the fix surface becomes
 
 ## debugging with event streams
 
-I also added a command `roadie session export-events-jsonl <id>` that lets you export the opencode events for a session
+I also added a command `roadie session export-events-jsonl <id>` that lets you export the normalized events for a session
 
-now every time I find a bug in roadie in Discord I tell roadie "export opencode events from session xxx, create a failing test, then fix it".
+now every time I find a bug in roadie in Discord I tell roadie "export events from session xxx, create a failing test, then fix it".
 
 the agent then adds a new test using the event stream as input. then it calls a pure transformation that computes data from the event stream
 
-I had to do this, for example, when I discovered there was a new way a session can end naturally in opencode. I just had to reference a session with this new behaviour to Opus and ask it to fix the bug. it just did so. one shot.
+I had to do this, for example, when I discovered there was a new way a session can end naturally. I just had to reference a session with this new behaviour to Opus and ask it to fix the bug. it just did so. one shot.
 
 ```bash
 roadie session export-events-jsonl --session ses_123 --out ./tmp/session.jsonl

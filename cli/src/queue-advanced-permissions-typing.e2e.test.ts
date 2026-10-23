@@ -143,7 +143,7 @@ describe.skipIf(!findPi())('queue advanced: typing around permissions', () => {
         -# ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
-        Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
+        Agent is accessing files outside the project.
         **Pattern:** \`/Users/morse\`
         ✅ Permission **accepted**
         [user clicks button]

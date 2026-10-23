@@ -103,7 +103,7 @@ export type ThreadRunState = {
   parentSessionId: string | undefined
 
   // FIFO queue of pending inputs waiting for roadie-local dispatch.
-  // Normal user messages default to opencode queue mode; this queue is
+  // Normal user messages default to direct session submission; this queue is
   // for local-queue flows (slash commands).
   // Changes: enqueueItem (append), dequeueItem (head removal),
   // clearQueueItems, removeQueueItemAtPosition.

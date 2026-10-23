@@ -61,7 +61,7 @@ describe.skipIf(process.platform === 'win32')('terminateProcessGroup', () => {
     expect(processGroupAlive(leader.pid!)).toBe(false)
   })
 
-  // The case stopOpencodeServer relies on: the leader was already stopped (and
+  // The process-group cleanup case: the leader was already stopped (and
   // reaped) by stopOwnedChild, but something it spawned is still running.
   test('stops surviving group members after the leader exited', async () => {
     const { leader, childPid } = await spawnLeaderWithChild(

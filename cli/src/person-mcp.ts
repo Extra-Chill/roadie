@@ -7,7 +7,7 @@
 //   <scope>_<name>   where scope = `roadie_pm_<first 16 hex of sha256(person key)>`
 //
 // Isolation has two halves:
-// - The OpenCode server config denies every `roadie_pm_*` tool by default
+// - The Pi permission gate denies every `roadie_pm_*` tool by default
 //   (PERSON_MCP_DENY_ALL), so sessions of people without MCP config, CLI
 //   sessions and denied people see none of these servers.
 // - Each chat turn appends session rules that reset to deny-all and then allow

@@ -168,7 +168,7 @@ async function sendClickedActionToModel({
 
   const username = interaction.user.globalName || interaction.user.username
 
-  // Action button clicks use opencode queue mode.
+  // Action button clicks submit directly to the session.
   const runtime = thread.type === ChannelType.GuildText
     ? getOrCreateRuntime({
         threadId: thread.id,

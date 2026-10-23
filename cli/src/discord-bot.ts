@@ -1598,9 +1598,8 @@ export async function startDiscordBot({
 
 // ── Process lifecycle ────────────────────────────────────────────────
 // cli-runner installs these handlers right after binding the hrana lock port,
-// long before Discord is ready. Before this, SIGINT/SIGTERM during startup only
-// hit the opencode.ts fallback listener, which does not exit, so the process
-// kept the lock port forever and every next start failed with EADDRINUSE.
+// long before Discord is ready. Startup signals must release the lock port
+// even before the bot is fully initialized, or the next start gets EADDRINUSE.
 // Every cleanup step below must therefore be safe at any startup phase.
 
 const SHUTDOWN_DEADLINE_MS = 15_000

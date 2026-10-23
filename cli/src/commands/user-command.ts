@@ -1,5 +1,5 @@
-// User-defined OpenCode command handler.
-// Handles slash commands that map to user-configured commands in opencode.json.
+// User-defined session command handler.
+// Handles slash commands that map to Pi prompt templates and skills.
 
 import type { CommandHandler } from './types.js'
 import {
@@ -28,7 +28,7 @@ export const handleUserCommand: CommandHandler = async ({
   appId,
 }) => {
   const discordCommandName = command.commandName
-  // Look up the original OpenCode command name from the mapping populated at registration.
+  // Look up the original session command name from the mapping populated at registration.
   // The sanitized Discord name is lossy (e.g. foo:bar → foo-bar), so resolving from
   // the exact registered slash command name avoids collisions.
   const registered = store.getState().registeredUserCommands.find(
@@ -161,7 +161,7 @@ export const handleUserCommand: CommandHandler = async ({
       const newThread = await starterMessage.startThread({
         name: threadName.slice(0, DISCORD_THREAD_NAME_LIMIT),
         autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-        reason: `OpenCode command: ${commandName}`,
+        reason: `Session command: ${commandName}`,
       })
 
       // Add user to thread so it appears in their sidebar

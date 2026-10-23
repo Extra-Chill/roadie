@@ -1,5 +1,5 @@
 // Permission button handler - Shows buttons for permission requests.
-// When OpenCode asks for permission, this module renders 3 buttons:
+// When Pi asks for permission, this module renders 3 buttons:
 // Accept, Accept Always, and Deny.
 //
 // The `directory` stored in PendingPermissionContext is the session directory
@@ -26,7 +26,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { updateComponentMessage } from '../interaction-reply.js'
 
 /**
- * Permission replies used to ignore OpenCode's rejection responses and only
+ * Permission replies used to ignore backend rejection responses and only
  * fail on transport errors. Keep that: rethrow anything but a rejection.
  */
 function throwUnlessRejected(result: void | Error): void {
@@ -156,7 +156,7 @@ export async function showPermissionButtons({
   // Auto-reject on TTL expiry so the agent session doesn't hang forever
   // waiting for a permission reply that will never come. Uses atomic take
   // so only one of TTL-expiry or button-click can win.
-  // With continue_loop_on_deny enabled in opencode config, the model sees
+  // After a denial, the model sees
   // this as a tool error and continues (tries alternatives or explains).
   const ttlMs = getPermissionTimeoutMs()
   setTimeout(async () => {
@@ -223,7 +223,7 @@ export async function showPermissionButtons({
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const externalDirLine =
     permission.permission === 'external_directory'
-      ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
+      ? `Agent is accessing files outside the project.\n`
       : ''
   const fullContent =
     `⚠️ **Permission Required**\n` +
@@ -260,7 +260,7 @@ function updatePermissionMessage({
       const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
       const externalDirLine =
         context.permission.permission === 'external_directory'
-          ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
+          ? 'Agent is accessing files outside the project.\n'
           : ''
       return message.edit({
         content:
@@ -296,7 +296,7 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
     const client = getAgentBackendProvider().getBackend(pendingContext.directory)
     if (!client) {
       pendingPermissionContexts.set(pendingContext.contextHash, pendingContext)
-      logger.error('Failed to dismiss pending permission: OpenCode server not found')
+      logger.error('Failed to dismiss pending permission: Pi backend not found')
       continue
     }
 
@@ -373,7 +373,7 @@ export async function handlePermissionButton(
   try {
     const permClient = getAgentBackendProvider().getBackend(context.directory)
     if (!permClient) {
-      throw new Error('OpenCode server not found for directory')
+      throw new Error('Pi backend not found for directory')
     }
     const requestIds =
       context.requestIds.length > 0

@@ -1,7 +1,7 @@
 // /mcp command - List and toggle MCP servers for the current project.
 // Uses the agent backend's MCP operations (status/connect/disconnect).
 // MCP state is project-scoped (per channel), not per thread or session.
-// No database storage needed — state lives in OpenCode's config.
+// No database storage needed — state lives in the project's MCP config.
 
 import crypto from 'node:crypto'
 import {
@@ -124,7 +124,7 @@ export async function handleMcpCommand({
   const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(command.channel as Parameters<typeof backendChannelId>[0]) })
   if (getClient instanceof Error) {
     await command.editReply({
-      content: `Failed to connect to OpenCode server: ${getClient.message}`,
+      content: `Failed to initialize Pi: ${getClient.message}`,
     })
     return
   }
@@ -217,7 +217,7 @@ export async function handleMcpSelectMenu(
   const getClient = await getAgentBackendProvider().initializeForDirectory(projectDirectory, { channelId: backendChannelId(interaction.channel as Parameters<typeof backendChannelId>[0]) })
   if (getClient instanceof Error) {
     await interaction.editReply({
-      content: `Failed to connect to OpenCode server: ${getClient.message}`,
+      content: `Failed to initialize Pi: ${getClient.message}`,
       components: [],
     })
     return
@@ -267,7 +267,7 @@ export async function handleMcpSelectMenu(
 
   if (serverInfo.status === 'needs_auth') {
     await interaction.editReply({
-      content: `**${serverName}** needs authentication.\nRun \`opencode\` in the project directory to complete the OAuth flow.`,
+      content: `**${serverName}** needs authentication.\nAsk an administrator to authenticate this MCP server in the Pi setup.`,
       components: [],
     })
     return

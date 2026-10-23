@@ -1,5 +1,5 @@
 // Retired sessions (#177). A thread bound to a session the agent backend does
-// not own (e.g. one from the removed OpenCode backend) starts a new session on
+// not own (e.g. one from a retired backend) starts a new session on
 // its next prompt. The new session gets one context-only message built here: the
 // thread's recent chat history, bounded, plus a note that the earlier
 // session's tool state did not carry over.

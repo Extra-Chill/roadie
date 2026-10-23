@@ -114,7 +114,7 @@ function hranaScript({
     const result = await startHranaServer({ dbPath: path.join(dir, 'db.sqlite') })
     if (result instanceof Error) throw result
     ${extra}
-    // Same situation as the opencode.ts fallback: a listener that never exits.
+    // Regression case: a listener that never exits.
     process.on('SIGINT', () => {})
     process.on('SIGTERM', () => {})
     console.log('FIXTURE_READY')

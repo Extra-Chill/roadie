@@ -1,7 +1,7 @@
 // Backend-neutral file search under a project directory.
 //
 // Replaces backend `find.files` autocomplete with a local walk, so file
-// suggestions work the same on every agent backend (no OpenCode client or
+// suggestions work the same on every agent backend (no backend client or
 // server involved). Respects the project root's `.gitignore` for plain
 // patterns: comments, `*`/`?`/`**` globs, directory-only (trailing `/`) and
 // anchored (inner `/` or leading `/`) rules. Negation rules and nested

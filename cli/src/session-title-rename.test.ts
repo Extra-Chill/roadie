@@ -1,6 +1,6 @@
 // Unit tests for deriveThreadNameFromSessionTitle — the pure helper that
 // decides whether (and how) to rename a Discord thread based on an
-// OpenCode session title. Kept focused and deterministic; no Discord mocks.
+// generated session title. Kept focused and deterministic; no Discord mocks.
 
 import { describe, test, expect } from 'vitest'
 import { deriveThreadNameFromSessionTitle } from './session-handler/thread-name.js'
@@ -95,7 +95,7 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`undefined`)
   })
 
-  test('ignores a title containing only OpenCode callout markup', () => {
+  test('ignores a title containing only callout markup', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: '<callout accent="#ef4444">',
@@ -104,7 +104,7 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`undefined`)
   })
 
-  test('ignores paired OpenCode callout markup with no title text', () => {
+  test('ignores paired callout markup with no title text', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: '<callout accent="#ef4444"></callout>',
@@ -113,7 +113,7 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`undefined`)
   })
 
-  test('keeps useful text while removing OpenCode callout wrappers', () => {
+  test('keeps useful text while removing callout wrappers', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: '<callout accent="#ef4444">Useful title</callout>',

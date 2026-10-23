@@ -287,7 +287,7 @@ describe('system-message', () => {
       "roadie session title 'Short title' --session ses_123",
     )
     expect(message).toContain(
-      'Skip the first turn. OpenCode already auto-generates the title from the first message.',
+      'Skip the first turn. Pi already auto-generates the title from the first message.',
     )
     expect(message).toContain('thread-name="..."')
     expect(message).toContain('Do not retitle every turn')
@@ -523,12 +523,12 @@ describe('system-message', () => {
 
       ## updating the session title
 
-      Skip the first turn. OpenCode already auto-generates the title from the first message.
+      Skip the first turn. Pi already auto-generates the title from the first message.
       On later turns, if the scope or goal changed, run:
 
       roadie session title 'Short title' --session ses_123
 
-      Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the OpenCode title.
+      Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the session title.
       Do not retitle every turn. Discord rate-limits thread renames.
       Keep titles short. No emoji. No ⬦ or Fork: prefixes.
 
@@ -603,9 +603,9 @@ describe('system-message', () => {
 
       A message to a busy thread never interrupts it. The agent picks the message up at its next step boundary (after the current tool call finishes) and continues with it in context. Only \`/abort\` stops a run. To have something done after the current task, say so in the message (for example "after you finish, run the tests").
 
-      ### opencode commands and agent switching
+      ### Session commands and agent switching
 
-      Start \`--prompt\` with \`/commandname\` to run a registered opencode command (slash commands, skills, MCP prompts). If the name is not registered, the prompt is sent as plain text. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
+      Start \`--prompt\` with \`/commandname\` to run a registered session command (slash commands, skills, MCP prompts). If the name is not registered, the prompt is sent as plain text. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
 
       roadie send --thread <thread_id> --prompt '/review fix the auth module' --agent <current_agent>
       roadie send --channel chan_123 --prompt '/build-cmd update dependencies' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'

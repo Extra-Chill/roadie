@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { agentFor, openCodePermissionRules, parseAgentMarkdown, piAgents, projectAgents } from './agents.js'
+import { agentFor, parseProjectPermissionRules, parseAgentMarkdown, piAgents, projectAgents } from './agents.js'
 
 function projectWithAgents(): string {
   const dir = fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pi-agents-'))
@@ -36,15 +36,15 @@ function projectWithAgents(): string {
   return dir
 }
 
-describe('openCodePermissionRules', () => {
+describe('parseProjectPermissionRules', () => {
   test('shorthand and pattern forms become rules, last match wins order', () => {
-    expect(openCodePermissionRules({ edit: 'deny', bash: { '*': 'ask', 'git diff': 'allow' }, webfetch: 'nope' })).toEqual([
+    expect(parseProjectPermissionRules({ edit: 'deny', bash: { '*': 'ask', 'git diff': 'allow' }, webfetch: 'nope' })).toEqual([
       { permission: 'edit', pattern: '*', action: 'deny' },
       { permission: 'bash', pattern: '*', action: 'ask' },
       { permission: 'bash', pattern: 'git diff', action: 'allow' },
     ])
-    expect(openCodePermissionRules(undefined)).toEqual([])
-    expect(openCodePermissionRules('deny')).toEqual([])
+    expect(parseProjectPermissionRules(undefined)).toEqual([])
+    expect(parseProjectPermissionRules('deny')).toEqual([])
   })
 })
 

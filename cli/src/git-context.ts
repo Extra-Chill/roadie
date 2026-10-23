@@ -1,6 +1,6 @@
 // Git branch context for the model: which branch (or detached HEAD) a
 // session's checkout is on, and when that changed since it was last announced.
-// Shared by OpenCode's context-awareness plugin and the Pi backend.
+// Used by the Pi backend for project context.
 
 import { FilesystemOperationError } from './errors.js'
 import { execAsync } from './exec-async.js'

@@ -1,6 +1,5 @@
 // The credential pool list a session bills to, as the ordered value of the
-// x-roadie-pool header. Shared by every agent backend: the OpenCode plugin
-// (../credential-pools-plugin.ts) and the Pi messages proxy (./messages-proxy.ts).
+// x-roadie-pool header, used by the Pi messages proxy (./messages-proxy.ts).
 
 import {
   CREDENTIALS_MODE_ENV,

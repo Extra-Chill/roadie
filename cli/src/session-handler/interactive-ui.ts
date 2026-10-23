@@ -3,7 +3,7 @@
 // patterns) and question dropdowns. Questions wait for the preceding text part
 // to finish, with a debounced fallback, so the dropdown never lands ahead of
 // the text that introduced it. The runtime owns this object and passes in the
-// callbacks it needs; queue handoff lives in message-queue.ts.
+// callbacks it needs; queued messages wait until Pi is idle.
 
 import type { AgentPermissionRequest, AgentQuestionRequest, AgentPart } from '../agent-backend/events.js'
 import type { ChatThread } from '../chat-platform/types.js'
@@ -36,7 +36,6 @@ export type InteractiveUiOptions = {
     skipPartId?: string
   }) => Promise<void>
   dispatchAction: (action: () => Promise<void>) => Promise<void>
-  onQuestionShown: (sessionId: string) => void
 }
 
 export class InteractiveUi {
@@ -183,7 +182,7 @@ export class InteractiveUi {
     })
   }
 
-  // OpenCode emits question.asked when the tool starts, often before the
+  // Pi emits question.asked when the tool starts, often before the
   // preceding text part gets time.end. Showing the dropdown on that event
   // holds the action queue while Discord posts, so the later text-end cannot
   // send and dumps after the queued » user: indicator. Wait for text-end.
@@ -233,7 +232,6 @@ export class InteractiveUi {
       },
     })
     this.deferredQuestionShow.clear()
-    this.opts.onQuestionShown(sessionId)
     return true
   }
 

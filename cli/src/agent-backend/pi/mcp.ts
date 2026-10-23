@@ -1,10 +1,6 @@
-// MCP servers for Pi sessions (#51). Pi 1.x speaks MCP itself (built-in `mcp`
-// extension); Roadie only decides which servers a session gets:
-// - the project's OpenCode-style `opencode.json` `mcp` entries, converted;
-// - servers added through the backend (per-person servers, ../../person-mcp.ts).
-// Roadie writes them to a private per-process file (ROADIE_PI_MCP_FILE, 0600:
-// headers carry tokens); ./roadie-extension.ts registers them with direct
-// exposure, so tools reach the model like OpenCode's MCP tools.
+// MCP servers for Pi sessions. Roadie converts OpenCode-format project config
+// and per-person servers to Pi's built-in MCP extension with direct exposure.
+// The private per-process file (ROADIE_PI_MCP_FILE, 0600) carries auth headers.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,12 +15,12 @@ export type PiMcpServer = {
   exposure: 'direct'
 }
 
-type OpenCodeMcp =
+type ProjectMcpConfig =
   | { type: 'local'; command: string[]; environment?: Record<string, string>; enabled?: boolean }
   | { type: 'remote'; url: string; headers?: Record<string, string>; enabled?: boolean }
 
-/** Convert OpenCode `mcp` config entries (per Pi's migration notes). `{env:NAME}` becomes `${NAME}`. */
-export function fromOpenCodeMcp(mcp: Record<string, OpenCodeMcp>): Record<string, PiMcpServer> {
+/** Convert OpenCode-format project config: `{env:NAME}` becomes `${NAME}`. */
+export function convertProjectMcpServers(mcp: Record<string, ProjectMcpConfig>): Record<string, PiMcpServer> {
   const env = (values: Record<string, string> | undefined) =>
     values && Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.replace(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, '${$1}')]))
   const servers: Record<string, PiMcpServer> = {}
@@ -47,8 +43,8 @@ export function projectMcpServers(directory: string): Record<string, PiMcpServer
     if (!fs.existsSync(file)) continue
     try {
       const text = fs.readFileSync(file, 'utf8').replace(/^\s*\/\/.*$/gm, '')
-      const config = JSON.parse(text) as { mcp?: Record<string, OpenCodeMcp> }
-      return config.mcp ? fromOpenCodeMcp(config.mcp) : {}
+      const config = JSON.parse(text) as { mcp?: Record<string, ProjectMcpConfig> }
+      return config.mcp ? convertProjectMcpServers(config.mcp) : {}
     } catch {
       return {}
     }
@@ -56,8 +52,8 @@ export function projectMcpServers(directory: string): Record<string, PiMcpServer
   return {}
 }
 
-/** OpenCode's tool name for an MCP tool Pi calls `mcp__<server>__<tool>`, so permission rules match. */
-export function openCodeToolName(piTool: string): string {
+/** Map Pi's `mcp__<server>__<tool>` to the name used by permission rules. */
+export function permissionToolName(piTool: string): string {
   const match = /^mcp__(.+?)__(.+)$/.exec(piTool)
   return match ? `${match[1]}_${match[2]}` : piTool
 }

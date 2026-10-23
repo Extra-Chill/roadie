@@ -4,8 +4,7 @@
 // - roadie_sleep: persist a wake time so the session can sleep hours or days
 //
 // IPC tools talk to the bot via SQLite rows; sleep writes session_sleeps.
-// OpenCode runs them inside its server process (./ipc-tools-plugin.ts). Pi
-// forwards each call to the bot process (./agent-backend/pi/backend.ts).
+// Pi forwards each call to the bot process (./agent-backend/pi/backend.ts).
 
 import dedent from 'string-dedent'
 import { z } from 'zod'
@@ -31,8 +30,7 @@ function defineTool<Args extends z.ZodRawShape>(tool: RoadieTool<Args>): RoadieT
 }
 
 async function loadDatabaseModule() {
-  // Lazy: the plugin-loading e2e test boots OpenCode without the bot-side
-  // Hrana env vars, and no tool has run yet.
+  // Lazy: tool definitions can load before bot-side Hrana configuration.
   return import('./database.js')
 }
 

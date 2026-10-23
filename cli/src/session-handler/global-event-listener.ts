@@ -4,7 +4,7 @@
 // sessionId internally. Replaces per-thread SSE listeners that each opened
 // their own connection, causing reconnect churn with many idle threads.
 //
-// Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
+// One global event subscription routes session events to thread runtimes.
 // which uses a single global.event() SSE stream for all directories.
 
 import { AgentBackendError } from '../errors.js'
@@ -87,7 +87,7 @@ export function disposeGlobalEventListener(): void {
 }
 
 /**
- * Restart the global listener (e.g. after the opencode server restarts).
+ * Restart the global listener (e.g. after the backend restarts).
  * Aborts the current SSE connection so it reconnects immediately.
  */
 export function restartGlobalEventListener(): void {

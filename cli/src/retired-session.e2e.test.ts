@@ -1,5 +1,5 @@
 // Retired sessions (#177): a thread bound to a session the agent backend does
-// not own (e.g. one from the removed OpenCode backend) moves to a new Pi
+// not own (e.g. one from a retired backend) moves to a new Pi
 // session on its next message, seeded from the thread's chat history.
 
 import { describe, expect, test } from 'vitest'
@@ -10,7 +10,7 @@ import * as threadState from './session-handler/thread-runtime-state.js'
 import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001530'
-const RETIRED_SESSION_ID = 'ses_retiredopencode0000000001'
+const RETIRED_SESSION_ID = 'ses_retiredbackend0000000001'
 
 describe.skipIf(!findPi())('retired sessions move to a new Pi session', () => {
   const ctx = setupQueueAdvancedSuite({
@@ -27,6 +27,14 @@ describe.skipIf(!findPi())('retired sessions move to a new Pi session', () => {
       predicate: (t) => t.name === 'remember the word marmalade',
     })
     await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000 })
+
+    // The starter is in the parent channel, not the thread history. Put the
+    // context to be recovered in the thread itself.
+    await ctx.discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'remember the word marmalade' })
+    await waitForFooterMessage({
+      discord: ctx.discord, threadId: thread.id, timeout: 20_000,
+      afterMessageIncludes: 'remember the word marmalade', afterAuthorId: TEST_USER_ID,
+    })
 
     // Bind the thread to a session Pi does not own.
     await setThreadSession(thread.id, RETIRED_SESSION_ID)

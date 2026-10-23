@@ -1,6 +1,6 @@
 // E2e test for agent model resolution in new threads.
 // Reproduces a bug where /agent channel preference is ignored by the
-// promptAsync path: submitViaOpencodeQueue only passes input.agent/input.model
+// promptAsync path: submitToSession only passes input.agent/input.model
 // (undefined for normal Discord messages) instead of resolving channel agent
 // preferences from DB like dispatchPrompt does.
 //

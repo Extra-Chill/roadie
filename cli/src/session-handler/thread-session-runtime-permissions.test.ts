@@ -23,7 +23,7 @@ describe('Pi ingress turn isolation (#340)', () => {
       prompt: 'team seat message', username: 'seat', userId: 'seat-user', personId: 'seat-person',
       permissions: ['bash:deny', 'edit:deny', 'roadie_pm_*:deny'],
     }
-    expect(await runtime.submitViaOpencodeQueue(input)).toEqual({ queued: true, queueId: 'next' })
+    expect(await runtime.submitToSession(input)).toEqual({ queued: true, queueId: 'next' })
     expect(queued).toHaveBeenCalledWith(input)
   })
 
@@ -43,7 +43,7 @@ describe('Pi ingress turn isolation (#340)', () => {
       messageQueue: { tryDrainQueue: async () => {} },
     })
     const input: IngressInput = { prompt: 'follow-up', username: 'admin', userId: 'admin-user', personId: 'admin-person' }
-    expect(await runtime.submitViaOpencodeQueue(input)).toEqual({ queued: false })
+    expect(await runtime.submitToSession(input)).toEqual({ queued: false })
     expect(queued).not.toHaveBeenCalled()
     expect(ensureSession).toHaveBeenCalledOnce()
   })
@@ -53,9 +53,24 @@ describe('Pi ingress turn isolation (#340)', () => {
     const setPermissions = vi.fn()
     expect(await runtime.updateExistingSessionPermissions({
       client: { sessions: { setPermissions } }, sessionId: 'admin-turn',
-      createdNewSession: false, noReply: true, permissions: ['bash:deny'], owner: 'seat',
+      noReply: true, permissions: ['bash:deny'], owner: 'seat',
     })).toBeNull()
     expect(setPermissions).not.toHaveBeenCalled()
+  })
+
+  test('a new session still applies the speaker policy and records its owner', async () => {
+    const runtime = Object.create(ThreadSessionRuntime.prototype)
+    runtime.sdkDirectory = '/tmp'
+    const setPermissions = vi.fn(async () => {})
+    expect(await runtime.updateExistingSessionPermissions({
+      client: { sessions: { setPermissions } }, sessionId: 'new-session',
+      permissions: ['bash:deny'], owner: 'seat',
+    })).toBeNull()
+    expect(setPermissions).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'new-session', owner: 'seat',
+      permission: expect.arrayContaining([{ permission: 'bash', pattern: '*', action: 'deny' }]),
+    }))
+    expect(runtime.permissionOwner).toBe('seat')
   })
 
   test('an unrestricted turn resets the previous speaker restrictions', async () => {
@@ -64,7 +79,7 @@ describe('Pi ingress turn isolation (#340)', () => {
     const setPermissions = vi.fn(async () => {})
     await runtime.updateExistingSessionPermissions({
       client: { sessions: { setPermissions } }, sessionId: 'shared',
-      createdNewSession: false, permissions: [], owner: 'admin',
+      permissions: [], owner: 'admin',
     })
     expect(setPermissions).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'shared', owner: 'admin' }))
     expect(setPermissions).not.toHaveBeenCalledWith(expect.objectContaining({

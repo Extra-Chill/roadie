@@ -39,7 +39,7 @@ type PendingQuestionContext = {
   sessionId: string
   directory: string
   thread: ThreadChannel
-  requestId: string // OpenCode question request ID for replying
+  requestId: string // Question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
@@ -131,7 +131,7 @@ export async function showAskUserQuestionDropdowns({
   thread: ThreadChannel
   sessionId: string
   directory: string
-  requestId: string // OpenCode question request ID
+  requestId: string // Question request ID
   input: AskUserQuestionInput
   /** Suppress notification when queue has pending items */
   silent?: boolean
@@ -204,7 +204,7 @@ export async function showAskUserQuestionDropdowns({
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     }).catch((e) => new DiscordOperationError({ operation: 'sendQuestionDropdown', cause: e }))
     // Without a visible dropdown the user can never answer, and there is no TTL
-    // to rescue the run, so drop the context and abort so OpenCode unblocks.
+    // to rescue the run, so drop the context and abort so Pi unblocks.
     if (sendResult instanceof Error) {
       logger.error('Failed to send question dropdown:', sendResult)
       deletePendingQuestionContextsForRequest({ threadId: thread.id, requestId })
@@ -315,8 +315,8 @@ export async function handleAskQuestionSelectMenu(
  * the run is resumed after an abort (e.g. `"Which option?"="Alpha"`).
  *
  * Known limitation: if the user had queued items (slash commands) during the pending
- * question AND aborted the run from another opencode client, the first queued
- * item may have already been handed off to opencode and can lose its ordering
+ * question AND aborted the run from another session client, the first queued
+ * item may have already been submitted to Pi and can lose its ordering
  * on resume. That rare combination needs a queue-handoff redesign; the common
  * (no-queue) abort case is handled correctly.
  */
@@ -350,7 +350,7 @@ async function resumeSessionWithAnswers(
  * The decision is based on whether the session still has a live run:
  *
  * - Busy: a live run is parked on the question. Reply so it continues.
- * - Idle: the run was aborted (from this or another opencode client). Replying
+ * - Idle: the run was aborted (from this or another session client). Replying
  *   would resolve a dead run and the session would never continue, so resume it
  *   with the answers as a fresh prompt instead.
  *
@@ -366,7 +366,7 @@ async function submitQuestionAnswers(
 ): Promise<void> {
   const client = getAgentBackendProvider().getBackend(context.directory)
   if (!client) {
-    logger.error('OpenCode server not found for directory')
+    logger.error('Pi backend not found for directory')
     return
   }
 
@@ -455,7 +455,7 @@ export function parseAskUserQuestionTool(part: {
  * Two modes depending on whether `userMessage` is provided:
  *
  * - `cancelPendingQuestion(threadId)` — cleanup only. Removes the context
- *   without replying to OpenCode. Use when aborting the blocked session
+ *   without replying to Pi. Use when aborting the blocked session
  *   separately (e.g. voice/attachment messages whose content needs
  *   transcription first). Returns 'no-pending' in both "found+cleaned" and
  *   "nothing found" cases.
@@ -500,7 +500,7 @@ export async function cancelPendingQuestion(
   try {
     const client = getAgentBackendProvider().getBackend(context.directory)
     if (!client) {
-      throw new Error('OpenCode server not found for directory')
+      throw new Error('Pi backend not found for directory')
     }
     if (!client.sessions.replyQuestion) {
       throw new Error('Agent backend cannot reply to questions')

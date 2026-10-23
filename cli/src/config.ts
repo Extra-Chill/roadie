@@ -54,8 +54,8 @@ export function getDataDir(): string {
     store.setState({ dataDir: tmpDir })
     return tmpDir
   }
-  // Child processes (OpenCode server, roadie shim commands) inherit this from
-  // opencode.ts. Without it they would silently use ~/.roadie.
+  // Child processes (Pi and roadie shim commands) inherit this from
+  // the backend. Without it they would silently use ~/.roadie.
   const fromEnv = getRoadieEnv('ROADIE_DATA_DIR')
   if (fromEnv) {
     const resolved = path.resolve(fromEnv)

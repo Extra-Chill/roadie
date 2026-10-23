@@ -43,7 +43,7 @@ export const ROADIE_MODEL_PREFIX = 'roadie/'
  * OAuth providers) rotate the refresh token on every use, so two stores holding
  * copies of one account invalidate each other (invalid_grant). With the marker
  * Roadie stops loading subrouter and serves `subrouter/<preset>` as an alias of
- * `roadie/<preset>` (see opencode.ts), so a host config that still names a
+ * `roadie/<preset>` pool aliases, so a host config that still names a
  * `subrouter/...` model keeps working through the pool.
  */
 export const SUBROUTER_HANDOFF_MARKER = 'subrouter-handoff.json'

@@ -1,5 +1,5 @@
 // The Roadie Pi extension's injection guard helpers (Pi parity of the
-// OpenCode injection guard plugin): pure functions, no `pi` process needed.
+// injection guard): pure functions, no `pi` process needed.
 
 import fs from 'node:fs'
 import os from 'node:os'

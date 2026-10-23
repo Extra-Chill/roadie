@@ -12,11 +12,10 @@
 //
 // Concurrency: one in-process lock per pool (promise chain), so different
 // pools never contend with each other. Every write goes through a temp file +
-// rename, so readers in other processes (bot CLI vs OpenCode server) only
+// rename, so readers in other processes (bot CLI vs pool proxy) only
 // ever observe complete files.
 //
-// This module is imported by the provider module that runs inside the
-// OpenCode server process, so it must stay dependency-free: only node
+// This module is shared by the CLI and pool proxy, so it uses only node
 // builtins, and every function takes the data directory explicitly instead of
 // importing cli/src/config.ts.
 
@@ -28,7 +27,7 @@ import lockfile from 'proper-lockfile'
 
 export const SHARED_POOL_ID = 'shared'
 export const POOL_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
-// Rotation names become opencode model ids (`roadie/<name>`).
+// Rotation names become pool model aliases (`roadie/<name>`).
 export const ROTATION_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
 export const CREDENTIALS_DIR_MODE = 0o700
@@ -94,7 +93,7 @@ export function getPoolDir({ dataDir, poolId }: { dataDir: string; poolId: strin
 // ── Per-pool lock ────────────────────────────────────────────────
 //
 // Two layers. In process, work per pool is chained. Across processes (the
-// bot, the OpenCode server, Pi's pool proxy all read and refresh the same
+// bot and Pi's pool proxy read and refresh the same
 // accounts), a lock directory next to the pool serializes them: an OAuth
 // refresh rotates the refresh token, so two processes refreshing one account
 // at once would leave one holding a revoked token. A holder that dies leaves
@@ -740,7 +739,7 @@ export async function setPoolRotation({
  * Copy the source pool's (default: shared) rotations into `poolId` under the
  * same names, only when the target pool still has no rotations at all.
  *
- * The `roadie/<rotation>` models in the OpenCode config are named after the
+ * The `roadie/<rotation>` models in the pool catalog are named after the
  * shared pool's rotations and routing looks rotations up by name in each
  * pool, so a person pool with accounts but no rotation would 401 every
  * request. Seeding runs under the target pool's lock and re-checks emptiness

@@ -247,7 +247,7 @@ export type AgentBackend = AgentCatalog & {
  *
  * `raw` is the backend's native payload, opaque to everything but the opt-in
  * backend event log. Consumers must not branch on it. `backend` is the emitting
- * provider's id (`this.id`, e.g. "opencode" or "pi"), so the opt-in log can tag
+ * provider's id (`this.id`, "pi"), so the opt-in log can tag
  * the raw payload with its source.
  */
 export type AgentBackendEvent = {
@@ -269,14 +269,14 @@ export type AgentBackendInitializeOptions = {
 
 /**
  * Supplies agent backends to the session runtime, one per project directory.
- * The default provider is Pi over OpenCode (see `./registry.ts`).
+ * The default provider is Pi (see `./registry.ts`).
  */
 export type AgentBackendProvider = {
   /** Name used in logs. */
   readonly id: string
   /**
    * Whether this provider runs or can resume `sessionId`. A thread bound to a
-   * session no provider owns (e.g. one from the removed OpenCode backend,
+   * session no provider owns (e.g. one from a retired backend,
    * #177) is retired: it starts a new session, seeded from the thread, on its
    * next prompt.
    */

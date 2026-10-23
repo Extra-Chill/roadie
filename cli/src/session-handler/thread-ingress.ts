@@ -4,7 +4,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 // Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
-// Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
+// Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. Pi already
 // queues promptAsync. /model, /agent, and /compact are not on this queue.
 const threadIngressChains = new Map<string, Promise<void>>()
 const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
