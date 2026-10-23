@@ -15,6 +15,7 @@ describe('Pi ingress turn isolation (#340)', () => {
       supersedePendingSleep: async () => {},
       dispatchAction: async (action: () => Promise<void>) => action(),
       isBusy: () => true,
+      permissionOwner: 'admin-person',
       enqueueViaLocalQueue: queued,
       ensureSession: () => { throw new Error('Must not mutate the active session') },
     })
@@ -24,6 +25,27 @@ describe('Pi ingress turn isolation (#340)', () => {
     }
     expect(await runtime.submitViaOpencodeQueue(input)).toEqual({ queued: true, queueId: 'next' })
     expect(queued).toHaveBeenCalledWith(input)
+  })
+
+  test('the running turn\'s own speaker steers it instead of queueing', async () => {
+    const runtime = Object.create(ThreadSessionRuntime.prototype)
+    const queued = vi.fn()
+    const ensureSession = vi.fn(async () => new Error('steered into the running session'))
+    Object.assign(runtime, {
+      supersedePendingSleep: async () => {},
+      dispatchAction: async (action: () => Promise<void>) => action(),
+      isBusy: () => true,
+      permissionOwner: 'admin-person',
+      enqueueViaLocalQueue: queued,
+      ensureSession,
+      typing: { stopTyping: () => {} },
+      chat: { sendMessage: async () => {} },
+      messageQueue: { tryDrainQueue: async () => {} },
+    })
+    const input: IngressInput = { prompt: 'follow-up', username: 'admin', userId: 'admin-user', personId: 'admin-person' }
+    expect(await runtime.submitViaOpencodeQueue(input)).toEqual({ queued: false })
+    expect(queued).not.toHaveBeenCalled()
+    expect(ensureSession).toHaveBeenCalledOnce()
   })
 
   test('context-only ingress never replaces the running permission rules', async () => {
