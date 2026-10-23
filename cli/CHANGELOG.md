@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.77.0] - 2026-10-23
+
+### Added
+- remove the /fork-subagent command
+
 ## [0.76.3] - 2026-10-23
 
 ### Fixed
