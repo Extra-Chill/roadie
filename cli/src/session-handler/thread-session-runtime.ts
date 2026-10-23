@@ -1,3 +1,24 @@
+import {
+  enqueueIncoming,
+  enqueueViaLocalQueue,
+  enqueueWithPreprocess,
+  ensureParentSessionId,
+  supersedePendingSleep,
+} from './session-ingress.js'
+import { ensureSession, sendNewSessionModelInfo } from './session-lifecycle.js'
+import {
+  registerSpeakerMcpServers,
+  updateExistingSessionPermissions,
+} from './session-permissions.js'
+import { seedFromRetiredSession } from './session-retired-seed.js'
+import {
+  dispatchPrompt,
+  persistIngressVariant,
+  postPayerChangeNoticeOnce,
+  recordTurnAttribution,
+  submitToSession,
+} from './session-submission.js'
+import { handleSessionUpdated } from './session-titles.js'
 // ThreadSessionRuntime — one per active thread.
 // Owns resource handles (listener controller, typing timers, part buffer).
 // Delegates all state to the global store via thread-runtime-state.ts transitions.
@@ -6,17 +27,9 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
-import { resolveSessionPermissionRules } from '../permission-policy.js'
-import { markPendingSessionTitle, sessionTitlePrompt, schedulePendingSessionTitle } from '../session-title.js'
-import { doAction } from '../hooks.js'
-import { parsePersistedEvents } from './persisted-events.js'
-import {
-  RESTART_CONTINUATION_FAILED_NOTICE,
-  RESTART_CONTINUATION_MAX_ATTEMPTS,
-} from '../service-lifecycle.js'
 import type { ThreadChannel } from 'discord.js'
-import type { ChatThread } from '../chat-platform/types.js'
-import { createDiscordChatThread } from '../chat-platform/discord.js'
+import path from 'node:path'
+import prettyMilliseconds from 'pretty-ms'
 import {
   agentEventSessionId,
   type AgentChildSessionEvent,
@@ -26,176 +39,108 @@ import {
   type AgentPart,
   type AgentStatus,
 } from '../agent-backend/events.js'
-import { AgentRequestError, type AgentPromptPart } from '../agent-backend/types.js'
-import path from 'node:path'
-import prettyMilliseconds from 'pretty-ms'
-import * as threadState from './thread-runtime-state.js'
-import type { QueuedMessage } from './thread-runtime-state.js'
-import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
-import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
-import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
-import { getCachedPerson, isIdentityConfigured } from '../identity.js'
-import { registerPersonMcpServers } from '../person-mcp.js'
+import { getAgentBackendProvider } from '../agent-backend/registry.js'
+import type {
+  AgentBackend,
+  AgentBackendEvent,
+  AgentBackendGetter,
+} from '../agent-backend/types.js'
+import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { applicationDirectory } from '../channel-policy.js'
-import { writeInjectionGuardConfig } from '../injection-guard-config.js'
-import { isAbortError } from '../utils.js'
+import { createDiscordChatThread } from '../chat-platform/discord.js'
+import type { ChatThread } from '../chat-platform/types.js'
 import {
-  registerEventListener,
-  unregisterEventListener,
-  waitForGlobalEventListener,
-} from './global-event-listener.js'
+  pendingActionButtonContexts,
+  waitForQueuedActionButtonsRequest,
+} from '../commands/action-buttons.js'
+import { pendingFileUploadContexts } from '../commands/file-upload.js'
+import {
+  appendSessionEventsSinceLastTimestamp,
+  completeScheduledTaskRunsForSession,
+  failScheduledTaskRunsForSession,
+  getChannelVerbosity,
+  getDb,
+  getPartMessageIds,
+  getSessionEventSnapshot,
+  setPartMessage,
+} from '../database.js'
+import { doAction } from '../hooks.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import {
-  NOTIFY_MESSAGE_FLAGS,
-  raceDiscordRename,
-  DISCORD_THREAD_RENAME_TIMEOUT_MS,
-  resolveThreadFooterMentionUserId,
-} from '../discord-utils.js'
 import type { SessionPartKind } from '../message-formatting.js'
 import {
   asDiscordQuote,
   asSubtext,
   formatPart,
   formatTaskToolTitle,
+  leadInTextPartBefore,
   planAssistantTurnFlush,
   sessionPartContent,
   sessionPartKind,
   shouldLeadWithBlankLine,
   shouldQuoteIntermediateTextPart,
-  toolKeepsLeadInTextPlain,
-  leadInTextPartBefore,
   STATUS_PREFIX,
+  toolKeepsLeadInTextPlain,
   type AssistantTurnFlushMode,
 } from '../message-formatting.js'
 import {
-  setSessionTurnAttribution,
-  getSessionTurnAttribution,
-  recordCredentialOwner,
-  recordCredentialPayerNotice,
-  getChannelVerbosity,
-  getPartMessageIds,
-  getDb,
-  setPartMessage,
-  getThreadSession,
-  setThreadSession,
-  getThreadLastSyncedName,
-  getThreadParentSessionId,
-  setThreadParentSessionId,
-  getSessionForkOrigin,
-  getThreadWorkingDirectory,
-  setSessionAgent,
-  setSessionModel,
-  clearSessionModel,
-  getVariantCascade,
-  setSessionStartSource,
-  completeScheduledTaskRunsForSession,
-  failScheduledTaskRunsForSession,
-  startScheduledTaskRunSession,
-  appendSessionEventsSinceLastTimestamp,
-  getSessionEventSnapshot,
-  cancelSessionSleepForThread,
-} from '../database.js'
-import * as orm from 'drizzle-orm'
-import * as schema from '../schema.js'
-import { personKeyFrom, resolvePersonBillingPool } from '../credentials/person-pool.js'
+  RESTART_CONTINUATION_FAILED_NOTICE,
+  RESTART_CONTINUATION_MAX_ATTEMPTS,
+} from '../service-lifecycle.js'
+import { store } from '../store.js'
 import {
-  showPermissionButtons,
-  addPermissionRequestToContext,
-} from '../commands/permissions.js'
-import {
-  showAskUserQuestionDropdowns,
-  pendingQuestionContexts,
-} from '../commands/ask-question.js'
-import {
-  showActionButtons,
-  waitForQueuedActionButtonsRequest,
-  pendingActionButtonContexts,
-} from '../commands/action-buttons.js'
-import {
-  pendingFileUploadContexts,
-} from '../commands/file-upload.js'
-import {
-  getCurrentModelInfo,
-  ensureSessionPreferencesSnapshot,
-} from '../commands/model.js'
-import {
-  displayedModelLabel,
-  resolveDisplayedModelName,
-  validateModelId,
-} from './model-utils.js'
-import {
-  getPromptContext,
-  systemPromptNamesOtherSession,
   systemPromptHasParentSession,
   type AgentInfo,
-  type WorkingDirectoryInfo,
   type ScheduledTaskSystemContext,
+  type WorkingDirectoryInfo,
 } from '../system-message.js'
-import { getDataDir } from '../config.js'
-import { countSystemPromptDiffLines } from '../cache-rewrite.js'
-import { store } from '../store.js'
-import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
-  appendSessionEventLog,
-  isSessionEventLogEnabled,
-} from './session-event-log.js'
-import {
-  doesLatestUserTurnHaveNaturalCompletion,
-  getContinuationTurnOutcome,
   didLatestUserTurnUseSleepTool,
+  doesLatestUserTurnHaveNaturalCompletion,
+  formatPromptCacheClearMessage,
   getAssistantMessageIdsForLatestUserTurn,
+  getAssistantMessageKind,
+  getContinuationTurnOutcome,
   getCurrentTurnStartTime,
-  isSessionBusy,
-  resolveActionParentSessionId,
+  getDerivedSubtaskLabel,
+  getEventBufferSessionId,
+  getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
   getPromptCacheClear,
-  formatPromptCacheClearMessage,
-  getIdleTokenUsageDelta,
-  getDerivedSubtaskLabel,
-  getTokenUsageSessionIdsForIdle,
-  isDerivedChildSession,
-  getLatestAssistantMessageIdForLatestUserTurn,
-  getAssistantMessageKind,
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
-  getEventBufferSessionId,
+  isDerivedChildSession,
+  isSessionBusy,
+  resolveActionParentSessionId,
   shouldBufferSessionEvent,
   shouldRetainSessionEvent,
   trimEventBuffer,
-  type EventBufferEvent,
   type EventBufferEntry,
+  type EventBufferEvent,
 } from './event-stream-state.js'
+import {
+  registerEventListener,
+  unregisterEventListener,
+} from './global-event-listener.js'
+import { displayedModelLabel, resolveDisplayedModelName } from './model-utils.js'
+import { parsePersistedEvents } from './persisted-events.js'
+import { appendSessionEventLog, isSessionEventLogEnabled } from './session-event-log.js'
+import type { QueuedMessage } from './thread-runtime-state.js'
+import * as threadState from './thread-runtime-state.js'
 
 import {
-  getThinkingValuesForModel,
-  matchThinkingValue,
-} from '../thinking-utils.js'
-import { execAsync } from '../git-utils.js'
-import {
-  DiscordOperationError,
   AgentBackendError,
+  DiscordOperationError,
   FilesystemOperationError,
 } from '../errors.js'
+import { execAsync } from '../git-utils.js'
 
-import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
-import { TypingKeepalive } from './typing-keepalive.js'
+import { isEssentialToolPart } from './essential-tools.js'
+import { type EnqueueResult, type IngressInput } from './ingress-input.js'
 import { InteractiveUi } from './interactive-ui.js'
 import { MessageQueue } from './message-queue.js'
-import { resolveTurnContext, resolveTurnSystemPrompt } from './turn-context.js'
-import { releaseCurrentThreadIngress, waitForCurrentThreadIngress } from './thread-ingress.js'
-import type { RuntimeOptions } from './runtime-registry.js'
-import {
-  applyChannelPolicyToIngress,
-  applyPersonToIngress,
-  maybeConvertLeadingCommand,
-  type EnqueueResult,
-  type IngressInput,
-} from './ingress-input.js'
 import { cleanupPendingUiForThread, pendingPermissions } from './pending-ui.js'
-import { isEssentialToolPart } from './essential-tools.js'
-import { resolveAutoThreadRename } from './thread-name.js'
 import {
   delay,
   extractToastSessionId,
@@ -205,10 +150,11 @@ import {
   getTokenTotal,
   getWorkingDirectoryPromptKey,
   stripToastSessionId,
-  toPromptFilePart,
   truncateSessionErrorMessage,
 } from './runtime-helpers.js'
-
+import type { RuntimeOptions } from './runtime-registry.js'
+import { resolveTurnContext, resolveTurnSystemPrompt } from './turn-context.js'
+import { TypingKeepalive } from './typing-keepalive.js'
 const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 
@@ -570,14 +516,7 @@ export class ThreadSessionRuntime {
     return isSessionBusy({ events: this.eventBuffer, sessionId })
   }
 
-  private async persistIngressVariant({
-    sessionId,
-    channelId,
-    appId,
-    agentPreference,
-    getClient,
-    variant,
-  }: {
+  private async persistIngressVariant(arg0: {
     sessionId: string
     channelId?: string
     appId?: string
@@ -585,33 +524,10 @@ export class ThreadSessionRuntime {
     getClient: Error | AgentBackendGetter
     variant?: string
   }) {
-    if (!variant) return
-    if (getClient instanceof Error) return
-    const variantModelInfo = await getCurrentModelInfo({
-      sessionId,
-      channelId,
-      appId,
-      agentPreference,
-      getClient,
-      directory: this.sdkDirectory,
-    })
-    if (variantModelInfo.type === 'none') return
-    const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
-    if (catalog instanceof Error) return
-    const matchedVariant = matchThinkingValue({
-      requestedValue: variant,
-      availableValues: getThinkingValuesForModel({
-        providers: catalog.providers,
-        providerId: variantModelInfo.providerID,
-        modelId: variantModelInfo.modelID,
-      }),
-    })
-    if (!matchedVariant) return
-    await setSessionModel({
-      sessionId,
-      modelId: variantModelInfo.model,
-      variant: matchedVariant,
-    })
+    const runtime = this
+    return persistIngressVariant({
+      get sdkDirectory() { return runtime.sdkDirectory },
+    }, arg0)
   }
 
   private getAssistantMessageIdsForCurrentTurn({
@@ -2317,73 +2233,18 @@ export class ThreadSessionRuntime {
   // - race setName() against an AbortSignal.timeout() so a throttled call never
   //   blocks the event loop
   // - fail soft (log + continue) on timeout, 429, or any other error
-  private async handleSessionUpdated(info: {
+  private async handleSessionUpdated(arg0: {
     id: string
     title: string
   }): Promise<void> {
-    // Only act on the main session for this thread
-    if (info.id !== this.state?.sessionId) {
-      return
-    }
-    const normalizedTitle = info.title.trim()
-    if (this.appliedSessionTitle === normalizedTitle) {
-      return
-    }
-    if (!this.chat.capabilities.rename) {
-      await (await getDb()).update(schema.thread_sessions).set({ last_synced_name: normalizedTitle }).where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
-      const synced = await this.chat.syncTitle?.(normalizedTitle)
-      if (synced instanceof Error) logger.warn('Could not synchronize native chat title:', synced)
-      this.appliedSessionTitle = normalizedTitle
-      return
-    }
-    const lastSyncedName = await getThreadLastSyncedName(this.threadId)
-    const desiredName = resolveAutoThreadRename({
-      sessionTitle: info.title,
-      currentName: this.chat.name,
-      lastSyncedName,
-    })
-    // Mark before setName so concurrent session.updated events don't stack
-    // renames. Keep the mark on failure — retry is almost always a rate limit.
-    this.appliedSessionTitle = normalizedTitle
-    if (!desiredName) {
-      return
-    }
-
-    const renameResult = await raceDiscordRename({
-      rename: this.chat.rename(desiredName)
-        .catch((e) =>
-          new Error('Failed to rename thread from session title', {
-            cause: e,
-          }),
-        ),
-    })
-
-    if (renameResult === 'timeout') {
-      logger.warn(
-        `[TITLE] setName timed out after ${DISCORD_THREAD_RENAME_TIMEOUT_MS}ms for thread ${this.threadId} (likely rate-limited)`,
-      )
-      return
-    }
-    if (renameResult instanceof Error) {
-      logger.warn(
-        `[TITLE] Could not rename thread ${this.threadId}: ${renameResult.message}`,
-      )
-      return
-    }
-    // Record the name we applied so restarts dedupe against it and manual
-    // renames can be detected. Fail soft: the rename itself already succeeded.
-    try {
-      await (await getDb()).update(schema.thread_sessions)
-        .set({ last_synced_name: desiredName })
-        .where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
-    } catch (error) {
-      logger.warn(
-        `[TITLE] Could not record applied name for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-    logger.log(
-      `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from agent session title`,
-    )
+    const runtime = this
+    return handleSessionUpdated({
+      state: this.state,
+      get appliedSessionTitle() { return runtime.appliedSessionTitle },
+      set appliedSessionTitle(value) { runtime.appliedSessionTitle = value },
+      chat: this.chat,
+      threadId: this.threadId,
+    }, arg0)
   }
 
   private async handleTuiToast(properties: {
@@ -2436,84 +2297,17 @@ export class ThreadSessionRuntime {
    * where the payer first changes — the previous turn's pool differs from
    * this turn's — and posts the thread's one-time payer-change notice.
    */
-  private async recordTurnAttribution({
-    sessionId,
-    input,
-  }: {
+  private async recordTurnAttribution(arg0: {
     sessionId: string
     input: Pick<IngressInput, 'userId' | 'username' | 'actorVia' | 'personId' | 'credentialPool'>
   }): Promise<void> {
-    const { credentialPoolsEnabled, credentialsMode, threadBilling } = store.getState()
-    const billing = input.userId
-      ? resolvePersonBillingPool({
-          person: {
-            personId: input.personId,
-            credentialPool: input.credentialPool,
-          },
-          platform: this.chat.platform,
-          actorId: input.userId,
-        })
-      : undefined
-    // Speaker billing: read the previous turn's payer before this turn's
-    // attribution overwrites the row. Global mode never changes payer (the
-    // shared pool bills everything), and neither does owner billing.
-    const speakerBilling =
-      credentialPoolsEnabled &&
-      credentialsMode !== 'global' &&
-      threadBilling === 'speaker' &&
-      billing !== undefined
-    const previousAttribution = speakerBilling
-      ? await getSessionTurnAttribution(sessionId).catch((e) => {
-          logger.warn(`[ACTOR] Failed to read the previous turn's payer for session ${sessionId}: ${String(e)}`)
-          return undefined
-        })
-      : undefined
-    const result = await setSessionTurnAttribution({
-      sessionId,
-      threadId: this.thread.id,
-      channelId: this.channelId,
-      ...(input.userId
-        ? {
-            actor: {
-              platform: this.chat.platform,
-              id: input.userId,
-              ...(input.username ? { name: input.username } : {}),
-              via: input.actorVia ?? 'chat',
-            },
-            ...(input.personId ? { personId: input.personId } : {}),
-            ...(credentialPoolsEnabled && billing ? { credentialPool: billing.poolId } : {}),
-          }
-        : {}),
-    }).catch((e) => new Error('Failed to record session turn attribution', { cause: e }))
-    if (result instanceof Error) {
-      logger.warn(`[ACTOR] ${result.message} for session ${sessionId}: ${String(result.cause)}`)
-    } else if (
-      speakerBilling &&
-      billing &&
-      previousAttribution?.credentialPool &&
-      previousAttribution.credentialPool !== billing.poolId
-    ) {
-      // Only on a successful attribution write: the notice compares the
-      // previous row's pool, which this write has just replaced.
-      await this.postPayerChangeNoticeOnce({
-        sessionId,
-        previousPoolId: previousAttribution.credentialPool,
-        poolId: billing.poolId,
-        username: input.username,
-      })
-    }
-    if (credentialPoolsEnabled && billing) {
-      // First human speaker owns the session; insert-or-ignore keeps later
-      // speakers from moving it. Sessions with no actor stay ownerless and
-      // bill to the shared pool.
-      await recordCredentialOwner({
-        sessionId,
-        poolId: billing.poolId,
-        personKey: billing.personKey,
-      }).catch((e) =>
-        logger.warn(`[ACTOR] Failed to record credential owner for session ${sessionId}: ${String(e)}`),
-      )
-    }
+    const runtime = this
+    return recordTurnAttribution({
+      get chat() { return runtime.chat },
+      get thread() { return runtime.thread },
+      get channelId() { return runtime.channelId },
+      postPayerChangeNoticeOnce: this.postPayerChangeNoticeOnce.bind(this),
+    }, arg0)
   }
 
   /**
@@ -2525,411 +2319,55 @@ export class ThreadSessionRuntime {
    * once per session — never again on later turns or after a restart.
    * Best-effort: failures are logged, never fatal.
    */
-  private async postPayerChangeNoticeOnce({
-    sessionId,
-    previousPoolId,
-    poolId,
-    username,
-  }: {
+  private async postPayerChangeNoticeOnce(arg0: {
     sessionId: string
     previousPoolId: string
     poolId: string
     username: string
   }): Promise<void> {
-    try {
-      const claimed = await recordCredentialPayerNotice({
-        sessionId,
-        previousPoolId,
-        poolId,
-      }).catch((e) => {
-        logger.warn(`[ACTOR] Failed to record the payer-change notice for session ${sessionId}: ${String(e)}`)
-        return false
-      })
-      if (!claimed) return
-      const notice = asSubtext(
-        `Speaker billing: this thread now bills through ${username}'s credential pool (${poolId}). Earlier messages in this thread are sent to that pool's provider account.`,
-      )
-      const sent = await this.chat.sendNotice(notice)
-      if (sent instanceof Error) {
-        discordLogger.error('Failed to send the speaker-billing payer-change notice:', sent)
-      }
-    } catch (e) {
-      logger.warn(`[ACTOR] Failed to post the payer-change notice for session ${sessionId}: ${String(e)}`)
-    }
+    const runtime = this
+    return postPayerChangeNoticeOnce({
+      get chat() { return runtime.chat },
+    }, arg0)
   }
 
   // Speaker whose permissions the session's Pi turns run under; set by the
   // last prompt that applied them.
   private permissionOwner: string | undefined
 
-  private async submitToSession(input: IngressInput): Promise<EnqueueResult> {
-    await this.supersedePendingSleep(input)
-    let skippedBySessionGuard = false
-    let deferPiTurn = false
-
-    await this.dispatchAction(async () => {
-      if (
-        input.expectedSessionId &&
-        this.state?.sessionId !== input.expectedSessionId
-      ) {
-        logger.log(
-          `[ENQUEUE] Skipping stale promptAsync enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
-        )
-        skippedBySessionGuard = true
-        return
-      }
-
-      // Pi steering shares the running model turn, so it stays with that
-      // turn's speaker. Another speaker's message waits for the turn to
-      // settle, keeping each speaker's permissions (including person-MCP).
-      if (
-        !input.noReply && this.isBusy() &&
-        (input.personId ?? input.userId) !== this.permissionOwner
-      ) {
-        deferPiTurn = true
-        return
-      }
-
-      // Context-only messages (noReply) should not create a new session.
-      // If there is no existing session, silently skip.
-      if (input.noReply) {
-        const existingSessionId = this.state?.sessionId || await getThreadSession(this.thread.id) || undefined
-        if (!existingSessionId) {
-          logger.log(
-            `[INGRESS] Skipping noReply message for thread ${this.threadId}: no existing session`,
-          )
-          return
-        }
-        // A retired session (one the backend does not own) takes no context:
-        // the next real prompt moves the thread, and its seed reads this
-        // message from the chat.
-        if (isRetiredSession(existingSessionId)) {
-          logger.log(`[INGRESS] Skipping noReply message for thread ${this.threadId}: session ${existingSessionId} is retired`)
-          return
-        }
-        if (input.contextOnly) {
-          const backend = await getAgentBackendProvider().initializeForDirectory(this.sdkDirectory, { channelId: this.channelId })
-          if (backend instanceof Error) {
-            logger.warn(`[CONTEXT] Cannot record message: ${backend.message}`)
-            return
-          }
-          const history = await backend().sessions.messages({ sessionId: existingSessionId, directory: this.sdkDirectory })
-          if (history instanceof Error) {
-            logger.warn(`[CONTEXT] Cannot resolve existing preferences: ${history.message}`)
-            return
-          }
-          const previous = history.findLast((entry) => entry.message.role === 'user')?.message
-          const context = getPromptContext({
-            platform: this.chat.platform, sessionId: existingSessionId, backend: agentBackendLabel(), threadId: this.threadId,
-            username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
-            sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
-            repliedMessage: input.repliedMessage,
-          })
-          const parts: AgentPromptPart[] = [
-            { kind: 'text', text: input.prompt }, { kind: 'text', text: context, synthetic: true },
-            ...(input.images ?? []).map((file): AgentPromptPart => ({ kind: 'file', mime: file.mime, url: file.url, filename: file.filename })),
-          ]
-          const recorded = await backend().sessions.prompt({
-            sessionId: existingSessionId, directory: this.sdkDirectory, parts, noReply: true,
-            agent: previous?.agent, model: previous?.model, system: previous?.system,
-          })
-          if (recorded instanceof Error) logger.warn(`[CONTEXT] Cannot record message: ${recorded.message}`)
-          return
-        }
-      }
-
-      // Helper: stop typing and drain queued local messages on error.
-      const cleanupOnError = async (errorMessage: string) => {
-        this.typing.stopTyping()
-        await this.chat.sendMessage(errorMessage, { notify: true })
-        await this.messageQueue.tryDrainQueue({ showIndicator: true })
-      }
-
-      // ── Ensure session ──────────────────────────────────────
-      const sessionResult = await this.ensureSession({
-        prompt: input.prompt,
-        agent: input.agent,
-        permissions: input.permissions,
-        injectionGuardPatterns: input.injectionGuardPatterns,
-        sourceMessageId: input.sourceMessageId,
-        sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
-        sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-      })
-      if (sessionResult instanceof Error) {
-        await cleanupOnError(`✗ ${sessionResult.message}`)
-        return
-      }
-
-      const { session, getClient, createdNewSession } = sessionResult
-      schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
-
-      await this.registerSpeakerMcpServers({ client: getClient(), input })
-      const updatePermissionsResult = await this.updateExistingSessionPermissions({
-        client: getClient(),
-        sessionId: session.id,
-        permissions: input.permissions,
-        noReply: input.noReply,
-        owner: input.personId ?? input.userId,
-      })
-      if (updatePermissionsResult instanceof Error) {
-        await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
-        return
-      }
-
-      // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
-      const channelId = this.channelId
-      const resolvedAppId = input.appId
-
-      // Explicit agent prompts (for example /plan-agent <prompt>) must update
-      // the session preference before dispatch. Otherwise the model can resolve
-      // from the requested agent while Pi keeps running the old agent.
-      if (input.agent) {
-        await setSessionAgent(session.id, input.agent)
-        await clearSessionModel(session.id)
-      }
-
-      if (input.model) {
-        const validatedModel = await validateModelId({
-          model: input.model,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-        if (validatedModel instanceof Error) {
-          await cleanupOnError(`Failed to resolve model: ${validatedModel.message}`)
-          return
-        }
-      }
-
-      await ensureSessionPreferencesSnapshot({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-        getClient,
-        directory: this.sdkDirectory,
-        agentOverride: input.agent,
-        modelOverride: input.model,
-        force: createdNewSession,
-      })
-
-      const agentResult = await resolveValidatedAgentPreference({
-        agent: input.agent,
-        sessionId: session.id,
-        channelId,
-        getClient,
-        directory: this.sdkDirectory,
-      }).catch((e) => new AgentBackendError({ operation: 'resolveAgent', cause: e }))
-      if (agentResult instanceof Error) {
-        await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
-        return
-      }
-      const resolvedAgent = agentResult.agentPreference
-      const availableAgents = agentResult.agents
-      releaseCurrentThreadIngress()
-
-      await this.persistIngressVariant({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-        agentPreference: resolvedAgent,
-        getClient,
-        variant: input.variant,
-      })
-
-      const [modelResult, preferredVariant] = await Promise.all([
-        (async () => {
-          if (input.model) {
-            return validateModelId({
-              model: input.model,
-              getClient,
-              directory: this.sdkDirectory,
-            })
-          }
-          const modelInfo = await getCurrentModelInfo({
-            sessionId: session.id,
-            channelId,
-            appId: resolvedAppId,
-            agentPreference: resolvedAgent,
-            getClient,
-            directory: this.sdkDirectory,
-          })
-          if (modelInfo.type === 'none') {
-            return undefined
-          }
-          return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-        })().catch((e) => new AgentBackendError({ operation: 'resolveModelPreference', cause: e })),
-        getVariantCascade({
-          sessionId: session.id,
-          channelId,
-          appId: resolvedAppId,
-        }),
-      ])
-      if (modelResult instanceof Error) {
-        await cleanupOnError(`Failed to resolve model: ${modelResult.message}`)
-        return
-      }
-      const modelField = modelResult
-      if (!modelField) {
-        await cleanupOnError(
-          'No model account available. Add an account to the credential pool with `/credentials add`.',
-        )
-        return
-      }
-
-      // Resolve thinking variant
-      const thinkingValue = await (async (): Promise<string | undefined> => {
-        if (!preferredVariant) {
-          return undefined
-        }
-        const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
-        if (catalog instanceof Error) {
-          return undefined
-        }
-        const availableValues = getThinkingValuesForModel({
-          providers: catalog.providers,
-          providerId: modelField.providerID,
-          modelId: modelField.modelID,
-        })
-        if (availableValues.length === 0) {
-          return undefined
-        }
-        return matchThinkingValue({
-          requestedValue: preferredVariant,
-          availableValues,
-        }) || undefined
-      })()
-
-      const variantField = thinkingValue
-        ? { variant: thinkingValue }
-        : {}
-
-      await this.sendNewSessionModelInfo({
-        createdNewSession,
-        model: modelField,
-        agent: resolvedAgent,
-      })
-
-      // ── Build prompt parts ──────────────────────────────────
-      const images = input.images || []
-      const promptWithImagePaths = (() => {
-        if (images.length === 0) {
-          return input.prompt
-        }
-        const imageList = images
-          .map((img) => {
-            return `- ${img.sourceUrl || img.filename}`
-          })
-          .join('\n')
-        return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
-      })()
-
-      // ── Working directory + channel topic for per-turn prompt context ──
-      const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
-
-      const channelTopic = await this.chat.channelTopic(channelId)
-      const system = await this.resolveTurnSystemPrompt({
-        sessionId: session.id,
-        channelTopic,
-        agents: availableAgents,
-        input,
-      })
-      if (system instanceof Error) {
-        await cleanupOnError(`✗ Failed to prepare system prompt: ${system.message}`)
-        return
-      }
-      const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
-      const syntheticContext = getPromptContext({
-        platform: this.chat.platform,
-        sessionId: session.id,
-        backend: agentBackendLabel(),
-        threadId: this.thread.id,
-        username: input.username,
-        userId: input.userId,
-        sourceMessageId: input.sourceMessageId,
-        sourceThreadId: input.sourceThreadId || this.thread.id,
-        threadName: this.chat.name || undefined,
-        repliedMessage: input.repliedMessage,
-        workingDirectory,
-        currentAgent: resolvedAgent,
-        workingDirectoryChanged,
-        systemPromptFromSourceSession: systemPromptNamesOtherSession({ system, sessionId: session.id }),
-        forkOrigin: await getSessionForkOrigin(session.id),
-        parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
-      })
-      const turnContext = await this.resolveTurnContext({
-        sessionId: session.id,
-        input,
-        isFirstTurn: createdNewSession,
-      })
-      const parts: AgentPromptPart[] = [
-        { kind: 'text', text: promptWithImagePaths },
-        { kind: 'text', text: syntheticContext, synthetic: true },
-        ...(turnContext ? [{ kind: 'text' as const, text: turnContext, synthetic: true }] : []),
-        ...images.map(toPromptFilePart),
-      ]
-
-      await this.recordTurnAttribution({ sessionId: session.id, input })
-      await waitForGlobalEventListener()
-      // Disposed while preparing (thread deleted, backend restarting or
-      // shutting down): the backend may no longer own this session, so the
-      // prompt must not be sent anywhere.
-      if (this.disposed) {
-        logger.log(`[DISPATCH] Runtime disposed before prompt was sent sessionId=${session.id}`)
-        return
-      }
-      // A busy session takes this prompt at its next step boundary; the
-      // running step is never aborted. Only /abort stops a run.
-      // Marked before sending so a fast pickup event can't arrive first.
-      const pendingMessageId = this.isBusy() && !input.noReply ? input.sourceMessageId : undefined
-      if (pendingMessageId) {
-        this.markPendingDelivery(pendingMessageId)
-      } else if (!input.noReply && input.sourceMessageId && input.sourceChannelId === this.threadId) {
-        // A new turn: its first reply answers the message that started it.
-        // Only inline channel conversations implement anchoring.
-        this.chat.setReplyAnchor?.(input.sourceMessageId)
-      }
-      const promptResult = await getClient().sessions.prompt({
-        sessionId: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system,
-        ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-        ...(modelField ? { model: { providerId: modelField.providerID, modelId: modelField.modelID } } : {}),
-        ...(variantField.variant ? { variant: variantField.variant } : {}),
-        ...(input.noReply ? { noReply: true } : {}),
-      })
-      if (promptResult instanceof Error) {
-        if (pendingMessageId) {
-          this.pendingDeliveryMessageIds = this.pendingDeliveryMessageIds.filter((id) => id !== pendingMessageId)
-          void this.setPendingReaction(pendingMessageId, false)
-        }
-        void notifyError(promptResult, 'promptAsync failed in submitToSession')
-        await cleanupOnError(`✗ Agent error: ${promptResult.message}`)
-        return
-      }
-
-      if (input.sessionStartSource?.scheduledTaskRunId) {
-        await startScheduledTaskRunSession({
-          runId: input.sessionStartSource.scheduledTaskRunId,
-          sessionId: session.id,
-          projectDirectory: this.sdkDirectory,
-        })
-      }
-
-      logger.log(
-        `[INGRESS] promptAsync accepted by ${getAgentBackendProvider().id} queue sessionId=${session.id} threadId=${this.threadId}`,
-      )
-
-      // noReply messages don't trigger the agent loop, so don't mark as busy
-      if (!input.noReply) {
-        this.markQueueDispatchBusy(session.id)
-      }
-    })
-
-    if (deferPiTurn) return this.enqueueViaLocalQueue(input)
-    if (skippedBySessionGuard) {
-      return { queued: false }
-    }
-    return { queued: false }
+  private async submitToSession(arg0: IngressInput): Promise<EnqueueResult> {
+    const runtime = this
+    return submitToSession({
+      supersedePendingSleep: this.supersedePendingSleep.bind(this),
+      dispatchAction: this.dispatchAction.bind(this),
+      get state() { return runtime.state },
+      get threadId() { return runtime.threadId },
+      isBusy: this.isBusy.bind(this),
+      get permissionOwner() { return runtime.permissionOwner },
+      get thread() { return runtime.thread },
+      get sdkDirectory() { return runtime.sdkDirectory },
+      get channelId() { return runtime.channelId },
+      get chat() { return runtime.chat },
+      get typing() { return runtime.typing },
+      get messageQueue() { return runtime.messageQueue },
+      ensureSession: this.ensureSession.bind(this),
+      registerSpeakerMcpServers: this.registerSpeakerMcpServers.bind(this),
+      updateExistingSessionPermissions: this.updateExistingSessionPermissions.bind(this),
+      persistIngressVariant: this.persistIngressVariant.bind(this),
+      sendNewSessionModelInfo: this.sendNewSessionModelInfo.bind(this),
+      resolveTurnSystemPrompt: this.resolveTurnSystemPrompt.bind(this),
+      consumeWorkingDirectoryPromptChange: this.consumeWorkingDirectoryPromptChange.bind(this),
+      getParentSessionIdMissingFromSystem: this.getParentSessionIdMissingFromSystem.bind(this),
+      resolveTurnContext: this.resolveTurnContext.bind(this),
+      recordTurnAttribution: this.recordTurnAttribution.bind(this),
+      get disposed() { return runtime.disposed },
+      markPendingDelivery: this.markPendingDelivery.bind(this),
+      get pendingDeliveryMessageIds() { return runtime.pendingDeliveryMessageIds },
+      set pendingDeliveryMessageIds(value) { runtime.pendingDeliveryMessageIds = value },
+      setPendingReaction: this.setPendingReaction.bind(this),
+      markQueueDispatchBusy: this.markQueueDispatchBusy.bind(this),
+      enqueueViaLocalQueue: this.enqueueViaLocalQueue.bind(this),
+    }, arg0)
   }
 
   /**
@@ -2943,18 +2381,19 @@ export class ThreadSessionRuntime {
    * Awaited rather than fire-and-forget so it cannot race the task runner and
    * let a stale wake land after the user took the conversation back.
    */
-  private async supersedePendingSleep(input: IngressInput): Promise<void> {
-    if (input.isSleepWake || input.contextOnly) return
-    await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
-      (error) => {
-        logger.error('[SLEEP] failed to cancel pending sleep:', error)
-      },
-    )
+  private async supersedePendingSleep(arg0: IngressInput): Promise<void> {
+    const runtime = this
+    return supersedePendingSleep({
+      get threadId() { return runtime.threadId },
+    }, arg0)
   }
 
-  private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
-    await this.supersedePendingSleep(input)
-    return this.messageQueue.enqueueViaLocalQueue(input)
+  private async enqueueViaLocalQueue(arg0: IngressInput): Promise<EnqueueResult> {
+    const runtime = this
+    return enqueueViaLocalQueue({
+      supersedePendingSleep: this.supersedePendingSleep.bind(this),
+      get messageQueue() { return runtime.messageQueue },
+    }, arg0)
   }
 
   /**
@@ -2966,39 +2405,17 @@ export class ThreadSessionRuntime {
    * the threadIngressQueue that previously serialized pre-enqueue work in
    * discord-bot.ts.
    */
-  async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
-    await waitForCurrentThreadIngress()
-    if (input.contextOnly) input = { ...input, noReply: true }
-    input = applyPersonToIngress({ ...input, actorPlatform: this.chat.platform })
-    input = applyChannelPolicyToIngress({ input: { ...input, actorPlatform: this.chat.platform }, channelId: this.channelId || this.chat.parentId || this.threadId })
-    if (!input.contextOnly) threadState.setSessionUsername(this.threadId, input.username)
-    const botUserId = this.chat.botUserId
-    if (!input.contextOnly && input.userId && input.userId !== botUserId) {
-      threadState.setSessionUserId(this.threadId, input.userId)
-    }
-    await this.ensureParentSessionId({
-      parentSessionId: input.parentSessionId,
-    })
-
-    // When a preprocessor is provided, we must resolve it inside
-    // dispatchAction before we know the final mode for routing.
-    if (input.preprocess) {
-      return this.enqueueWithPreprocess(input)
-    }
-    // If the prompt starts with `/cmdname ...` (and no explicit command is
-    // already set), rewrite it into a command invocation so it goes through
-    // the session command API instead of being sent to the model as
-    // plain text. Covers Discord chat messages, /new-session, CLI
-    // `roadie send --prompt`, and scheduled tasks — all funnel through here.
-    if (!input.contextOnly) input = maybeConvertLeadingCommand(input)
-    if (input.mode === 'local-queue') {
-      return this.enqueueViaLocalQueue(input)
-    }
-    if (input.command) {
-      // Commands wait in the local queue until the current run finishes.
-      return this.enqueueViaLocalQueue(input)
-    }
-    return this.submitToSession(input)
+  async enqueueIncoming(arg0: IngressInput): Promise<EnqueueResult> {
+    const runtime = this
+    return enqueueIncoming({
+      get chat() { return runtime.chat },
+      get channelId() { return runtime.channelId },
+      get threadId() { return runtime.threadId },
+      ensureParentSessionId: this.ensureParentSessionId.bind(this),
+      enqueueWithPreprocess: this.enqueueWithPreprocess.bind(this),
+      enqueueViaLocalQueue: this.enqueueViaLocalQueue.bind(this),
+      submitToSession: this.submitToSession.bind(this),
+    }, arg0)
   }
 
   /**
@@ -3006,36 +2423,13 @@ export class ThreadSessionRuntime {
    * Prefer in-memory state, then SQLite, then the ingress marker.
    * Persist once so multi-turn child sessions keep the parent after restart.
    */
-  private async ensureParentSessionId({
-    parentSessionId,
-  }: {
+  private async ensureParentSessionId(arg0: {
     parentSessionId?: string
   }) {
-    if (this.state?.parentSessionId) {
-      return
-    }
-
-    const storedParentSessionId = await getThreadParentSessionId(this.threadId)
-    if (storedParentSessionId) {
-      threadState.setParentSessionId(this.threadId, storedParentSessionId)
-      return
-    }
-
-    if (!parentSessionId) {
-      return
-    }
-
-    threadState.setParentSessionId(this.threadId, parentSessionId)
-    // Row may not exist yet on first ingress before ensureSession creates it.
-    // Best-effort write; ensureSession path also persists after setThreadSession.
-    await setThreadParentSessionId({
+    return ensureParentSessionId({
+      state: this.state,
       threadId: this.threadId,
-      parentSessionId,
-    }).catch((error) => {
-      logger.warn(
-        `[PARENT SESSION] Failed to persist parent session for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    })
+    }, arg0)
   }
 
   /**
@@ -3048,71 +2442,15 @@ export class ThreadSessionRuntime {
    * preprocessing order is serialized here — the enqueue itself goes
    * through dispatchAction as usual.
    */
-  private async enqueueWithPreprocess(input: IngressInput): Promise<EnqueueResult> {
-    // Deferred result: the chain link resolves/rejects this promise.
-    let resolveOuter!: (value: EnqueueResult | PromiseLike<EnqueueResult>) => void
-    let rejectOuter!: (reason: unknown) => void
-    const resultPromise = new Promise<EnqueueResult>((resolve, reject) => {
-      resolveOuter = resolve
-      rejectOuter = reject
-    })
-
-    // Chain preprocess + enqueue calls so they run in arrival order but
-    // outside dispatchAction. The chain awaits the full enqueue (including
-    // ensureSession / setThreadSession) before releasing to the next
-    // message, so session-creation races on fresh threads are avoided.
-    // The chain itself never rejects (catch + resolve via rejectOuter)
-    // so the next link always runs.
-    this.preprocessChain = this.preprocessChain.then(async () => {
-      try {
-        const result = await input.preprocess!()
-        if (result.skip) {
-          resolveOuter({ queued: false })
-          return
-        }
-        const resolvedInput: IngressInput = maybeConvertLeadingCommand({
-          ...input,
-          prompt: result.prompt,
-          images: result.images,
-          mode: result.mode,
-          // Preprocessing may request an agent — apply it only if no
-          // explicit agent was already set (CLI --agent flag wins).
-          agent: input.agent || result.agent,
-          repliedMessage: result.repliedMessage,
-          preprocess: undefined,
-        })
-
-        const hasPromptText = resolvedInput.prompt.trim().length > 0
-        const hasImages = (resolvedInput.images?.length || 0) > 0
-        if (!hasPromptText && !hasImages && !resolvedInput.command) {
-          logger.warn(
-            `[INGRESS] Skipping empty preprocessed input threadId=${this.threadId}`,
-          )
-          resolveOuter({ queued: false })
-          return
-        }
-
-        // Route with the resolved mode through normal paths.
-        // Await the enqueue so session state (ensureSession, setThreadSession)
-        // is persisted before the next message's preprocessing reads it.
-        // noReply messages always go through direct submission so the flag
-        // reaches promptAsync; local queue doesn't support noReply.
-        const enqueueResult = resolvedInput.noReply
-          ? await this.submitToSession({
-              ...resolvedInput,
-              mode: 'direct',
-              command: undefined,
-            })
-          : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
-            ? await this.enqueueViaLocalQueue(resolvedInput)
-            : await this.submitToSession(resolvedInput)
-        resolveOuter(enqueueResult)
-      } catch (err) {
-        rejectOuter(err)
-      }
-    })
-
-    return resultPromise
+  private async enqueueWithPreprocess(arg0: IngressInput): Promise<EnqueueResult> {
+    const runtime = this
+    return enqueueWithPreprocess({
+      get preprocessChain() { return runtime.preprocessChain },
+      set preprocessChain(value) { runtime.preprocessChain = value },
+      get threadId() { return runtime.threadId },
+      submitToSession: this.submitToSession.bind(this),
+      enqueueViaLocalQueue: this.enqueueViaLocalQueue.bind(this),
+    }, arg0)
   }
 
   /**
@@ -3348,375 +2686,34 @@ export class ThreadSessionRuntime {
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
-  private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
-    this.lastDisplayedContextPercentage = 0
-    this.lastRateLimitDisplayTime = 0
-    this.lastSentPartKind = undefined
-
-    // ── Ensure session ────────────────────────────────────────
-    const sessionResult = await this.ensureSession({
-      prompt: input.prompt,
-      agent: input.agent,
-      permissions: input.permissions,
-      injectionGuardPatterns: input.injectionGuardPatterns,
-      sourceMessageId: input.sourceMessageId,
-      sessionStartScheduleKind: input.sessionStartScheduleKind,
-      sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
-    })
-    if (sessionResult instanceof Error) {
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`✗ ${sessionResult.message}`, { notify: true })
-      // Show indicator: this dispatch failed, so the next queued message
-      // has been waiting — the user needs to see which one is starting.
-      return false
-    }
-    const { session, getClient, createdNewSession } = sessionResult
-    schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
-
-    await this.registerSpeakerMcpServers({ client: getClient(), input })
-    const updatePermissionsResult = await this.updateExistingSessionPermissions({
-      client: getClient(),
-      sessionId: session.id,
-      permissions: input.permissions,
-      owner: input.personId ?? input.userId,
-    })
-    if (updatePermissionsResult instanceof Error) {
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`Failed to update session permissions: ${updatePermissionsResult.message}`, { notify: true })
-      return false
-    }
-
-    // ── Resolve model + agent preferences ─────────────────────
-    const channelId = this.channelId
-    const resolvedAppId = input.appId
-
-    // Explicit agent prompts (for example /plan-agent <prompt>) must update
-    // the session preference before dispatch. Otherwise the model can resolve
-    // from the requested agent while Pi keeps running the old agent.
-    if (input.agent) {
-      await setSessionAgent(session.id, input.agent)
-      await clearSessionModel(session.id)
-    }
-
-    if (input.model) {
-      const validatedModel = await validateModelId({
-        model: input.model,
-        getClient,
-        directory: this.sdkDirectory,
-      })
-      if (validatedModel instanceof Error) {
-        this.typing.stopTyping()
-        await this.chat.sendMessage(`Failed to resolve model: ${validatedModel.message}`, { notify: true })
-        return false
-      }
-    }
-
-    await ensureSessionPreferencesSnapshot({
-      sessionId: session.id,
-      channelId,
-      appId: resolvedAppId,
-      getClient,
-      directory: this.sdkDirectory,
-      agentOverride: input.agent,
-      modelOverride: input.model,
-      force: createdNewSession,
-    })
-
-    const earlyAgentResult = await resolveValidatedAgentPreference({
-      agent: input.agent,
-      sessionId: session.id,
-      channelId,
-      getClient,
-      directory: this.sdkDirectory,
-    }).catch((e) => new AgentBackendError({ operation: 'resolveAgent', cause: e }))
-    if (earlyAgentResult instanceof Error) {
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`Failed to resolve agent: ${earlyAgentResult.message}`, { notify: true })
-      return false
-    }
-    const earlyAgentPreference = earlyAgentResult.agentPreference
-    const earlyAvailableAgents = earlyAgentResult.agents
-
-    await this.persistIngressVariant({
-      sessionId: session.id,
-      channelId,
-      appId: resolvedAppId,
-      agentPreference: earlyAgentPreference,
-      getClient,
-      variant: input.variant,
-    })
-
-    const [earlyModelResult, preferredVariant] = await Promise.all([
-      (async () => {
-        if (input.model) {
-          return validateModelId({
-            model: input.model,
-            getClient,
-            directory: this.sdkDirectory,
-          })
-        }
-        const modelInfo = await getCurrentModelInfo({
-          sessionId: session.id,
-          channelId,
-          appId: resolvedAppId,
-          agentPreference: earlyAgentPreference,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-        if (modelInfo.type === 'none') {
-          return undefined
-        }
-        return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-      })().catch((e) => new AgentBackendError({ operation: 'resolveModelPreference', cause: e })),
-      getVariantCascade({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-      }),
-    ])
-    if (earlyModelResult instanceof Error) {
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`Failed to resolve model: ${earlyModelResult.message}`, { notify: true })
-      return false
-    }
-    const earlyModelParam = earlyModelResult
-    if (!earlyModelParam) {
-      this.typing.stopTyping()
-      await this.chat.sendMessage('No model account available. Add an account to the credential pool with `/credentials add`.')
-      return false
-    }
-
-    // Resolve thinking variant
-    const earlyThinkingValue = await (async (): Promise<string | undefined> => {
-      if (!preferredVariant) {
-        return undefined
-      }
-      const catalog = await getClient().catalog.providers({ directory: this.sdkDirectory })
-      if (catalog instanceof Error) {
-        return undefined
-      }
-      const availableValues = getThinkingValuesForModel({
-        providers: catalog.providers,
-        providerId: earlyModelParam.providerID,
-        modelId: earlyModelParam.modelID,
-      })
-      if (availableValues.length === 0) {
-        return undefined
-      }
-      return matchThinkingValue({
-        requestedValue: preferredVariant,
-        availableValues,
-      }) || undefined
-    })()
-
-    await this.ensureModelContextLimit({
-      providerID: earlyModelParam.providerID,
-      modelID: earlyModelParam.modelID,
-    })
-
-    await this.sendNewSessionModelInfo({
-      createdNewSession,
-      model: earlyModelParam,
-      agent: earlyAgentPreference,
-    })
-
-    // ── Build prompt parts ────────────────────────────────────
-    const images = input.images || []
-    const promptWithImagePaths = (() => {
-      if (images.length === 0) {
-        return input.prompt
-      }
-      const imageList = images
-        .map((img) => {
-          return `- ${img.sourceUrl || img.filename}`
-        })
-        .join('\n')
-      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
-    })()
-
-    // ── Working directory for per-turn prompt context ─────────
-    const workingDirectory = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
-
-    const channelTopic = await this.chat.channelTopic(channelId)
-    // Pinned before building parts so the fork notice can compare identities.
-    // Also covers session.command: the context-awareness plugin reads the same
-    // pinned file because the command API has no system field.
-    const system = await this.resolveTurnSystemPrompt({
-      sessionId: session.id,
-      channelTopic,
-      agents: earlyAvailableAgents,
-      input,
-    })
-    if (system instanceof Error) {
-      logger.error(
-        `[DISPATCH] Failed to pin system prompt for session ${session.id}: ${system.message}`,
-      )
-      void notifyError(system, 'Failed to pin session system prompt')
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`✗ Failed to prepare system prompt: ${system.message}`, { notify: true })
-      return false
-    }
-    const systemPromptFromSourceSession = systemPromptNamesOtherSession({ system, sessionId: session.id })
-    const forkOrigin = await getSessionForkOrigin(session.id)
-    const workingDirectoryChanged = this.consumeWorkingDirectoryPromptChange(workingDirectory)
-    const syntheticContext = getPromptContext({
-      platform: this.chat.platform,
-      sessionId: session.id,
-      backend: agentBackendLabel(),
-      threadId: this.thread.id,
-      username: input.username,
-      userId: input.userId,
-      sourceMessageId: input.sourceMessageId,
-      sourceThreadId: input.sourceThreadId || this.thread.id,
-      threadName: this.chat.name || undefined,
-      repliedMessage: input.repliedMessage,
-      workingDirectory,
-      currentAgent: earlyAgentPreference,
-      workingDirectoryChanged,
-      systemPromptFromSourceSession,
-      forkOrigin,
-      parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
-    })
-    const turnContext = await this.resolveTurnContext({
-      sessionId: session.id,
-      input,
-      isFirstTurn: createdNewSession,
-    })
-    const parts: AgentPromptPart[] = [
-      { kind: 'text', text: promptWithImagePaths },
-      { kind: 'text', text: syntheticContext, synthetic: true },
-      ...(turnContext ? [{ kind: 'text' as const, text: turnContext, synthetic: true }] : []),
-      ...images.map(toPromptFilePart),
-    ]
-
-    const variantField = earlyThinkingValue
-      ? { variant: earlyThinkingValue }
-      : {}
-
-    if (input.command) {
-      const queuedCommand = input.command
-      const commandSignal = AbortSignal.timeout(30_000)
-      // session.command() only accepts FilePart in parts, not text parts.
-      // Append the <discord-user /> tag to the arguments, same as promptAsync,
-      // so the model sees who sent the command.
-      const discordTag = getPromptContext({
-        platform: this.chat.platform,
-        sessionId: session.id,
-        backend: agentBackendLabel(),
-        threadId: this.thread.id,
-        username: input.username,
-        userId: input.userId,
-        sourceMessageId: input.sourceMessageId,
-        sourceThreadId: input.sourceThreadId || this.thread.id,
-        threadName: this.chat.name || undefined,
-        repliedMessage: input.repliedMessage,
-        systemPromptFromSourceSession,
-        forkOrigin,
-        parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
-      })
-      await this.recordTurnAttribution({ sessionId: session.id, input })
-      if (this.disposed) {
-        logger.log(`[DISPATCH] Runtime disposed before command was sent sessionId=${session.id}`)
-        return false
-      }
-      const commandResponse = await getClient().sessions.command(
-        {
-          sessionId: session.id,
-          directory: this.sdkDirectory,
-          command: queuedCommand.name,
-          arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
-          system,
-          agent: earlyAgentPreference,
-          model: { providerId: earlyModelParam.providerID, modelId: earlyModelParam.modelID },
-          ...(variantField.variant ? { variant: variantField.variant } : {}),
-        },
-        { signal: commandSignal },
-      )
-
-      if (commandResponse instanceof AgentRequestError) {
-        const errorMessage = commandResponse.message
-        if (errorMessage.includes('aborted')) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.typing.stopTyping()
-          return true
-        }
-        const apiError = new Error(`Agent error: ${errorMessage}`)
-        logger.error(`[DISPATCH] ${apiError.message}`)
-        void notifyError(apiError, 'Agent error during command')
-        this.typing.stopTyping()
-        await this.chat.sendMessage(`✗ ${apiError.message}`, { notify: true })
-        return false
-      }
-
-      if (commandResponse instanceof Error) {
-        const timeoutReason = commandSignal.reason
-        const timedOut =
-          commandSignal.aborted &&
-          timeoutReason instanceof Error &&
-          timeoutReason.name === 'TimeoutError'
-        if (timedOut) {
-          logger.warn(
-            `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
-          )
-          this.typing.stopTyping()
-          await this.chat.sendMessage('✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.', { notify: true })
-          return false
-        }
-
-        const commandErrorForAbortCheck: unknown = commandResponse
-        if (isAbortError(commandErrorForAbortCheck)) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.typing.stopTyping()
-          return true
-        }
-
-        logger.error(
-          `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
-        )
-        void notifyError(commandResponse, 'Failed to send command to the agent')
-        this.typing.stopTyping()
-        await this.chat.sendMessage(`✗ Unexpected bot Error: ${commandResponse.message}`, { notify: true })
-        return false
-      }
-
-      logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
-      return true
-    }
-
-    await this.recordTurnAttribution({ sessionId: session.id, input })
-    await waitForGlobalEventListener()
-    if (this.disposed) {
-      logger.log(`[DISPATCH] Runtime disposed before prompt was sent sessionId=${session.id}`)
-      return false
-    }
-    const promptResponse = await getClient().sessions.prompt({
-      sessionId: session.id,
-      directory: this.sdkDirectory,
-      parts,
-      system,
-      model: { providerId: earlyModelParam.providerID, modelId: earlyModelParam.modelID },
-      agent: earlyAgentPreference,
-      ...(variantField.variant ? { variant: variantField.variant } : {}),
-    })
-
-    if (promptResponse instanceof Error) {
-      const errorMessage = promptResponse.message
-      const errorObject = promptResponse
-      logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
-      void notifyError(errorObject, 'Agent error during local queue prompt')
-      this.typing.stopTyping()
-      await this.chat.sendMessage(`✗ Agent error: ${errorMessage}`, { notify: true })
-      return false
-    }
-
-    logger.log(
-      `[DISPATCH] promptAsync accepted by ${getAgentBackendProvider().id} queue sessionId=${session.id} threadId=${this.threadId}`,
-    )
-    return true
+  private async dispatchPrompt(arg0: QueuedMessage): Promise<boolean> {
+    const runtime = this
+    return dispatchPrompt({
+      get lastDisplayedContextPercentage() { return runtime.lastDisplayedContextPercentage },
+      set lastDisplayedContextPercentage(value) { runtime.lastDisplayedContextPercentage = value },
+      get lastRateLimitDisplayTime() { return runtime.lastRateLimitDisplayTime },
+      set lastRateLimitDisplayTime(value) { runtime.lastRateLimitDisplayTime = value },
+      get lastSentPartKind() { return runtime.lastSentPartKind },
+      set lastSentPartKind(value) { runtime.lastSentPartKind = value },
+      ensureSession: this.ensureSession.bind(this),
+      get typing() { return runtime.typing },
+      get chat() { return runtime.chat },
+      get sdkDirectory() { return runtime.sdkDirectory },
+      registerSpeakerMcpServers: this.registerSpeakerMcpServers.bind(this),
+      updateExistingSessionPermissions: this.updateExistingSessionPermissions.bind(this),
+      get channelId() { return runtime.channelId },
+      persistIngressVariant: this.persistIngressVariant.bind(this),
+      ensureModelContextLimit: this.ensureModelContextLimit.bind(this),
+      sendNewSessionModelInfo: this.sendNewSessionModelInfo.bind(this),
+      get thread() { return runtime.thread },
+      resolveTurnSystemPrompt: this.resolveTurnSystemPrompt.bind(this),
+      consumeWorkingDirectoryPromptChange: this.consumeWorkingDirectoryPromptChange.bind(this),
+      getParentSessionIdMissingFromSystem: this.getParentSessionIdMissingFromSystem.bind(this),
+      resolveTurnContext: this.resolveTurnContext.bind(this),
+      recordTurnAttribution: this.recordTurnAttribution.bind(this),
+      get disposed() { return runtime.disposed },
+      get threadId() { return runtime.threadId },
+    }, arg0)
   }
 
   // ── Session Ensure ──────────────────────────────────────────
@@ -3788,63 +2785,29 @@ export class ThreadSessionRuntime {
    * their previously resolved person is read from cache. Turns without a
    * cached person get no speaker MCP servers. Never fatal.
    */
-  private async registerSpeakerMcpServers({
-    client,
-    input,
-  }: {
+  private async registerSpeakerMcpServers(arg0: {
     client: AgentBackend
     input: Pick<IngressInput, 'userId' | 'actorVia' | 'personId'>
   }): Promise<void> {
-    if (!isIdentityConfigured()) return
-    if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
-    const actor = { platform: this.chat.platform, id: input.userId }
-    const person = getCachedPerson(actor)
-    if (!person?.allowed || !person.mcpServers?.length) return
-    const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
-    if (!personKey) return
-    await registerPersonMcpServers({
-      backend: client,
-      directory: this.sdkDirectory,
-      dataDir: getDataDir(),
-      personKey,
-      servers: person.mcpServers,
-    }).catch((e: unknown) => logger.warn(`[PERSON-MCP] registration failed: ${String(e)}`))
+    return registerSpeakerMcpServers({
+      chat: this.chat,
+      sdkDirectory: this.sdkDirectory,
+    }, arg0)
   }
 
-  private async updateExistingSessionPermissions({
-    client,
-    sessionId,
-    permissions,
-    noReply,
-    owner,
-  }: {
+  private async updateExistingSessionPermissions(arg0: {
     client: AgentBackend
     sessionId: string
     permissions?: string[]
     noReply?: boolean
     owner?: string
   }) {
-    if (noReply) {
-      return null
-    }
-
-    const rules = resolveSessionPermissionRules({
-      directory: this.sdkDirectory,
-      requested: permissions,
-      phase: 'create',
-    })
-
-    const updateResult = await client.sessions.setPermissions({
-      sessionId,
-      permission: rules,
-      owner,
-    })
-    if (updateResult instanceof AgentRequestError) {
-      return new Error('Pi rejected permission update', { cause: updateResult })
-    }
-    if (updateResult instanceof Error) return updateResult
-    this.permissionOwner = owner
-    return null
+    const runtime = this
+    return updateExistingSessionPermissions({
+      sdkDirectory: this.sdkDirectory,
+      get permissionOwner() { return runtime.permissionOwner },
+      set permissionOwner(value) { runtime.permissionOwner = value },
+    }, arg0)
   }
 
   /**
@@ -3852,50 +2815,20 @@ export class ThreadSessionRuntime {
    * thread's recent chat history as context-only input, then one notice in
    * the thread. Failures are logged, never fatal: the turn still runs.
    */
-  private async seedFromRetiredSession({
-    client,
-    sessionId,
-    retiredSessionId,
-    sourceMessageId,
-  }: {
+  private async seedFromRetiredSession(arg0: {
     client: AgentBackend
     sessionId: string
     retiredSessionId: string
     sourceMessageId?: string
   }): Promise<void> {
-    const backend = agentBackendLabel()
-    const history = await this.chat.readRecentMessages?.(RETIRED_SEED_HISTORY_LIMIT)
-    if (history instanceof Error) {
-      logger.warn(`[RETIRED SESSION] Cannot read thread ${this.thread.id} history: ${history.message}`)
-    }
-    const seeded = await client.sessions.prompt({
-      sessionId,
-      directory: this.sdkDirectory,
-      parts: [{
-        kind: 'text',
-        synthetic: true,
-        text: buildRetiredSessionSeed({ retiredSessionId, history, excludeMessageId: sourceMessageId }),
-      }],
-      noReply: true,
-    })
-    if (seeded instanceof Error) {
-      logger.warn(`[RETIRED SESSION] Cannot seed ${sessionId} from thread ${this.thread.id}: ${seeded.message}`)
-    }
-    logger.log(`[RETIRED SESSION] Thread ${this.thread.id} moved from retired session ${retiredSessionId} to ${backend} session ${sessionId}`)
-    await this.chat.sendNotice(asSubtext(
-      `This thread's earlier session can't be resumed, so it moved to a new ${backend} session that starts from this thread's recent messages.`,
-    ))
+    return seedFromRetiredSession({
+      chat: this.chat,
+      thread: this.thread,
+      sdkDirectory: this.sdkDirectory,
+    }, arg0)
   }
 
-  private async ensureSession({
-    prompt,
-    agent,
-    permissions,
-    injectionGuardPatterns,
-    sourceMessageId,
-    sessionStartScheduleKind,
-    sessionStartScheduledTaskId,
-  }: {
+  private async ensureSession(arg0: {
     prompt: string
     agent?: string
     /** Raw "tool:action" strings from --permission flag */
@@ -3913,176 +2846,31 @@ export class ThreadSessionRuntime {
         createdNewSession: boolean
       }
   > {
-    const directory = this.sdkDirectory
-
-    // A thread in a separate git checkout is kept out of the origin checkout.
-    // A project subfolder is not: its project root contains it.
-    const threadDir = applicationDirectory() ? undefined : await getThreadWorkingDirectory(this.thread.id)
-    const originalRepoDirectory = threadDir?.kind === 'git-worktree'
-      ? threadDir.projectDirectory
-      : undefined
-
-    const getClientResult = await getAgentBackendProvider().initializeForDirectory(directory, {
-      originalRepoDirectory,
-      channelId: this.channelId,
-    })
-    if (getClientResult instanceof Error) return getClientResult
-    const getClient = getClientResult
-
-    // Check thread state for existing session ID
-    let sessionId = this.state?.sessionId
-    if (!sessionId) {
-      // Fallback to DB
-      sessionId = await getThreadSession(this.thread.id) || undefined
-    }
-    // A session the backend does not own is retired, not resumed: the thread
-    // moves to a new session, seeded from its chat history below.
-    let retiredSessionId: string | undefined
-    if (sessionId && isRetiredSession(sessionId)) {
-      retiredSessionId = sessionId
-      sessionId = undefined
-    }
-
-    let session: { id: string; title: string } | undefined
-    let createdNewSession = false
-
-    if (sessionId) {
-      const sessionResponse = await getClient().sessions.get({
-        sessionId,
-        directory: this.sdkDirectory,
-      })
-      if (sessionResponse instanceof Error) {
-        logger.warn(
-          `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
-        )
-      } else if (sessionResponse) {
-        session = sessionResponse
-      } else {
-        logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}`,
-        )
-      }
-    }
-
-    if (!session) {
-      // Roadie's rules for the session: checkout isolation, then requested
-      // rules (send, channel policy, identity), then plugins. Later rules win.
-      const sessionPermissions = resolveSessionPermissionRules({
-        directory: this.sdkDirectory,
-        originalRepoDirectory,
-        requested: permissions,
-        phase: 'create',
-      })
-      // Untitled: the first task names it (markPendingSessionTitle below).
-      const createResult = await getClient().sessions.create({
-        directory: this.sdkDirectory,
-        permission: sessionPermissions,
-      })
-      if (createResult instanceof Error) {
-        logger.error(
-          `[ENSURE SESSION] session.create failed: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
-        )
-        return new Error(
-          `Failed to create session: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
-          { cause: createResult },
-        )
-      }
-      session = createResult
-      // Insert DB row immediately so the external-sync poller sees
-      // source='roadie' before the next poll tick and skips this session.
-      // The upsert at the end of ensureSession is kept for the reuse path.
-      await setThreadSession(this.thread.id, session.id)
-      await markPendingSessionTitle(session)
-      if (injectionGuardPatterns?.length) {
-        writeInjectionGuardConfig({
-          sessionId: session.id,
-          scanPatterns: injectionGuardPatterns,
-        })
-      }
-      createdNewSession = true
-      if (retiredSessionId) {
-        await this.seedFromRetiredSession({
-          client: getClient(),
-          sessionId: session.id,
-          retiredSessionId,
-          sourceMessageId,
-        })
-      }
-    }
-
-    if (!session) {
-      return new Error(
-        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
-      )
-    }
-
-    // Store session in DB and thread state
-    await setThreadSession(this.thread.id, session.id)
-    threadState.setSessionId(this.threadId, session.id)
-    // Parent may have been set on ingress before the thread_sessions row
-    // existed; write it now that the row is guaranteed.
-    const parentSessionId = this.state?.parentSessionId
-    if (parentSessionId) {
-      await setThreadParentSessionId({
-        threadId: this.thread.id,
-        parentSessionId,
-      }).catch((error) => {
-        logger.warn(
-          `[PARENT SESSION] Failed to persist parent session for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      })
-    }
-    await this.hydrateSessionEventsFromDatabase({ sessionId: session.id })
-
-    // Store session start source for scheduled tasks
-    if (createdNewSession && sessionStartScheduleKind) {
-      const sessionStartSourceResult = await setSessionStartSource({
-        sessionId: session.id,
-        scheduleKind: sessionStartScheduleKind,
-        scheduledTaskId: sessionStartScheduledTaskId,
-      }).catch((e) =>
-        new AgentBackendError({ operation: 'setSessionStartSource', cause: e }),
-      )
-      if (sessionStartSourceResult instanceof Error) {
-        logger.warn(
-          `[SESSION START SOURCE] ${sessionStartSourceResult.message}`,
-        )
-      }
-    }
-
-    // Store agent preference if provided
-    if (agent && createdNewSession) {
-      await setSessionAgent(session.id, agent)
-    }
-
-    return { session, getClient, createdNewSession }
+    const runtime = this
+    return ensureSession({
+      get sdkDirectory() { return runtime.sdkDirectory },
+      get thread() { return runtime.thread },
+      get channelId() { return runtime.channelId },
+      get state() { return runtime.state },
+      seedFromRetiredSession: this.seedFromRetiredSession.bind(this),
+      get threadId() { return runtime.threadId },
+      hydrateSessionEventsFromDatabase: this.hydrateSessionEventsFromDatabase.bind(this),
+    }, arg0)
   }
 
   /**
    * Emit the model + agent banner once, before the first prompt or session
    * command can produce visible output in a newly-created session thread.
    */
-  private async sendNewSessionModelInfo({
-    createdNewSession,
-    model,
-    agent,
-  }: {
+  private async sendNewSessionModelInfo(arg0: {
     createdNewSession: boolean
     model: { providerID: string; modelID: string }
     agent?: string
   }): Promise<void> {
-    if (!createdNewSession) {
-      return
-    }
-
-    const modelLabel = `${model.providerID}/${model.modelID}`
-    const agentLabel = agent && agent.toLowerCase() !== 'build'
-      ? ` ⋅ ${agent}`
-      : ''
-    const result = await this.chat.sendMessage(asSubtext(`*using ${modelLabel}${agentLabel}*`)).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-    if (result instanceof Error) {
-      logger.warn(`[SESSION INFO] Failed to send model info: ${result.message}`)
-    }
+    const runtime = this
+    return sendNewSessionModelInfo({
+      get chat() { return runtime.chat },
+    }, arg0)
   }
 
   /**
