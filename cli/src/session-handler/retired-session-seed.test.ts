@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'vitest'
-import { buildRetiredSessionSeed } from './retired-session-seed.js'
+import { describe, expect, test, vi } from 'vitest'
+import type { AgentBackend } from '../agent-backend/types.js'
+import type { ChatThread } from '../chat-platform/types.js'
+import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT, seedFromRetiredSession } from './retired-session-seed.js'
 
 const history = [
   { id: '1', author: 'chubes', fromBot: false, text: 'fix the footer' },
@@ -7,6 +9,43 @@ const history = [
   { id: '3', author: 'chubes', fromBot: false, text: '   ' },
   { id: '4', author: 'chubes', fromBot: false, text: 'now ship it' },
 ]
+
+describe('seedFromRetiredSession', () => {
+  test.each([false, true])('seeds before notifying, even with returned errors: %s', async (fail) => {
+    const order: string[] = []
+    const prompt = vi.fn(async () => {
+      order.push('prompt')
+      return fail ? new Error('backend unavailable') : undefined
+    })
+    const readRecentMessages = vi.fn(async () => fail ? new Error('history unavailable') : history)
+    const sendNotice = vi.fn(async () => { order.push('notice') })
+    const client = { sessions: { prompt } } as unknown as AgentBackend
+    const chat = { readRecentMessages, sendNotice } as unknown as ChatThread
+
+    await seedFromRetiredSession(client, chat, 'thread', '/checkout', 'new', 'old', '4')
+
+    expect(readRecentMessages).toHaveBeenCalledWith(RETIRED_SEED_HISTORY_LIMIT)
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: 'new', directory: '/checkout', noReply: true,
+      parts: [{ kind: 'text', synthetic: true, text: buildRetiredSessionSeed({
+        retiredSessionId: 'old', history: fail ? new Error('history unavailable') : history, excludeMessageId: '4',
+      }) }],
+    })
+    expect(order).toEqual(['prompt', 'notice'])
+    expect(sendNotice).toHaveBeenCalledWith(expect.stringContaining("earlier session can't be resumed"))
+  })
+
+  test('supports platforms without history reads', async () => {
+    const prompt = vi.fn(async () => undefined)
+    const sendNotice = vi.fn(async () => undefined)
+    await seedFromRetiredSession(
+      { sessions: { prompt } } as unknown as AgentBackend,
+      { sendNotice } as unknown as ChatThread, 'thread', '/checkout', 'new', 'old',
+    )
+    expect(prompt.mock.calls[0]).toBeDefined()
+    expect(sendNotice).toHaveBeenCalledOnce()
+  })
+})
 
 describe('buildRetiredSessionSeed', () => {
   test('carries the thread oldest first, minus the triggering message and blanks', () => {
