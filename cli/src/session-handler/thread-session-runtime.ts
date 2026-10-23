@@ -34,9 +34,8 @@ import type { QueuedMessage } from './thread-runtime-state.js'
 import type { AgentBackend, AgentBackendEvent, AgentBackendGetter } from '../agent-backend/types.js'
 import type { AgentFormRequest } from '../agent-backend/events.js'
 import { agentBackendLabel, getAgentBackendProvider, isRetiredSession } from '../agent-backend/registry.js'
-import { buildRetiredSessionSeed, RETIRED_SEED_HISTORY_LIMIT } from './retired-session-seed.js'
-import { getCachedPerson, isIdentityConfigured } from '../identity.js'
-import { registerPersonMcpServers } from '../person-mcp.js'
+import { seedFromRetiredSession } from './retired-session-seed.js'
+import { registerSpeakerMcpServers } from '../person-mcp.js'
 import { applicationDirectory } from '../channel-policy.js'
 import { writeInjectionGuardConfig } from '../injection-guard-config.js'
 import { isAbortError } from '../utils.js'
@@ -98,7 +97,7 @@ import {
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
-import { personKeyFrom, resolvePersonBillingPool } from '../credentials/person-pool.js'
+import { resolvePersonBillingPool } from '../credentials/person-pool.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
@@ -135,7 +134,6 @@ import {
   type WorkingDirectoryInfo,
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
-import { getDataDir } from '../config.js'
 import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { store } from '../store.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
@@ -2732,7 +2730,7 @@ export class ThreadSessionRuntime {
       const { session, getClient, createdNewSession } = sessionResult
       schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
-      await this.registerSpeakerMcpServers({ client: getClient(), input })
+      await registerSpeakerMcpServers(getClient(), this.chat.platform, this.sdkDirectory, input)
       const updatePermissionsResult = await this.updateExistingSessionPermissions({
         client: getClient(),
         sessionId: session.id,
@@ -3442,7 +3440,7 @@ export class ThreadSessionRuntime {
     const { session, getClient, createdNewSession } = sessionResult
     schedulePendingSessionTitle({ session, prompt: sessionTitlePrompt(input), backend: getClient(), directory: this.sdkDirectory })
 
-    await this.registerSpeakerMcpServers({ client: getClient(), input })
+    await registerSpeakerMcpServers(getClient(), this.chat.platform, this.sdkDirectory, input)
     const updatePermissionsResult = await this.updateExistingSessionPermissions({
       client: getClient(),
       sessionId: session.id,
@@ -3851,35 +3849,6 @@ export class ThreadSessionRuntime {
     return parentSessionId
   }
 
-  /**
-   * Connect the speaker's own MCP servers, authenticated with their stored
-   * credential. Only chat speakers allowed by the person filter get any;
-   * their previously resolved person is read from cache. Turns without a
-   * cached person get no speaker MCP servers. Never fatal.
-   */
-  private async registerSpeakerMcpServers({
-    client,
-    input,
-  }: {
-    client: AgentBackend
-    input: Pick<IngressInput, 'userId' | 'actorVia' | 'personId'>
-  }): Promise<void> {
-    if (!isIdentityConfigured()) return
-    if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
-    const actor = { platform: this.chat.platform, id: input.userId }
-    const person = getCachedPerson(actor)
-    if (!person?.allowed || !person.mcpServers?.length) return
-    const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
-    if (!personKey) return
-    await registerPersonMcpServers({
-      backend: client,
-      directory: this.sdkDirectory,
-      dataDir: getDataDir(),
-      personKey,
-      servers: person.mcpServers,
-    }).catch((e: unknown) => logger.warn(`[PERSON-MCP] registration failed: ${String(e)}`))
-  }
-
   private async updateExistingSessionPermissions({
     client,
     sessionId,
@@ -3914,46 +3883,6 @@ export class ThreadSessionRuntime {
     if (updateResult instanceof Error) return updateResult
     this.permissionOwner = owner
     return null
-  }
-
-  /**
-   * First message of a session that replaces one on a retired backend: the
-   * thread's recent chat history as context-only input, then one notice in
-   * the thread. Failures are logged, never fatal: the turn still runs.
-   */
-  private async seedFromRetiredSession({
-    client,
-    sessionId,
-    retiredSessionId,
-    sourceMessageId,
-  }: {
-    client: AgentBackend
-    sessionId: string
-    retiredSessionId: string
-    sourceMessageId?: string
-  }): Promise<void> {
-    const backend = agentBackendLabel()
-    const history = await this.chat.readRecentMessages?.(RETIRED_SEED_HISTORY_LIMIT)
-    if (history instanceof Error) {
-      logger.warn(`[RETIRED SESSION] Cannot read thread ${this.thread.id} history: ${history.message}`)
-    }
-    const seeded = await client.sessions.prompt({
-      sessionId,
-      directory: this.sdkDirectory,
-      parts: [{
-        kind: 'text',
-        synthetic: true,
-        text: buildRetiredSessionSeed({ retiredSessionId, history, excludeMessageId: sourceMessageId }),
-      }],
-      noReply: true,
-    })
-    if (seeded instanceof Error) {
-      logger.warn(`[RETIRED SESSION] Cannot seed ${sessionId} from thread ${this.thread.id}: ${seeded.message}`)
-    }
-    logger.log(`[RETIRED SESSION] Thread ${this.thread.id} moved from retired session ${retiredSessionId} to ${backend} session ${sessionId}`)
-    await this.chat.sendNotice(asSubtext(
-      `This thread's earlier session can't be resumed, so it moved to a new ${backend} session that starts from this thread's recent messages.`,
-    ))
   }
 
   private async ensureSession({
@@ -4070,19 +3999,11 @@ export class ThreadSessionRuntime {
       }
       createdNewSession = true
       if (retiredSessionId) {
-        await this.seedFromRetiredSession({
-          client: getClient(),
-          sessionId: session.id,
-          retiredSessionId,
-          sourceMessageId,
-        })
+        await seedFromRetiredSession(
+          getClient(), this.chat, this.thread.id, this.sdkDirectory,
+          session.id, retiredSessionId, sourceMessageId,
+        )
       }
-    }
-
-    if (!session) {
-      return new Error(
-        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
-      )
     }
 
     // Store session in DB and thread state

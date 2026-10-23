@@ -21,10 +21,36 @@
 import crypto from 'node:crypto'
 import type { AgentBackend } from './agent-backend/types.js'
 import { MCP_NAME_PATTERN, getPersonMcpAccessToken, isAllowedMcpUrl } from './credentials/person-mcp-store.js'
-import type { PersonMcpServer } from './identity.js'
+import { getCachedPerson, isIdentityConfigured, type PersonMcpServer } from './identity.js'
+import { personKeyFrom } from './credentials/person-pool.js'
+import { getDataDir } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.MCP)
+const sessionLogger = createLogger(LogPrefix.SESSION)
+
+/** Connect an allowed chat speaker's own servers; registration is never fatal. */
+export async function registerSpeakerMcpServers(
+  client: AgentBackend,
+  platform: string,
+  directory: string,
+  input: { userId?: string; actorVia?: 'chat' | 'cli'; personId?: string },
+): Promise<void> {
+  if (!isIdentityConfigured()) return
+  if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
+  const actor = { platform, id: input.userId }
+  const person = getCachedPerson(actor)
+  if (!person?.allowed || !person.mcpServers?.length) return
+  const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
+  if (!personKey) return
+  await registerPersonMcpServers({
+    backend: client,
+    directory,
+    dataDir: getDataDir(),
+    personKey,
+    servers: person.mcpServers,
+  }).catch((e: unknown) => sessionLogger.warn(`[PERSON-MCP] registration failed: ${String(e)}`))
+}
 
 export const PERSON_MCP_PREFIX = 'roadie_pm_'
 /** Permission (tool name) glob covering every person-scoped MCP tool. */

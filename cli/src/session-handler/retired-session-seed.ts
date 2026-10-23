@@ -4,7 +4,47 @@
 // thread's recent chat history, bounded, plus a note that the earlier
 // session's tool state did not carry over.
 
-import type { ChatHistoryMessage } from '../chat-platform/types.js'
+import type { ChatHistoryMessage, ChatThread } from '../chat-platform/types.js'
+import type { AgentBackend } from '../agent-backend/types.js'
+import { agentBackendLabel } from '../agent-backend/registry.js'
+import { asSubtext } from '../message-formatting.js'
+import { createLogger, LogPrefix } from '../logger.js'
+
+const logger = createLogger(LogPrefix.SESSION)
+
+/** Seed a replacement session and notify the thread; failures never stop the turn. */
+export async function seedFromRetiredSession(
+  client: AgentBackend,
+  chat: ChatThread,
+  threadId: string,
+  directory: string,
+  sessionId: string,
+  retiredSessionId: string,
+  sourceMessageId?: string,
+): Promise<void> {
+  const backend = agentBackendLabel()
+  const history = await chat.readRecentMessages?.(RETIRED_SEED_HISTORY_LIMIT)
+  if (history instanceof Error) {
+    logger.warn(`[RETIRED SESSION] Cannot read thread ${threadId} history: ${history.message}`)
+  }
+  const seeded = await client.sessions.prompt({
+    sessionId,
+    directory,
+    parts: [{
+      kind: 'text',
+      synthetic: true,
+      text: buildRetiredSessionSeed({ retiredSessionId, history, excludeMessageId: sourceMessageId }),
+    }],
+    noReply: true,
+  })
+  if (seeded instanceof Error) {
+    logger.warn(`[RETIRED SESSION] Cannot seed ${sessionId} from thread ${threadId}: ${seeded.message}`)
+  }
+  logger.log(`[RETIRED SESSION] Thread ${threadId} moved from retired session ${retiredSessionId} to ${backend} session ${sessionId}`)
+  await chat.sendNotice(asSubtext(
+    `This thread's earlier session can't be resumed, so it moved to a new ${backend} session that starts from this thread's recent messages.`,
+  ))
+}
 
 /** Messages read from the thread for the seed. */
 export const RETIRED_SEED_HISTORY_LIMIT = 60
