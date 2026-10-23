@@ -472,4 +472,3 @@ export async function handleForkAutocomplete({
   await interaction.respond(choices).catch(() => undefined)
 }
 
-export { getThreadChannel, parsePersistedEventRows }

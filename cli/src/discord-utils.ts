@@ -32,8 +32,6 @@ import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
 import {
   sessionPartContent,
-  shouldLeadWithBlankLine,
-  type SessionChunk,
 } from './message-formatting.js'
 import { getChannelDirectory, getThreadIdBySessionId, getThreadWorkingDirectory } from './database.js'
 import { DiscordOperationError } from './errors.js'
@@ -916,28 +914,6 @@ export async function sendSessionPartMessage(
     }),
     { flags: options?.flags, replyTo: options?.replyTo },
   )
-}
-
-export async function sendSessionPartBatches({
-  thread,
-  batches,
-}: {
-  thread: ThreadChannel
-  batches: SessionChunk[]
-}) {
-  const sent: Array<{ partIds: string[]; message: Message }> = []
-  let previousKind: SessionChunk['kind'] | undefined
-  for (const batch of batches) {
-    const message = await sendSessionPartMessage(thread, batch.content, {
-      leadWithBlankLine: shouldLeadWithBlankLine({
-        previousKind,
-        nextKind: batch.kind,
-      }),
-    })
-    previousKind = batch.kind
-    sent.push({ partIds: batch.partIds, message })
-  }
-  return sent
 }
 
 export function isThreadChannelType(type: number): boolean {

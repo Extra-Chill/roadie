@@ -345,11 +345,6 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('fork-subagent')
-      .setDescription(truncateCommandDescription('Fork a subagent task session into a new thread'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('model')
       .setDescription(
         truncateCommandDescription(

@@ -26,7 +26,6 @@ import {
   handleForkCommand,
   handleForkAutocomplete,
 } from './commands/fork.js'
-import { handleForkSubagentCommand } from './commands/fork-subagent.js'
 import { handleModelCommand } from './commands/model.js'
 import { handleLoginCommand } from './commands/login.js'
 import { handleCredentialsCommand } from './commands/credentials.js'
@@ -369,7 +368,7 @@ export function registerInteractionHandler({
           const intake = await resolveConversationIntake({ actor, spaceId: thread.guildId, channelId: thread.parentId ?? thread.id, threadId: thread.id,
             personId: getCachedPerson(actor)?.personId,
             eligible: hasRoadieBotPermission(interaction.member, interaction.guild), isNewConversation: !hasSession && !admission,
-            createsThread: interaction.isChatInputCommand() && ['new-session', 'fork', 'fork-subagent'].includes(interaction.commandName), hasSession,
+            createsThread: interaction.isChatInputCommand() && ['new-session', 'fork'].includes(interaction.commandName), hasSession,
             mentionsBot: false, isCommand: true, messageId: interaction.id, text: interaction.isChatInputCommand() ? `/${interaction.commandName}` : 'interactive callback', legacyOutcome: 'respond' })
           if (intake.outcome !== 'respond') {
             await replyOrEditInteraction(interaction, 'Your account is not admitted to this conversation.')
@@ -455,10 +454,6 @@ export function registerInteractionHandler({
 
             case 'fork':
               await handleForkCommand({ interaction, appId })
-              return
-
-            case 'fork-subagent':
-              await handleForkSubagentCommand(interaction)
               return
 
             case 'model':
