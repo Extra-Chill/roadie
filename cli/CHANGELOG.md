@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.79.0] - 2026-10-23
+
+### Added
+- consolidate model selection under /model — Refs #352
+
 ## [0.78.1] - 2026-10-23
 
 ### Fixed
