@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.80.1] - 2026-10-23
+
+### Fixed
+- split thread-session-runtime along narrow seams
+
 ## [0.80.0] - 2026-10-23
 
 ### Added
