@@ -993,7 +993,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     )
     const result = await this.finishChildTurn(child, idle)
     respond(result instanceof Error ? { error: result.message } : { output: result })
-    // One-shot subagent: the session file stays for lineage and /fork-subagent;
+    // One-shot subagent: the session file stays for lineage;
     // the process does not outlive the task.
     child.process.kill()
   }

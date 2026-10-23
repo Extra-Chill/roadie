@@ -12,7 +12,6 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js'
 import { handlePermissionButton } from './commands/permissions.js'
-import { handleForkSubagentSelectMenu } from './commands/fork-subagent.js'
 import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
@@ -150,7 +149,6 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
   button({ prefix: 'html_action:', ack: 'update' }, handleHtmlActionButton),
 
   // Select menus
-  select({ prefix: 'fork_subagent_select:', ack: 'update' }, handleForkSubagentSelectMenu),
   select({ prefix: 'model_provider:', ack: 'update' }, handleProviderSelectMenu),
   select({ prefix: 'model_select:', ack: 'update' }, handleModelSelectMenu),
   select({ prefix: 'model_scope:', ack: 'update' }, handleModelScopeSelectMenu),
