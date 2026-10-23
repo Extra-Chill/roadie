@@ -9,7 +9,6 @@
 
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import {
-  ChatInputCommandInteraction,
   StringSelectMenuInteraction,
   StringSelectMenuBuilder,
   ActionRowBuilder,
@@ -41,19 +40,15 @@ import { replyOrEditInteraction } from '../interaction-reply.js'
 const logger = createLogger(LogPrefix.MODEL)
 
 type PendingVariantContext = {
-  dir: string
   channelId: string
   sessionId?: string
-  isThread: boolean
   thread?: ThreadChannel
   appId: string
   /** Full model ID (provider/model) that stays constant */
   modelId: string
-  providerId: string
   modelName: string
   providerName: string
   availableVariants: string[]
-  currentVariant?: string
   /** Partial selection tracking — set when user picks variant before scope */
   selectedVariant?: string | null
   /** Partial selection tracking — set when user picks scope before variant */
@@ -87,31 +82,6 @@ function formatSourceLabel(info: CurrentModelInfo): string {
     case 'none':
       return 'none'
   }
-}
-
-/** /model-variant slash command entrypoint — defers reply then delegates to the shared picker. */
-export async function handleModelVariantCommand({
-  interaction,
-  appId,
-}: {
-  interaction: ChatInputCommandInteraction
-  appId: string
-}): Promise<void> {
-  await interaction.deferReply()
-
-  const channel = interaction.channel
-  if (!channel) {
-    await interaction.editReply({
-      content: 'This command can only be used in a channel',
-    })
-    return
-  }
-
-  await showModelVariantPicker({
-    channel,
-    appId,
-    editReply: (options) => interaction.editReply(options),
-  })
 }
 
 export async function showModelVariantPicker({
@@ -247,18 +217,14 @@ export async function showModelVariantPicker({
 
   const contextHash = crypto.randomBytes(8).toString('hex')
   pendingVariantContexts.set(contextHash, {
-    dir: projectDirectory,
     channelId: targetChannelId,
     sessionId,
-    isThread,
     thread: isThread ? (channel as ThreadChannel) : undefined,
     appId,
     modelId: fullModelId,
-    providerId: providerID,
     modelName: modelID,
     providerName,
     availableVariants: variants,
-    currentVariant: cascadeVariant,
   })
   setTimeout(() => {
     pendingVariantContexts.delete(contextHash)

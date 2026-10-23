@@ -311,13 +311,6 @@ export function buildStaticSlashCommands() {
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('model-variant')
-      .setDescription(
-        truncateCommandDescription('Change thinking level for current model. Tied to the model; lost when you switch models'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('agent')
       .setDescription(truncateCommandDescription('Set the preferred agent for this channel or session'))
       .setDMPermission(false)

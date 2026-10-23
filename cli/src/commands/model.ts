@@ -12,7 +12,6 @@ import {
   ActionRowBuilder,
   ChannelType,
   type ThreadChannel,
-  type TextChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
@@ -48,7 +47,6 @@ import {
 } from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { AgentBackendError } from '../errors.js'
-import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
 const modelLogger = createLogger(LogPrefix.MODEL)
@@ -93,9 +91,6 @@ type PendingModelContext = {
   appId?: string
   selectedModelId?: string
   selectedVariant?: string | null
-  availableVariants?: string[]
-  providerPage?: number
-  modelPage?: number
   /** Header text shown above the provider select (current model info). */
   providerSelectHeader?: string
 }
@@ -109,26 +104,39 @@ function setModelContext(contextHash: string, context: PendingModelContext): voi
   }, MODEL_CONTEXT_TTL_MS).unref()
 }
 
-export type ProviderInfo = {
-  id: string
-  name: string
-  models: Record<
-    string,
-    {
-      id: string
-      name: string
-      release_date: string
-    }
-  >
+function modelOptions(provider: AgentProviderInfo) {
+  return Object.entries(provider.models || {})
+    .map(([id, model]) => buildSafeSelectOption({
+      label: model.name || id,
+      value: id,
+      description: model.releaseDate
+        ? new Date(model.releaseDate).toLocaleDateString()
+        : 'Unknown date',
+    }))
+    .filter((option): option is NonNullable<typeof option> => !!option)
+    .sort((a, b) => a.label.localeCompare(b.label))
 }
 
-export type ModelSource =
-  | 'session'
-  | 'agent'
-  | 'channel'
-  | 'global'
-  | 'backend-config'
-  | 'provider-default'
+function buildModelMenu({
+  provider,
+  contextHash,
+  context,
+  page = 0,
+}: {
+  provider: AgentProviderInfo
+  contextHash: string
+  context: PendingModelContext
+  page?: number
+}) {
+  context.providerId = provider.id
+  context.providerName = provider.name?.trim() || provider.id
+  const { options } = buildPaginatedOptions({ allOptions: modelOptions(provider), page })
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`model_select:${contextHash}`)
+    .setPlaceholder('Select a model')
+    .addOptions(options)
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)
+}
 
 export type CurrentModelInfo =
   | { type: 'session'; model: string; providerID: string; modelID: string }
@@ -516,7 +524,7 @@ export async function getCurrentModelInfo({
 
 /**
  * Handle the /model slash command.
- * Shows a select menu with available providers.
+ * Shows models directly when only one connected provider has pickable models.
  */
 export async function handleModelCommand({
   interaction,
@@ -624,7 +632,7 @@ export async function handleModelCommand({
       allProviders.filter((p) => {
         return connected.includes(p.id)
       }),
-    )
+    ).filter((provider) => modelOptions(provider).length > 0)
 
     if (availableProviders.length === 0) {
       await interaction.editReply({
@@ -671,7 +679,7 @@ export async function handleModelCommand({
 
     // Store context with a short hash key to avoid customId length limits.
     const providerSelectHeader = `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`
-    const context = {
+    const context: PendingModelContext = {
       dir: directory,
       projectDirectory,
       channelId: targetChannelId,
@@ -706,8 +714,10 @@ export async function handleModelCommand({
       .setPlaceholder('Select a provider')
       .addOptions(options)
 
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const singleProvider = availableProviders.length === 1 ? availableProviders[0] : undefined
+    const actionRow = singleProvider
+      ? buildModelMenu({ provider: singleProvider, contextHash, context })
+      : new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     const shortcutButtons: ButtonBuilder[] = []
     const ownerKey = `model-actions:${interaction.user.id}:${interaction.channelId}`
@@ -813,7 +823,9 @@ export async function handleModelCommand({
     }
 
     await interaction.editReply({
-      content: providerSelectHeader,
+      content: singleProvider
+        ? `**Set Model Preference**\n${currentModelText}${variantText}\nProvider: **${context.providerName}**\nSelect a model:`
+        : providerSelectHeader,
       components,
     })
   } catch (error) {
@@ -862,9 +874,6 @@ export async function handleProviderSelectMenu(
   // Handle pagination nav — re-render the same provider select with new page
   const providerNavPage = parsePaginationValue(selectedProviderId)
   if (providerNavPage !== undefined) {
-    context.providerPage = providerNavPage
-    setModelContext(contextHash, context)
-
     const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
@@ -877,6 +886,7 @@ export async function handleProviderSelectMenu(
     }
     const { providers: allProviders, connected } = providersResponse
     const availableProviders = pickerProviders(allProviders.filter((p) => connected.includes(p.id)))
+      .filter((provider) => modelOptions(provider).length > 0)
     const allProviderOptions = [...availableProviders]
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
       .map((p) => {
@@ -935,16 +945,7 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const models = Object.entries(provider.models || {})
-      .map(([modelId, model]) => ({
-        id: modelId,
-        name: model.name || modelId,
-        releaseDate: model.releaseDate,
-      }))
-      .filter((model) => model.id && model.name)
-      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
-
-    if (models.length === 0) {
+    if (modelOptions(provider).length === 0) {
       await interaction.editReply({
         content: `No models available for ${provider.name}`,
         components: [],
@@ -952,37 +953,7 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    // Update context with provider info and reuse the same hash
-    context.providerId = selectedProviderId
-    context.providerName = provider.name?.trim() || provider.id
-    context.modelPage = 0
-    setModelContext(contextHash, context)
-
-    const allModelOptions = models
-      .map((model) => {
-        const dateStr = model.releaseDate
-          ? new Date(model.releaseDate).toLocaleDateString()
-          : 'Unknown date'
-        return buildSafeSelectOption({
-          label: model.name,
-          value: model.id,
-          description: dateStr,
-        })
-      })
-      .filter((option): option is NonNullable<typeof option> => !!option)
-
-    const { options } = buildPaginatedOptions({
-      allOptions: allModelOptions,
-      page: 0,
-    })
-
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_select:${contextHash}`)
-      .setPlaceholder('Select a model')
-      .addOptions(options)
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow = buildModelMenu({ provider, contextHash, context })
 
     await interaction.editReply({
       content: `**Set Model Preference**\nProvider: **${provider.name}**\nSelect a model:`,
@@ -1035,9 +1006,6 @@ export async function handleModelSelectMenu(
   // Handle pagination nav — re-render the same model select with new page
   const modelNavPage = parsePaginationValue(selectedModelId)
   if (modelNavPage !== undefined) {
-    context.modelPage = modelNavPage
-    setModelContext(contextHash, context)
-
     const getClient = await getAgentBackendProvider().initializeForDirectory(context.projectDirectory, { channelId: context.channelId })
     if (getClient instanceof Error) {
       await interaction.editReply({ content: getClient.message, components: [] })
@@ -1051,24 +1019,7 @@ export async function handleModelSelectMenu(
       await interaction.editReply({ content: 'Provider not found', components: [] })
       return
     }
-    const allModelOptions = Object.entries(provider.models || {})
-      .map(([modelId, model]) =>
-        buildSafeSelectOption({
-          label: model.name || modelId,
-          value: modelId,
-          description: model.releaseDate
-            ? new Date(model.releaseDate).toLocaleDateString()
-            : 'Unknown date',
-        }),
-      )
-      .filter((option): option is NonNullable<typeof option> => !!option)
-      .sort((a, b) => a.label.localeCompare(b.label))
-    const { options } = buildPaginatedOptions({ allOptions: allModelOptions, page: modelNavPage })
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_select:${contextHash}`)
-      .setPlaceholder('Select a model')
-      .addOptions(options)
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow = buildModelMenu({ provider, contextHash, context, page: modelNavPage })
     await interaction.editReply({
       content: `**Set Model Preference**\nProvider: **${context.providerName}**\nSelect a model:`,
       components: [actionRow],
@@ -1096,9 +1047,6 @@ export async function handleModelSelectMenu(
           modelId: selectedModelId,
         })
         if (variants.length > 0) {
-          context.availableVariants = variants
-          setModelContext(contextHash, context)
-
           const variantOptions = [
             {
               label: 'None (default)',
