@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.76.1] - 2026-10-23
+
+### Fixed
+- release pi-ai 1.4.0 for the pool proxy
+
 ## [0.76.0] - 2026-10-22
 
 ### Added
