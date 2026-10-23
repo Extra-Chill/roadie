@@ -8,8 +8,7 @@ moves existing subrouter accounts over.
 
 Pools are **on by default**. `--no-credential-pools` (or
 `ROADIE_CREDENTIAL_POOLS=0`) turns them off: Pi's own auth (its agent dir
-`auth.json`, managed with `pi` on the host) applies, and `/login` and
-`/credentials` are not registered.
+`auth.json`, managed with `pi` on the host) applies, and `/credentials` is not registered.
 
 ## Configuring pools
 
@@ -21,7 +20,7 @@ roadie --no-credential-pools                   # pools off
 
 | setting | values | default |
 | --- | --- | --- |
-| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the pool models and the Discord `/login` and `/credentials` commands off | on |
+| `--no-credential-pools` / `ROADIE_CREDENTIAL_POOLS=0` | turn the pool store, the pool models and the Discord `/credentials` command off | on |
 | `--credentials` / `ROADIE_CREDENTIALS` | `global`, `per-person`, `per-person-fallback` | `global` |
 | `--thread-billing` / `ROADIE_THREAD_BILLING` | `owner`, `speaker` | `owner` |
 
@@ -35,8 +34,7 @@ wins over it.
   servers: add your accounts to `shared` and stop reading.
 - **`per-person`** — each session bills to its owner's pool. The owner is the
   first person to speak in a thread, recorded once. An owner with no accounts
-  gets a clear error telling them to run `/credentials add-key` or
-  `/credentials login-anthropic`; nothing falls back silently.
+  gets a clear error telling them to run `/credentials add`; nothing falls back silently.
 - **`per-person-fallback`** — the owner's pool first, then `shared` as a
   fallback. Use it when some people have subscriptions and others draw from a
   team account.
@@ -120,10 +118,9 @@ about credentials is ever posted in a channel, and keys are only ever entered
 in a modal.
 
 - `/credentials list` — accounts and rotations in your pool (no secrets)
-- `/credentials add-key provider:<provider>` — add an API key (modal, plus an
-  optional base URL override)
-- `/credentials login-anthropic` — add a Claude Pro/Max subscription (OAuth:
-  authorize URL, then paste the code back into a modal)
+- `/credentials add` — open the provider picker, then add an API key (private
+  modal, with an optional base URL override) or an Anthropic/ChatGPT subscription
+  (OAuth authorize URL, then paste the code or redirect URL into a modal)
 - `/credentials remove account:<id>` — remove an account
 - `/credentials reorder account:<id> position:<n>` — move an account in the
   pool order (the router's tiebreaker within one provider)
@@ -132,11 +129,12 @@ In per-person modes the command manages **your own pool**. Writing to
 `shared` requires admin capability (server administrator, or the identity
 hook's `admin`).
 
-### `/login`
+### `/credentials add`
 
-`/login` is registered only while pools are on and never touches Pi's `auth.json`. The provider
-picker lists the models.dev catalog, and Anthropic offers both a subscription
-login and an API key. The writes go through the same handlers as
+`/credentials add` is registered only while pools are on and never touches Pi's `auth.json`. The provider
+picker lists the models.dev catalog; Anthropic and OpenAI offer both subscription
+OAuth and API-key options. An admin can use `/credentials add pool:shared` to
+carry the shared-pool target through every picker step. The writes go through the same handlers as
 `/credentials`: in `global` mode accounts land in `shared` (admin only), in
 per-person modes they land in the caller's pool. Every reply is ephemeral.
 
@@ -198,9 +196,9 @@ A Roadie bot uses the host instead of its local pool with:
 | --- | --- |
 | `ROADIE_POOL_URL` | the host's base URL, e.g. `http://100.64.0.5:47120` |
 | `ROADIE_POOL_KEY_FILE` | file holding the bot's client key; model requests use it |
-| `ROADIE_POOL_ADMIN_KEY_FILE` | optional: file holding an `--admin` client key; `/credentials`, `/login` and the `roadie credentials` account verbs use it |
+| `ROADIE_POOL_ADMIN_KEY_FILE` | optional: file holding an `--admin` client key; `/credentials` and the `roadie credentials` account verbs use it |
 
-With `ROADIE_POOL_ADMIN_KEY_FILE` set, `/credentials` and `/login` on the bot
+With `ROADIE_POOL_ADMIN_KEY_FILE` set, `/credentials` on the bot
 add, list, reorder and remove the host's accounts. The OAuth code exchange
 runs on the host, so the token never reaches the bot. Without it those
 commands report the host and the `client add <name> --admin` fix, and write
@@ -243,13 +241,13 @@ a custom endpoint is exactly the case the catalog cannot know.
 
 ## Subscriptions: Anthropic and ChatGPT
 
-`/credentials login-anthropic` (or `roadie credentials login anthropic`) runs
+`/credentials add` (or `roadie credentials login anthropic`) runs
 the Claude Pro/Max OAuth flow: an authorize URL with PKCE, then the code
 pasted back into a modal. Tokens are stored per pool, refreshed under that
 pool's lock shortly before expiry, and requests are shaped the way Claude Code
 sends them (system prefix, beta headers, tool-name round-trip).
 
-A ChatGPT subscription is added through `/login` on Discord (choose OpenAI,
+A ChatGPT subscription is added through `/credentials add` on Discord (choose OpenAI,
 then the ChatGPT subscription), or imported from subrouter or OpenCode (below)
 (#198). It is stored under the `openai-codex` provider id and serves the
 `openai/<model>` entries of rotations; the proxy translates them to ChatGPT's

@@ -19,7 +19,6 @@ import {
   claimLinkPrompt,
   completeIdentityLink,
   isLinkCandidate,
-  LINK_ALREADY_LINKED_MESSAGE,
   LINK_NOT_AVAILABLE_MESSAGE,
   LINK_PROMPT_INTERVAL_MS,
   LINK_STILL_DENIED_MESSAGE,
@@ -30,9 +29,10 @@ import {
   type IdentityLinkContext,
 } from './identity-link.js'
 import { resetWelcomeCache } from './person-welcome.js'
+import { handleConnectCommand } from './commands/connect.js'
 import {
   handleLinkButton,
-  handleLinkCommand,
+  startDiscordIdentityLink,
   linkButtonCustomId,
   offerDiscordLinkPrompt,
   parseLinkButtonCustomId,
@@ -186,7 +186,8 @@ function fakeInteraction({ user, customId, guildId = '123', channelId = 'c1' }: 
     customId,
     guildId,
     channelId,
-    deferReply: vi.fn(async () => undefined),
+    deferred: false,
+    deferReply: vi.fn(async () => { interaction.deferred = true }),
     reply: vi.fn(async (payload: Reply) => { replies.push(payload) }),
     editReply: vi.fn(async (payload: Reply) => { edits.push(payload) }),
   }
@@ -276,7 +277,7 @@ describe('link prompt eligibility', () => {
   })
 })
 
-// ── Buttons and /link ───────────────────────────────────────────
+// ── Buttons and /connect ───────────────────────────────────────────
 
 describe('link button ids', () => {
   test('round-trip and reject junk', () => {
@@ -293,6 +294,25 @@ async function finalEdit(edits: Reply[], count: number): Promise<Reply> {
 }
 
 describe('the link flow', () => {
+  test('/connect links first, then lists tools with the stored credential already connected', async () => {
+    const { linked } = hostIdentity()
+    withProvider()
+    addFilter('link_identity', (_value, ctx) => {
+      linked.add(ctx.actor.id)
+      return { linked: true as const }
+    })
+    const oauth = oauthServer()
+    setLinkFetchForTests(oauth.fetchImpl, async () => undefined)
+    const { interaction, edits } = fakeInteraction({ user: fakeUser('112') })
+    await handleConnectCommand({ command: interaction as unknown as ChatInputCommandInteraction })
+    const done = await finalEdit(edits, 2)
+    expect(done.content).toContain('Your connected services:')
+    expect(done.content).toContain('**host**: connected')
+    expect(componentCustomIds(done.components)).toContain('roadie_connect:d:host')
+    expect(listPersonMcpCredentials({ dataDir, personKey: 'person-112' })).toEqual(['host'])
+    expect(oauth.revocations()).toEqual([])
+  })
+
   test('the clicker is the actor, even on a button sent to someone else', async () => {
     const { linked } = hostIdentity()
     withProvider()
@@ -342,7 +362,7 @@ describe('the link flow', () => {
 
     const user = fakeUser('111')
     const { interaction, edits } = fakeInteraction({ user })
-    await handleLinkCommand({ command: interaction as unknown as ChatInputCommandInteraction })
+    await startDiscordIdentityLink({ command: interaction as unknown as ChatInputCommandInteraction })
     // First edit: the private sign-in prompt (link + code, no token).
     const prompt = await finalEdit(edits, 1)
     expect(prompt.content).toContain('ABCD-EFGH')
@@ -381,7 +401,7 @@ describe('the link flow', () => {
     setLinkFetchForTests(oauth.fetchImpl, async () => undefined)
     const user = fakeUser('333')
     const { interaction, edits } = fakeInteraction({ user })
-    await handleLinkCommand({ command: interaction as unknown as ChatInputCommandInteraction })
+    await startDiscordIdentityLink({ command: interaction as unknown as ChatInputCommandInteraction })
     const done = await finalEdit(edits, 2)
     expect(done.content).toBe(LINK_STILL_DENIED_MESSAGE)
     expect(listPersonMcpCredentials({ dataDir, personKey: 'person-333' })).toEqual([])
@@ -397,7 +417,7 @@ describe('the link flow', () => {
     setLinkFetchForTests(oauth.fetchImpl, async () => undefined)
     const user = fakeUser('444')
     const { interaction, edits } = fakeInteraction({ user })
-    await handleLinkCommand({ command: interaction as unknown as ChatInputCommandInteraction })
+    await startDiscordIdentityLink({ command: interaction as unknown as ChatInputCommandInteraction })
     const done = await finalEdit(edits, 2)
     expect(done.content).toBe('Could not link your account: No account uses that sign-in.')
     const revocations = oauth.revocations()
@@ -409,32 +429,33 @@ describe('the link flow', () => {
     expect(user.dms).toEqual([])
   })
 
-  test('without a provider /link changes nothing', async () => {
+  test('without a provider /connect changes nothing', async () => {
     hostIdentity()
     const linkIdentity = vi.fn(() => ({ linked: true as const }))
     addFilter('link_identity', linkIdentity)
     const oauth = oauthServer()
     setLinkFetchForTests(oauth.fetchImpl, async () => undefined)
     const { interaction, edits } = fakeInteraction({ user: fakeUser('555') })
-    await handleLinkCommand({ command: interaction as unknown as ChatInputCommandInteraction })
+    await handleConnectCommand({ command: interaction as unknown as ChatInputCommandInteraction })
     expect(edits[0]!.content).toBe(LINK_NOT_AVAILABLE_MESSAGE)
     expect(oauth.calls).toEqual([])
     expect(linkIdentity).not.toHaveBeenCalled()
   })
 
-  test('/link for someone already allowed, or when the lookup fails, does not start a sign-in', async () => {
+  test('/connect for someone already allowed, or when the lookup fails, does not start a sign-in', async () => {
     addFilter('person', (_value, { actor }) =>
-      actor.id === 'ok' ? person() : { ...denied(), lookupFailed: true },
+      actor.id === 'ok' ? person({ mcpServers: [{ name: 'host', url: MCP_URL, credential: 'host' }] }) : { ...denied(), lookupFailed: true },
     )
     withProvider()
     const oauth = oauthServer()
     setLinkFetchForTests(oauth.fetchImpl, async () => undefined)
     const allowed = fakeInteraction({ user: fakeUser('ok') })
-    await handleLinkCommand({ command: allowed.interaction as unknown as ChatInputCommandInteraction })
-    expect(allowed.edits[0]!.content).toBe(LINK_ALREADY_LINKED_MESSAGE)
+    await handleConnectCommand({ command: allowed.interaction as unknown as ChatInputCommandInteraction })
+    expect(allowed.replies[0]!.content).toContain('Your connected services:')
+    expect(componentCustomIds(allowed.replies[0]!.components)).toContain('roadie_connect:c:host')
     const failing = fakeInteraction({ user: fakeUser('broken') })
-    await handleLinkCommand({ command: failing.interaction as unknown as ChatInputCommandInteraction })
-    expect(failing.edits[0]!.content).toBe(IDENTITY_LOOKUP_FAILED_MESSAGE)
+    await handleConnectCommand({ command: failing.interaction as unknown as ChatInputCommandInteraction })
+    expect(failing.replies[0]!.content).toBe(IDENTITY_LOOKUP_FAILED_MESSAGE)
     expect(oauth.calls).toEqual([])
   })
 })

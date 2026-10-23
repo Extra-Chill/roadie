@@ -1,4 +1,4 @@
-// Credential pools: /login adds an account to a
+// Credential pools: /credentials add adds an account to a
 // pool by reusing the /credentials handlers (issue #137 item 4).
 //
 // The provider picker lists the models.dev catalog (hermetic fixture via
@@ -18,9 +18,9 @@ import type {
 } from 'discord.js'
 import {
   buildPoolLoginProviderOptions,
-  handleLoginCommand,
+  handleCredentialsAdd,
   handleLoginSelect,
-} from '../commands/login.js'
+} from '../commands/credentials-add.js'
 import {
   CREDENTIALS_APIKEY_MODAL_PREFIX,
   CREDENTIALS_OAUTH_BUTTON_PREFIX,
@@ -77,12 +77,15 @@ function modalCustomId(modal: unknown): string {
 
 function makeLoginCommandInteraction({
   userId = USER_ID,
+  shared = false,
 }: {
   userId?: string
+  shared?: boolean
 } = {}): { interaction: ChatInputCommandInteraction; replies: ReplyOptions[] } {
   const replies: ReplyOptions[] = []
   const interaction = {
     channelId: 'channel-1',
+    options: { getString: () => shared ? 'shared' : null },
     deferReply: async () => {},
     editReply: async (options: ReplyOptions) => {
       replies.push(options)
@@ -103,10 +106,12 @@ function makePoolSelectInteraction({
   customId,
   value,
   userId = USER_ID,
+  admin = false,
 }: {
   customId: string
   value: string
   userId?: string
+  admin?: boolean
 }): {
   interaction: StringSelectMenuInteraction
   replies: ReplyOptions[]
@@ -136,7 +141,7 @@ function makePoolSelectInteraction({
     member: {
       user: { id: userId },
       roles: [],
-      permissions: '0',
+      permissions: admin ? '8' : '0',
     },
   }
   return {
@@ -146,13 +151,13 @@ function makePoolSelectInteraction({
   }
 }
 
-/** Drive /login and return the provider-select customId hash it showed. */
-async function openPoolLoginPicker(): Promise<{
+/** Drive /credentials add and return the provider-select customId hash it showed. */
+async function openPoolLoginPicker(shared = false): Promise<{
   hash: string
   replies: ReplyOptions[]
 }> {
-  const { interaction, replies } = makeLoginCommandInteraction()
-  await handleLoginCommand({ interaction, appId: 'app-1' })
+  const { interaction, replies } = makeLoginCommandInteraction({ shared })
+  await handleCredentialsAdd(interaction)
   const customId = firstSelectCustomId(replies[0] ?? {})
   expect(customId).toMatch(/^login_select:[0-9a-f]{16}$/)
   return { hash: customId!.slice('login_select:'.length), replies }
@@ -172,7 +177,35 @@ afterEach(() => {
   resetCatalogCacheForTests()
 })
 
-describe('/login with credential pools on', () => {
+describe('/credentials add with credential pools on', () => {
+  test.each(['groq', 'anthropic', 'openai'])('pool:shared survives the %s picker and refuses non-admin writes', async (provider) => {
+    const { hash } = await openPoolLoginPicker(true)
+    const select = makePoolSelectInteraction({ customId: `login_select:${hash}`, value: provider })
+    await handleLoginSelect(select.interaction)
+    const final = provider === 'groq' ? select : makePoolSelectInteraction({ customId: `login_select:${hash}`, value: 'oauth' })
+    if (final !== select) await handleLoginSelect(final.interaction)
+    expect(final.replies.map((r) => r.content).join('\n')).toContain('Only server admins')
+    expect(final.modals).toHaveLength(0)
+  })
+
+  test.each(['groq', 'anthropic', 'openai'])('an admin adds %s to the selected shared pool', async (provider) => {
+    const { hash } = await openPoolLoginPicker(true)
+    const select = makePoolSelectInteraction({ customId: `login_select:${hash}`, value: provider, admin: true })
+    await handleLoginSelect(select.interaction)
+    if (provider === 'groq') {
+      const customId = modalCustomId(select.modals[0])
+      expect(getCredentialsContext(customId.slice(CREDENTIALS_APIKEY_MODAL_PREFIX.length))).toEqual({ kind: 'apikey', provider, shared: true })
+    } else {
+      const method = makePoolSelectInteraction({ customId: `login_select:${hash}`, value: 'oauth', admin: true })
+      await handleLoginSelect(method.interaction)
+      expect(replyText(method.replies)).toContain(`pool ${SHARED_POOL_ID}`)
+      const customId = firstSelectCustomId(method.replies[0] ?? {})!
+      expect(getCredentialsContext(customId.slice(CREDENTIALS_OAUTH_BUTTON_PREFIX.length))).toMatchObject({
+        kind: 'oauth', shared: true, provider: provider === 'openai' ? 'openai-codex' : 'anthropic',
+      })
+    }
+  })
+
   test('lists the models.dev catalog providers in an ephemeral select, without a project directory', async () => {
     const { replies } = await openPoolLoginPicker()
     // The pool flow never asks for a channel project directory: the picker shows up with only bare interaction context.
@@ -187,7 +220,7 @@ describe('/login with credential pools on', () => {
     expect(options[3]?.label).toBe('z.ai')
   })
 
-  test('a non-anthropic provider opens the /credentials add-key modal, never the login modal', async () => {
+  test('a non-anthropic provider opens the /credentials add modal, never the login modal', async () => {
     const { hash, replies } = await openPoolLoginPicker()
     const { interaction, modals } = makePoolSelectInteraction({
       customId: `login_select:${hash}`,
@@ -221,7 +254,7 @@ describe('/login with credential pools on', () => {
     expect(options[1]?.label).toContain('API key')
   })
 
-  test('the anthropic OAuth choice reuses the /credentials login-anthropic flow', async () => {
+  test('the anthropic OAuth choice reuses the /credentials add flow', async () => {
     const { hash } = await openPoolLoginPicker()
     const provider = makePoolSelectInteraction({
       customId: `login_select:${hash}`,
@@ -252,7 +285,7 @@ describe('/login with credential pools on', () => {
     expect(readPoolAccounts({ dataDir, poolId: OWN_POOL })).toEqual([])
   })
 
-  test('the anthropic API key choice opens the /credentials add-key modal', async () => {
+  test('the anthropic API key choice opens the /credentials add modal', async () => {
     const { hash } = await openPoolLoginPicker()
     const provider = makePoolSelectInteraction({
       customId: `login_select:${hash}`,

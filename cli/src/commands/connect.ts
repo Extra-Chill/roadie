@@ -2,8 +2,8 @@
 // the person-scoped MCP servers the identity layer names for them
 // (`mcp_servers`), from chat, with the OAuth device grant.
 //
-//   /connect                      ephemeral list: each server, connected or not,
-//                                 with a Connect or Disconnect button
+//   /connect                      link identity if needed, then an ephemeral
+//                                 tool list with Connect/Disconnect buttons
 //   roadie_connect:c:<server>     Connect button (also shown by the welcome)
 //   roadie_connect:d:<server>     Disconnect button
 //
@@ -27,8 +27,10 @@ import {
   type ChatInputCommandInteraction,
 } from 'discord.js'
 import { getDataDir } from '../config.js'
+import { startDiscordIdentityLink } from './link.js'
 import {
   isIdentityConfigured,
+  IDENTITY_LOOKUP_FAILED_MESSAGE,
   resolvePerson,
   type IdentityActor,
   type Person,
@@ -126,23 +128,40 @@ async function personFor(interaction: ChatInputCommandInteraction | ButtonIntera
   })
 }
 
-export async function handleConnectCommand({ command }: { command: ChatInputCommandInteraction }): Promise<void> {
+export async function handleConnectCommand({ command, channelBound = true }: { command: ChatInputCommandInteraction; channelBound?: boolean }): Promise<void> {
   if (!isIdentityConfigured()) {
     await command.reply({ content: 'Per-person services are not configured on this server.', flags: MessageFlags.Ephemeral })
     return
   }
-  const actor = actorOf(command)
-  const speaker = resolveConnectSpeaker({ person: await personFor(command), actor })
+  const person = await personFor(command)
+  if (person?.lookupFailed) {
+    await command.reply({ content: IDENTITY_LOOKUP_FAILED_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
+  if (!person?.allowed) {
+    await startDiscordIdentityLink({
+      command,
+      channelBound,
+      onLinked: async () => {
+        await showConnectionList(command, await personFor(command))
+      },
+    })
+    return
+  }
+  await showConnectionList(command, person)
+}
+
+async function showConnectionList(command: ChatInputCommandInteraction, person: Person | null): Promise<void> {
+  const speaker = resolveConnectSpeaker({ person, actor: actorOf(command) })
   if (speaker instanceof Error) {
-    await command.reply({ content: speaker.message, flags: MessageFlags.Ephemeral })
+    if (command.deferred || command.replied) await command.editReply({ content: speaker.message, components: [] })
+    else await command.reply({ content: speaker.message, flags: MessageFlags.Ephemeral })
     return
   }
   const states = personMcpConnectionStates({ dataDir: getDataDir(), personKey: speaker.personKey, servers: speaker.servers })
-  await command.reply({
-    content: formatConnectionList(states),
-    components: buildConnectButtonRows({ states }),
-    flags: MessageFlags.Ephemeral,
-  })
+  const payload = { content: formatConnectionList(states), components: buildConnectButtonRows({ states }) }
+  if (command.deferred || command.replied) await command.editReply(payload)
+  else await command.reply({ ...payload, flags: MessageFlags.Ephemeral })
 }
 
 export async function handleConnectButton(interaction: ButtonInteraction): Promise<void> {

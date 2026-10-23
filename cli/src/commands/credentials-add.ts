@@ -1,9 +1,8 @@
-// /login command: add an account to a credential pool (Anthropic/ChatGPT OAuth
+// /credentials add command: add an account to a credential pool (Anthropic/ChatGPT OAuth
 // or an API key for any models.dev provider).
 //
 // The credential pool is the single owner of the credentials Roadie manages.
-// /login is registered only when credential pools are enabled (like
-// /credentials). The provider picker lists the models.dev catalog and the
+// /credentials is registered only when credential pools are enabled. The provider picker lists the models.dev catalog and the
 // writes go through the /credentials handlers (startCredentialsApiKeyModal +
 // startCredentialsAnthropicOAuth): same target-pool resolution, same
 // shared-pool admin rule, ephemeral replies, keys only ever via a modal.
@@ -49,11 +48,12 @@ type LoginContext = {
   stepIndex: number
   providerId?: string
   providerPage?: number
+  requestShared: boolean
 }
 
 // ── Context store ───────────────────────────────────────────────
 // Keyed by random hash to stay under Discord's 100-char customId limit.
-// TTL prevents unbounded growth when users open /login and never interact.
+// TTL prevents unbounded growth when users open /credentials add and never interact.
 
 const LOGIN_CONTEXT_TTL_MS = 10 * 60 * 1000
 const pendingLoginContexts = new Map<string, LoginContext>()
@@ -121,7 +121,7 @@ function buildSelectMenu({
 }
 
 // ── Credential-pool flow ────────────────────────────────────────
-// /login adds an account to a pool. The provider picker comes from the
+// /credentials add adds an account to a pool. The provider picker comes from the
 // models.dev catalog (#136); the writes reuse the /credentials handlers, so
 // target-pool resolution, the shared-pool admin rule, ephemeral replies and
 // modal-only keys are identical.
@@ -156,12 +156,7 @@ export function buildPoolLoginProviderOptions(
     }))
 }
 
-export async function handleLoginCommand({
-  interaction: command,
-}: {
-  interaction: ChatInputCommandInteraction
-  appId: string
-}): Promise<void> {
+export async function handleCredentialsAdd(command: ChatInputCommandInteraction): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   const catalog = await resolveCatalog({ dataDir: getDataDir() })
   if (catalog instanceof Error) {
@@ -173,6 +168,7 @@ export async function handleLoginCommand({
   const context: LoginContext = {
     steps: [{ type: 'provider' }],
     stepIndex: 0,
+    requestShared: command.options.getString('pool') === 'shared',
   }
   const hash = createContextHash(context)
   const { options } = buildPaginatedOptions({
@@ -283,12 +279,12 @@ async function handlePoolProviderStep(
     })
     return
   }
-  // Every other provider is an API key account, entered through the same
-  // modal /credentials add-key uses (never a menu option, never a reply).
+  // Every other provider is an API key account, entered through a private
+  // modal (never a menu option, never a reply).
   await startCredentialsApiKeyModal({
     command: interaction,
     provider: providerId,
-    requestShared: false,
+    requestShared: ctx.requestShared,
   })
 }
 
@@ -296,13 +292,14 @@ async function handlePoolMethodStep(
   interaction: StringSelectMenuInteraction,
   value: string,
   step: StepPoolMethod,
+  requestShared: boolean,
 ): Promise<void> {
   if (value === 'oauth') {
-    // Same ephemeral authorize-URL + paste-modal flow as
-    // /credentials login-anthropic; OpenAI's is a ChatGPT subscription.
+    // Shared ephemeral authorize-URL + paste-modal flow;
+    // OpenAI's is a ChatGPT subscription.
     await startCredentialsAnthropicOAuth({
       command: interaction,
-      requestShared: false,
+      requestShared,
       provider: step.provider === 'openai' ? 'openai-codex' : 'anthropic',
     })
     return
@@ -310,7 +307,7 @@ async function handlePoolMethodStep(
   await startCredentialsApiKeyModal({
     command: interaction,
     provider: step.provider,
-    requestShared: false,
+    requestShared,
   })
 }
 
@@ -332,7 +329,7 @@ export async function handleLoginSelect(
   if (!ctx) {
     await interaction.deferUpdate()
     await interaction.editReply({
-      content: 'Selection expired. Please run /login again.',
+      content: 'Selection expired. Please run /credentials add again.',
       components: [],
     })
     return
@@ -352,7 +349,7 @@ export async function handleLoginSelect(
   if (!step) {
     await interaction.deferUpdate()
     await interaction.editReply({
-      content: 'Invalid state. Please run /login again.',
+      content: 'Invalid state. Please run /credentials add again.',
       components: [],
     })
     return
@@ -362,7 +359,7 @@ export async function handleLoginSelect(
     if (step.type === 'provider') {
       await handlePoolProviderStep(interaction, ctx, hash, value)
     } else if (step.type === 'pool-method') {
-      await handlePoolMethodStep(interaction, value, step)
+      await handlePoolMethodStep(interaction, value, step, ctx.requestShared)
     }
   } catch (error) {
     loginLogger.error('Error in login select:', error)

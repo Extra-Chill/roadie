@@ -18,7 +18,7 @@ import {
   handleModelScopeSelectMenu,
   handleModelVariantSelectMenu,
 } from './commands/model.js'
-import { handleLoginSelect } from './commands/login.js'
+import { handleLoginSelect } from './commands/credentials-add.js'
 import {
   handleCredentialsApiKeyModalSubmit,
   handleCredentialsOAuthCodeButton,
@@ -162,7 +162,7 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
   // Opens the API key modal for most providers.
   select({ prefix: 'login_select:', ack: 'modal' }, async (interaction) => {
     if (!store.getState().credentialPoolsEnabled) {
-      // Stale menu: /login only exists when credential pools are enabled.
+      // Stale menu: /credentials add only exists when credential pools are enabled.
       await replyOrEditInteraction(interaction, CREDENTIAL_POOLS_DISABLED_MESSAGE)
       return
     }

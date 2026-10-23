@@ -1,7 +1,7 @@
-// /link command, Link buttons and the unprompted link prompt on Discord
+// /connect command, Link buttons and the unprompted link prompt on Discord
 // (issue #292). The flow itself lives in identity-link.ts.
 //
-//   /link                          start linking on demand (ephemeral)
+//   /connect                          start linking on demand (ephemeral)
 //   roadie_link:<guild>:           Link button in a DM: acts for the clicker
 //   roadie_link:<guild>:<user>     Link button posted in a channel (DM
 //                                  fallback): only <user> may use it
@@ -102,7 +102,7 @@ export async function offerDiscordLinkPrompt({
     const sent = await user.send(dm).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))))
     if (!(sent instanceof Error)) {
       await replyInChannel({
-        content: "You don't have access yet. I sent you a DM to link your account (or run `/link`).",
+        content: "You don't have access yet. I sent you a DM to link your account (or run `/connect`).",
         components: [],
       })
       return true
@@ -132,7 +132,7 @@ function actorOf(interaction: ChatInputCommandInteraction | ButtonInteraction): 
 async function runLink(
   interaction: ChatInputCommandInteraction | ButtonInteraction,
   context: IdentityContext,
-  { channelBound = true }: { channelBound?: boolean } = {},
+  { channelBound = true, onLinked }: { channelBound?: boolean; onLinked?: () => Promise<void> } = {},
 ): Promise<void> {
   const actor = actorOf(interaction)
   const started = await startIdentityLink({
@@ -140,7 +140,7 @@ async function runLink(
     context,
     isBot: interaction.user.bot,
     maxWaitMs: MAX_WAIT_MS,
-    retryHint: 'Run `/link` to try again.',
+    retryHint: 'Run `/connect` to try again.',
     welcome: async (person) =>
       await welcomeDiscordUser({
         user: interaction.user,
@@ -150,6 +150,10 @@ async function runLink(
         ...(context.channelId && channelBound ? { channelId: context.channelId } : {}),
       }),
     onDone: async (outcome) => {
+      if (outcome.status === 'allowed' && onLinked) {
+        await onLinked()
+        return
+      }
       await interaction.editReply({ content: outcome.text, components: [] }).catch((error: unknown) => {
         logger.warn(`[LINK] could not update sign-in reply: ${error instanceof Error ? error.message : String(error)}`)
       })
@@ -169,19 +173,21 @@ async function runLink(
   })
 }
 
-export async function handleLinkCommand({
+export async function startDiscordIdentityLink({
   command,
   channelBound = true,
+  onLinked,
 }: {
   command: ChatInputCommandInteraction
   /** False in a channel Roadie does not answer in (#301). */
   channelBound?: boolean
+  onLinked?: () => Promise<void>
 }): Promise<void> {
   await command.deferReply({ flags: MessageFlags.Ephemeral })
   await runLink(command, {
     ...(command.guildId ? { guildId: command.guildId } : {}),
     ...(command.channelId ? { channelId: command.channelId } : {}),
-  }, { channelBound })
+  }, { channelBound, onLinked })
 }
 
 export async function handleLinkButton(
@@ -191,7 +197,7 @@ export async function handleLinkButton(
   const parsed = parseLinkButtonCustomId(interaction.customId)
   if (!parsed) return
   if (parsed.restrictTo && parsed.restrictTo !== interaction.user.id) {
-    await replyOrEditInteraction(interaction, 'This button is for someone else. Run `/link` to link your own account.')
+    await replyOrEditInteraction(interaction, 'This button is for someone else. Run `/connect` to link your own account.')
     return
   }
   // In a guild the interaction listener has already deferred this privately.
