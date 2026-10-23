@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.80.0] - 2026-10-23
+
+### Added
+- answer MCP form elicitation (2026-07-28) from chat for person MCP servers — Refs #356
+
 ## [0.79.0] - 2026-10-23
 
 ### Added
