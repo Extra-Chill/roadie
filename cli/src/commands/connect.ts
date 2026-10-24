@@ -1,11 +1,15 @@
 // /connect command and Connect buttons: a person connects their own account to
 // the person-scoped MCP servers the identity layer names for them
-// (`mcp_servers`), from chat, with the OAuth device grant.
+// (`mcp_servers`), from chat, with the OAuth device grant — or, when the
+// server has no device grant, authorization code + S256 PKCE (issue #356).
 //
 //   /connect                      link identity if needed, then an ephemeral
 //                                 tool list with Connect/Disconnect buttons
 //   roadie_connect:c:<server>     Connect button (also shown by the welcome)
 //   roadie_connect:d:<server>     Disconnect button
+//   roadie_connect_paste:<key>    Paste redirect URL button (authorization-
+//                                 code connect); opens the paste modal
+//   roadie_connect_modal:<key>    its modal submit
 //
 // The button only carries intent (which server). Authority always comes from
 // the clicking user: the person key is derived from the person the identity
@@ -14,17 +18,22 @@
 // button forwarded to, or clicked by, someone else acts on their own account,
 // never on the original person's.
 //
-// All replies are ephemeral. Tokens are never logged or shown; the person only
-// sees the verification link and user code. The OAuth work lives in
-// credentials/mcp-device-connect.ts.
+// All replies are ephemeral. Tokens, codes and verifiers are never logged or
+// shown; the person only sees the sign-in link (and the device user code).
+// Only the person who started a connect can paste its redirect URL. The OAuth
+// work lives in credentials/mcp-device-connect.ts.
 
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type ModalSubmitInteraction,
 } from 'discord.js'
 import { getDataDir } from '../config.js'
 import { startDiscordIdentityLink } from './link.js'
@@ -35,8 +44,12 @@ import {
   type IdentityActor,
   type Person,
 } from '../identity.js'
+import { personKeyFrom } from '../credentials/person-pool.js'
 import {
+  CONNECT_PASTE_MODAL_PREFIX,
+  CONNECT_PASTE_PREFIX,
   connectButtonCustomId,
+  findConnectPaste,
   formatConnectionList,
   parseConnectButtonCustomId,
   personMcpConnectionStates,
@@ -51,6 +64,8 @@ import {
 // existing importers.
 export {
   CONNECT_BUTTON_PREFIX,
+  CONNECT_PASTE_MODAL_PREFIX,
+  CONNECT_PASTE_PREFIX,
   connectButtonCustomId,
   formatConnectionList,
   parseConnectButtonCustomId,
@@ -114,11 +129,11 @@ export function buildPersonConnectButtons({
 
 // ── Discord handlers ────────────────────────────────────────────
 
-function actorOf(interaction: ChatInputCommandInteraction | ButtonInteraction): IdentityActor {
+function actorOf(interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction): IdentityActor {
   return { platform: 'discord', id: interaction.user.id, name: interaction.user.displayName }
 }
 
-async function personFor(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<Person | null> {
+async function personFor(interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction): Promise<Person | null> {
   return await resolvePerson({
     actor: actorOf(interaction),
     context: {
@@ -193,6 +208,7 @@ export async function handleConnectButton(interaction: ButtonInteraction): Promi
     server,
     maxWaitMs: MAX_WAIT_MS,
     retryHint: 'Run `/connect` to try again.',
+    pasteButton: true,
     onDone: async (content) => {
       await interaction.editReply({ content, components: [] })
     },
@@ -201,12 +217,96 @@ export async function handleConnectButton(interaction: ButtonInteraction): Promi
     await interaction.editReply({ content: started.message })
     return
   }
+  const buttons = [new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(started.link).setLabel('Open sign-in page')]
+  if (started.paste) {
+    buttons.push(new ButtonBuilder().setCustomId(started.paste.customId).setLabel('Paste redirect URL').setStyle(ButtonStyle.Secondary))
+  }
   await interaction.editReply({
     content: started.text,
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(started.link).setLabel('Open sign-in page'),
-      ),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons)],
   })
+}
+
+// ── Paste redirect URL (authorization-code connect) ─────────────
+
+const PASTE_URL_FIELD = 'redirect_url'
+
+const PASTE_GONE_MESSAGE = 'This sign-in is no longer available. Run `/connect` to try again.'
+const PASTE_FOREIGN_MESSAGE = 'Only the person who started this connect can paste the redirect URL.'
+
+const PASTE_OUTCOME_MESSAGES: Record<string, string> = {
+  invalid: 'That does not look like a sign-in redirect. Paste the whole address your browser was redirected to.',
+  mismatch: 'That sign-in link was not started by this connect attempt. Open the sign-in link from this conversation and try again.',
+  late: 'This sign-in already finished or expired. Run `/connect` to try again.',
+  accepted: 'Got it — finishing sign-in. Your connect reply will update once it completes.',
+}
+
+/**
+ * The person key of the interacting user, resolved the same way turns resolve
+ * theirs (the identity layer). A pasted redirect is accepted only from the
+ * person who started the connect; anyone else gets an ephemeral refusal.
+ */
+async function clickerPersonKey(interaction: ButtonInteraction | ModalSubmitInteraction): Promise<string | Error> {
+  if (!isIdentityConfigured()) return new Error('Per-person services are not configured on this server.')
+  const person = await personFor(interaction)
+  if (person?.lookupFailed) return new Error(IDENTITY_LOOKUP_FAILED_MESSAGE)
+  const personKey = personKeyFrom({ personId: person?.personId, platform: 'discord', actorId: interaction.user.id })
+  if (!personKey) return new Error('Could not resolve your account.')
+  return personKey
+}
+
+/** Open the modal that takes the redirected URL the person's browser landed on. */
+export async function handleConnectPasteButton(interaction: ButtonInteraction): Promise<void> {
+  const paste = findConnectPaste(interaction.customId)
+  if (!paste) {
+    await interaction.reply({ content: PASTE_GONE_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
+  const clicker = await clickerPersonKey(interaction)
+  if (clicker instanceof Error) {
+    await interaction.reply({ content: clicker.message, flags: MessageFlags.Ephemeral })
+    return
+  }
+  if (clicker !== paste.personKey) {
+    await interaction.reply({ content: PASTE_FOREIGN_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
+  await interaction.showModal(
+    new ModalBuilder()
+      .setCustomId(`${CONNECT_PASTE_MODAL_PREFIX}${interaction.customId.slice(CONNECT_PASTE_PREFIX.length)}`)
+      .setTitle('Finish sign-in')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId(PASTE_URL_FIELD)
+            .setLabel('Redirected URL')
+            .setPlaceholder('http://127.0.0.1:…/callback?code=…&state=…')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true),
+        ),
+      ),
+  )
+}
+
+/** Take the pasted redirect URL, hand it to the flow, answer ephemerally. */
+export async function handleConnectPasteModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+  const paste = findConnectPaste(interaction.customId)
+  if (!paste) {
+    await interaction.reply({ content: PASTE_GONE_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
+  const clicker = await clickerPersonKey(interaction)
+  if (clicker instanceof Error) {
+    await interaction.reply({ content: clicker.message, flags: MessageFlags.Ephemeral })
+    return
+  }
+  if (clicker !== paste.personKey) {
+    await interaction.reply({ content: PASTE_FOREIGN_MESSAGE, flags: MessageFlags.Ephemeral })
+    return
+  }
+  // No secrets here (the URL carries an authorization code, never a token),
+  // and the outcome line names no values; the flow itself never logs it.
+  const url = interaction.fields.getTextInputValue(PASTE_URL_FIELD).trim()
+  const outcome = await paste.submit(url)
+  await interaction.reply({ content: PASTE_OUTCOME_MESSAGES[outcome.status] ?? PASTE_GONE_MESSAGE, flags: MessageFlags.Ephemeral })
 }

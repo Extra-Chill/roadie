@@ -1,19 +1,34 @@
-// OAuth device-grant connect for person-scoped MCP servers: discovery (RFC
-// 9728 header + well-known fallback, RFC 8414), dynamic client registration
-// caching, device authorization, polling states, token storage, disconnect.
+// OAuth connect for person-scoped MCP servers: discovery (RFC 9728 header +
+// well-known fallback, RFC 8414), dynamic client registration caching, device
+// authorization, polling states, token storage, disconnect — and the
+// authorization code + S256 PKCE fallback for servers with no device grant
+// (grant selection, PKCE/state, authorization URL, loopback receiver, paste,
+// exchange, storage).
 
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
+  AUTHORIZATION_CODE_GRANT,
   DEVICE_CODE_GRANT,
+  PKCE_CHALLENGE_METHOD,
   beginDeviceConnect,
+  beginOAuthConnect,
+  buildAuthorizationUrl,
+  createPkcePair,
+  createState,
   discoverMcpAuthorization,
   disconnectPersonMcp,
+  exchangeAuthorizationCode,
+  getOrRegisterAuthorizationCodeClient,
   getOrRegisterClient,
+  parseAuthorizationCodeRedirect,
   parseResourceMetadataUrl,
   pollDeviceToken,
+  selectConnectGrant,
+  startLoopbackRedirectListener,
   type ConnectFetch,
   type ConnectFetchResponse,
   type DeviceConnectError,
@@ -58,6 +73,11 @@ function fakeFetch(routes: Record<string, Reply | Route | Array<Reply | Route>>)
     return response
   }
   return { fetchImpl, calls }
+}
+
+async function httpGet(url: string): Promise<{ status: number; text: string }> {
+  const response = await fetch(url)
+  return { status: response.status, text: await response.text() }
 }
 
 const AS_METADATA = {
@@ -416,5 +436,446 @@ describe('end to end connect and disconnect', () => {
     const session = await beginDeviceConnect({ dataDir, personKey: 'wp:1', target, fetchImpl })
     expect(session instanceof Error).toBe(false)
     expect(calls.filter((call) => call.url.endsWith('/oauth/register'))).toHaveLength(2)
+  })
+})
+
+// ── Grant selection (issue #356) ────────────────────────────────
+
+describe('grant selection', () => {
+  const base = {
+    issuer: ISSUER,
+    tokenEndpoint: `${ISSUER}/oauth/token`,
+    registrationEndpoint: `${ISSUER}/oauth/register`,
+  }
+
+  test('prefers the device grant when the server offers it', () => {
+    expect(selectConnectGrant({ ...base, deviceAuthorizationEndpoint: `${ISSUER}/oauth/device` })).toEqual({ grant: 'device' })
+    expect(
+      selectConnectGrant({
+        ...base,
+        deviceAuthorizationEndpoint: `${ISSUER}/oauth/device`,
+        authorizationEndpoint: `${ISSUER}/oauth/authorize`,
+        grantTypesSupported: [DEVICE_CODE_GRANT, AUTHORIZATION_CODE_GRANT],
+      }),
+    ).toEqual({ grant: 'device' })
+  })
+
+  test('falls back to authorization code when the device grant is unavailable', () => {
+    expect(
+      selectConnectGrant({ ...base, authorizationEndpoint: `${ISSUER}/oauth/authorize`, codeChallengeMethodsSupported: [PKCE_CHALLENGE_METHOD] }),
+    ).toEqual({ grant: 'authorization_code' })
+    // A device endpoint that the grant list does not allow is not enough.
+    expect(
+      selectConnectGrant({
+        ...base,
+        deviceAuthorizationEndpoint: `${ISSUER}/oauth/device`,
+        authorizationEndpoint: `${ISSUER}/oauth/authorize`,
+        grantTypesSupported: [AUTHORIZATION_CODE_GRANT, 'refresh_token'],
+        codeChallengeMethodsSupported: [PKCE_CHALLENGE_METHOD],
+      }),
+    ).toEqual({ grant: 'authorization_code' })
+  })
+
+  test('refuses unconnectable servers with specific reasons', () => {
+    const noS256 = selectConnectGrant({ ...base, authorizationEndpoint: `${ISSUER}/oauth/authorize`, codeChallengeMethodsSupported: ['plain'] })
+    expect((noS256 as DeviceConnectError).code).toBe('unsupported')
+    expect((noS256 as Error).message).toMatch(/S256/)
+
+    const neither = selectConnectGrant(base)
+    expect((neither as DeviceConnectError).code).toBe('unsupported')
+    expect((neither as Error).message).toMatch(/neither device sign-in nor browser sign-in/)
+
+    const noRegistration = selectConnectGrant({ issuer: ISSUER, tokenEndpoint: `${ISSUER}/oauth/token` })
+    expect((noRegistration as DeviceConnectError).code).toBe('unsupported')
+    expect((noRegistration as Error).message).toMatch(/client registration/)
+  })
+})
+
+// ── PKCE and state ──────────────────────────────────────────────
+
+describe('pkce and state', () => {
+  test('challenge is the S256 of the verifier, and state is independent randomness', () => {
+    const { verifier, challenge } = createPkcePair()
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(challenge).toBe(crypto.createHash('sha256').update(verifier).digest('base64url'))
+    const state = createState()
+    expect(state).toMatch(/^[A-Za-z0-9_-]{10,}$/)
+    // state must not be derived from the verifier (issue #250): the URL and
+    // the verifier travel differently.
+    expect(state).not.toBe(challenge)
+    expect(state).not.toBe(verifier)
+    expect(createState()).not.toBe(state)
+    expect(createPkcePair().verifier).not.toBe(verifier)
+  })
+})
+
+// ── Authorization URL and pasted redirects ──────────────────────
+
+describe('authorization url and pasted redirects', () => {
+  test('builds the authorization URL with resource (RFC 8707) and scope', () => {
+    const url = new URL(
+      buildAuthorizationUrl({
+        endpoint: 'https://auth.example.com/oauth/authorize',
+        clientId: 'client-123',
+        redirectUri: 'http://127.0.0.1:4919/callback',
+        state: 'STATE',
+        codeChallenge: 'CHALLENGE',
+        scope: 'mcp profile',
+        resource: MCP_URL,
+      }),
+    )
+    expect(`${url.origin}${url.pathname}`).toBe('https://auth.example.com/oauth/authorize')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      response_type: 'code',
+      client_id: 'client-123',
+      redirect_uri: 'http://127.0.0.1:4919/callback',
+      state: 'STATE',
+      code_challenge: 'CHALLENGE',
+      code_challenge_method: 'S256',
+      scope: 'mcp profile',
+      resource: MCP_URL,
+    })
+    const minimal = new URL(
+      buildAuthorizationUrl({
+        endpoint: 'https://auth.example.com/oauth/authorize',
+        clientId: 'c',
+        redirectUri: 'http://127.0.0.1:9/callback',
+        state: 's',
+        codeChallenge: 'cc',
+      }),
+    )
+    expect(minimal.searchParams.get('scope')).toBeNull()
+    expect(minimal.searchParams.get('resource')).toBeNull()
+  })
+
+  test('parses a pasted redirect and refuses junk without echoing it as code', () => {
+    expect(parseAuthorizationCodeRedirect('http://127.0.0.1:4919/callback?code=C&state=S')).toEqual({ code: 'C', state: 'S' })
+    expect(parseAuthorizationCodeRedirect('  http://127.0.0.1:4919/callback?scope=mcp&code=C&state=S  ')).toEqual({ code: 'C', state: 'S' })
+    const junk = parseAuthorizationCodeRedirect('not a url at all')
+    expect((junk as DeviceConnectError).code).toBe('authorization')
+    const missing = parseAuthorizationCodeRedirect('http://127.0.0.1:4919/callback?state=S')
+    expect((missing as DeviceConnectError).code).toBe('authorization')
+  })
+})
+
+// ── Loopback redirect receiver ──────────────────────────────────
+
+describe('loopback redirect receiver', () => {
+  test('binds 127.0.0.1, delivers exactly one redirect, then answers duplicates', async () => {
+    const listener = await startLoopbackRedirectListener({ expectedState: 'S1', lifetimeMs: 60_000 })
+    if (listener instanceof Error) throw listener
+    expect(listener.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
+    const done = listener.wait()
+    const page = await httpGet(`${listener.redirectUri}?code=C&state=S1`)
+    expect(page.status).toBe(200)
+    expect(page.text).toContain('close this tab')
+    expect(await done).toEqual({ code: 'C', state: 'S1' })
+    const again = await httpGet(`${listener.redirectUri}?code=C2&state=S1`)
+    expect(again.status).toBe(200)
+    expect(again.text).toContain('already completed')
+    await listener.close()
+  })
+
+  test('a state mismatch gets an error page and does not consume the attempt', async () => {
+    const listener = await startLoopbackRedirectListener({ expectedState: 'S1', lifetimeMs: 60_000 })
+    if (listener instanceof Error) throw listener
+    const done = listener.wait()
+    const bad = await httpGet(`${listener.redirectUri}?code=C&state=WRONG`)
+    expect(bad.status).toBe(400)
+    expect(bad.text).toMatch(/not started by this connect attempt/)
+    const good = await httpGet(`${listener.redirectUri}?code=C&state=S1`)
+    expect(good.status).toBe(200)
+    expect(await done).toEqual({ code: 'C', state: 'S1' })
+    await listener.close()
+  })
+
+  test('expires after its lifetime', async () => {
+    const listener = await startLoopbackRedirectListener({ expectedState: 'S1', lifetimeMs: 30 })
+    if (listener instanceof Error) throw listener
+    const result = await listener.wait()
+    expect((result as DeviceConnectError).code).toBe('expired')
+    await listener.close()
+  })
+
+  test('an access_denied redirect ends the attempt as denied', async () => {
+    const listener = await startLoopbackRedirectListener({ expectedState: 'S1', lifetimeMs: 60_000 })
+    if (listener instanceof Error) throw listener
+    const done = listener.wait()
+    const page = await httpGet(`${listener.redirectUri}?error=access_denied&state=S1`)
+    expect(page.status).toBe(200)
+    expect(((await done) as DeviceConnectError).code).toBe('denied')
+    await listener.close()
+  })
+
+  test('unknown paths are 404 and never consume the attempt', async () => {
+    const listener = await startLoopbackRedirectListener({ expectedState: 'S1', lifetimeMs: 60_000 })
+    if (listener instanceof Error) throw listener
+    const done = listener.wait()
+    const other = await httpGet(`${listener.redirectUri.replace('/callback', '/other')}?code=C&state=S1`)
+    expect(other.status).toBe(404)
+    const missing = await httpGet(`${listener.redirectUri}?state=S1`)
+    expect(missing.status).toBe(400)
+    const good = await httpGet(`${listener.redirectUri}?code=C&state=S1`)
+    expect(good.status).toBe(200)
+    expect(await done).toEqual({ code: 'C', state: 'S1' })
+    await listener.close()
+  })
+})
+
+// ── Authorization-code client registration ──────────────────────
+
+describe('authorization-code client registration', () => {
+  const server = {
+    issuer: ISSUER,
+    tokenEndpoint: `${ISSUER}/oauth/token`,
+    registrationEndpoint: `${ISSUER}/oauth/register`,
+  }
+
+  test('registers a public loopback client per redirect and caches it beside the device client', async () => {
+    const { fetchImpl, calls } = fakeFetch({ [`POST ${ISSUER}/oauth/register`]: { status: 201, json: { client_id: 'ac-client' } } })
+    const redirectUri = 'http://127.0.0.1:4919/callback'
+    const first = await getOrRegisterAuthorizationCodeClient({ dataDir, server, redirectUri, fetchImpl })
+    const second = await getOrRegisterAuthorizationCodeClient({ dataDir, server, redirectUri, fetchImpl })
+    expect(first).toEqual({ clientId: 'ac-client' })
+    expect(second).toEqual({ clientId: 'ac-client' })
+    const registrations = calls.filter((call) => call.url.endsWith('/oauth/register'))
+    expect(registrations).toHaveLength(1)
+    expect(JSON.parse(registrations[0]!.body!)).toEqual({
+      client_name: 'Roadie',
+      token_endpoint_auth_method: 'none',
+      grant_types: [AUTHORIZATION_CODE_GRANT, 'refresh_token'],
+      response_types: ['code'],
+      redirect_uris: [redirectUri],
+    })
+    // The device client keeps its own cache entry: grants never clobber.
+    const { fetchImpl: deviceFetch, calls: deviceCalls } = fakeFetch({
+      [`POST ${ISSUER}/oauth/register`]: { json: { client_id: 'device-client' } },
+    })
+    expect(await getOrRegisterClient({ dataDir, server, fetchImpl: deviceFetch })).toEqual({ clientId: 'device-client' })
+    expect(deviceCalls).toHaveLength(1)
+    expect(fs.readdirSync(path.join(dataDir, 'mcp-clients'))).toHaveLength(2)
+  })
+})
+
+// ── Authorization-code exchange ─────────────────────────────────
+
+describe('authorization code exchange', () => {
+  const tokenEndpoint = `${ISSUER}/oauth/token`
+  const client = { clientId: 'client-123' }
+  const base = {
+    tokenEndpoint,
+    client,
+    code: 'CODE-SECRET',
+    codeVerifier: 'VERIFIER-SECRET',
+    redirectUri: 'http://127.0.0.1:4919/callback',
+    resource: MCP_URL,
+  }
+
+  test('exchanges code + verifier for tokens', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`POST ${tokenEndpoint}`]: { json: { access_token: 'ACCESS', refresh_token: 'REFRESH', expires_in: 3600 } },
+    })
+    let current = 1_000_000
+    const result = await exchangeAuthorizationCode({ ...base, fetchImpl, now: () => current })
+    expect(result).toEqual({ access: 'ACCESS', refresh: 'REFRESH', expires: current + 3_600_000 })
+    const body = new URLSearchParams(calls[0]!.body!)
+    expect(body.get('grant_type')).toBe(AUTHORIZATION_CODE_GRANT)
+    expect(body.get('code')).toBe('CODE-SECRET')
+    expect(body.get('code_verifier')).toBe('VERIFIER-SECRET')
+    expect(body.get('redirect_uri')).toBe('http://127.0.0.1:4919/callback')
+    expect(body.get('client_id')).toBe('client-123')
+    expect(body.get('resource')).toBe(MCP_URL)
+  })
+
+  test('maps token errors to specific codes without echoing secrets', async () => {
+    for (const [error, code] of [
+      ['invalid_client', 'registration'],
+      ['invalid_grant', 'authorization'],
+      ['access_denied', 'denied'],
+    ] as const) {
+      const { fetchImpl } = fakeFetch({
+        [`POST ${tokenEndpoint}`]: { status: 400, json: { error, error_description: 'CODE-SECRET VERIFIER-SECRET bad' } },
+      })
+      const result = await exchangeAuthorizationCode({ ...base, fetchImpl })
+      expect((result as DeviceConnectError).code).toBe(code)
+      expect((result as Error).message).not.toContain('CODE-SECRET')
+      expect((result as Error).message).not.toContain('VERIFIER-SECRET')
+    }
+    const { fetchImpl } = fakeFetch({ [`POST ${tokenEndpoint}`]: { status: 500, json: { error: 'temporarily_unavailable' } } })
+    expect(((await exchangeAuthorizationCode({ ...base, fetchImpl })) as DeviceConnectError).code).toBe('failed')
+  })
+})
+
+// ── Authorization-code connect (the fallback for /connect) ──────
+
+const AUTH_CODE_METADATA = {
+  issuer: ISSUER,
+  token_endpoint: `${ISSUER}/oauth/token`,
+  authorization_endpoint: `${ISSUER}/oauth/authorize`,
+  registration_endpoint: `${ISSUER}/oauth/register`,
+  revocation_endpoint: `${ISSUER}/oauth/revoke`,
+  grant_types_supported: [AUTHORIZATION_CODE_GRANT, 'refresh_token'],
+  code_challenge_methods_supported: [PKCE_CHALLENGE_METHOD],
+}
+
+function baseAuthCodeRoutes(): Record<string, Reply | Route | Array<Reply | Route>> {
+  return {
+    [`POST ${MCP_URL}`]: {
+      status: 401,
+      headers: { 'WWW-Authenticate': `Bearer realm="mcp", resource_metadata="${PRM_URL}"` },
+    },
+    [`GET ${PRM_URL}`]: {
+      json: { resource: MCP_URL, authorization_servers: [ISSUER], scopes_supported: ['mcp', 'profile'] },
+    },
+    [`GET ${ISSUER}/.well-known/oauth-authorization-server`]: { json: AUTH_CODE_METADATA },
+    [`POST ${ISSUER}/oauth/register`]: { status: 201, json: { client_id: 'client-123' } },
+    [`POST ${ISSUER}/oauth/token`]: {
+      json: { access_token: 'ACCESS-AC', refresh_token: 'REFRESH-AC', expires_in: 3600 },
+    },
+  }
+}
+
+async function startAuthCodeConnect(
+  fetchImpl: ConnectFetch,
+  overrides: { routes?: Record<string, Reply | Route | Array<Reply | Route>>; dataDir?: string } = {},
+) {
+  const session = await beginOAuthConnect({
+    dataDir: overrides.dataDir ?? dataDir,
+    personKey: 'wp:1',
+    target: { name: 'acme', url: MCP_URL, credential: 'acme' },
+    fetchImpl,
+  })
+  if (session instanceof Error) throw session
+  if (session.grant !== 'authorization_code') throw new Error('expected the authorization-code fallback')
+  return session
+}
+
+describe('authorization code connect', () => {
+  test('a server offering both grants still gets the device grant', async () => {
+    const { fetchImpl, calls } = fakeFetch(baseRoutes())
+    const selection = await beginOAuthConnect({
+      dataDir,
+      personKey: 'wp:1',
+      target: { name: 'acme', url: MCP_URL, credential: 'acme' },
+      fetchImpl,
+    })
+    if (selection instanceof Error) throw selection
+    expect(selection.grant).toBe('device')
+    expect(JSON.parse(calls.find((call) => call.url.endsWith('/oauth/register'))!.body!).grant_types).toContain(DEVICE_CODE_GRANT)
+    expect(calls.some((call) => call.url.endsWith('/oauth/authorize'))).toBe(false)
+  })
+
+  test('registers a loopback client, signs in via the receiver, and stores a refreshable token', async () => {
+    const { fetchImpl, calls } = fakeFetch(baseAuthCodeRoutes())
+    const session = await startAuthCodeConnect(fetchImpl)
+
+    const registration = JSON.parse(calls.find((call) => call.url.endsWith('/oauth/register'))!.body!)
+    expect(registration).toEqual({
+      client_name: 'Roadie',
+      token_endpoint_auth_method: 'none',
+      grant_types: [AUTHORIZATION_CODE_GRANT, 'refresh_token'],
+      response_types: ['code'],
+      redirect_uris: [session.redirectUri],
+    })
+
+    const authorize = new URL(session.prompt.signInUrl)
+    expect(`${authorize.origin}${authorize.pathname}`).toBe(`${ISSUER}/oauth/authorize`)
+    expect(Object.fromEntries(authorize.searchParams)).toMatchObject({
+      response_type: 'code',
+      client_id: 'client-123',
+      redirect_uri: session.redirectUri,
+      resource: MCP_URL,
+      scope: 'mcp profile',
+      code_challenge_method: 'S256',
+    })
+    expect(authorize.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/)
+
+    const completion = session.complete({ maxWaitMs: 60_000 })
+    const page = await httpGet(`${session.redirectUri}?code=THE-CODE&state=${authorize.searchParams.get('state')}`)
+    expect(page.status).toBe(200)
+    expect(await completion).toBeUndefined()
+
+    const exchange = new URLSearchParams(calls.find((call) => call.url.endsWith('/oauth/token'))!.body!)
+    expect(exchange.get('grant_type')).toBe(AUTHORIZATION_CODE_GRANT)
+    expect(exchange.get('code')).toBe('THE-CODE')
+    expect(exchange.get('redirect_uri')).toBe(session.redirectUri)
+    expect(exchange.get('client_id')).toBe('client-123')
+    expect(exchange.get('resource')).toBe(MCP_URL)
+    const verifier = exchange.get('code_verifier')!
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    // The verifier only ever travels to the token endpoint, never in a URL.
+    expect(session.prompt.signInUrl.includes(verifier)).toBe(false)
+    expect(authorize.searchParams.get('state')).not.toBe(verifier)
+
+    expect(readPersonMcpToken({ dataDir, personKey: 'wp:1', credential: 'acme' })).toMatchObject({
+      access: 'ACCESS-AC',
+      refresh: 'REFRESH-AC',
+      tokenEndpoint: `${ISSUER}/oauth/token`,
+      clientId: 'client-123',
+      revocationEndpoint: `${ISSUER}/oauth/revoke`,
+    })
+
+    // Single use and bounded: once the flow finished, the receiver is gone.
+    await expect(httpGet(`${session.redirectUri}?code=THE-CODE&state=${authorize.searchParams.get('state')}`)).rejects.toThrow()
+    expect(calls.filter((call) => call.url.endsWith('/oauth/token'))).toHaveLength(1)
+  })
+
+  test('accepts a pasted redirect URL when the state matches, exactly once', async () => {
+    const { fetchImpl, calls } = fakeFetch(baseAuthCodeRoutes())
+    const session = await startAuthCodeConnect(fetchImpl)
+    const state = new URL(session.prompt.signInUrl).searchParams.get('state')!
+    expect(await session.submitRedirectUrl('not a url at all')).toEqual({ status: 'invalid' })
+    expect(await session.submitRedirectUrl(`${session.redirectUri}?code=X&state=stale`)).toEqual({ status: 'mismatch' })
+
+    const completion = session.complete({ maxWaitMs: 60_000 })
+    expect(await session.submitRedirectUrl(`${session.redirectUri}?code=PASTED-CODE&state=${state}`)).toEqual({ status: 'accepted' })
+    expect(await completion).toBeUndefined()
+    const exchange = new URLSearchParams(calls.find((call) => call.url.endsWith('/oauth/token'))!.body!)
+    expect(exchange.get('code')).toBe('PASTED-CODE')
+
+    // The flow is over: another paste (even a valid one) is late, no second exchange.
+    expect(await session.submitRedirectUrl(`${session.redirectUri}?code=PASTED-CODE&state=${state}`)).toEqual({ status: 'late' })
+    expect(calls.filter((call) => call.url.endsWith('/oauth/token'))).toHaveLength(1)
+  })
+
+  test('expires when no redirect arrives, and later pastes are late', async () => {
+    const { fetchImpl } = fakeFetch(baseAuthCodeRoutes())
+    const session = await startAuthCodeConnect(fetchImpl)
+    const result = await session.complete({ maxWaitMs: 50 })
+    expect((result as DeviceConnectError).code).toBe('expired')
+    const state = new URL(session.prompt.signInUrl).searchParams.get('state')!
+    expect(await session.submitRedirectUrl(`${session.redirectUri}?code=X&state=${state}`)).toEqual({ status: 'late' })
+    expect(readPersonMcpToken({ dataDir, personKey: 'wp:1', credential: 'acme' })).toBeNull()
+  })
+
+  test('reports specific errors for no supported grant and a rejected registration', async () => {
+    const noGrant = { ...AUTH_CODE_METADATA }
+    delete (noGrant as Record<string, unknown>).authorization_endpoint
+    noGrant.grant_types_supported = ['refresh_token']
+    const { fetchImpl } = fakeFetch({
+      [`POST ${MCP_URL}`]: { status: 401, headers: { 'WWW-Authenticate': `Bearer resource_metadata="${PRM_URL}"` } },
+      [`GET ${PRM_URL}`]: { json: { authorization_servers: [ISSUER] } },
+      [`GET ${ISSUER}/.well-known/oauth-authorization-server`]: { json: noGrant },
+    })
+    const refused = await beginOAuthConnect({
+      dataDir,
+      personKey: 'wp:1',
+      target: { name: 'acme', url: MCP_URL, credential: 'acme' },
+      fetchImpl,
+    })
+    expect((refused as DeviceConnectError).code).toBe('unsupported')
+    expect((refused as Error).message).toMatch(/neither device sign-in nor browser sign-in/)
+
+    const { fetchImpl: rejectedFetch } = fakeFetch({
+      ...baseAuthCodeRoutes(),
+      [`POST ${ISSUER}/oauth/register`]: { status: 400, json: { error: 'invalid_redirect_uri' } },
+    })
+    const failed = await beginOAuthConnect({
+      dataDir,
+      personKey: 'wp:1',
+      target: { name: 'acme', url: MCP_URL, credential: 'acme' },
+      fetchImpl: rejectedFetch,
+    })
+    expect((failed as DeviceConnectError).code).toBe('registration')
   })
 })

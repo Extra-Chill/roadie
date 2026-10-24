@@ -46,7 +46,14 @@ import { handleOperatorRequestButton, OPERATOR_REQUEST_PREFIX } from './commands
 import { handleHtmlActionButton } from './html-actions.js'
 import { handleVerbositySelectMenu } from './commands/verbosity.js'
 import { handleMcpSelectMenu } from './commands/mcp.js'
-import { CONNECT_BUTTON_PREFIX, handleConnectButton } from './commands/connect.js'
+import {
+  CONNECT_BUTTON_PREFIX,
+  CONNECT_PASTE_MODAL_PREFIX,
+  CONNECT_PASTE_PREFIX,
+  handleConnectButton,
+  handleConnectPasteButton,
+  handleConnectPasteModalSubmit,
+} from './commands/connect.js'
 import { handleLinkButton, LINK_BUTTON_PREFIX } from './commands/link.js'
 import {
   handleVariantQuickSelectMenu,
@@ -143,6 +150,7 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
   button({ prefix: LINK_BUTTON_PREFIX, ack: 'private', personScoped: true, selfServe: true },
     (interaction, { channelBound }) => handleLinkButton(interaction, { channelBound })),
   // Acts only on the clicking user's own person key and servers.
+  button({ prefix: CONNECT_PASTE_PREFIX, ack: 'modal', personScoped: true }, handleConnectPasteButton),
   button({ prefix: CONNECT_BUTTON_PREFIX, ack: 'private', personScoped: true },
     (interaction) => handleConnectButton(interaction)),
   button({ prefix: OPERATOR_REQUEST_PREFIX, ack: 'update' }, handleOperatorRequestButton),
@@ -193,6 +201,7 @@ export const COMPONENT_ROUTES: readonly ComponentRoute[] = [
     if (await rejectDisabledCredentialPools(interaction)) return
     await handleCredentialsOAuthCodeModalSubmit(interaction)
   }),
+  modal({ prefix: CONNECT_PASTE_MODAL_PREFIX, ack: 'modal', personScoped: true }, handleConnectPasteModalSubmit),
   modal({ prefix: 'file_upload_modal:', ack: 'modal' }, handleFileUploadModalSubmit),
   modal({ prefix: MCP_FORM_MODAL_PREFIX, ack: 'modal' }, handleMcpFormModalSubmit),
 ]
