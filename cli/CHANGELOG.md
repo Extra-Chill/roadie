@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.81.0] - 2026-10-24
+
+### Added
+- connect person MCP servers with authorization code + PKCE when no device grant — Refs #356
+
 ## [0.80.1] - 2026-10-23
 
 ### Fixed
