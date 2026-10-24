@@ -132,10 +132,12 @@ Personal commands need no thread and answer only the speaker (ephemeral):
 
 - `/roadie connect` lists the per-person MCP servers the `person` filter names
   for you, connected or not, with Connect and Disconnect buttons. Connect runs
-  the OAuth device sign-in; the link and code replace that ephemeral message
-  (through Slack's `response_url`) and the message updates again when the
-  sign-in finishes. The person is always the clicking user, never data on the
-  button.
+  the OAuth sign-in (device grant, or browser PKCE when the server has none);
+  the link and code replace that ephemeral message (through Slack's
+  `response_url`) and the message updates again when the sign-in finishes. The
+  person is always the clicking user, never data on the button. (Discord adds
+  a Paste redirect URL button for the PKCE flow; Slack relies on the loopback
+  receiver.)
 - `/roadie start` shows the welcome again.
 
 Newly admitted people get the welcome once as a DM, with Connect buttons for

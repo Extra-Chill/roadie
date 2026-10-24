@@ -1,10 +1,11 @@
-// Platform-neutral core of "connect your own account" (issues #271, #284).
+// Platform-neutral core of "connect your own account" (issues #271, #284, #356).
 //
 // A person connects their own account to the person-scoped MCP servers the
-// identity layer names for them (`mcp_servers`) with the OAuth device grant.
-// Discord (commands/connect.ts) and Slack (slack-connect.ts) render the list,
-// buttons and sign-in prompt in their own way; everything that decides *who*
-// and *what* lives here so both platforms behave the same:
+// identity layer names for them (`mcp_servers`) with the OAuth device grant,
+// or, when the server has no device grant, with authorization code + S256
+// PKCE. Discord (commands/connect.ts) and Slack (slack-connect.ts) render the
+// list, buttons and sign-in prompt in their own way; everything that decides
+// *who* and *what* lives here so both platforms behave the same:
 //
 // - Button ids (`roadie_connect:c|d:<server>`) carry only intent: which
 //   server. They never carry a person.
@@ -13,14 +14,17 @@
 //   exactly like turns derive it (applyPersonToIngress), and the server must
 //   be one of *their* servers. A forwarded or foreign button acts on the
 //   clicker's own account, never on the original person's.
-// - Tokens are never logged or shown; the person only sees the verification
-//   link and user code. The OAuth work lives in credentials/mcp-device-connect.ts.
+// - Tokens are never logged or shown; the person only sees the sign-in link
+//   (and, for the device grant, the user code). The OAuth work lives in
+//   credentials/mcp-device-connect.ts.
 
+import crypto from 'node:crypto'
 import { personKeyFrom } from './credentials/person-pool.js'
 import { listPersonMcpCredentials } from './credentials/person-mcp-store.js'
 import {
-  beginDeviceConnect,
+  beginOAuthConnect,
   disconnectPersonMcp,
+  type AuthorizationCodeRedirectOutcome,
   type ConnectFetch,
   type DeviceConnectPrompt,
 } from './credentials/mcp-device-connect.js'
@@ -32,6 +36,16 @@ const logger = createLogger(LogPrefix.MCP)
 export const CONNECT_BUTTON_PREFIX = 'roadie_connect:'
 const CONNECT_ACTION = 'c'
 const DISCONNECT_ACTION = 'd'
+
+/**
+ * Custom-id prefixes of the "Paste redirect URL" button and its modal
+ * (authorization-code connect). Deliberately not `roadie_connect:*`: ids are
+ * matched by prefix, and these must not fall through to the connect/disconnect
+ * handler that parses `roadie_connect:c|d:<server>` — nor share or shadow
+ * another route prefix (component-routes requires uniqueness).
+ */
+export const CONNECT_PASTE_PREFIX = 'roadie_connect_paste:'
+export const CONNECT_PASTE_MODAL_PREFIX = 'roadie_connect_modal:'
 
 // ── Who and what ────────────────────────────────────────────────
 
@@ -142,6 +156,76 @@ export function formatConnectPrompt({
   ].join('\n')
 }
 
+/**
+ * Prompt for authorization-code connect (servers without a device grant):
+ * no user code; the code comes back either to Roadie's short-lived loopback
+ * receiver or, when the person's browser cannot reach the Roadie host and the
+ * platform renders a paste button, as a pasted redirect URL.
+ */
+export function formatAuthorizationCodeConnectPrompt({
+  serverName,
+  waitUntil,
+  now = Date.now(),
+  pasteButton = false,
+}: {
+  serverName: string
+  /** When the sign-in stops working (epoch ms). */
+  waitUntil: number
+  now?: number
+  /** Whether this platform renders the Paste redirect URL button. */
+  pasteButton?: boolean
+}): string {
+  const minutes = Math.max(1, Math.round((waitUntil - now) / 60_000))
+  return [
+    `Sign in to connect **${serverName}**.`,
+    pasteButton
+      ? 'Open the link below and approve the request. If the page cannot load after signing in, copy the address it was redirected to and use **Paste redirect URL** here.'
+      : 'Open the link below and approve the request.',
+    `This link expires in about ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+  ].join('\n')
+}
+
+// ── Pasted redirects (authorization-code connect) ─────────────
+
+/**
+ * A pending "paste the redirected URL" target. Keyed by the button's custom
+ * id (random, like ask-question's context keys). The person key of the
+ * starter is checked by the platform handler, so only the person who started
+ * the connect can submit a redirect; the state inside the URL is checked by
+ * the OAuth session.
+ */
+type PendingConnectPaste = {
+  personKey: string
+  serverName: string
+  submit(url: string): Promise<AuthorizationCodeRedirectOutcome>
+}
+
+const pendingConnectPastes = new Map<string, PendingConnectPaste>()
+
+/** The paste target for a button or modal custom id, or undefined when stale. */
+export function findConnectPaste(customId: string): { personKey: string; serverName: string; submit(url: string): Promise<AuthorizationCodeRedirectOutcome> } | undefined {
+  const key = customId.startsWith(CONNECT_PASTE_PREFIX)
+    ? customId.slice(CONNECT_PASTE_PREFIX.length)
+    : customId.startsWith(CONNECT_PASTE_MODAL_PREFIX)
+      ? customId.slice(CONNECT_PASTE_MODAL_PREFIX.length)
+      : undefined
+  return key ? pendingConnectPastes.get(key) : undefined
+}
+
+function connectPasteKey(customId: string): string {
+  return customId.startsWith(CONNECT_PASTE_PREFIX)
+    ? customId.slice(CONNECT_PASTE_PREFIX.length)
+    : customId.slice(CONNECT_PASTE_MODAL_PREFIX.length)
+}
+
+function registerConnectPaste(customId: string, paste: PendingConnectPaste): void {
+  pendingConnectPastes.set(connectPasteKey(customId), paste)
+}
+
+function dropConnectPaste(customId: string): void {
+  pendingConnectPastes.delete(connectPasteKey(customId))
+}
+
 // ── Flows ───────────────────────────────────────────────────────
 
 /** Overridable for tests. */
@@ -183,6 +267,12 @@ export type PersonConnectStarted = {
   text: string
   /** The sign-in page. Show privately. */
   link: string
+  /**
+   * Authorization-code connect only: a "Paste redirect URL" button with this
+   * custom id feeds the person's redirected URL back into the flow (for when
+   * their browser cannot reach the Roadie host).
+   */
+  paste?: { customId: string }
 }
 
 /**
@@ -198,6 +288,7 @@ export async function startPersonConnect({
   maxWaitMs,
   retryHint,
   onDone,
+  pasteButton = false,
 }: {
   dataDir: string
   personKey: string
@@ -207,6 +298,12 @@ export async function startPersonConnect({
   /** How to try again on this platform, e.g. "Run `/connect` to try again." */
   retryHint: string
   onDone: (text: string) => Promise<void>
+  /**
+   * Whether this platform renders the Paste redirect URL button for
+   * authorization-code connect (Discord does; its modal feeds the pasted
+   * redirect back into the flow).
+   */
+  pasteButton?: boolean
 }): Promise<PersonConnectStarted | Error> {
   const flowKey = `${personKey}\0${server.name}`
   activeFlows.get(flowKey)?.abort()
@@ -216,7 +313,7 @@ export async function startPersonConnect({
     if (activeFlows.get(flowKey) === controller) activeFlows.delete(flowKey)
   }
 
-  const session = await beginDeviceConnect({
+  const session = await beginOAuthConnect({
     dataDir,
     personKey,
     target: server,
@@ -228,17 +325,41 @@ export async function startPersonConnect({
     return new Error(`Could not connect **${server.name}**: ${session.message}`)
   }
 
-  const { prompt } = session
-  const waitUntil = Math.min(prompt.expiresAt, Date.now() + maxWaitMs)
-  const started: PersonConnectStarted = {
-    text: formatConnectPrompt({ serverName: server.name, prompt, waitUntil }),
-    link: prompt.verificationUriComplete ?? prompt.verificationUri,
+  // Authorization-code connect can also take the pasted redirect: the
+  // person's browser is often on a machine where the Roadie host's loopback
+  // receiver is unreachable. Only platforms that render the button get one.
+  const pasteCustomId =
+    session.grant === 'authorization_code' && pasteButton
+      ? `${CONNECT_PASTE_PREFIX}${crypto.randomBytes(8).toString('hex')}`
+      : undefined
+  if (pasteCustomId && session.grant === 'authorization_code') {
+    registerConnectPaste(pasteCustomId, {
+      personKey,
+      serverName: server.name,
+      submit: (url) => session.submitRedirectUrl(url),
+    })
   }
 
-  void session
-    .complete({ signal: controller.signal, maxWaitMs, ...(connectSleep ? { sleep: connectSleep } : {}) })
+  const waitUntil = Math.min(session.prompt.expiresAt, Date.now() + maxWaitMs)
+  const started: PersonConnectStarted =
+    session.grant === 'device'
+      ? {
+          text: formatConnectPrompt({ serverName: server.name, prompt: session.prompt, waitUntil }),
+          link: session.prompt.verificationUriComplete ?? session.prompt.verificationUri,
+        }
+      : {
+          text: formatAuthorizationCodeConnectPrompt({ serverName: server.name, waitUntil, pasteButton }),
+          link: session.prompt.signInUrl,
+          ...(pasteCustomId ? { paste: { customId: pasteCustomId } } : {}),
+        }
+
+  void (session.grant === 'device'
+    ? session.complete({ signal: controller.signal, maxWaitMs, ...(connectSleep ? { sleep: connectSleep } : {}) })
+    : session.complete({ signal: controller.signal, maxWaitMs })
+  )
     .then(async (result) => {
       release()
+      if (pasteCustomId) dropConnectPaste(pasteCustomId)
       if (result instanceof Error && result.code === 'aborted') return
       const text = result instanceof Error
         ? `Could not connect **${server.name}**: ${result.message} ${retryHint}`
