@@ -3,12 +3,14 @@
 //   /fork                       fork the whole session; continue in the new thread
 //   /fork prompt:<text>         fork and start working on <text> right away
 //   /fork from:<message>        fork from before an earlier user message
+//   /fork channel:<channel>     continue in another Roadie-bound project's channel
 //
 // The source session keeps running. The fork runs with the source agent,
 // model and pinned system prompt so its requests reuse the source prompt cache.
 // When the host supplies a fork_workspace provider, the fork automatically
 // works in a freshly provisioned host worktree; without one it stays in the
-// source directory.
+// source directory. Cross-channel forks use the target project, system prompt,
+// and channel preferences instead of reusing the source's.
 
 import { backendChannelId, getAgentBackendProvider } from '../agent-backend/registry.js'
 import { parsePersistedEvents } from '../session-handler/persisted-events.js'
@@ -21,6 +23,7 @@ import {
   type ChatInputCommandInteraction,
   type StringSelectMenuInteraction,
   type ThreadChannel,
+  type TextChannel,
 } from 'discord.js'
 import {
   getThreadSession,
@@ -32,6 +35,7 @@ import {
 } from '../database.js'
 import {
   resolveTextChannel,
+  getRoadieMetadata,
   resolveWorkingDirectory,
   sendThreadMessage,
 } from '../discord-utils.js'
@@ -125,6 +129,7 @@ const THREAD_NAME_MAX = 100
 
 export async function forkSessionToThread({
   sourceThread,
+  targetChannel,
   projectDirectory,
   sdkDirectory,
   fromMessageId,
@@ -136,6 +141,8 @@ export async function forkSessionToThread({
   images,
 }: {
   sourceThread: ThreadChannel
+  /** Omitted or the source parent preserves the existing same-channel fork. */
+  targetChannel?: TextChannel
   projectDirectory: string
   /** The source thread's working directory, otherwise same as projectDirectory */
   sdkDirectory: string
@@ -150,12 +157,19 @@ export async function forkSessionToThread({
   images?: DiscordFileAttachment[]
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
   const startedAt = Date.now()
+  const crossChannel = !!targetChannel && targetChannel.id !== sourceThread.parentId
+  const targetProject = crossChannel
+    ? (await getRoadieMetadata(targetChannel)).projectDirectory
+    : projectDirectory
+  if (!targetProject) {
+    return new Error('The target channel is not bound to a Roadie project (no projectDirectory).')
+  }
   const [sessionId, getBackend, textChannel] = await Promise.all([
     getThreadSession(sourceThread.id),
     getAgentBackendProvider().initializeForDirectory(projectDirectory, {
       channelId: backendChannelId(sourceThread),
     }),
-    resolveTextChannel(sourceThread),
+    targetChannel ?? resolveTextChannel(sourceThread),
   ])
 
   if (!sessionId) {
@@ -172,12 +186,12 @@ export async function forkSessionToThread({
 
   const workspace = await resolveForkWorkspace({
     sourceSessionId: sessionId, sourceThreadId: sourceThread.id,
-    projectDirectory, sourceDirectory: sdkDirectory, prompt, userId,
-    platform: 'discord', spaceId: sourceThread.guildId, channelId: sourceThread.parentId ?? undefined,
+    projectDirectory: targetProject, sourceDirectory: sdkDirectory, prompt, userId,
+    platform: 'discord', spaceId: sourceThread.guildId, channelId: crossChannel ? targetChannel.id : sourceThread.parentId ?? undefined,
   })
   if (workspace instanceof Error) return workspace
-  const forkDirectory = workspace.binding?.workingDirectory ?? sdkDirectory
-  const forkProjectDirectory = workspace.binding?.projectDirectory ?? projectDirectory
+  const forkDirectory = workspace.binding?.workingDirectory ?? (crossChannel ? targetProject : sdkDirectory)
+  const forkProjectDirectory = workspace.binding?.projectDirectory ?? targetProject
 
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
@@ -186,7 +200,7 @@ export async function forkSessionToThread({
   const [forkSettled, threadSettled] = await Promise.allSettled([
     timed(backend.sessions.fork({
       sessionId, directory: sdkDirectory,
-      ...(workspace.binding && { targetDirectory: forkDirectory, targetProjectDirectory: forkProjectDirectory }),
+      ...((workspace.binding || crossChannel) && { targetDirectory: forkDirectory, targetProjectDirectory: forkProjectDirectory }),
       ...(fromMessageId && { messageId: fromMessageId }),
     })),
     timed(textChannel.threads.create({
@@ -229,13 +243,13 @@ export async function forkSessionToThread({
   await markPendingSessionTitle(forkedSession)
   const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
   const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
-  const channelId = sourceThread.parentId || sourceThread.id
+  const channelId = crossChannel ? targetChannel.id : sourceThread.parentId || sourceThread.id
   const sourceThreadLink = `<#${sourceThread.id}>`
 
   // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
   const copyStartedAt = Date.now()
   const [, copiedSystem, history] = await Promise.all([
-    copySessionPreferences({
+    crossChannel ? undefined : copySessionPreferences({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
       channelId,
@@ -243,7 +257,7 @@ export async function forkSessionToThread({
       getClient: () => backend,
       directory: sdkDirectory,
     }),
-    copySessionSystemPrompt({
+    crossChannel ? false : copySessionSystemPrompt({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
     }),
@@ -276,6 +290,15 @@ export async function forkSessionToThread({
           await setThreadWorkingDirectory({ threadId: thread.id, ...workspace.binding })
           return
         }
+        if (crossChannel) {
+          await setThreadWorkingDirectory({
+            threadId: thread.id,
+            projectDirectory: forkProjectDirectory,
+            workingDirectory: forkDirectory,
+            label: forkProjectDirectory,
+          })
+          return
+        }
         // The fork works where its source thread works.
         const source = await getThreadWorkingDirectory(sourceThread.id)
         if (!source) {
@@ -291,9 +314,11 @@ export async function forkSessionToThread({
     }),
     sendThreadMessage(
       thread,
-      trimmedPrompt
-        ? `Forked from ${sourceThreadLink}.\n${trimmedPrompt}`
-        : `Forked from ${sourceThreadLink}. Continue the conversation here.`,
+      crossChannel
+        ? `Forked from ${sourceThreadLink} in <#${sourceThread.parentId}>. Now working in the target project: ${forkProjectDirectory}.\n${trimmedPrompt || 'Continue the conversation here.'}`
+        : trimmedPrompt
+          ? `Forked from ${sourceThreadLink}.\n${trimmedPrompt}`
+          : `Forked from ${sourceThreadLink}. Continue the conversation here.`,
     ).catch((cause) => new DiscordOperationError({ operation: 'send fork notice', cause })),
   ])
   if (bindingResult instanceof Error) {
@@ -338,7 +363,9 @@ export async function forkSessionToThread({
     // would add a parent block to the system message and bust the prompt
     // cache shared with the source session.
     const forkedPrompt = [
-      `This conversation was forked from thread <#${sourceThread.id}> (session ${sessionId}) into a new thread.`,
+      crossChannel
+        ? `This conversation was forked from thread <#${sourceThread.id}> in <#${sourceThread.parentId}> (session ${sessionId}). Now working in the target project: ${forkProjectDirectory}.`
+        : `This conversation was forked from thread <#${sourceThread.id}> (session ${sessionId}) into a new thread.`,
       `Do not send messages to the source session unless the user asks you to.`,
       ``,
       trimmedPrompt,
@@ -390,8 +417,19 @@ export async function handleForkCommand({
   const prompt = interaction.options.getString('prompt') ?? undefined
   const fromMessageId = interaction.options.getString('from') ?? undefined
   try {
+    const targetChannelId = interaction.options.get('channel')?.value
+    let targetChannel: TextChannel | undefined
+    if (typeof targetChannelId === 'string' && targetChannelId !== threadChannel.parentId) {
+      const fetched = await interaction.client.channels.fetch(targetChannelId)
+      if (!fetched || fetched.type !== ChannelType.GuildText) {
+        await replyOrEditInteraction(interaction, 'The target must be a guild text channel.')
+        return
+      }
+      targetChannel = fetched
+    }
     const result = await forkSessionToThread({
       sourceThread: threadChannel,
+      targetChannel,
       projectDirectory: resolved.projectDirectory,
       sdkDirectory: resolved.workingDirectory,
       ...(fromMessageId && { fromMessageId }),

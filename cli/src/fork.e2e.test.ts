@@ -3,6 +3,7 @@
 // earlier user message, so the fork's history ends where that message began.
 
 import { describe, test, expect } from 'vitest'
+import { ApplicationCommandOptionType, ChannelType } from 'discord.js'
 import { findPi } from './agent-backend/pi/find-pi.js'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
 import { getDb, getThreadSession } from './database.js'
@@ -215,6 +216,52 @@ describe.skipIf(!findPi())('/fork', () => {
     const messages = await sessionMessages(forkSession)
     expect(messages.some((m) => m.message.role === 'assistant')).toBe(true)
   }, 25_000)
+
+  test('channel: moves the conversation and subsequent turns to the target project', async () => {
+    const targetId = '200000000000001076'
+    const targetDirectory = path.join(ctx.directories.root, 'cross-channel-project')
+    fs.mkdirSync(targetDirectory, { recursive: true })
+    const source = await startSource()
+    const owned = await ctx.discord.prisma.channel.findUniqueOrThrow({ where: { id: TEXT_CHANNEL_ID } })
+    await ctx.discord.prisma.channel.create({ data: {
+      id: targetId, guildId: owned.guildId, type: ChannelType.GuildText, name: 'fork-target',
+    } })
+    await setChannelDirectory({ channelId: targetId, directory: targetDirectory, channelType: 'text' })
+    let requested = false
+    const remove = addFilter('fork_workspace', (_provider, request) => {
+      expect(request.channelId).toBe(targetId)
+      expect(request.projectDirectory).toBe(targetDirectory)
+      expect(request.sourceDirectory).toBe(ctx.directories.projectDirectory)
+      requested = true
+      return null // Exercise the target-project fallback without a host binding.
+    })
+    try {
+      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({
+        name: 'fork', options: [
+          { name: 'channel', type: ApplicationCommandOptionType.Channel, value: targetId },
+          { name: 'prompt', type: ApplicationCommandOptionType.String, value: 'WORKSPACE_WRITE_MARKER cross-channel' },
+        ],
+      })
+      await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+      const fork = await ctx.discord.channel(targetId).waitForThread({ timeout: 6_000 })
+      expect('parent_id' in fork && fork.parent_id).toBe(targetId)
+      const sessionId = await waitForThreadSession(fork.id)
+      await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 10_000 })
+      expect(requested).toBe(true)
+      expect(await getThreadWorkingDirectory(fork.id)).toMatchObject({
+        projectDirectory: targetDirectory, workingDirectory: targetDirectory,
+      })
+      expect(await backendSessions().get({ sessionId, directory: targetDirectory })).toMatchObject({ directory: targetDirectory })
+      expect(fs.readFileSync(path.join(targetDirectory, 'fork-result.txt'), 'utf8')).toBe('isolated')
+      expect(await ctx.discord.thread(fork.id).text()).toContain(`Forked from <#${source.id}> in <#${TEXT_CHANNEL_ID}>. Now working in the target project: ${targetDirectory}.`)
+      // Reconstruct the runtime to check durable routing on the follow-up turn.
+      disposeRuntime(fork.id)
+      fs.unlinkSync(path.join(targetDirectory, 'fork-result.txt'))
+      await ctx.discord.thread(fork.id).user(TEST_USER_ID).sendMessage({ content: 'WORKSPACE_WRITE_MARKER follow-up' })
+      await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 10_000, afterMessageIncludes: 'WORKSPACE_WRITE_MARKER follow-up' })
+      expect(fs.readFileSync(path.join(targetDirectory, 'fork-result.txt'), 'utf8')).toBe('isolated')
+    } finally { remove() }
+  }, 35_000)
 
   test('from: forks from before an earlier user message', async () => {
     const source = await startSource()

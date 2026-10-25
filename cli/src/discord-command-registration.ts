@@ -5,6 +5,7 @@
 import { hostUpgradeHandler, isManagedInstall } from './service-lifecycle.js'
 import {
   type REST,
+  ChannelType,
   Routes,
   SlashCommandBuilder,
 } from 'discord.js'
@@ -284,6 +285,11 @@ export function buildStaticSlashCommands() {
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Branch this session into a new thread; the original keeps running'))
+      .addChannelOption((option) => option
+        .setName('channel')
+        .setDescription('Continue in another Roadie-bound project channel')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false))
       .addStringOption((option) => {
         option
           .setName('prompt')

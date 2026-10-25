@@ -9,7 +9,12 @@ workspace choice:
 ```
 
 Without a matching provider the fork stays an ordinary conversation fork in the
-source directory.
+source directory. With `/fork channel:<text channel>`, the thread instead starts
+in that channel's Roadie project. The target must have `projectDirectory`
+metadata. Its channel ID and project directory are sent to `fork_workspace`;
+`sourceDirectory` always remains the source thread's working directory. Without
+a provider, the fork works directly in the target project. Cross-channel forks
+use the target channel defaults and regenerate the system prompt.
 
 The `fork_workspace` filter supplies a provider with `provision(request)`. The
 request contains a unique request ID, source session, thread, project
