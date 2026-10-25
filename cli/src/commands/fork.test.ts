@@ -119,7 +119,7 @@ function createInteraction({ channel }: { channel: ThreadChannel }): ChatInputCo
   return {
     channel,
     user: { id: 'user-1', displayName: 'Tester' },
-    options: { getString: () => undefined },
+    options: { getString: () => undefined, get: () => null },
     deferred: false,
     deferReply: vi.fn(async () => ({})),
     editReply: vi.fn(async () => ({})),
