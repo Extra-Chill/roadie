@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.82.0] - 2026-10-25
+
+### Added
+- fork a session into another Roadie channel with /fork channel:
+
 ## [0.81.0] - 2026-10-24
 
 ### Added
