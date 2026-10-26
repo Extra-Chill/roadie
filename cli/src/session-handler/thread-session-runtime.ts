@@ -112,7 +112,6 @@ import {
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
-  pendingActionButtonContexts,
 } from '../commands/action-buttons.js'
 import {
   pendingFileUploadContexts,
@@ -1204,14 +1203,6 @@ export class ThreadSessionRuntime {
   private hasPendingInteractiveUi(): boolean {
     if (this.chat.interactions.hasPending()) return true
     if (this.hasPendingQuestionUi()) {
-      return true
-    }
-    const hasPendingActionButtons = [...pendingActionButtonContexts.values()].some(
-      (ctx) => {
-        return ctx.thread.id === this.thread.id
-      },
-    )
-    if (hasPendingActionButtons) {
       return true
     }
     const hasPendingFileUpload = [...pendingFileUploadContexts.values()].some(

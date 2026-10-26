@@ -9,12 +9,12 @@ import { ChannelType, Client, Events, GatewayIntentBits, MessageFlags, type Thre
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import { setDataDir } from './config.js'
 import { closeDb } from './db.js'
-import { initDatabase, setChannelDirectory, setThreadSession } from './database.js'
+import { deletePendingActionButtonsForThread, listPendingActionButtons, initDatabase, setChannelDirectory, setThreadSession } from './database.js'
 import { setChannelsConfigPath } from './channel-policy.js'
 import { addFilter, resetHooks } from './hooks.js'
 import { clearIdentityCache, resolvePerson, type Capability, type Person } from './identity.js'
 import { registerInteractionHandler } from './interaction-handler.js'
-import { pendingActionButtonContexts, showActionButtons } from './commands/action-buttons.js'
+import { showActionButtons } from './commands/action-buttons.js'
 import { cancelPendingFileUpload, pendingFileUploadContexts, showFileUploadButton } from './commands/file-upload.js'
 import { disposeRuntime } from './session-handler/runtime-registry.js'
 import { ThreadSessionRuntime } from './session-handler/thread-session-runtime.js'
@@ -83,8 +83,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   disposeRuntime(threadId)
   await cancelPendingFileUpload(threadId)
-  for (const context of pendingActionButtonContexts.values()) clearTimeout(context.timer)
-  pendingActionButtonContexts.clear()
+  await deletePendingActionButtonsForThread(threadId)
   resetHooks()
   // Also forgets an in-flight lookup, so no test inherits another's person.
   clearIdentityCache({ platform: 'discord', id: userId })
@@ -103,9 +102,10 @@ async function fetchThread(): Promise<ThreadChannel> {
 
 async function clickActionButton(label: string): Promise<string> {
   await showActionButtons({ thread: await fetchThread(), sessionId, directory, buttons: [{ label }] })
-  const [contextHash, context] = [...pendingActionButtonContexts.entries()][0]!
+  const [context] = await listPendingActionButtons(threadId)
+  const contextHash = context!.context_hash
   const { id } = await discord.thread(threadId).user(userId).clickButton({
-    messageId: context.messageId!,
+    messageId: context!.message_id,
     customId: `action_button:${contextHash}:0`,
   })
   return id
@@ -141,7 +141,7 @@ describe('component interactions with a slow identity lookup', () => {
     expect((notice!.flags ?? 0) & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral)
     expect(enqueueIncoming).not.toHaveBeenCalled()
     // The click was not consumed: the buttons stay pending.
-    expect(pendingActionButtonContexts.size).toBe(1)
+    expect(await listPendingActionButtons(threadId)).toHaveLength(1)
   }, 20_000)
 
   test('a modal button opens its modal from the last known person without awaiting the lookup', async () => {

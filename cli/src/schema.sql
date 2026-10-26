@@ -155,6 +155,17 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `pending_action_buttons` (
+	`context_hash` text PRIMARY KEY,
+	`session_id` text NOT NULL,
+	`thread_id` text NOT NULL,
+	`directory` text NOT NULL,
+	`message_id` text NOT NULL,
+	`buttons` text NOT NULL,
+	`expires_at` datetime NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `pending_session_titles` (
 	`session_id` text PRIMARY KEY,
 	`inherited_title` text NOT NULL,
@@ -309,6 +320,7 @@ CREATE TABLE IF NOT EXISTS `thread_worktrees` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `forum_sync_configs_app_id_forum_channel_id_key` ON `forum_sync_configs` (`app_id`,`forum_channel_id`);
 CREATE INDEX IF NOT EXISTS `ipc_requests_status_created_at_idx` ON `ipc_requests` (`status`,`created_at`);
+CREATE INDEX IF NOT EXISTS `pending_action_buttons_thread_id_idx` ON `pending_action_buttons` (`thread_id`);
 CREATE INDEX IF NOT EXISTS `scheduled_task_runs_task_status_idx` ON `scheduled_task_runs` (`scheduled_task_id`,`status`);
 CREATE INDEX IF NOT EXISTS `scheduled_task_runs_session_status_idx` ON `scheduled_task_runs` (`session_id`,`status`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_status_next_run_at_idx` ON `scheduled_tasks` (`status`,`next_run_at`);

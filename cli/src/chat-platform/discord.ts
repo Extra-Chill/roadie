@@ -12,7 +12,7 @@ import {
 import { showPermissionButtons, addPermissionRequestToContext, pendingPermissionContexts } from '../commands/permissions.js'
 import { showAskUserQuestionDropdowns, hasPendingQuestionForThread, cancelPendingQuestion } from '../commands/ask-question.js'
 import { showMcpFormDialog, pendingMcpFormContexts } from '../commands/mcp-form.js'
-import { showActionButtons, pendingActionButtonContexts } from '../commands/action-buttons.js'
+import { showActionButtons } from '../commands/action-buttons.js'
 import { pendingFileUploadContexts, showFileUploadButton } from '../commands/file-upload.js'
 import { DiscordOperationError } from '../errors.js'
 import type { ChatThread } from './types.js'
@@ -36,7 +36,6 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       upload: (input) => showFileUploadButton({ thread, ...input }),
       hasQuestion: () => hasPendingQuestionForThread(thread.id),
       hasPending: () => [
-        ...pendingActionButtonContexts.values(),
         ...pendingFileUploadContexts.values(),
         ...pendingPermissionContexts.values(),
         ...pendingMcpFormContexts.values(),

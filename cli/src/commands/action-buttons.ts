@@ -14,7 +14,14 @@ import {
 import { channelUsesChannelConversation } from '../channel-policy.js'
 import { createDiscordChatChannel } from '../chat-platform/discord.js'
 import crypto from 'node:crypto'
-import { getThreadSession } from '../database.js'
+import {
+  deletePendingActionButtons,
+  deletePendingActionButtonsForThread,
+  getPendingActionButtons,
+  getThreadSession,
+  insertPendingActionButtons,
+  type PendingActionButtons,
+} from '../database.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
@@ -44,21 +51,6 @@ export type ActionButtonsRequest = {
   buttons: ActionButtonOption[]
 }
 
-type PendingActionButtonsContext = {
-  sessionId: string
-  directory: string
-  thread: ThreadChannel
-  buttons: ActionButtonOption[]
-  contextHash: string
-  messageId?: string
-  resolved: boolean
-  timer: ReturnType<typeof setTimeout>
-}
-
-export const pendingActionButtonContexts = new Map<
-  string,
-  PendingActionButtonsContext
->()
 const pendingActionButtonRequests = new Map<string, ActionButtonsRequest>()
 const pendingActionButtonRequestWaiters = new Map<
   string,
@@ -121,35 +113,24 @@ function toButtonStyle(color?: ActionButtonColor): ButtonStyle {
   return ButtonStyle.Secondary
 }
 
-function resolveContext(context: PendingActionButtonsContext): boolean {
-  if (context.resolved) {
-    return false
-  }
-  context.resolved = true
-  clearTimeout(context.timer)
-  pendingActionButtonContexts.delete(context.contextHash)
-  return true
-}
-
-function updateButtonMessage({
+async function updateButtonMessage({
   context,
   status,
+  channel,
 }: {
-  context: PendingActionButtonsContext
+  context: PendingActionButtons
   status: string
-}): void {
-  if (!context.messageId) {
-    return
-  }
-  context.thread.messages
-    .fetch(context.messageId)
-    .then((message) => {
-      return message.edit({
-        content: `**Action Required**\n${status}`,
-        components: [],
-      })
+  channel: ThreadChannel | TextChannel
+}): Promise<void> {
+  try {
+    const message = await channel.messages.fetch(context.message_id)
+    await message.edit({
+      content: `**Action Required**\n${status}`,
+      components: [],
     })
-    .catch(() => {})
+  } catch {
+    // Deleted or inaccessible Discord messages must not prevent cleanup.
+  }
 }
 
 async function sendClickedActionToModel({
@@ -222,33 +203,12 @@ export async function showActionButtons({
     throw new Error('No valid buttons to display')
   }
 
-  for (const existing of pendingActionButtonContexts.values()) {
-    if (existing.thread.id === thread.id && resolveContext(existing)) {
-      updateButtonMessage({ context: existing, status: '_Replaced._' })
-    }
+  const replaced = await deletePendingActionButtonsForThread(thread.id)
+  for (const existing of replaced) {
+    await updateButtonMessage({ context: existing, status: '_Replaced._', channel: thread })
   }
 
   const contextHash = crypto.randomBytes(8).toString('hex')
-  const timer = setTimeout(() => {
-    const current = pendingActionButtonContexts.get(contextHash)
-    if (!current || current.resolved) {
-      return
-    }
-    resolveContext(current)
-    updateButtonMessage({ context: current, status: '_Expired_' })
-  }, PENDING_TTL_MS)
-
-  const context: PendingActionButtonsContext = {
-    sessionId,
-    directory,
-    thread,
-    buttons: safeButtons,
-    contextHash,
-    resolved: false,
-    timer,
-  }
-
-  pendingActionButtonContexts.set(contextHash, context)
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...safeButtons.map((button, index) => {
@@ -266,13 +226,19 @@ export async function showActionButtons({
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
 
-    context.messageId = message.id
+    await insertPendingActionButtons({
+      context_hash: contextHash,
+      session_id: sessionId,
+      thread_id: thread.id,
+      directory,
+      message_id: message.id,
+      buttons: safeButtons,
+      expires_at: new Date(Date.now() + PENDING_TTL_MS),
+    })
     logger.log(
       `Showed ${safeButtons.length} action button(s) for session ${sessionId}`,
     )
   } catch (error) {
-    clearTimeout(timer)
-    pendingActionButtonContexts.delete(contextHash)
     throw new Error('Failed to send action buttons', { cause: error })
   }
 }
@@ -291,9 +257,19 @@ export async function handleActionButton(
     return
   }
 
-  const context = pendingActionButtonContexts.get(contextHash)
-  if (!context || context.resolved) {
+  const context = await getPendingActionButtons(contextHash)
+  if (!context) {
     await replyOrEditInteraction(interaction, 'This action is no longer available.')
+    return
+  }
+
+  if (context.expires_at.getTime() <= Date.now()) {
+    if (await deletePendingActionButtons(contextHash)) {
+      await interaction.editReply({
+        content: '**Action Required**\n_Expired_',
+        components: [],
+      })
+    }
     return
   }
 
@@ -305,12 +281,12 @@ export async function handleActionButton(
   }
 
   // The interaction listener already acknowledged the click (deferUpdate).
-  const claimed = resolveContext(context)
+  const claimed = await deletePendingActionButtons(contextHash)
   if (!claimed) {
     return
   }
 
-  const channel = interaction.channel
+  const channel = interaction.channel ?? await interaction.client.channels.fetch(context.thread_id)
   // Inline channel conversations (`threads: none`) host buttons directly.
   const thread =
     channel?.isThread() ||
@@ -327,7 +303,7 @@ export async function handleActionButton(
   }
 
   const currentSessionId = await getThreadSession(thread.id)
-  if (!currentSessionId || currentSessionId !== context.sessionId) {
+  if (!currentSessionId || currentSessionId !== context.session_id) {
     await interaction.editReply({
       content: '**Action Required**\n_Expired due to session change._',
       components: [],
@@ -363,22 +339,4 @@ export async function handleActionButton(
       { flags: NOTIFY_MESSAGE_FLAGS },
     )
   }
-}
-
-/**
- * Dismiss pending action buttons when a thread's runtime is disposed.
- * Removes buttons from the message and cleans up context.
- */
-export function cancelPendingActionButtons(threadId: string): boolean {
-  for (const [, ctx] of pendingActionButtonContexts) {
-    if (ctx.thread.id !== threadId) {
-      continue
-    }
-    if (!resolveContext(ctx)) {
-      continue
-    }
-    updateButtonMessage({ context: ctx, status: '_Buttons dismissed._' })
-    return true
-  }
-  return false
 }

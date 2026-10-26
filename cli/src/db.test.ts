@@ -11,6 +11,11 @@ import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
+  deletePendingActionButtons,
+  deletePendingActionButtonsForThread,
+  getPendingActionButtons,
+  insertPendingActionButtons,
+  listPendingActionButtons,
   cleanupDeletedThread,
   completeIpcRequest,
   createIpcRequest,
@@ -96,6 +101,54 @@ describe('getDb', () => {
     expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
     expect(tablesFromSql).toContain('session_sleeps')
     expect(tablesFromSql).toContain('thread_queue_items')
+  })
+
+  test('pending action buttons survive a database reopen and can only be claimed once', async () => {
+    const contextHash = crypto.randomUUID()
+    const threadId = crypto.randomUUID()
+    const expiresAt = new Date(Date.now() + 86_400_000)
+    await insertPendingActionButtons({
+      context_hash: contextHash,
+      thread_id: threadId,
+      session_id: 'button-session',
+      directory: '/project',
+      message_id: 'button-message',
+      buttons: [{ label: 'Continue', color: 'green' }],
+      expires_at: expiresAt,
+    })
+    await closeDb()
+    expect(await getPendingActionButtons(contextHash)).toMatchObject({
+      session_id: 'button-session',
+      buttons: [{ label: 'Continue', color: 'green' }],
+      expires_at: expiresAt,
+    })
+    expect(await listPendingActionButtons(threadId)).toHaveLength(1)
+    const claims = await Promise.all([
+      deletePendingActionButtons(contextHash),
+      deletePendingActionButtons(contextHash),
+    ])
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    expect(await getPendingActionButtons(contextHash)).toBeUndefined()
+  })
+
+  test('deleting a thread removes its pending action buttons without affecting other threads', async () => {
+    const threadId = crypto.randomUUID()
+    const otherThreadId = crypto.randomUUID()
+    for (const id of [threadId, threadId, otherThreadId]) {
+      await insertPendingActionButtons({
+        context_hash: crypto.randomUUID(),
+        thread_id: id,
+        session_id: 'button-session',
+        directory: '/project',
+        message_id: crypto.randomUUID(),
+        buttons: [{ label: 'Continue' }],
+        expires_at: new Date(),
+      })
+    }
+    await cleanupDeletedThread(threadId)
+    expect(await listPendingActionButtons(threadId)).toEqual([])
+    expect(await listPendingActionButtons(otherThreadId)).toHaveLength(1)
+    await deletePendingActionButtonsForThread(otherThreadId)
   })
 
   test('persists local queue items in FIFO order', async () => {

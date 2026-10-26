@@ -42,6 +42,42 @@ export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
 export type ScheduledTaskRun = typeof schema.scheduled_task_runs.$inferSelect
 export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
 export type SessionSleep = typeof schema.session_sleeps.$inferSelect
+export type PendingActionButtons = typeof schema.pending_action_buttons.$inferSelect
+
+export async function insertPendingActionButtons(row: typeof schema.pending_action_buttons.$inferInsert) {
+  const db = await getDb()
+  await db.insert(schema.pending_action_buttons).values(row)
+}
+
+export async function getPendingActionButtons(contextHash: string) {
+  const db = await getDb()
+  return await db.query.pending_action_buttons.findFirst({
+    where: { context_hash: contextHash },
+  })
+}
+
+export async function listPendingActionButtons(threadId: string) {
+  const db = await getDb()
+  return await db.select().from(schema.pending_action_buttons)
+    .where(orm.eq(schema.pending_action_buttons.thread_id, threadId))
+}
+
+// DELETE RETURNING is the claim: only one click can consume a pending set.
+export async function deletePendingActionButtons(contextHash: string) {
+  const db = await getDb()
+  const rows = await db.delete(schema.pending_action_buttons)
+    .where(orm.eq(schema.pending_action_buttons.context_hash, contextHash))
+    .returning()
+  return rows[0]
+}
+
+export async function deletePendingActionButtonsForThread(threadId: string) {
+  const db = await getDb()
+  return await db.delete(schema.pending_action_buttons)
+    .where(orm.eq(schema.pending_action_buttons.thread_id, threadId))
+    .returning()
+}
+
 export type ModelPreference = { modelId: string; variant: string | null }
 
 function countRows<T>(rows: T[]) {
@@ -1437,6 +1473,8 @@ export async function cleanupDeletedThread(threadId: string) {
     ? binding?.session_id
     : undefined
   await db.batch([
+    db.delete(schema.pending_action_buttons)
+      .where(orm.eq(schema.pending_action_buttons.thread_id, threadId)),
     db.delete(schema.thread_queue_items)
       .where(orm.eq(schema.thread_queue_items.thread_id, threadId)),
     db.update(schema.session_sleeps)
