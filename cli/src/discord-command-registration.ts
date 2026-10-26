@@ -285,11 +285,6 @@ export function buildStaticSlashCommands() {
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Branch this session into a new thread; the original keeps running'))
-      .addChannelOption((option) => option
-        .setName('channel')
-        .setDescription('Continue in another Roadie-bound project channel')
-        .addChannelTypes(ChannelType.GuildText)
-        .setRequired(false))
       .addStringOption((option) => {
         option
           .setName('prompt')
@@ -305,6 +300,11 @@ export function buildStaticSlashCommands() {
           .setRequired(false)
         return option
       })
+      .addChannelOption((option) => option
+        .setName('channel')
+        .setDescription('Continue in another Roadie-bound project channel')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()

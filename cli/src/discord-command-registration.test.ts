@@ -37,10 +37,10 @@ describe('buildStaticSlashCommands', () => {
       expect(behavior.choices?.map((choice) => choice.value)).toEqual(['always', 'mention', 'listen', 'off'])
     }
   })
-  test('fork registers channel, prompt and from options without a workspace option', () => {
+  test('fork registers prompt, from and channel options, in that order without a workspace option', () => {
     const fork = buildStaticSlashCommands().find((command) => command.name === 'fork')
     expect(fork).toBeDefined()
-    expect(fork?.options?.map((option) => option.name)).toEqual(['channel', 'prompt', 'from'])
+    expect(fork?.options?.map((option) => option.name)).toEqual(['prompt', 'from', 'channel'])
     expect(fork?.options?.map((option) => option.name)).not.toContain('workspace')
   })
 })
