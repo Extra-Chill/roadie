@@ -102,16 +102,25 @@ function findRegister(mod: unknown): RoadiePlugin['register'] | undefined {
   return undefined
 }
 
+// Import targets already registered in this process.
+const registered = new Set<string>()
+
 /**
  * Load and register plugins in order. A plugin that fails to load or register
  * is an Error: misconfigured extensions must not silently change behavior.
+ * Each plugin registers once per process, however many callers load it.
  */
 export async function loadPlugins(specs: string[], { cwd = process.cwd() }: { cwd?: string } = {}): Promise<Error | string[]> {
   const loaded: string[] = []
   for (const spec of specs) {
+    const target = importTarget(spec, cwd)
+    if (registered.has(target)) {
+      loaded.push(spec)
+      continue
+    }
     let mod: unknown
     try {
-      mod = await import(importTarget(spec, cwd))
+      mod = await import(target)
     } catch (error) {
       return new Error(`Could not load plugin ${spec}: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
@@ -124,6 +133,7 @@ export async function loadPlugins(specs: string[], { cwd = process.cwd() }: { cw
     } catch (error) {
       return new Error(`Plugin ${spec} failed to register: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
+    registered.add(target)
     logger.log(`[PLUGINS] Loaded ${spec}`)
     loaded.push(spec)
   }

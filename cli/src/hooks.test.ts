@@ -99,6 +99,13 @@ describe('plugins', () => {
     expect(applyFilters('demo', '', {})).toBe('nd')
   })
 
+  test('a plugin loaded twice registers once', async () => {
+    const plugin = writePlugin(`export function register(roadie) { roadie.addFilter('once', (v) => v + 'x') }`)
+    expect(await loadPlugins([plugin])).toEqual([plugin])
+    expect(await loadPlugins([plugin])).toEqual([plugin])
+    expect(applyFilters('once', '', {})).toBe('x')
+  })
+
   test('a plugin that fails to load or lacks register is an error', async () => {
     expect(await loadPlugins(['/nope/missing-plugin.mjs'])).toBeInstanceOf(Error)
     const bad = writePlugin(`export const notRegister = 1`)
