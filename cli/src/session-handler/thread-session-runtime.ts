@@ -2342,6 +2342,16 @@ export class ThreadSessionRuntime {
       return
     }
 
+    if (event.status.state === 'compacting' || event.status.state === 'compaction-failed') {
+      this.typing.ensureTypingNow()
+      const notice = event.status.state === 'compacting'
+        ? `compacting context (${event.status.reason})…`
+        : `compaction failed: ${event.status.message}`
+      const result = await this.chat.sendNotice(asSubtext(notice))
+      if (result instanceof Error) discordLogger.error('Failed to send compaction notice:', result)
+      return
+    }
+
     if (event.status.state !== 'retry') {
       return
     }

@@ -194,7 +194,7 @@ export function isSessionBusy({
       return false
     }
     if (e.type === 'status') {
-      return e.status.state === 'busy'
+      return e.status.state === 'busy' || e.status.state === 'compacting'
     }
     const delegation = getDelegationPartStatus(e)
     if (delegation && !latestDelegationStatusByCallId.has(delegation.callId)) {
