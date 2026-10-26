@@ -222,6 +222,12 @@ export async function showActionButtons({
     throw new Error('No valid buttons to display')
   }
 
+  for (const existing of pendingActionButtonContexts.values()) {
+    if (existing.thread.id === thread.id && resolveContext(existing)) {
+      updateButtonMessage({ context: existing, status: '_Replaced._' })
+    }
+  }
+
   const contextHash = crypto.randomBytes(8).toString('hex')
   const timer = setTimeout(() => {
     const current = pendingActionButtonContexts.get(contextHash)
@@ -360,7 +366,7 @@ export async function handleActionButton(
 }
 
 /**
- * Dismiss pending action buttons for a thread (e.g. user sent a new message).
+ * Dismiss pending action buttons when a thread's runtime is disposed.
  * Removes buttons from the message and cleans up context.
  */
 export function cancelPendingActionButtons(threadId: string): boolean {
