@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.3] - 2026-10-26
+
+### Changed
+- Store pending action buttons in SQLite (first cook candidate)
+
 ## [0.83.2] - 2026-10-26
 
 ### Fixed
