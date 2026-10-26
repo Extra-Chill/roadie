@@ -40,7 +40,9 @@ import {
   REMOTE_SEND_MAX_BODY_BYTES,
   type RemoteSendEvent,
 } from './remote-send.js'
-import { getScheduledTask, getThreadIdBySessionId } from './database.js'
+import { getScheduledTask, getThreadIdBySessionId, getSessionTurnAttribution } from './database.js'
+import { forkSessionToThread, resolveForkTargetChannel } from './commands/fork.js'
+import { resolveWorkingDirectory } from './discord-utils.js'
 import {
   createOperatorRequest,
   expireOperatorRequest,
@@ -58,6 +60,7 @@ export const AGENT_OPERATOR_REQUESTS_PATH = '/roadie/agent/operator-requests'
 export const AGENT_SESSION_SEARCH_PATH = '/roadie/agent/sessions/search'
 export const AGENT_SESSION_EDITORS_PATH = '/roadie/agent/sessions/editors'
 export const AGENT_SESSION_ARCHIVE_PATH = '/roadie/agent/sessions/archive'
+export const AGENT_SESSION_FORK_PATH = '/roadie/agent/sessions/fork'
 export const AGENT_SESSION_TITLE_PATH = '/roadie/agent/sessions/title'
 export const AGENT_SESSIONS_PATH = '/roadie/agent/sessions'
 export const AGENT_TASKS_PATH = '/roadie/agent/tasks'
@@ -894,6 +897,51 @@ export async function handleAgentRequest(
   // Literal /roadie/agent/sessions/... paths are matched before the session
   // read pattern below, which would otherwise treat "editors" as a session id.
   try {
+    if (req.method === 'POST' && url.pathname === AGENT_SESSION_FORK_PATH) {
+      const body = await readJsonBody(req, res)
+      if (!body.ok) return
+      const fields = jsonObjectBody(body.value)
+      rejectUnknownFields(fields, ['sessionId', 'channel', 'prompt', 'from', 'json'])
+      const targetSession = bodyString(fields, 'sessionId') ?? sessionId
+      const channel = bodyString(fields, 'channel')
+      const prompt = bodyString(fields, 'prompt')
+      const fromMessageId = bodyString(fields, 'from')
+      if (fields.json !== undefined && typeof fields.json !== 'boolean') {
+        throw new AgentRequestError('json must be a boolean')
+      }
+      if (targetSession !== sessionId) {
+        respondJson(res, 403, { error: 'agent token is bound to another session' })
+        return
+      }
+      try {
+        const threadId = await getThreadIdBySessionId(sessionId)
+        if (!threadId) throw new Error('No thread mapped to this session')
+        const { getActiveDiscordClient } = await import('./discord-bot.js')
+        const client = getActiveDiscordClient()
+        if (!client) throw new Error('Fork requires the running Discord bot')
+        const sourceThread = await client.channels.fetch(threadId)
+        if (!sourceThread?.isThread()) throw new Error('The mapped channel is not a thread')
+        const resolved = await resolveWorkingDirectory({ channel: sourceThread })
+        if (!resolved) throw new Error('Could not determine project directory for this channel')
+        const actor = (await getSessionTurnAttribution(sessionId))?.actor
+        if (!actor || actor.platform !== 'discord') throw new Error('No Discord actor for this session')
+        const targetChannel = await resolveForkTargetChannel(sourceThread, channel)
+        const result = await forkSessionToThread({
+          sourceThread, targetChannel, projectDirectory: resolved.projectDirectory,
+          sdkDirectory: resolved.workingDirectory, prompt, fromMessageId,
+          userId: actor.id, username: actor.name ?? actor.id, actorVia: 'cli', appId: client.application?.id,
+        })
+        if (result instanceof Error) throw result
+        const output = { threadId: result.thread.id, url: result.thread.url, forkedSessionId: result.forkedSessionId }
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+        const data = fields.json ? JSON.stringify(output) : `Thread: ${output.threadId}\n${output.url}\nSession: ${output.forkedSessionId}`
+        res.write(`${JSON.stringify({ stream: 'stdout', data: `${data}\n` })}\n`)
+        res.end(`${JSON.stringify({ exit: 0 })}\n`)
+      } catch (error) {
+        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
     if (req.method === 'POST' && url.pathname === AGENT_SEND_PATH) {
       await runAgentSend(req, res)
       return

@@ -307,7 +307,7 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/connect` | Link your chat identity first if needed, then list your tool accounts with Connect/Disconnect buttons (OAuth sign-in: device grant, or browser PKCE when the server has none) |
 | `/start` | Show the welcome and how to use Roadie, privately |
 
-The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`), `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
+The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`, `fork`). In an agent shell, `roadie session fork [--session <id>] [--channel <id>] [--prompt <text>] [--from <message id>] [--json]` branches your session just like `/fork`, optionally into another Roadie-bound project channel. Other CLI commands include `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
 
 ## Troubleshooting
 

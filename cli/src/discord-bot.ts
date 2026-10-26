@@ -1604,6 +1604,11 @@ export async function startDiscordBot({
 
 const SHUTDOWN_DEADLINE_MS = 15_000
 let activeDiscordClient: Client | null = null
+
+/** The connected bot client; scoped in-process operations must not log in again. */
+export function getActiveDiscordClient(): Client | null {
+  return activeDiscordClient
+}
 let stopBackgroundWorkers: (() => Promise<void>) | null = null
 let selfRestarting = false
 let lifecycleHandlersRegistered = false

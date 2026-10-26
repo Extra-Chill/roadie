@@ -47,6 +47,7 @@ import {
   AGENT_SESSION_EDITORS_PATH,
   AGENT_SESSION_SEARCH_PATH,
   AGENT_SESSION_TITLE_PATH,
+  AGENT_SESSION_FORK_PATH,
   AGENT_OPERATOR_ONLY_MESSAGE,
   resolveAgentCredentials,
   runAgentCommand,
@@ -62,6 +63,28 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
+
+cli
+  .command('session fork', 'Fork your session into a new Discord thread')
+  .option('--session <id>', 'Source session (defaults to the agent token session)')
+  .option('--channel <id>', 'Target Roadie-bound channel')
+  .option('--prompt <text>', 'Start working on this prompt in the fork')
+  .option('--from <id>', 'Fork from before this message')
+  .option('--json', 'Output thread ID, URL and forked session ID as JSON')
+  .action(async (options) => {
+    const agent = resolveAgentCredentials()
+    if (agent instanceof Error) {
+      cliLogger.error(`session fork requires an agent shell (ROADIE_AGENT_SHELL) connected to the running Roadie bot: ${agent.message}`)
+      process.exitCode = 1
+      return
+    }
+    process.exitCode = await runAgentCommand({
+      agent, request: { method: 'POST', path: AGENT_SESSION_FORK_PATH, body: {
+        sessionId: options.session ?? process.env.ROADIE_SESSION_ID,
+        channel: options.channel, prompt: options.prompt, from: options.from, json: !!options.json,
+      } },
+    })
+  })
 
 async function resolveSessionDirectoryFromDatabase({
   sessionId,
