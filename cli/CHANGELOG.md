@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.1] - 2026-10-26
+
+### Changed
+- Keep action buttons after a typed reply; newer buttons replace older ones
+
 ## [0.83.0] - 2026-10-26
 
 ### Added
