@@ -131,7 +131,7 @@ describe('getDb', () => {
     expect(await getPendingActionButtons(contextHash)).toBeUndefined()
   })
 
-  test('dismissing pending action buttons removes all sets for only that thread', async () => {
+  test('deleting a thread removes its pending action buttons without affecting other threads', async () => {
     const threadId = crypto.randomUUID()
     const otherThreadId = crypto.randomUUID()
     for (const id of [threadId, threadId, otherThreadId]) {
@@ -145,7 +145,7 @@ describe('getDb', () => {
         expires_at: new Date(),
       })
     }
-    expect(await deletePendingActionButtonsForThread(threadId)).toHaveLength(2)
+    await cleanupDeletedThread(threadId)
     expect(await listPendingActionButtons(threadId)).toEqual([])
     expect(await listPendingActionButtons(otherThreadId)).toHaveLength(1)
     await deletePendingActionButtonsForThread(otherThreadId)

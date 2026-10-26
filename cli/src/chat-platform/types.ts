@@ -28,7 +28,7 @@ export type ChatInteractions = {
   actions(input: { sessionId: string; directory: string; buttons: ActionButtonOption[]; silent?: boolean }): Promise<void>
   upload(input: { sessionId: string; directory: string; prompt: string; maxFiles: number }): Promise<string[]>
   hasQuestion(): boolean
-  hasPending(): boolean | Promise<boolean>
+  hasPending(): boolean
   cancelQuestion(): Promise<void>
   dispose(): void
 }

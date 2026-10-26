@@ -1473,6 +1473,8 @@ export async function cleanupDeletedThread(threadId: string) {
     ? binding?.session_id
     : undefined
   await db.batch([
+    db.delete(schema.pending_action_buttons)
+      .where(orm.eq(schema.pending_action_buttons.thread_id, threadId)),
     db.delete(schema.thread_queue_items)
       .where(orm.eq(schema.thread_queue_items.thread_id, threadId)),
     db.update(schema.session_sleeps)

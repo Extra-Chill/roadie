@@ -157,6 +157,9 @@ export type AgentStatus =
   | { state: 'idle' }
   | { state: 'busy' }
   | { state: 'retry'; attempt: number; message: string; nextAt: number }
+  /** The backend is compacting context before the run can continue. */
+  | { state: 'compacting'; reason: string }
+  | { state: 'compaction-failed'; message: string }
 
 /** How a delegated child session last progressed. */
 export type AgentChildSessionStatus = 'running' | 'completed' | 'error'

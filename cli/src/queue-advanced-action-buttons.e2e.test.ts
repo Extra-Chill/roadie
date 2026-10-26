@@ -8,7 +8,7 @@ import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.
 import { getDb, getThreadSession, listPendingActionButtons } from './database.js'
 import { pending_action_buttons } from './schema.js'
 import { eq } from 'drizzle-orm'
-import { cancelPendingActionButtons, showActionButtons } from './commands/action-buttons.js'
+import { showActionButtons } from './commands/action-buttons.js'
 import { disposeRuntime } from './session-handler/runtime-registry.js'
 
 const TEXT_CHANNEL_ID = '200000000000001006'
@@ -85,12 +85,6 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         throw new Error('Expected Discord thread channel for action button test')
       }
 
-      // Leave no live runtime holding the old Discord client. Posting buttons
-      // does not require a runtime; the click must recreate it from storage.
-      if (restart) {
-        disposeRuntime(thread.id)
-        await cancelPendingActionButtons(thread.id)
-      }
       await showActionButtons({
         thread: channel,
         sessionId: currentSessionId,
@@ -111,6 +105,8 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         timeout: 12_000,
       })
 
+      // Dispose with buttons still pending: the click must rebuild the runtime.
+      disposeRuntime(thread.id)
       if (restart) {
         await ctx.restartBot()
         ctx.botClient.channels.cache.delete(thread.id)
@@ -162,7 +158,7 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
     }, 20_000)
   }
 
-  test('replaces older buttons, preserves them across typed replies, and expires or dismisses pending sets', async () => {
+  test('replaces older buttons, preserves them across typed replies, and expires pending sets', async () => {
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
       content: 'Reply with exactly: action-button-dismiss-setup',
     })
@@ -303,21 +299,6 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
       discord: ctx.discord,
       threadId: thread.id,
       text: '_Expired_',
-      timeout: 4_000,
-    })
-    expect(await listPendingActionButtons(thread.id)).toEqual([])
-
-    await showActionButtons({
-      thread: channel,
-      sessionId: currentSessionId,
-      directory: ctx.directories.projectDirectory,
-      buttons: [{ label: 'Dismiss on disposal' }],
-    })
-    disposeRuntime(thread.id)
-    await waitForBotMessageContaining({
-      discord: ctx.discord,
-      threadId: thread.id,
-      text: '_Buttons dismissed._',
       timeout: 4_000,
     })
     expect(await listPendingActionButtons(thread.id)).toEqual([])

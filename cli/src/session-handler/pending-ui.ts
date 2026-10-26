@@ -5,7 +5,6 @@ import type { AgentPermissionRequest } from '../agent-backend/events.js'
 import { getAgentBackendProvider } from '../agent-backend/registry.js'
 import { pendingPermissionContexts } from '../commands/permissions.js'
 import { cancelPendingQuestion } from '../commands/ask-question.js'
-import { cancelPendingActionButtons } from '../commands/action-buttons.js'
 import { cancelPendingFileUpload } from '../commands/file-upload.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 
@@ -63,9 +62,6 @@ export function cleanupPendingUiForThread(threadId: string): void {
 
   // Questions: cancel deletes pending context without replying to Pi.
   void cancelPendingQuestion(threadId)
-
-  // Action buttons: deletes persisted sets and dismisses their messages.
-  void cancelPendingActionButtons(threadId).catch(() => {})
 
   // File uploads: resolves with empty files so Pi unblocks.
   void cancelPendingFileUpload(threadId)

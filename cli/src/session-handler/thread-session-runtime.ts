@@ -420,47 +420,45 @@ export class ThreadSessionRuntime {
     return 0
   }
 
-  private async isIdleCandidateForInactivityCheck(): Promise<boolean> {
+  private isIdleCandidateForInactivityCheck(): boolean {
     if (this.isBusy()) {
       return false
     }
     if ((this.state?.queueItems.length ?? 0) > 0) {
       return false
     }
-    if (await this.hasPendingInteractiveUi()) {
+    if (this.hasPendingInteractiveUi()) {
       return false
     }
     if (this.processingAction || this.actionQueue.length > 0) {
       return false
     }
-    // Pending checks can yield to new session activity.
-    return !this.isBusy() && (this.state?.queueItems.length ?? 0) === 0
+    return true
   }
 
-  async getInactivitySnapshot({
+  getInactivitySnapshot({
     nowMs,
   }: {
     nowMs: number
-  }): Promise<{
+  }): {
     idleCandidate: boolean
     inactiveForMs: number
-  }> {
-    const idleCandidate = await this.isIdleCandidateForInactivityCheck()
+  } {
     const lastActivityTimestamp = this.getLastRuntimeActivityTimestamp({ nowMs })
     return {
-      idleCandidate,
+      idleCandidate: this.isIdleCandidateForInactivityCheck(),
       inactiveForMs: Math.max(0, nowMs - lastActivityTimestamp),
     }
   }
 
-  async isIdleForInactivityTimeout({
+  isIdleForInactivityTimeout({
     idleMs,
     nowMs,
   }: {
     idleMs: number
     nowMs: number
-  }): Promise<boolean> {
-    const snapshot = await this.getInactivitySnapshot({ nowMs })
+  }): boolean {
+    const snapshot = this.getInactivitySnapshot({ nowMs })
     if (!snapshot.idleCandidate) {
       return false
     }
@@ -1202,8 +1200,8 @@ export class ThreadSessionRuntime {
     return this.chat.interactions.hasQuestion()
   }
 
-  private async hasPendingInteractiveUi(): Promise<boolean> {
-    if (await this.chat.interactions.hasPending()) return true
+  private hasPendingInteractiveUi(): boolean {
+    if (this.chat.interactions.hasPending()) return true
     if (this.hasPendingQuestionUi()) {
       return true
     }
@@ -2332,6 +2330,16 @@ export class ThreadSessionRuntime {
 
     if (event.status.state === 'busy') {
       this.typing.ensureTypingNow()
+      return
+    }
+
+    if (event.status.state === 'compacting' || event.status.state === 'compaction-failed') {
+      this.typing.ensureTypingNow()
+      const notice = event.status.state === 'compacting'
+        ? `compacting context (${event.status.reason})…`
+        : `compaction failed: ${event.status.message}`
+      const result = await this.chat.sendNotice(asSubtext(notice))
+      if (result instanceof Error) discordLogger.error('Failed to send compaction notice:', result)
       return
     }
 

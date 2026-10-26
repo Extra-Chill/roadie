@@ -13,7 +13,6 @@ import { showPermissionButtons, addPermissionRequestToContext, pendingPermission
 import { showAskUserQuestionDropdowns, hasPendingQuestionForThread, cancelPendingQuestion } from '../commands/ask-question.js'
 import { showMcpFormDialog, pendingMcpFormContexts } from '../commands/mcp-form.js'
 import { showActionButtons } from '../commands/action-buttons.js'
-import { listPendingActionButtons } from '../database.js'
 import { pendingFileUploadContexts, showFileUploadButton } from '../commands/file-upload.js'
 import { DiscordOperationError } from '../errors.js'
 import type { ChatThread } from './types.js'
@@ -36,12 +35,11 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
       actions: async (input) => { await showActionButtons({ thread, ...input }) },
       upload: (input) => showFileUploadButton({ thread, ...input }),
       hasQuestion: () => hasPendingQuestionForThread(thread.id),
-      hasPending: async () => [
+      hasPending: () => [
         ...pendingFileUploadContexts.values(),
         ...pendingPermissionContexts.values(),
         ...pendingMcpFormContexts.values(),
-      ].some((context) => context.thread.id === thread.id)
-        || (await listPendingActionButtons(thread.id)).length > 0,
+      ].some((context) => context.thread.id === thread.id),
       cancelQuestion: async () => { await cancelPendingQuestion(thread.id) },
       dispose: () => {},
     },

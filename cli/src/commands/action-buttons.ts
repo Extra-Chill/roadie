@@ -22,7 +22,6 @@ import {
   insertPendingActionButtons,
   type PendingActionButtons,
 } from '../database.js'
-import { getActiveDiscordClient } from '../discord-bot.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
@@ -121,12 +120,10 @@ async function updateButtonMessage({
 }: {
   context: PendingActionButtons
   status: string
-  channel?: ThreadChannel | TextChannel
+  channel: ThreadChannel | TextChannel
 }): Promise<void> {
   try {
-    const target = channel ?? await getActiveDiscordClient()?.channels.fetch(context.thread_id)
-    if (!target || !('messages' in target)) return
-    const message = await target.messages.fetch(context.message_id)
+    const message = await channel.messages.fetch(context.message_id)
     await message.edit({
       content: `**Action Required**\n${status}`,
       components: [],
@@ -342,16 +339,4 @@ export async function handleActionButton(
       { flags: NOTIFY_MESSAGE_FLAGS },
     )
   }
-}
-
-/**
- * Dismiss pending action buttons when a thread's runtime is disposed.
- * Removes buttons from the message and cleans up context.
- */
-export async function cancelPendingActionButtons(threadId: string): Promise<void> {
-  const rows = await deletePendingActionButtonsForThread(threadId)
-  await Promise.all(rows.map((context) => updateButtonMessage({
-    context,
-    status: '_Buttons dismissed._',
-  })))
 }

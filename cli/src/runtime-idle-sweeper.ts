@@ -30,7 +30,7 @@ export function startRuntimeIdleSweeper({
 
     const currentSweepPromise = (async () => {
       const nowMs = Date.now()
-      const disposeResult = await disposeInactiveRuntimes({
+      const disposeResult = disposeInactiveRuntimes({
         idleMs: runtimeIdleMs,
         nowMs,
       })

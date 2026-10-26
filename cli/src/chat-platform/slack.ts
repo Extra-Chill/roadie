@@ -240,7 +240,7 @@ export class SlackChatThread implements ChatThread {
         return new Promise<string[]>((resolve) => this.uploadWaiters.set(hash, resolve))
       },
       hasQuestion: () => [...this.pending.values()].some((item) => item.kind === 'question'),
-      hasPending: () => this.pending.size > 0,
+      hasPending: () => [...this.pending.values()].some((item) => item.kind !== 'actions'),
       cancelQuestion: async () => {
         for (const [hash, item] of this.pending)
           if (item.kind === 'question') await this.remove(hash)

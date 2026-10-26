@@ -371,10 +371,12 @@ export class PiEventTranslator {
         return record.success
           ? [{ type: 'status', sessionId, status: { state: 'busy' } }]
           : [{ type: 'error', sessionId, error: { name: 'APIError', message: String(record.finalError ?? 'Retries exhausted') } }]
+      case 'compaction_start':
+        return [{ type: 'status', sessionId, status: { state: 'compacting', reason: String(record.reason ?? 'threshold') } }]
       case 'compaction_end':
-        return record.errorMessage
-          ? [{ type: 'notice', message: `Compaction failed: ${String(record.errorMessage)}`, level: 'warning' }]
-          : []
+        return record.errorMessage && !record.aborted
+          ? [{ type: 'status', sessionId, status: { state: 'compaction-failed', message: String(record.errorMessage) } }]
+          : [{ type: 'status', sessionId, status: { state: 'busy' } }]
       case 'extension_error':
         return [{ type: 'notice', title: 'Pi extension error', message: String(record.error ?? ''), level: 'error' }]
       default:
