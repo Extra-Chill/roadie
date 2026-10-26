@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.83.2] - 2026-10-26
+
+### Fixed
+- show Pi auto-compaction in the thread instead of going silent
+- register each plugin once per process so roadie upgrade reaches the host handler
+
 ## [0.83.1] - 2026-10-26
 
 ### Changed
