@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.0] - 2026-10-26
+
+### Added
+- agents fork their own session with roadie session fork
+
 ## [0.82.1] - 2026-10-26
 
 ### Fixed
