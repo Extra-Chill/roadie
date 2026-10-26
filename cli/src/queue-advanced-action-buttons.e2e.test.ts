@@ -44,28 +44,6 @@ async function waitForPendingActionButtons({
   throw new Error('Timed out waiting for pending action buttons context')
 }
 
-async function waitForNoPendingActionButtons({
-  threadId,
-  timeoutMs,
-}: {
-  threadId: string
-  timeoutMs: number
-}): Promise<void> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const stillPending = [...pendingActionButtonContexts.values()].some((context) => {
-      return context.thread.id === threadId
-    })
-    if (!stillPending) {
-      return
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100)
-    })
-  }
-  throw new Error('Timed out waiting for action buttons cleanup')
-}
-
 describe.skipIf(!findPi())('queue advanced: action buttons', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
@@ -182,7 +160,7 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
   )
 
   test(
-    'manual thread message dismisses pending action buttons',
+    'newer buttons replace older ones; a typed reply leaves them clickable',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: action-button-dismiss-setup',
@@ -227,28 +205,58 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         thread: channel,
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
-        buttons: [{ label: 'Dismiss me', color: 'white' }],
+        buttons: [{ label: 'Earlier choice', color: 'white' }],
       })
-
       await waitForPendingActionButtons({
         threadId: thread.id,
         timeoutMs: 4_000,
       })
 
+      await showActionButtons({
+        thread: channel,
+        sessionId: currentSessionId,
+        directory: ctx.directories.projectDirectory,
+        buttons: [{ label: 'Dismiss me', color: 'white' }],
+      })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'Replaced.',
+        timeout: 4_000,
+      })
+      expect(
+        [...pendingActionButtonContexts.values()]
+          .filter((context) => context.thread.id === thread.id)
+          .map((context) => context.buttons[0]?.label),
+      ).toEqual(['Dismiss me'])
+
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: post-dismiss-user-message',
       })
 
-      await waitForBotMessageContaining({
+      await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        text: 'Buttons dismissed.',
         timeout: 4_000,
+        afterMessageIncludes: 'post-dismiss-user-message',
+        afterAuthorId: TEST_USER_ID,
       })
-
-      await waitForNoPendingActionButtons({
+      const action = await waitForPendingActionButtons({
         threadId: thread.id,
         timeoutMs: 4_000,
+      })
+
+      const interaction = await th.user(TEST_USER_ID).clickButton({
+        messageId: action.messageId,
+        customId: `action_button:${action.contextHash}:0`,
+      })
+      await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'Dismiss me',
+        afterAuthorId: ctx.discord.botUserId,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -260,11 +268,19 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
         **Action Required**
-        _Buttons dismissed._
+        _Replaced._
+        **Action Required**
+        _Selected: Dismiss me_
         --- from: user (queue-action-tester)
-        Reply with exactly: post-dismiss-user-message"
+        Reply with exactly: post-dismiss-user-message
+        --- from: assistant (TestBot)
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
+        [user clicks button]
+        » **queue-action-tester:** Dismiss me
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
-      expect(timeline).toContain('_Buttons dismissed._')
       expect(timeline).toContain('post-dismiss-user-message')
     },
     20_000,

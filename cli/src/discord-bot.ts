@@ -63,7 +63,6 @@ import {
   preprocessChannelMessage,
   resolveMessagePrompt,
 } from './message-preprocessing.js'
-import { cancelPendingActionButtons } from './commands/action-buttons.js'
 import { cancelPendingQuestion, hasPendingQuestionForThread } from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelPendingPermission } from './commands/permissions.js'
@@ -975,7 +974,6 @@ export async function startDiscordBot({
         // the active run or dismiss pending UI.
         const dismissSourceUi = async () => {
           if (message.author.bot || isCliInjectedPrompt || intake.outcome === 'context') return
-          cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
           if (dismissedPermission) {
@@ -1169,7 +1167,6 @@ export async function startDiscordBot({
           await recordConversationAdmission({ scope, actor: { platform: 'discord', id: message.author.id }, starter: isNewConversation, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
 
           if (!message.author.bot && !isCliInjectedPrompt && intake.outcome !== 'context') {
-            cancelPendingActionButtons(channel.id)
             cancelHtmlActionsForThread(channel.id)
             if (await cancelPendingPermission(channel.id)) {
               await runtime.abortActiveRunAndWait({ reason: 'user sent a new message while permission was pending' })
