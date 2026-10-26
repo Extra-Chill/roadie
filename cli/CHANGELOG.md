@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.82.1] - 2026-10-26
+
+### Fixed
+- list /fork prompt first and channel last
+
 ## [0.82.0] - 2026-10-25
 
 ### Added
