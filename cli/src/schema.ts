@@ -385,6 +385,22 @@ export const session_sleeps = sqliteCore.sqliteTable('session_sleeps', {
   sqliteCore.index('session_sleeps_status_wake_at_idx').on(table.status, table.wake_at),
 ])
 
+export const pending_action_buttons = sqliteCore.sqliteTable('pending_action_buttons', {
+  context_hash: sqliteCore.text('context_hash').primaryKey().notNull(),
+  session_id: sqliteCore.text('session_id').notNull(),
+  thread_id: sqliteCore.text('thread_id').notNull(),
+  directory: sqliteCore.text('directory').notNull(),
+  message_id: sqliteCore.text('message_id').notNull(),
+  buttons: sqliteCore.text('buttons', { mode: 'json' }).$type<{
+    label: string
+    color?: 'white' | 'blue' | 'green' | 'red'
+  }[]>().notNull(),
+  expires_at: datetime('expires_at').notNull(),
+  created_at: datetime('created_at').notNull().default(orm.sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  sqliteCore.index('pending_action_buttons_thread_id_idx').on(table.thread_id),
+])
+
 export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
   id: sqliteCore.text('id').primaryKey().notNull().$defaultFn(() => crypto.randomUUID()),
   type: sqliteCore.text('type', { enum: ['file_upload', 'action_buttons'] }).notNull(),
@@ -429,6 +445,7 @@ export const relations = defineRelations({
   session_start_sources,
   forum_sync_configs,
   session_sleeps,
+  pending_action_buttons,
   ipc_requests,
   credential_owners,
   credential_payer_notices,

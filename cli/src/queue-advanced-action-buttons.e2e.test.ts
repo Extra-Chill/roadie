@@ -3,19 +3,13 @@
 
 import { describe, test, expect } from 'vitest'
 import { findPi } from './agent-backend/pi/find-pi.js'
-import {
-  setupQueueAdvancedSuite,
-  TEST_USER_ID,
-} from './queue-advanced-e2e-setup.js'
-import {
-  waitForBotMessageContaining,
-  waitForFooterMessage,
-} from './test-utils.js'
-import { getThreadSession } from './database.js'
-import {
-  pendingActionButtonContexts,
-  showActionButtons,
-} from './commands/action-buttons.js'
+import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
+import { getDb, getThreadSession, listPendingActionButtons } from './database.js'
+import { pending_action_buttons } from './schema.js'
+import { eq } from 'drizzle-orm'
+import { cancelPendingActionButtons, showActionButtons } from './commands/action-buttons.js'
+import { disposeRuntime } from './session-handler/runtime-registry.js'
 
 const TEXT_CHANNEL_ID = '200000000000001006'
 
@@ -28,14 +22,9 @@ async function waitForPendingActionButtons({
 }): Promise<{ contextHash: string; messageId: string }> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    const entry = [...pendingActionButtonContexts.entries()].find(([, context]) => {
-      return context.thread.id === threadId && Boolean(context.messageId)
-    })
+    const [entry] = await listPendingActionButtons(threadId)
     if (entry) {
-      const [contextHash, context] = entry
-      if (context.messageId) {
-        return { contextHash, messageId: context.messageId }
-      }
+      return { contextHash: entry.context_hash, messageId: entry.message_id }
     }
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 100)
@@ -52,17 +41,19 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
     username: 'queue-action-tester',
   })
 
-  test(
-    'button click should continue the session with a follow-up assistant reply',
-    async () => {
-      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: action-button-setup',
-      })
+  for (const restart of [false, true]) {
+    test(`button click continues the session with a follow-up assistant reply (restart: ${restart})`, async () => {
+      await ctx.discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .sendMessage({
+          content: `Reply with exactly: action-button-setup${restart ? '-restart' : ''}`,
+        })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
         predicate: (t) => {
-          return t.name === 'Reply with exactly: action-button-setup'
+          return t.name === `Reply with exactly: action-button-setup${restart ? '-restart' : ''}`
         },
       })
 
@@ -94,6 +85,12 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         throw new Error('Expected Discord thread channel for action button test')
       }
 
+      // Leave no live runtime holding the old Discord client. Posting buttons
+      // does not require a runtime; the click must recreate it from storage.
+      if (restart) {
+        disposeRuntime(thread.id)
+        await cancelPendingActionButtons(thread.id)
+      }
       await showActionButtons({
         thread: channel,
         sessionId: currentSessionId,
@@ -113,6 +110,12 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         text: 'Action Required',
         timeout: 12_000,
       })
+
+      if (restart) {
+        await ctx.restartBot()
+        ctx.botClient.channels.cache.delete(thread.id)
+      }
+      expect(await listPendingActionButtons(thread.id)).toHaveLength(1)
 
       const interaction = await th.user(TEST_USER_ID).clickButton({
         messageId: action.messageId,
@@ -140,7 +143,8 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
       })
 
       const timeline = await th.text({ showInteractions: true })
-      expect(timeline).toMatchInlineSnapshot(`
+      expect(timeline.replace('action-button-setup-restart', 'action-button-setup'))
+        .toMatchInlineSnapshot(`
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
@@ -155,112 +159,107 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
       expect(timeline).toContain('action-buttons-click-continued')
-    },
-    20_000,
-  )
+    }, 20_000)
+  }
 
-  test(
-    'newer buttons replace older ones; a typed reply leaves them clickable',
-    async () => {
-      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: action-button-dismiss-setup',
-      })
+  test('replaces older buttons, preserves them across typed replies, and expires or dismisses pending sets', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'Reply with exactly: action-button-dismiss-setup',
+    })
 
-      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: action-button-dismiss-setup'
-        },
-      })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (t) => {
+        return t.name === 'Reply with exactly: action-button-dismiss-setup'
+      },
+    })
 
-      const th = ctx.discord.thread(thread.id)
+    const th = ctx.discord.thread(thread.id)
 
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'ok',
-        timeout: 4_000,
-      })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      userId: TEST_USER_ID,
+      text: 'ok',
+      timeout: 4_000,
+    })
 
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'ok',
-        afterAuthorId: ctx.discord.botUserId,
-      })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'ok',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
-      const currentSessionId = await getThreadSession(thread.id)
-      if (!currentSessionId) {
-        throw new Error('Expected thread session id before showing action buttons')
-      }
+    const currentSessionId = await getThreadSession(thread.id)
+    if (!currentSessionId) {
+      throw new Error('Expected thread session id before showing action buttons')
+    }
 
-      const channel = await ctx.botClient.channels.fetch(thread.id)
-      if (!channel || !channel.isThread()) {
-        throw new Error('Expected Discord thread channel for action button test')
-      }
+    const channel = await ctx.botClient.channels.fetch(thread.id)
+    if (!channel || !channel.isThread()) {
+      throw new Error('Expected Discord thread channel for action button test')
+    }
 
-      await showActionButtons({
-        thread: channel,
-        sessionId: currentSessionId,
-        directory: ctx.directories.projectDirectory,
-        buttons: [{ label: 'Earlier choice', color: 'white' }],
-      })
-      await waitForPendingActionButtons({
-        threadId: thread.id,
-        timeoutMs: 4_000,
-      })
+    await showActionButtons({
+      thread: channel,
+      sessionId: currentSessionId,
+      directory: ctx.directories.projectDirectory,
+      buttons: [{ label: 'Earlier choice', color: 'white' }],
+    })
+    await waitForPendingActionButtons({
+      threadId: thread.id,
+      timeoutMs: 4_000,
+    })
 
-      await showActionButtons({
-        thread: channel,
-        sessionId: currentSessionId,
-        directory: ctx.directories.projectDirectory,
-        buttons: [{ label: 'Dismiss me', color: 'white' }],
-      })
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'Replaced.',
-        timeout: 4_000,
-      })
-      expect(
-        [...pendingActionButtonContexts.values()]
-          .filter((context) => context.thread.id === thread.id)
-          .map((context) => context.buttons[0]?.label),
-      ).toEqual(['Dismiss me'])
+    await showActionButtons({
+      thread: channel,
+      sessionId: currentSessionId,
+      directory: ctx.directories.projectDirectory,
+      buttons: [{ label: 'Dismiss me', color: 'white' }],
+    })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'Replaced.',
+      timeout: 4_000,
+    })
+    expect(
+      (await listPendingActionButtons(thread.id)).map((context) => context.buttons[0]?.label),
+    ).toEqual(['Dismiss me'])
 
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: post-dismiss-user-message',
-      })
+    await th.user(TEST_USER_ID).sendMessage({
+      content: 'Reply with exactly: post-dismiss-user-message',
+    })
 
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'post-dismiss-user-message',
-        afterAuthorId: TEST_USER_ID,
-      })
-      const action = await waitForPendingActionButtons({
-        threadId: thread.id,
-        timeoutMs: 4_000,
-      })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'post-dismiss-user-message',
+      afterAuthorId: TEST_USER_ID,
+    })
+    const action = await waitForPendingActionButtons({
+      threadId: thread.id,
+      timeoutMs: 4_000,
+    })
 
-      const interaction = await th.user(TEST_USER_ID).clickButton({
-        messageId: action.messageId,
-        customId: `action_button:${action.contextHash}:0`,
-      })
-      await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
-      await waitForFooterMessage({
-        discord: ctx.discord,
-        threadId: thread.id,
-        timeout: 12_000,
-        afterMessageIncludes: 'Dismiss me',
-        afterAuthorId: ctx.discord.botUserId,
-      })
+    const interaction = await th.user(TEST_USER_ID).clickButton({
+      messageId: action.messageId,
+      customId: `action_button:${action.contextHash}:0`,
+    })
+    await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 12_000,
+      afterMessageIncludes: 'Dismiss me',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
-      const timeline = await th.text({ showInteractions: true })
-      expect(timeline).toMatchInlineSnapshot(`
+    const timeline = await th.text({ showInteractions: true })
+    expect(timeline).toMatchInlineSnapshot(`
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
@@ -281,8 +280,46 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
       `)
-      expect(timeline).toContain('post-dismiss-user-message')
-    },
-    20_000,
-  )
+    expect(timeline).toContain('post-dismiss-user-message')
+
+    await showActionButtons({
+      thread: channel,
+      sessionId: currentSessionId,
+      directory: ctx.directories.projectDirectory,
+      buttons: [{ label: 'Expired choice' }],
+    })
+    const expired = await waitForPendingActionButtons({ threadId: thread.id, timeoutMs: 4_000 })
+    const db = await getDb()
+    await db
+      .update(pending_action_buttons)
+      .set({ expires_at: new Date(Date.now() - 1_000) })
+      .where(eq(pending_action_buttons.context_hash, expired.contextHash))
+    const expiredClick = await th.user(TEST_USER_ID).clickButton({
+      messageId: expired.messageId,
+      customId: `action_button:${expired.contextHash}:0`,
+    })
+    await th.waitForInteractionAck({ interactionId: expiredClick.id, timeout: 4_000 })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: '_Expired_',
+      timeout: 4_000,
+    })
+    expect(await listPendingActionButtons(thread.id)).toEqual([])
+
+    await showActionButtons({
+      thread: channel,
+      sessionId: currentSessionId,
+      directory: ctx.directories.projectDirectory,
+      buttons: [{ label: 'Dismiss on disposal' }],
+    })
+    disposeRuntime(thread.id)
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: '_Buttons dismissed._',
+      timeout: 4_000,
+    })
+    expect(await listPendingActionButtons(thread.id)).toEqual([])
+  }, 20_000)
 })

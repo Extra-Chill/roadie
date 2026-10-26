@@ -14,7 +14,7 @@ const TYPING_REPULSE_DEBOUNCE_MS = 500
 export type TypingKeepaliveOptions = {
   supportsTyping: () => boolean
   isDisposed: () => boolean
-  hasPendingInteractiveUi: () => boolean
+  hasPendingInteractiveUi: () => boolean | Promise<boolean>
   getSessionId: () => string | undefined
   isSessionBusy: (sessionId: string) => boolean
   sendTyping: () => Promise<Error | void>
@@ -29,8 +29,8 @@ export class TypingKeepalive {
     this.opts = opts
     this.typingRepulseDebounce = createDebouncedTimeout({
       delayMs: TYPING_REPULSE_DEBOUNCE_MS,
-      callback: () => {
-        if (!this.shouldTypeNow()) {
+      callback: async () => {
+        if (!await this.shouldTypeNow()) {
           return
         }
         this.restartTypingKeepalive({ sendNow: true })
@@ -38,14 +38,16 @@ export class TypingKeepalive {
     })
   }
 
-  private shouldTypeNow(): boolean {
+  private async shouldTypeNow(): Promise<boolean> {
     if (!this.opts.supportsTyping()) return false
     if (this.opts.isDisposed()) {
       return false
     }
-    if (this.opts.hasPendingInteractiveUi()) {
+    if (await this.opts.hasPendingInteractiveUi()) {
       return false
     }
+    // Database-backed pending checks yield; disposal may happen meanwhile.
+    if (this.opts.isDisposed()) return false
     const sessionId = this.opts.getSessionId()
     if (!sessionId) {
       return false
@@ -79,7 +81,7 @@ export class TypingKeepalive {
         return
       }
       void (async () => {
-        if (!this.shouldTypeNow()) {
+        if (!await this.shouldTypeNow()) {
           this.stopTyping()
           return
         }
@@ -87,7 +89,7 @@ export class TypingKeepalive {
         if (this.typingKeepaliveTimeout !== activeTimer) {
           return
         }
-        if (!this.shouldTypeNow()) {
+        if (!await this.shouldTypeNow()) {
           this.stopTyping()
           return
         }
@@ -105,8 +107,8 @@ export class TypingKeepalive {
     this.armTypingKeepalive({ delayMs: sendNow ? 0 : 7000 })
   }
 
-  ensureTypingNow(): void {
-    if (!this.shouldTypeNow()) {
+  async ensureTypingNow(): Promise<void> {
+    if (!await this.shouldTypeNow()) {
       this.stopTyping()
       return
     }
@@ -117,8 +119,8 @@ export class TypingKeepalive {
     this.typingRepulseDebounce.trigger()
   }
 
-  ensureTypingKeepalive(): void {
-    if (!this.shouldTypeNow()) {
+  async ensureTypingKeepalive(): Promise<void> {
+    if (!await this.shouldTypeNow()) {
       this.stopTyping()
       return
     }
@@ -133,8 +135,8 @@ export class TypingKeepalive {
     this.clearTypingKeepalive()
   }
 
-  requestTypingRepulse(): void {
-    if (!this.shouldTypeNow()) {
+  async requestTypingRepulse(): Promise<void> {
+    if (!await this.shouldTypeNow()) {
       return
     }
     this.typingRepulseDebounce.trigger()

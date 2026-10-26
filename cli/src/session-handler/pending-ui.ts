@@ -64,8 +64,8 @@ export function cleanupPendingUiForThread(threadId: string): void {
   // Questions: cancel deletes pending context without replying to Pi.
   void cancelPendingQuestion(threadId)
 
-  // Action buttons: resolves context and clears timer.
-  cancelPendingActionButtons(threadId)
+  // Action buttons: deletes persisted sets and dismisses their messages.
+  void cancelPendingActionButtons(threadId).catch(() => {})
 
   // File uploads: resolves with empty files so Pi unblocks.
   void cancelPendingFileUpload(threadId)

@@ -946,6 +946,8 @@ export type QueueAdvancedContext = {
    * resume from their files.
    */
   restartPi: () => Promise<void>
+  /** Reconnect Discord and Pi over the same database and digital twin. */
+  restartBot: () => Promise<void>
 }
 
 export const TEST_USER_ID = '200000000000000991'
@@ -996,6 +998,20 @@ export function setupQueueAdvancedSuite({
       return ctx.backend.modelServer
     },
     restartPi: () => ctx.backend.restart(),
+    restartBot: async () => {
+      stopIpcPolling()
+      await ctx.botClient.destroy()
+      await ctx.backend.restart()
+      await closeDatabase()
+      await initDatabase()
+      ctx.botClient = createDiscordJsClient({ restUrl: ctx.discord.restUrl })
+      await startDiscordBot({
+        token: ctx.discord.botToken,
+        appId: ctx.discord.botUserId,
+        discordClient: ctx.botClient,
+      })
+      await startIpcPolling({ discordClient: ctx.botClient })
+    },
   }
 
   let previousDefaultVerbosity: VerbosityLevel | null = null

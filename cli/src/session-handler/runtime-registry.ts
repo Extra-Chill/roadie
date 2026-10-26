@@ -321,23 +321,22 @@ export function getRuntimeCount(): number {
   return runtimes.size
 }
 
-export function disposeInactiveRuntimes({
+export async function disposeInactiveRuntimes({
   idleMs,
   nowMs = Date.now(),
 }: {
   idleMs: number
   nowMs?: number
-}): {
+}): Promise<{
   disposedThreadIds: string[]
   disposedDirectories: string[]
-} {
-  const candidates = [...runtimes.entries()].filter(([, runtime]) => {
-    return runtime.isIdleForInactivityTimeout({ idleMs, nowMs })
-  })
+}> {
   const disposedDirectories = new Set<string>()
   const disposedThreadIds: string[] = []
 
-  for (const [threadId, runtime] of candidates) {
+  for (const [threadId, runtime] of runtimes.entries()) {
+    if (!await runtime.isIdleForInactivityTimeout({ idleMs, nowMs })) continue
+    if (runtimes.get(threadId) !== runtime) continue
     runtime.dispose()
     runtimes.delete(threadId)
     threadState.removeThread(threadId)

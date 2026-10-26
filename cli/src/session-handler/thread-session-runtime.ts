@@ -112,7 +112,6 @@ import {
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
-  pendingActionButtonContexts,
 } from '../commands/action-buttons.js'
 import {
   pendingFileUploadContexts,
@@ -421,45 +420,47 @@ export class ThreadSessionRuntime {
     return 0
   }
 
-  private isIdleCandidateForInactivityCheck(): boolean {
+  private async isIdleCandidateForInactivityCheck(): Promise<boolean> {
     if (this.isBusy()) {
       return false
     }
     if ((this.state?.queueItems.length ?? 0) > 0) {
       return false
     }
-    if (this.hasPendingInteractiveUi()) {
+    if (await this.hasPendingInteractiveUi()) {
       return false
     }
     if (this.processingAction || this.actionQueue.length > 0) {
       return false
     }
-    return true
+    // Pending checks can yield to new session activity.
+    return !this.isBusy() && (this.state?.queueItems.length ?? 0) === 0
   }
 
-  getInactivitySnapshot({
+  async getInactivitySnapshot({
     nowMs,
   }: {
     nowMs: number
-  }): {
+  }): Promise<{
     idleCandidate: boolean
     inactiveForMs: number
-  } {
+  }> {
+    const idleCandidate = await this.isIdleCandidateForInactivityCheck()
     const lastActivityTimestamp = this.getLastRuntimeActivityTimestamp({ nowMs })
     return {
-      idleCandidate: this.isIdleCandidateForInactivityCheck(),
+      idleCandidate,
       inactiveForMs: Math.max(0, nowMs - lastActivityTimestamp),
     }
   }
 
-  isIdleForInactivityTimeout({
+  async isIdleForInactivityTimeout({
     idleMs,
     nowMs,
   }: {
     idleMs: number
     nowMs: number
-  }): boolean {
-    const snapshot = this.getInactivitySnapshot({ nowMs })
+  }): Promise<boolean> {
+    const snapshot = await this.getInactivitySnapshot({ nowMs })
     if (!snapshot.idleCandidate) {
       return false
     }
@@ -1201,17 +1202,9 @@ export class ThreadSessionRuntime {
     return this.chat.interactions.hasQuestion()
   }
 
-  private hasPendingInteractiveUi(): boolean {
-    if (this.chat.interactions.hasPending()) return true
+  private async hasPendingInteractiveUi(): Promise<boolean> {
+    if (await this.chat.interactions.hasPending()) return true
     if (this.hasPendingQuestionUi()) {
-      return true
-    }
-    const hasPendingActionButtons = [...pendingActionButtonContexts.values()].some(
-      (ctx) => {
-        return ctx.thread.id === this.thread.id
-      },
-    )
-    if (hasPendingActionButtons) {
       return true
     }
     const hasPendingFileUpload = [...pendingFileUploadContexts.values()].some(

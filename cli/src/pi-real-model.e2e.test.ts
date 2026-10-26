@@ -16,8 +16,7 @@ import { poolCatalog } from './credentials/messages-proxy.js'
 import { writePiPoolAgentDir } from './agent-backend/pi/pool.js'
 import { startMessagesProxy, type MessagesProxy } from './credentials/messages-proxy.js'
 import { SHARED_POOL_ID } from './credentials/store.js'
-import { pendingActionButtonContexts } from './commands/action-buttons.js'
-import { getThreadSession } from './database.js'
+import { listPendingActionButtons, getThreadSession } from './database.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
 import { waitForFooterMessage } from './test-utils.js'
@@ -123,7 +122,7 @@ describe.skipIf(!bin || (!poolDir && !directAgentDir))('Pi channel on a real mod
 
   test('a Roadie tool: action buttons', async () => {
     const t = await thread('Call the roadie_action_buttons tool with one button labeled "Ship it". Say nothing else.', 'Call the roadie_action_buttons')
-    const shown = [...pendingActionButtonContexts.values()].some((c) => c.thread.id === t.id)
+    const shown = (await listPendingActionButtons(t.id)).length > 0
     const text = await ctx.discord.thread(t.id).text()
     console.log(`[pi-real] buttons thread:\n${text}`)
     expect(shown || text.includes('Ship it')).toBe(true)
