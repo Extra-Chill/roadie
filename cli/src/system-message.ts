@@ -863,6 +863,10 @@ The path must be inside the project or be a git worktree of the project (validat
 ## reading other sessions
 
 \`\`\`bash
+roadie session fork --channel <channel_id> --prompt 'Task in the target project' --json
+# Like /fork: copies your conversation into a new thread; source keeps running.
+# Omit --channel for the same project. --from <message_id> forks before a message.
+# Agent shells can fork only their own token-scoped session; output includes its Discord URL.
 roadie session list                              # sessions in this project, marks roadie-started ones
 roadie session list --json                       # machine-readable output
 roadie session list --project /path/to/project   # specific project

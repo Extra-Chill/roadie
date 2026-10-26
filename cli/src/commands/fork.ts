@@ -392,6 +392,19 @@ export async function forkSessionToThread({
   return { thread, forkedSessionId: forkedSession.id }
 }
 
+/** Shared slash/CLI target resolution; same-parent forks preserve source settings. */
+export async function resolveForkTargetChannel(
+  sourceThread: ThreadChannel,
+  targetChannelId?: string,
+): Promise<TextChannel | undefined> {
+  if (!targetChannelId || targetChannelId === sourceThread.parentId) return undefined
+  const fetched = await sourceThread.client.channels.fetch(targetChannelId)
+  if (!fetched || fetched.type !== ChannelType.GuildText) {
+    throw new Error('The target must be a guild text channel.')
+  }
+  return fetched
+}
+
 export async function handleForkCommand({
   interaction,
   appId,
@@ -418,15 +431,9 @@ export async function handleForkCommand({
   const fromMessageId = interaction.options.getString('from') ?? undefined
   try {
     const targetChannelId = interaction.options.get('channel')?.value
-    let targetChannel: TextChannel | undefined
-    if (typeof targetChannelId === 'string' && targetChannelId !== threadChannel.parentId) {
-      const fetched = await interaction.client.channels.fetch(targetChannelId)
-      if (!fetched || fetched.type !== ChannelType.GuildText) {
-        await replyOrEditInteraction(interaction, 'The target must be a guild text channel.')
-        return
-      }
-      targetChannel = fetched
-    }
+    const targetChannel = await resolveForkTargetChannel(
+      threadChannel, typeof targetChannelId === 'string' ? targetChannelId : undefined,
+    )
     const result = await forkSessionToThread({
       sourceThread: threadChannel,
       targetChannel,
