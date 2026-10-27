@@ -2,7 +2,8 @@
 //
 // One loopback endpoint, `POST /v1/messages` (Anthropic Messages), in the bot
 // process or on a pool host. The client's `model` is a pool rotation name and
-// its `x-roadie-key` header is a key Roadie handed that client's process. The
+// its key (`x-roadie-key`, or a standard `x-api-key` / `Authorization: Bearer`)
+// is one Roadie handed that client's process. The
 // proxy maps the key to a session, resolves the session's pool list, and walks
 // the rotation's candidates in order, whatever their provider (#276):
 //   - `anthropic/*`: forwarded as Anthropic Messages, with OAuth refresh and
@@ -44,6 +45,17 @@ import { anthropicMessage, anthropicRequestToContext, anthropicStreamWriter, piM
 
 export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 export const PROXY_KEY_HEADER = 'x-roadie-key'
+
+/**
+ * The Roadie key a request carries: `x-roadie-key`, or else the API key header
+ * a standard client sends (`x-api-key`, or `Authorization: Bearer`), so any
+ * Anthropic- or OpenAI-style client can use its key setting as is.
+ */
+export function proxyKey(req: http.IncomingMessage): string | undefined {
+  const bearer = req.headers.authorization?.match(/^Bearer\s+(\S+)$/i)?.[1]
+  const key = req.headers[PROXY_KEY_HEADER] || req.headers['x-api-key'] || bearer
+  return typeof key === 'string' ? key : undefined
+}
 /** Optional client session scope (#226): per-session route pins for a remote bot. */
 export const PROXY_SESSION_HEADER = 'x-roadie-session'
 /** Pool catalog for registered clients: the rotations their pools serve. */
@@ -183,8 +195,8 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
    * (#171) carry their own pools and a stable `client:<name>` session id.
    */
   async function authorize(req: http.IncomingMessage): Promise<{ sessionId: string; poolIds: string[]; client: boolean } | undefined> {
-    const key = req.headers[PROXY_KEY_HEADER]
-    if (typeof key !== 'string' || key === '') return undefined
+    const key = proxyKey(req)
+    if (!key) return undefined
     const sessionId = keys.get(key)?.()
     if (sessionId) {
       const poolHeader = await options.resolvePools(sessionId)
