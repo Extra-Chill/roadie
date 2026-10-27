@@ -44,6 +44,23 @@ async function poolHost() {
 const ask = (baseUrl: string, key: string) =>
   fetch(`${baseUrl}/v1/messages`, { method: 'POST', headers: { 'x-roadie-key': key, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'claude-best', max_tokens: 8, messages: [] }) })
 
+describe('pool client keys', () => {
+  test('a standard client may send its key as x-api-key or Authorization: Bearer, and none goes upstream', async () => {
+    const { key, upstream, host: pool } = await poolHost()
+    const send = (headers: Record<string, string>) =>
+      fetch(`${pool.baseUrl}/v1/messages`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'claude-best', max_tokens: 8, messages: [] }) })
+    expect((await send({ 'x-api-key': key })).status).toBe(200)
+    expect((await send({ authorization: `Bearer ${key}` })).status).toBe(200)
+    expect((await send({ authorization: key })).status).toBe(401)
+    expect((await send({ 'x-api-key': 'nope' })).status).toBe(401)
+    expect(upstream).toHaveLength(2)
+    for (const call of upstream) {
+      expect(call.headers.get('authorization')).toBe('Bearer access-a')
+      expect(call.headers.get('x-api-key')).toBeNull()
+    }
+  })
+})
+
 describe('readRemotePoolConfig', () => {
   test('unset means a local pool', () => {
     expect(readRemotePoolConfig({})).toBeUndefined()
