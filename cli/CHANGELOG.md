@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.4] - 2026-10-27
+
+### Changed
+- pool proxy: take a client's key from x-api-key or Authorization: Bearer too
+
 ## [0.83.3] - 2026-10-26
 
 ### Changed
