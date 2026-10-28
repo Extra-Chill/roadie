@@ -140,8 +140,24 @@ per-person modes they land in the caller's pool. Every reply is ephemeral.
 
 ### CLI (operators)
 
+`roadie credentials usage [--pool <poolId>] [--json]` probes subscription usage
+without inference. It reports each account's windows, reset times and state;
+unsupported providers and failed lookups are `unmeasured`, while rejected
+credentials are `auth_failed`. OAuth tokens are refreshed under the pool lock.
+Anthropic extra-usage enablement and spend-limit status are reported separately.
+
+With a remote pool configured, usage calls the authenticated pool-admin
+`GET usage?pool=<poolId>` route; tokens never leave the host. JSON is a capacity
+object with `state`, `remaining`, `limit`, `unit`, `reset_at`, `scope` (the pool id)
+and `accounts`. Remaining is percent headroom on the best measured account,
+not a sum of unrelated plan quotas; an incompletely measured pool is not
+classified as exhausted. Each report appends timestamped, secret-free account
+windows to `credentials/<poolId>/usage.jsonl` on the pool host, rotating at 1 MiB
+with one previous segment retained.
+
 ```bash
 roadie credentials list --pool <poolId>
+roadie credentials usage --pool <poolId> [--json]
 echo <key> | roadie credentials add-key --provider <provider> [--pool <poolId>] [--base-url <url>]
 roadie credentials login <anthropic|openai-codex> --pool <poolId>
 roadie credentials remove <id> --pool <poolId>

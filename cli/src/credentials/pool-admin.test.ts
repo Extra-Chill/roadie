@@ -10,6 +10,7 @@ import { POOL_ADMIN_PATH, PROXY_KEY_HEADER, startMessagesProxy, type MessagesPro
 import { addPoolClient } from './pool-clients.js'
 import { localPoolAccounts } from './pool-accounts.js'
 import { createPoolAdminHandler } from './pool-admin.js'
+import { remotePoolAccounts } from './remote-pool.js'
 import { addPoolAccount, readPoolAccounts, readPoolRotations, setPoolRotation, SHARED_POOL_ID } from './store.js'
 
 const CATALOG = { openai: { id: 'openai', npm: '@ai-sdk/openai' } }
@@ -57,7 +58,7 @@ async function host({ tokenFetch }: { tokenFetch?: ReturnType<typeof fakeTokenEn
     const text = await response.text()
     return { status: response.status, text, json: JSON.parse(text) as Record<string, any> }
   }
-  return { dataDir, adminKey: admin.key, plainKey: plain.key, call }
+  return { dataDir, url: proxy.baseUrl, adminKey: admin.key, plainKey: plain.key, call }
 }
 
 describe('pool admin API', () => {
@@ -88,6 +89,17 @@ describe('pool admin API', () => {
     }
     const stored = readPoolAccounts({ dataDir, poolId: SHARED_POOL_ID })
     expect(stored).toMatchObject([{ provider: 'openai', key: TEST_KEY }])
+  })
+
+  test('remote usage returns capacity without secrets and enforces pool admin access', async () => {
+    const { url, call, adminKey, plainKey, dataDir } = await host()
+    await addPoolAccount({ dataDir, poolId: 'shared', provider: 'openai', key: TEST_KEY })
+    const remote = remotePoolAccounts({ url, key: adminKey })
+    const report = await remote.usage({ poolId: 'shared' })
+    expect(report).toMatchObject({ scope: 'shared', state: 'unmeasured', remaining: null, limit: 100, unit: 'percent', accounts: [{ provider: 'openai', state: 'unmeasured', windows: [] }] })
+    expect(JSON.stringify(report)).not.toContain(TEST_KEY)
+    expect((await call(plainKey, 'GET', 'usage?pool=shared')).status).toBe(403)
+    expect((await call(adminKey, 'GET', 'usage?pool=alice')).status).toBe(403)
   })
 
   test('an unknown provider is refused by the host catalog check', async () => {

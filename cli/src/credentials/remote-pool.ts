@@ -207,6 +207,7 @@ export function remotePoolAccounts({ url, key, fetchImpl = fetch }: RemotePoolCo
   const query = (poolId: string) => `pool=${encodeURIComponent(poolId)}`
   return {
     location: url,
+    usage: ({ poolId }) => call<import('./capacity.js').PoolCapacity>('GET', `usage?${query(poolId)}`),
     list: ({ poolId }) => call<PoolListing>('GET', `accounts?${query(poolId)}`),
     addApiKey: ({ poolId, ...rest }) => call<PoolAccountAdded>('POST', 'accounts/api-key', { pool: poolId, ...rest }),
     startOAuth: ({ poolId, ...rest }) => call<PoolOAuthStart>('POST', 'oauth/start', { pool: poolId, ...rest }),
