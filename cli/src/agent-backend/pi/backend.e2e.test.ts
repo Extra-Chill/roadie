@@ -275,10 +275,10 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
   test('added and disabled MCP servers show in status', async () => {
     const dir = path.join(root, 'mcp-added')
     fs.mkdirSync(dir, { recursive: true })
-    await provider.getBackend().mcp!.addRemote({ directory: dir, name: 'roadie_pm_x_docs', url: 'https://example.invalid/mcp', headers: { Authorization: 'Bearer t' } })
-    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'unknown' } })
-    await provider.getBackend().mcp!.disconnect({ directory: dir, name: 'roadie_pm_x_docs' })
-    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ roadie_pm_x_docs: { status: 'disabled' } })
+    await provider.getBackend().mcp!.addRemote({ directory: dir, name: 'rpm_x_docs', url: 'https://example.invalid/mcp', headers: { Authorization: 'Bearer t' } })
+    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ rpm_x_docs: { status: 'unknown' } })
+    await provider.getBackend().mcp!.disconnect({ directory: dir, name: 'rpm_x_docs' })
+    expect(await provider.getBackend().mcp!.status({ directory: dir })).toEqual({ rpm_x_docs: { status: 'disabled' } })
   })
 
   test("Pi's own project prompts and skills list and run; OpenCode-format ones are not loaded", async () => {

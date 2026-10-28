@@ -49,6 +49,7 @@ import {
   type NativeFormAnswer,
 } from './mcp-native.js'
 import { cleanMessageToolCalls } from './text-tool-calls.js'
+import { displayServerName, isPersonMcpServerName, mcpToolName } from '../../person-mcp-name.js'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
@@ -286,7 +287,7 @@ type NativeRegistration = { configKey: string; tools: string[] }
 
 /** Person-scoped remote servers are the native client's slice-1 targets. */
 function nativeCandidate(name: string, config: McpServerConfig): { url: string; headers: Record<string, string> } | undefined {
-  if (!name.startsWith('roadie_pm_')) return undefined
+  if (!isPersonMcpServerName(name)) return undefined
   // Roadie's URL policy (isAllowedMcpUrl) already gates what gets registered;
   // plain http is accepted here so a test server can pose as one.
   if (typeof config.url !== 'string' || !/^https?:\/\//.test(config.url)) return undefined
@@ -294,9 +295,9 @@ function nativeCandidate(name: string, config: McpServerConfig): { url: string; 
   return { url: config.url, headers: config.headers }
 }
 
-/** Pi names MCP tools `mcp__<server>__<tool>`, non-alphanumerics folded to `_`. */
+/** Pi names MCP tools `mcp__<server>__<tool>`, non-alphanumerics folded to `_`, capped at 64 chars. */
 export function nativeMcpToolName(server: string, tool: string): string {
-  return `mcp__${server}__${tool.replace(/[^A-Za-z0-9_]/g, '_')}`
+  return mcpToolName(server, tool)
 }
 
 async function registerNativeServer(pi: ExtensionApi, input: {
@@ -352,7 +353,7 @@ async function registerNativeServer(pi: ExtensionApi, input: {
         if (outcome.result.isError) throw new Error(`${text || 'The MCP tool call failed'}${note}`)
         return {
           content: [{ type: 'text', text: `${text}${note}` }],
-          details: { title: `${tool.name} (mcp: ${name.replace(/^roadie_pm_[0-9a-f]+_/, '')})` },
+          details: { title: `${tool.name} (mcp: ${displayServerName(name)})` },
         }
       },
     })

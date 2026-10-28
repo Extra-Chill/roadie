@@ -4,10 +4,11 @@
 // is registered with the agent backend under a name scoped to that person, with
 // that person's own OAuth access token in the request headers:
 //
-//   <scope>_<name>   where scope = `roadie_pm_<first 16 hex of sha256(person key)>`
+//   <scope>_<name>   where scope = `rpm_<first 12 hex of sha256(person key)>`
+//   (naming lives in ./person-mcp-name.ts)
 //
 // Isolation has two halves:
-// - The Pi permission gate denies every `roadie_pm_*` tool by default
+// - The Pi permission gate denies every `rpm_*` tool by default
 //   (PERSON_MCP_DENY_ALL), so sessions of people without MCP config, CLI
 //   sessions and denied people see none of these servers.
 // - Each chat turn appends session rules that reset to deny-all and then allow
@@ -52,24 +53,15 @@ export async function registerSpeakerMcpServers(
   }).catch((e: unknown) => sessionLogger.warn(`[PERSON-MCP] registration failed: ${String(e)}`))
 }
 
-export const PERSON_MCP_PREFIX = 'roadie_pm_'
-/** Permission (tool name) glob covering every person-scoped MCP tool. */
-export const PERSON_MCP_TOOL_GLOB = `${PERSON_MCP_PREFIX}*`
+import {
+  PERSON_MCP_PREFIX,
+  PERSON_MCP_TOOL_GLOB,
+  isPersonMcpServerName,
+  personMcpScope,
+  personMcpServerName,
+} from './person-mcp-name.js'
 
-/** Scope prefix unique to a person key. Fixed length, so no scope prefixes another. */
-export function personMcpScope(personKey: string): string {
-  const hash = crypto.createHash('sha256').update(personKey).digest('hex').slice(0, 16)
-  return `${PERSON_MCP_PREFIX}${hash}`
-}
-
-export function personMcpServerName({ personKey, name }: { personKey: string; name: string }): string {
-  return `${personMcpScope(personKey)}_${name}`
-}
-
-/** True for a server name created by this module (hide it from shared listings). */
-export function isPersonMcpServerName(name: string): boolean {
-  return name.startsWith(PERSON_MCP_PREFIX)
-}
+export { PERSON_MCP_PREFIX, PERSON_MCP_TOOL_GLOB, isPersonMcpServerName, personMcpScope, personMcpServerName }
 
 /**
  * Session permission rules for one speaker's turn: deny every person-scoped

@@ -29,6 +29,23 @@ describe('formatPart', () => {
     `)
   })
 
+  test('person-scoped MCP tools render as server › tool', () => {
+    const part: Part = {
+      id: 'prt_mcp',
+      sessionId: 'ses_test',
+      messageId: 'msg_test',
+      kind: 'tool',
+      callId: 'call_mcp',
+      tool: 'mcp__rpm_34273144a2e9_extrachill__extrachill_ability_search',
+      status: 'running',
+      input: { query: 'event', limit: 40 },
+    }
+    const formatted = formatPart(part)
+    expect(formatted).toContain('extrachill › ability-search (query: event, limit: 40)')
+    expect(formatted).not.toContain('rpm_')
+    expect(formatted).not.toContain('mcp__')
+  })
+
   test('regular text has no diamond prefix', () => {
     const part: Part = {
       id: 'test',

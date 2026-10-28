@@ -25,14 +25,14 @@ import type { NativeCallContinuation, NativeCallResult } from './mcp-native.js'
 
 describe('native MCP tool names', () => {
   test('keeps the mcp__<server>__<tool> shape Pi\'s built-in client uses', () => {
-    expect(nativeMcpToolName('roadie_pm_abc123_wordpress', 'search')).toBe('mcp__roadie_pm_abc123_wordpress__search')
+    expect(nativeMcpToolName('rpm_abc123def456_wordpress', 'search')).toBe('mcp__rpm_abc123def456_wordpress__search')
     // Non-alphanumerics fold to _, like Pi's own naming.
     expect(nativeMcpToolName('srv', 'buy-plan')).toBe('mcp__srv__buy_plan')
   })
 })
 
 describe('runNativeToolCall (form elicitation)', () => {
-  const SERVER = 'roadie_pm_abc123def4567890_wordpress'
+  const SERVER = 'rpm_abc123def456_wordpress'
 
   const formRequest = (): NativeCallResult => ({
     content: [],

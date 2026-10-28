@@ -16,7 +16,7 @@ function harness({ timeoutMs }: { timeoutMs?: number } = {}) {
   const ask = (requestId = 'ui-1', owner = 'wp:1') => forms.ask({
     requestId,
     sessionId: 'ses-1',
-    server: 'roadie_pm_abc123def4567890_wordpress',
+    server: 'rpm_abc123def456_wordpress',
     tool: 'buy-plan',
     message: 'Buy the pro plan?',
     schema: { type: 'object', properties: {} },
@@ -30,7 +30,7 @@ describe('McpFormRequests', () => {
   test('asking announces the form; the person can accept with content', () => {
     const { forms, answers, asked, replied, ask } = harness()
     ask()
-    expect(asked).toEqual([{ requestId: 'ui-1', server: 'roadie_pm_abc123def4567890_wordpress' }])
+    expect(asked).toEqual([{ requestId: 'ui-1', server: 'rpm_abc123def456_wordpress' }])
     expect(forms.reply({ requestId: 'ui-1', action: 'accept', content: { confirm: true }, personKey: 'wp:1' })).toBeUndefined()
     expect(answers).toEqual([{ requestId: 'ui-1', answer: { action: 'accept', content: { confirm: true } } }])
     expect(replied).toEqual([{ requestId: 'ui-1', action: 'accept' }])
@@ -70,7 +70,7 @@ describe('McpFormRequests', () => {
     forms.ask({
       requestId: 'ui-2',
       sessionId: 'ses-1',
-      server: 'roadie_pm_x_y',
+      server: 'rpm_x_y',
       tool: 't',
       message: 'm',
       schema: {},

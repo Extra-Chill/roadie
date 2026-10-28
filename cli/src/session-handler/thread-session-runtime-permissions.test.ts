@@ -21,7 +21,7 @@ describe('Pi ingress turn isolation (#340)', () => {
     })
     const input: IngressInput = {
       prompt: 'team seat message', username: 'seat', userId: 'seat-user', personId: 'seat-person',
-      permissions: ['bash:deny', 'edit:deny', 'roadie_pm_*:deny'],
+      permissions: ['bash:deny', 'edit:deny', 'rpm_*:deny'],
     }
     expect(await runtime.submitToSession(input)).toEqual({ queued: true, queueId: 'next' })
     expect(queued).toHaveBeenCalledWith(input)

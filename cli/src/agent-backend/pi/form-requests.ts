@@ -27,7 +27,7 @@ export type McpFormAnswer = { action: McpFormAction; content?: Record<string, un
 export type McpFormRequest = {
   requestId: string
   sessionId: string
-  /** Person-scoped server the form's tool belongs to (`roadie_pm_<hash>_<name>`). */
+  /** Person-scoped server the form's tool belongs to (`rpm_<hash>_<name>`). */
   server: string
   /** The MCP tool that triggered the form. */
   tool: string

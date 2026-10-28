@@ -374,7 +374,7 @@ describe('decidePermission', () => {
     expect(decidePermission({ rules, tool: 'task', input: { subagent_type: 'explore', prompt: 'x' }, cwd }).action).toBe('deny')
     expect(decidePermission({ rules, tool: 'task', input: { subagent_type: 'general', prompt: 'x' }, cwd }).action).toBe('allow')
   })
-  test('the owning person\'s per-turn allow pair still allows their own roadie_pm_* tools', () => {
+  test('the owning person\'s per-turn allow pair still allows their own rpm_* tools', () => {
     const scope = personMcpScope('person-a')
     const rules = parsePermissionRules(personMcpPermissions({ personKey: 'person-a', hasServers: true }))
     expect(decidePermission({ rules, tool: `mcp__${scope}_jira__search`, input: {}, cwd: '/r' }).action).toBe('allow')
@@ -409,9 +409,9 @@ describe('MCP config for Pi', () => {
     })
   })
   test('Pi MCP tool names map to permission rule names, so person-scoped rules still match', () => {
-    expect(permissionToolName('mcp__roadie_pm_abc_jira__search')).toBe('roadie_pm_abc_jira_search')
+    expect(permissionToolName('mcp__rpm_abc_jira__search')).toBe('rpm_abc_jira_search')
     expect(permissionToolName('bash')).toBe('bash')
-    const rules = [{ permission: 'roadie_pm_*', pattern: '*', action: 'deny' as const }]
-    expect(decidePermission({ rules, tool: 'mcp__roadie_pm_abc_jira__search', input: {}, cwd: '/r' }).action).toBe('deny')
+    const rules = [{ permission: 'rpm_*', pattern: '*', action: 'deny' as const }]
+    expect(decidePermission({ rules, tool: 'mcp__rpm_abc_jira__search', input: {}, cwd: '/r' }).action).toBe('deny')
   })
 })
