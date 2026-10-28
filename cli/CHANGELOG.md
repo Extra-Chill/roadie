@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.5] - 2026-10-28
+
+### Fixed
+- mint agent shell tokens from the same secret the bot verifies with
+
 ## [0.83.4] - 2026-10-27
 
 ### Changed
