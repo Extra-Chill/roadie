@@ -50,6 +50,10 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
 
   beforeAll(async () => {
     server = await startFakeModelServer({ matchers: [
+      { id: 'roadie-compaction', when: { rawPromptIncludes: 'Create a compact continuation summary of at most', toolsEmpty: true }, then: { parts: [
+        { type: 'text-delta', id: 'summary', delta: 'ROADIE_BOUNDED_SUMMARY' },
+        { type: 'finish', finishReason: 'stop' },
+      ] } },
       { id: 'title-rejected', when: { latestUserTextIncludes: 'TITLE_MODEL_REJECTS', toolsEmpty: true }, then: { error: { status: 400, message: 'thinking is not supported for this model' } } },
       // A run with several sequential tool calls: STEER_ONE starts it with a
       // slow tool, a steered-in STEER_TWO queues a second tool, and once that
@@ -101,6 +105,29 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const done = events.find((e) => e.type === 'message' && e.message.role === 'assistant' && e.message.completedAt)
     expect(done?.type === 'message' && done.message.finish).toBe('stop')
   })
+
+  test('Roadie compaction persists an extension summary and the next prompt replies', async () => {
+    const project = path.join(root, 'compact-project')
+    fs.mkdirSync(path.join(project, '.pi'), { recursive: true })
+    fs.writeFileSync(path.join(project, '.pi', 'settings.json'), JSON.stringify({ compaction: { keepRecentTokens: 0 } }))
+    const session = await provider.getBackend().sessions.create({ directory: project })
+    if (session instanceof Error) throw session
+    const run = async (text: string) => {
+      const before = idleCount(session.id)
+      await provider.getBackend().sessions.prompt({ sessionId: session.id, directory: project, parts: [{ kind: 'text', text }] })
+      await until(() => idleCount(session.id) > before ? true : undefined)
+    }
+    await run('history for compaction')
+    for (let round = 0; round < 2; round++) {
+      expect(await provider.getBackend().sessions.summarize!({ sessionId: session.id, directory: project, model: { providerId: 'fake', modelId: 'fake-1' } })).toBeUndefined()
+      await run(`continue after compaction ${round}`)
+    }
+    const files = fs.readdirSync(path.join(root, 'sessions'), { recursive: true })
+    const entries = files.filter((file) => String(file).endsWith('.jsonl')).flatMap((file) => fs.readFileSync(path.join(root, 'sessions', String(file)), 'utf8').trim().split('\n').map((line) => JSON.parse(line)))
+    const summaries = entries.filter((entry) => entry.type === 'compaction' && entry.summary === 'ROADIE_BOUNDED_SUMMARY')
+    expect(summaries).toHaveLength(2)
+    expect(summaries.every((entry) => entry.fromHook === true)).toBe(true)
+  }, 30_000)
 
   test('text-only tool_use is hidden and corrected into a real tool call', async () => {
     const args = JSON.stringify({ buttons: [{ label: 'Proceed' }] })
