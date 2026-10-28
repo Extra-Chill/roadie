@@ -34,6 +34,28 @@ application's configured destinations.
 
 ## Discord channel commands
 
+### Project-style configuration
+
+These commands also support `projects:` plus `channels:` without `application:`.
+A server is eligible only when an explicitly configured channel or category
+belongs to it; the `"*"` policy alone does not establish ownership.
+
+`/channel bind [project]` automatically selects the sole configured project.
+With multiple projects, choose the autocomplete-enabled `project` option (an
+existing channel keeps its project when omitted). The binding writes
+`project: <name>`, `respond: always`, and `threads: per-message` by default;
+`behavior` selects another preset. New bindings leave `who` unset, so normal
+project/global audience defaults apply. They do not copy another channel's
+users or grant access to everyone. Existing per-channel settings are preserved.
+
+`/channel behavior` retains the channel's project, or accepts `project` when
+enabling a previously unbound channel. `/channel unbind` retains the entry and
+sets `respond: never`, just as in application mode. Configure at least one
+project (or an application block) before binding. For a new server, manually add
+one of its channel/category IDs to `channels:` first.
+
+### Application-style configuration
+
 `/channel bind [channel] [behavior]` accepts an optional behavior. Omit it to
 inherit the application default policy, or choose:
 
