@@ -24,6 +24,8 @@
 
 import { applyFiltersAsync, hasFilter } from './hooks.js'
 import { spawn } from 'node:child_process'
+import { childProcesses } from './child-process-lifecycle.js'
+import { PROCESS_GROUP_SPAWN_OPTIONS, signalProcessGroup } from './process-group.js'
 import { z } from 'zod'
 import { getRoadieEnv } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -165,7 +167,7 @@ export function speakerKey(request: Pick<ContextRequest, 'actor' | 'personId'>):
 
 function execProvider({ command, input }: { command: string; input: string }): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
+    const child = childProcesses.track(spawn(command, { shell: true, ...PROCESS_GROUP_SPAWN_OPTIONS, stdio: ['pipe', 'pipe', 'pipe'], env: process.env }))
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -176,13 +178,13 @@ function execProvider({ command, input }: { command: string; input: string }): P
       fn()
     }
     const timer = setTimeout(() => {
-      child.kill('SIGKILL')
+      if (child.pid) signalProcessGroup(child.pid, 'SIGKILL')
       finish(() => reject(new Error(`timed out after ${TIMEOUT_MS}ms`)))
     }, TIMEOUT_MS)
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8')
       if (stdout.length > MAX_OUTPUT_BYTES) {
-        child.kill('SIGKILL')
+        if (child.pid) signalProcessGroup(child.pid, 'SIGKILL')
         finish(() => reject(new Error('output too large')))
       }
     })
