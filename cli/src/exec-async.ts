@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 
+import { childProcesses } from './child-process-lifecycle.js'
+
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000
 /** child_process.exec's default output cap. */
 const DEFAULT_MAX_BUFFER = 1024 * 1024
@@ -75,6 +77,7 @@ export function execAsync(
       child = typeof command === 'string'
         ? spawn(command, { ...spawnOptions, shell: true })
         : spawn(command.command, command.args, spawnOptions)
+      childProcesses.track(child)
     } catch (cause) {
       reject(cause)
       return

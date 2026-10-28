@@ -14,6 +14,7 @@ declare global {
 }
 
 import { doAction } from './hooks.js'
+import { createShutdown } from './child-process-lifecycle.js'
 import { stopActiveChatPlatforms } from './chat-platform/registry.js'
 import { mergeInterruptedSessions, recordInterruptedSessions } from './service-lifecycle.js'
 import { operatorRequestContinuations } from './operator-requests.js'
@@ -1599,7 +1600,7 @@ export async function startDiscordBot({
 // even before the bot is fully initialized, or the next start gets EADDRINUSE.
 // Every cleanup step below must therefore be safe at any startup phase.
 
-const SHUTDOWN_DEADLINE_MS = 15_000
+// Child groups and the hard shutdown deadline are owned by one coordinator.
 let activeDiscordClient: Client | null = null
 
 /** The connected bot client; scoped in-process operations must not log in again. */
@@ -1610,6 +1611,8 @@ let stopBackgroundWorkers: (() => Promise<void>) | null = null
 let selfRestarting = false
 let lifecycleHandlersRegistered = false
 
+const finishShutdown = createShutdown({ cleanup: cleanupBot })
+
 async function shutdownBot(reason: string, { skipExit = false } = {}) {
   discordLogger.log(`Received ${reason}, cleaning up...`)
 
@@ -1619,13 +1622,10 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
   }
   global.shuttingDown = true
 
-  // Cleanup or process.exit() can hang (native worker threads after gateway
-  // failures). Never let a stuck shutdown hold the lock port. Kept ref'd so a
-  // drained event loop cannot exit with code 0 and skip the wrapper restart.
-  setTimeout(() => {
-    process.kill(process.pid, 'SIGKILL')
-  }, SHUTDOWN_DEADLINE_MS)
+  await finishShutdown({ skipExit })
+}
 
+async function cleanupBot() {
   try {
     stopStdinCpuProfListener()
     const flushed = await flushCpuProfiling()
@@ -1690,14 +1690,9 @@ async function shutdownBot(reason: string, { skipExit = false } = {}) {
     }
 
     discordLogger.log('Cleanup complete.')
-    if (!skipExit) {
-      process.exit(0)
-    }
   } catch (error) {
     voiceLogger.error('[SHUTDOWN] Error during cleanup:', error)
-    if (!skipExit) {
-      process.exit(1)
-    }
+    throw error
   }
 }
 

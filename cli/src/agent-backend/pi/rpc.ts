@@ -6,6 +6,8 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import * as errore from 'errore'
+import { childProcesses } from '../../child-process-lifecycle.js'
+import { PROCESS_GROUP_SPAWN_OPTIONS, terminateProcessGroup } from '../../process-group.js'
 
 export class PiRpcError extends errore.createTaggedError({
   name: 'PiRpcError',
@@ -54,11 +56,12 @@ export class PiProcess {
   exited = false
 
   constructor(options: PiProcessOptions) {
-    this.child = spawn(options.bin, ['--mode', 'rpc', ...options.args], {
+    this.child = childProcesses.track(spawn(options.bin, ['--mode', 'rpc', ...options.args], {
+      ...PROCESS_GROUP_SPAWN_OPTIONS,
       cwd: options.cwd,
       env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-    })
+    }))
     this.child.stdout.setEncoding('utf8')
     this.child.stdout.on('data', (chunk: string) => this.onData(chunk))
     this.child.stderr.setEncoding('utf8')
@@ -139,13 +142,7 @@ export class PiProcess {
    * has exited, so its session file is no longer being written.
    */
   kill({ graceMs = 3_000 }: { graceMs?: number } = {}): Promise<void> {
-    if (this.exited) return Promise.resolve()
-    const exited = new Promise<void>((resolve) => this.child.once('exit', () => resolve()))
-    this.child.kill('SIGTERM')
-    const force = setTimeout(() => {
-      if (!this.exited) this.child.kill('SIGKILL')
-    }, graceMs)
-    force.unref()
-    return exited.finally(() => clearTimeout(force))
+    childProcesses.captureDescendants()
+    return terminateProcessGroup(this.child, { graceMs }).then(() => {})
   }
 }

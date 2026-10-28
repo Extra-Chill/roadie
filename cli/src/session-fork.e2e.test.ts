@@ -35,7 +35,7 @@ describe.skipIf(!findPi())('session fork CLI', () => {
   }
 
   function run(sessionId: string, args: string[]) {
-    return exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'session', 'fork', ...args], {
+    return exec(process.execPath, ['--import', 'tsx', path.join(import.meta.dirname, 'cli.ts'), 'session', 'fork', ...args], {
       env: { ...process.env, ROADIE_DATA_DIR: ctx.directories.dataDir, ROADIE_AGENT_SHELL: '1',
         ROADIE_AGENT_TOKEN: mintAgentToken({ secret: ensureAgentTokenSecret(), sessionId }),
         ROADIE_SESSION_ID: sessionId, ROADIE_DB_URL: '', ROADIE_DB_AUTH_TOKEN: '',
