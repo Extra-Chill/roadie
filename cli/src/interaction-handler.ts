@@ -19,7 +19,7 @@ import {
   handleRemoveProjectCommand,
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
-import { handleChannelCommand, isApplicationGuild } from './commands/channel.js'
+import { handleChannelAutocomplete, handleChannelCommand, isApplicationGuild } from './commands/channel.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
 import {
@@ -230,7 +230,7 @@ export function registerInteractionHandler({
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
         // Setup commands must not let an unconfigured server grant itself host access.
-        const channelCommand = interaction.isChatInputCommand() && interaction.commandName === 'channel'
+        const channelCommand = (interaction.isChatInputCommand() || interaction.isAutocomplete()) && interaction.commandName === 'channel'
         const applicationGuild = channelCommand && await isApplicationGuild(interaction)
         const owned = await isInteractionOwnedByThisMachine(interaction)
         // Person-scoped commands need no project: answer them in any channel
@@ -304,6 +304,10 @@ export function registerInteractionHandler({
 
         // Explicit application management is the only bootstrap exception to
         // ownership/response policy. The handler still requires admin identity.
+        if (channelCommand && interaction.isAutocomplete()) {
+          await handleChannelAutocomplete(interaction)
+          return
+        }
         if (channelCommand && interaction.isChatInputCommand()) {
           await handleChannelCommand({ command: interaction, appId })
           return

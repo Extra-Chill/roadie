@@ -112,6 +112,6 @@ test('an unrelated guild with a legacy local mapping cannot bind itself to the a
   const channel = ctx.discord.channel(channelId)
   const result = await channel.user(TEST_USER_ID).runSlashCommand({ name: 'channel', guildId, options: [{ name: 'bind', type: 1 }] })
   await channel.waitForInteractionAck({ interactionId: result.id, timeout: 4_000 })
-  await channel.waitForMessage({ timeout: 4_000, predicate: (message) => message.content.includes('not configured') })
+  await channel.waitForMessage({ timeout: 4_000, predicate: (message) => message.content.includes('No configured channel or category belongs to this server') })
   expect(fs.readFileSync(file, 'utf8')).toBe(before)
 })

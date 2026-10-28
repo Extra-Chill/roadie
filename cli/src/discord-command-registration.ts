@@ -237,7 +237,8 @@ export function buildStaticSlashCommands() {
       .setDescription('Bind or unbind existing channels to this Roadie application')
       .addSubcommand((subcommand) => subcommand
         .setName('bind')
-        .setDescription('Enable this application in an existing text channel')
+        .setDescription('Enable Roadie in an existing text channel')
+        .addStringOption((option) => option.setName('project').setDescription('Configured project (required when several are available)').setAutocomplete(true))
         .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel'))
         .addStringOption((option) => option.setName('behavior').setDescription('Defaults to the application policy').addChoices(
           { name: 'Always reply', value: 'always' }, { name: 'Mention only', value: 'mention' },
@@ -248,7 +249,8 @@ export function buildStaticSlashCommands() {
         .addStringOption((option) => option.setName('behavior').setDescription('Channel behavior').setRequired(true).addChoices(
           { name: 'Always reply', value: 'always' }, { name: 'Mention only', value: 'mention' },
           { name: 'Mention + listen', value: 'listen' }, { name: 'Off', value: 'off' }))
-        .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel')))
+        .addChannelOption((option) => option.setName('channel').setDescription('Defaults to the current text channel'))
+        .addStringOption((option) => option.setName('project').setDescription('Configured project for an unbound channel').setAutocomplete(true)))
       .addSubcommand((subcommand) => subcommand
         .setName('unbind')
         .setDescription('Stop responses while preserving channel and session history')

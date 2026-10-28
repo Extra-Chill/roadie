@@ -300,15 +300,21 @@ export function applicationBinding(): ChannelsConfig['application'] {
   return binding ? { ...binding } : undefined
 }
 
+/** Snapshot for command routing and project selection; callers cannot mutate cached policy. */
+export function channelBindingConfig(): ChannelsConfig | null | undefined {
+  return structuredClone(currentConfig())
+}
+
 // One writer for the application policy. Serialized fresh reads keep different
 // channel commands from overwriting each other's bindings.
 let bindingWrites: Promise<unknown> = Promise.resolve()
 
-export function setApplicationChannelBinding({ channelId, bound, application, behavior }: {
+export function setApplicationChannelBinding({ channelId, bound, application, behavior, project }: {
   channelId: string
   bound: boolean
   behavior?: ChannelBehavior
-  application: NonNullable<ChannelsConfig['application']>
+  application?: NonNullable<ChannelsConfig['application']>
+  project?: string
 }): Promise<{ changed: boolean } | Error> {
   const write = bindingWrites.then(() => {
     const configPath = getChannelsConfigPath()
@@ -322,23 +328,34 @@ export function setApplicationChannelBinding({ channelId, bound, application, be
       const text = fs.readFileSync(file, 'utf8')
       const config = parseChannelsConfig(text)
       if (config instanceof Error) return new Error(`Fix the channel policy before changing bindings: ${config.message}`)
-      if (!config.application) return new Error('Configure application.channel and application.directory first')
-      if (config.application.channel !== application.channel || config.application.directory !== application.directory) {
+      if (Boolean(config.application) !== Boolean(application) || (config.application && application &&
+        (config.application.channel !== application.channel || config.application.directory !== application.directory))) {
         return new Error('Application configuration changed; run the channel command again')
       }
-      if (!bound && channelId === application.channel) return new Error('The application default cannot be unbound; change application.channel first')
+      if (!bound && channelId === application?.channel) return new Error('The application default cannot be unbound; change application.channel first')
       const previous = config.channels[channelId]
       const enabled = Boolean(previous && previous.respond !== 'never')
-      if (!behavior && enabled === bound) return { changed: false }
-      const source = config.channels[application.channel]!
-      if (bound && !behavior && source.respond === 'never') return new Error('Enable the application default channel policy before binding another channel')
+      let selectedProject: string | undefined
+      if (!application) {
+        const projects = Object.keys(config.projects ?? {})
+        if (!projects.length) return new Error('Channels config has no projects or application block; configure one before binding channels')
+        selectedProject = project ?? previous?.project ?? (projects.length === 1 ? projects[0] : undefined)
+        if (bound && !selectedProject) return new Error('Choose a project with the project option; channels config has multiple projects')
+        if (selectedProject && !config.projects?.[selectedProject]) return new Error(`Unknown project "${selectedProject}"; choose a configured project`)
+      }
+      if (!behavior && enabled === bound && (application || !project || previous?.project === project)) return { changed: false }
+      const source: ChannelPolicy = application ? config.channels[application.channel]! : { project: selectedProject }
+      if (application && bound && !behavior && source.respond === 'never') return new Error('Enable the application default channel policy before binding another channel')
       // Disabling is a canonical respond: never policy, so category/wildcard
       // policies cannot re-enable an unbound channel or discard its settings.
-      const policy: ChannelPolicy = behavior
-        ? applyChannelBehavior(structuredClone(previous ?? source), behavior)
-        : bound
-          ? { ...structuredClone(source), respond: source.respond ?? 'always' }
-          : { ...previous, respond: 'never' }
+      const base = structuredClone(previous ?? source)
+      const policy: ChannelPolicy = !application && bound
+        ? applyChannelBehavior({ ...base, project: selectedProject }, behavior ?? 'always')
+        : behavior
+          ? applyChannelBehavior(base, behavior)
+          : bound
+            ? { ...structuredClone(source), respond: source.respond ?? 'always' }
+            : { ...previous, respond: 'never' }
       if (isDeepStrictEqual(previous, policy)) return { changed: false }
       config.channels[channelId] = policy
       const document = YAML.parseDocument(text)
