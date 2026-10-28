@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.6] - 2026-10-28
+
+### Fixed
+- short person MCP tool names and readable Discord labels
+
 ## [0.83.5] - 2026-10-28
 
 ### Fixed
