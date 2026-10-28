@@ -202,7 +202,7 @@ export type AgentQuestionRequest = {
 export type AgentFormRequest = {
   id: string
   sessionId: string
-  /** Person-scoped MCP server the form's tool belongs to (`roadie_pm_<hash>_<name>`). */
+  /** Person-scoped MCP server the form's tool belongs to (`rpm_<hash>_<name>`). */
   server: string
   /** The MCP tool that triggered the form. */
   tool: string

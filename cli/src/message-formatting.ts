@@ -21,6 +21,7 @@ import { FetchError, FilesystemOperationError } from './errors.js'
 import { processImage } from './image-utils.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
+import { mcpToolLabel } from './person-mcp-name.js'
 
 // A session message as rendered from history (/resume, /fork). Parts may come
 // straight from the backend's history API; they are translated before rendering.
@@ -911,7 +912,7 @@ function formatPartBody(part: AgentPart, prefix?: string): string {
       }
       return TOOL_PREFIX
     })()
-    const toolParts = [part.tool, toolTitle, summaryText]
+    const toolParts = [mcpToolLabel(part.tool), toolTitle, summaryText]
       .filter(Boolean)
       .join(' ')
     if (icon === '⨯') {

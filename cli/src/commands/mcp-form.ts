@@ -38,6 +38,10 @@ import { getThreadSession } from '../database.js'
 import { parseFormSchema, type NativeFormField } from '../agent-backend/pi/mcp-native.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { createLogger } from '../logger.js'
+import { displayServerName } from '../person-mcp-name.js'
+
+/** The server name a person sees, without the per-person scope hash. */
+export { displayServerName }
 import { replyOrEditInteraction } from '../interaction-reply.js'
 import {
   NOTIFY_MESSAGE_FLAGS,
@@ -102,10 +106,6 @@ function unclaimContext(context: PendingMcpFormContext): void {
   pendingMcpFormContexts.set(context.contextHash, context)
 }
 
-/** The server name a person sees, without the per-person scope hash. */
-export function displayServerName(server: string): string {
-  return server.replace(/^roadie_pm_[0-9a-f]+_/, '') || server
-}
 
 /** Show the server's form: message verbatim, one select per choice field, then Accept/Decline/Cancel. */
 export async function showMcpFormDialog({
