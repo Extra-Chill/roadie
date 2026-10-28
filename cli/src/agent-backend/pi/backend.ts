@@ -64,7 +64,12 @@ import { permissionToolName, projectMcpServers, writeMcpFile, type PiMcpServer }
 import { appendFileEditEvents, isFileEditTool } from '../../file-edit-log.js'
 import { resolveGitState, shouldInjectBranch, type GitState } from '../../git-context.js'
 import { TITLE_PROMPT_MAX_CHARS, TITLE_REQUEST_SYSTEM } from '../../title-request.js'
-import { AGENT_TOKEN_SECRET_ENV, SCRUBBED_SHELL_ENV_NAMES, applyAgentShellEnv } from '../../agent-token.js'
+import {
+  AGENT_TOKEN_SECRET_ENV,
+  SCRUBBED_SHELL_ENV_NAMES,
+  applyAgentShellEnv,
+  ensureAgentTokenSecret,
+} from '../../agent-token.js'
 import {
   applyShellEnvTemplates,
   applyTurnAttributionEnv,
@@ -1129,7 +1134,11 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   private async writeShellEnv(file: string, sessionId: string) {
     const env: Record<string, string> = {}
-    applyAgentShellEnv({ env, secret: process.env[AGENT_TOKEN_SECRET_ENV], sessionId })
+    // Mint from the same secret the bot verifies with (hrana-server uses
+    // ensureAgentTokenSecret): the env override or the data-dir secret file.
+    // Reading only the env var left shells with an empty token whenever the
+    // secret lived in the file, the default (#380).
+    applyAgentShellEnv({ env, secret: ensureAgentTokenSecret(), sessionId })
     env[ROADIE_SESSION_ID_ENV] = sessionId
     const shellKey = this.shellPoolKey(sessionId)
     if (shellKey) env[PI_KEY_ENV] = shellKey

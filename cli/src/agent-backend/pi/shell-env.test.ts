@@ -9,7 +9,8 @@ import path from 'node:path'
 import { afterAll, afterEach, describe, expect, test } from 'vitest'
 import { closeDb } from '../../db.js'
 import { setSessionTurnAttribution } from '../../database.js'
-import { AGENT_TOKEN_SECRET_ENV } from '../../agent-token.js'
+import { AGENT_TOKEN_SECRET_ENV, verifyAgentToken } from '../../agent-token.js'
+import { getDataDir, setDataDir } from '../../config.js'
 import { PiBackendProvider } from './backend.js'
 
 const savedSecret = process.env[AGENT_TOKEN_SECRET_ENV]
@@ -62,6 +63,27 @@ describe('Pi backend writeShellEnv with configured templates', () => {
       expect(env.ROADIE_AGENT_TOKEN).toContain(sessionId)
     } finally {
       provider.dispose()
+    }
+  })
+
+  test('mints the agent token from the data-dir secret file when the env var is unset (#380)', async () => {
+    const sessionId = 'ses-pi-shell-env-secret-file'
+    const previousDataDir = getDataDir()
+    const dataDir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'roadie-pi-secret-'))
+    fs.mkdirSync(path.join(dataDir, 'secrets'), { recursive: true })
+    fs.writeFileSync(path.join(dataDir, 'secrets', 'agent-token-secret'), 'file-secret\n')
+    delete process.env[AGENT_TOKEN_SECRET_ENV]
+    setDataDir(dataDir)
+    const provider = makeProvider({})
+    try {
+      const env = await writeShellEnv(provider, sessionId)
+      expect(env.ROADIE_AGENT_TOKEN).not.toBe('')
+      expect(verifyAgentToken({ secret: 'file-secret', token: env.ROADIE_AGENT_TOKEN! })).toEqual({ sessionId })
+      // The secret itself never reaches the shell.
+      expect(env[AGENT_TOKEN_SECRET_ENV]).toBe('')
+    } finally {
+      provider.dispose()
+      setDataDir(previousDataDir)
     }
   })
 
