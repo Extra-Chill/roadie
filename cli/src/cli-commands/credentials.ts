@@ -107,6 +107,27 @@ function resolvePoolId(poolId: string | undefined): string {
 }
 
 cli
+  .command('credentials usage', 'Report per-account plan usage and reset without inference')
+  .option('--pool <id>', 'Pool to probe (default: shared)')
+  .option('--json', 'Print the capacity object as JSON')
+  .action(async (options) => {
+    await refuseAgentMode()
+    const report = await poolAccounts().usage({ poolId: resolvePoolId(options.pool) })
+    if (report instanceof Error) exitWithError(report.message)
+    if (options.json) {
+      cliLogger.log(JSON.stringify(report))
+      return
+    }
+    cliLogger.log(`Pool ${report.scope}: ${report.state}`)
+    cliLogger.log('ID  PROVIDER  LABEL  STATE  WINDOW / USED / RESET')
+    for (const account of report.accounts) {
+      const windows = account.windows.map((entry) => `${entry.name}: ${entry.used_percent}% / ${entry.reset_at || 'unknown'}`).join('; ')
+      const extra = account.extra_usage ? `; extra usage: ${account.extra_usage.enabled ? account.extra_usage.limit_reached ? 'limit reached' : 'enabled' : 'disabled'}` : ''
+      cliLogger.log(`${account.id}  ${account.provider}  ${account.label}  ${account.state}  ${windows || '—'}${extra}${account.diagnostic ? ` (${account.diagnostic})` : ''}`)
+    }
+  })
+
+cli
   .command('credentials list', 'List the accounts and rotations in a credential pool (default: shared)')
   .option('--pool <id>', 'Pool to list (default: shared)')
   .action(async (options) => {

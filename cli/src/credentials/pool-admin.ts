@@ -92,6 +92,10 @@ export function createPoolAdminHandler({
       else reply(res, status, result)
     }
 
+    if (req.method === 'GET' && route === 'usage') {
+      respond(200, await accounts.usage({ poolId }))
+      return
+    }
     if (req.method === 'GET' && route === 'accounts') {
       respond(200, await accounts.list({ poolId }))
       return

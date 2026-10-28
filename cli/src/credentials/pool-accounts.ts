@@ -16,6 +16,7 @@
 // toPoolAccountView, an explicit allowlist of fields.
 
 import crypto from 'node:crypto'
+import { poolCapacity, type PoolCapacity } from './capacity.js'
 import {
   DuplicatePoolAccountError,
   SHARED_POOL_ID,
@@ -89,6 +90,7 @@ export type PoolOAuthStart = { flowId: string; authorizeUrl: string }
 export type PoolAccounts = {
   /** Where the accounts live, for messages: `local` or the pool host URL. */
   readonly location: string
+  usage(input: { poolId: string }): Promise<PoolCapacity | Error>
   list(input: { poolId: string }): Promise<PoolListing | Error>
   addApiKey(input: { poolId: string; provider: string; key: string; label?: string; baseURL?: string }): Promise<PoolAccountAdded | Error>
   startOAuth(input: { poolId: string; provider: PoolOAuthProvider; label?: string }): Promise<PoolOAuthStart | Error>
@@ -206,6 +208,8 @@ export function localPoolAccounts({
 
   return {
     location: 'local',
+
+    usage: ({ poolId }) => poolCapacity({ dataDir, poolId }),
 
     async list({ poolId }) {
       const invalid = invalidPool(poolId)
