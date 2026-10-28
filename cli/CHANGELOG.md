@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.83.7] - 2026-10-28
+
+### Fixed
+- own child process groups and exit promptly on shutdown
+- support project-style configs in channel commands
+
 ## [0.83.6] - 2026-10-28
 
 ### Fixed
