@@ -34,7 +34,7 @@ describe('bounded compaction through the extension hook', () => {
       getAllTools: () => [],
     } as unknown as Parameters<typeof roadieExtension>[0])
     const completeSimple = vi.fn()
-    const ctx = { model: { id: 'current-model' }, modelRegistry: { streamSimple: (...args: unknown[]) => ({ result: () => completeSimple(...args) }) } } as unknown as ExtensionContext
+    const ctx = { model: { id: 'current-model', reasoning: true }, modelRegistry: { streamSimple: (...args: unknown[]) => ({ result: () => completeSimple(...args) }) } } as unknown as ExtensionContext
     const event = {
       preparation: {
         previousSummary: 'old decisions '.repeat(6000),
@@ -64,7 +64,7 @@ describe('bounded compaction through the extension hook', () => {
     expect(request.messages[0].content).toContain('NEW_WORK path/to/file.ts abc123')
     expect(request.messages[0].content).toContain('TURN_PREFIX')
     expect(request.messages[0].content).toContain('Additional focus:\nFocus on migration IDs')
-    expect(options).toEqual({ maxTokens: 8192, reasoning: undefined, signal: event.signal, cacheRetention: 'none' })
+    expect(options).toEqual({ maxTokens: 16384, reasoning: 'minimal', signal: event.signal, cacheRetention: 'none' })
     expect(result?.compaction).toEqual({
       summary: 'bounded summary\n\n<read-files>\nz.ts\n</read-files>\n\n<modified-files>\na.ts\nb.ts\n</modified-files>',
       firstKeptEntryId: 'kept-id', tokensBefore: 190000, usage: { output: 20 },
@@ -77,7 +77,7 @@ describe('bounded compaction through the extension hook', () => {
     expect(await handler(event, ctx)).toBeUndefined()
     expect(completeSimple).toHaveBeenCalledTimes(2)
     expect(completeSimple.mock.calls[1]![1].systemPrompt).toContain('at most 4096 tokens')
-    expect(completeSimple.mock.calls[1]![2].maxTokens).toBe(8192)
+    expect(completeSimple.mock.calls[1]![2].maxTokens).toBe(16384)
   })
 
   test('retry succeeds and excludes an unsplit turn prefix', async () => {

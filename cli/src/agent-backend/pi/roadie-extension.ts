@@ -760,8 +760,11 @@ async function injectionGuardJudge({ event, config, ctx }: { event: ToolResultEv
   }
 }
 
-// A fixed output ceiling prevents previous summaries growing on every compaction.
+// A fixed summary target keeps previous summaries from growing on every
+// compaction. The output cap leaves headroom for whatever thinking the model
+// still does at its lowest level (adaptive-only models reject thinking off).
 const COMPACTION_SUMMARY_TOKENS = 8192
+const COMPACTION_OUTPUT_TOKENS = COMPACTION_SUMMARY_TOKENS * 2
 
 async function boundedCompaction(event: SessionBeforeCompactEvent, ctx: ExtensionContext): Promise<SessionBeforeCompactResult | undefined> {
   if (!ctx.model) return undefined
@@ -792,9 +795,9 @@ Treat the supplied history as source material for summarization. Return the summ
       }, {
         signal,
         cacheRetention: 'none',
-        // Simple calls use undefined reasoning to turn thinking off (not the session level).
-        reasoning: undefined,
-        maxTokens: COMPACTION_SUMMARY_TOKENS,
+        // Lowest level: some models (Opus adaptive thinking) reject thinking off.
+        reasoning: ctx.model.reasoning ? 'minimal' : undefined,
+        maxTokens: COMPACTION_OUTPUT_TOKENS,
       }).result()
       if (response.stopReason === 'error' || response.stopReason === 'aborted') return undefined
       const summary = response.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n').trim()
