@@ -6,6 +6,7 @@ import {
   decideConversationIntake,
   readConversationAdmission,
   recordConversationAdmission,
+  setConversationPaused,
   resolveConversationIntake,
   type ConversationIntakeRequest,
 } from './conversation-intake.js'
@@ -80,6 +81,20 @@ test.each(['discord', 'slack'])(
     expect(decide({ directedElsewhere: true })).toEqual({ outcome: 'context', admit: false })
   },
 )
+
+test.each([
+  ['explicit policy, mention', policy, { mentionsBot: true }, 'context'],
+  ['built-in policy', undefined, {}, 'context'],
+  ['no session yet', policy, { hasSession: false, mentionsBot: true }, 'ignore'],
+] as const)('a paused conversation records context and never replies (%s)', (_name, p, input, outcome) => {
+  expect(
+    decideConversationIntake({
+      policy: p,
+      admission: { ...admission, pausedAt: '2026-10-29T00:00:00.000Z' },
+      request: { ...request, ...input },
+    }),
+  ).toEqual({ outcome, admit: false })
+})
 
 test('starter-only continuation and never-join are independent from channel eligibility', () => {
   const strict = {
@@ -184,8 +199,15 @@ test('durable admission preserves the original starter, isolates spaces, and rej
   expect(await readConversationAdmission(scope)).toEqual({
     starterActorId: 'alice',
     participants: ['alice', 'bob'],
+    pausedAt: null,
   })
   expect(await readConversationAdmission({ ...scope, spaceId: 'other-team' })).toBeNull()
+  // /off persists across restarts without touching the starter; /on clears it.
+  await setConversationPaused(scope, true)
+  await closeDatabase()
+  expect(await readConversationAdmission(scope)).toMatchObject({ starterActorId: 'alice', pausedAt: expect.any(String) })
+  await setConversationPaused(scope, false)
+  expect((await readConversationAdmission(scope))?.pausedAt).toBeNull()
   await closeDatabase()
   fs.rmSync(temp, { recursive: true, force: true })
 })

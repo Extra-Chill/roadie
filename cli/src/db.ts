@@ -251,6 +251,8 @@ async function migrateSchema({
     'ALTER TABLE session_actors ADD COLUMN person_id TEXT',
     // session_actors shipped without credential_pool (credential pools phase 2a).
     'ALTER TABLE session_actors ADD COLUMN credential_pool TEXT',
+    // conversation_admissions shipped without paused_at (/off and /on).
+    'ALTER TABLE conversation_admissions ADD COLUMN paused_at DATETIME',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)

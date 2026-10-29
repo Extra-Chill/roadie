@@ -30,7 +30,7 @@ import { disposeRuntime, getRuntime } from './session-handler/runtime-registry.j
 import { addFilter } from './hooks.js'
 import type { ContextRequest } from './context-provider.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
-import { readConversationAdmission } from './conversation-intake.js'
+import { readConversationAdmission, setConversationPaused } from './conversation-intake.js'
 import { slackThreadId } from './chat-platform/slack-api.js'
 import { initTestGitRepo, chooseLockPort } from './test-utils.js'
 import { startPiTestBackend, type PiTestBackend } from './pi-test-backend.js'
@@ -379,7 +379,22 @@ export function setupConversationIntakeSuite(platform: Platform) {
     expect(await readConversationAdmission({ platform, spaceId, threadId })).toEqual({
       starterActorId: actors.alice,
       participants: [actors.alice, actors.bob],
+      pausedAt: null,
     })
+    // /off: even a mention is recorded as context without a reply; /on resumes.
+    await wait(async () => !getRuntime(threadId)?.isBusy())
+    const answersBeforePause = (await threadMessages()).filter(answer).length
+    await setConversationPaused({ platform, spaceId, threadId }, true)
+    await sendThread(actors.alice, `<@${botId}> INTAKE_ANSWER PAUSED_NOTE`)
+    await wait(async () =>
+      (await history()).some((entry) =>
+        entry.parts.some((part) => part.kind === 'text' && part.text.includes('PAUSED_NOTE')),
+      ),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect((await threadMessages()).filter(answer)).toHaveLength(answersBeforePause)
+    await setConversationPaused({ platform, spaceId, threadId }, false)
+    await waitReply(await sendThread(actors.alice, 'INTAKE_ANSWER resumed'))
     const joinedTurn = (await history()).find(
       (entry) =>
         entry.message.role === 'user' &&
@@ -403,6 +418,7 @@ export function setupConversationIntakeSuite(platform: Platform) {
         .map((message) => message.text.replace(/^>\s*/, '').trim()),
     ).toMatchInlineSnapshot(`
       [
+        "intake-answer",
         "intake-answer",
         "intake-answer",
         "intake-answer",

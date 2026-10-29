@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS `conversation_admissions` (
 	`space_id` text NOT NULL,
 	`thread_id` text NOT NULL,
 	`starter_actor_id` text,
+	`paused_at` datetime,
 	CONSTRAINT `conversation_admissions_pk` PRIMARY KEY(`platform`, `space_id`, `thread_id`),
 	CONSTRAINT `fk_conversation_admissions_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON DELETE CASCADE
 );

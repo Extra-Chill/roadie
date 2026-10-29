@@ -68,11 +68,12 @@ import { store } from './store.js'
 import { replyOrEditInteraction } from './interaction-reply.js'
 import { notifyError } from './sentry.js'
 import { findChannelsByDirectory, getChannelDirectory, getThreadSession } from './database.js'
-import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
+import { readConversationAdmission, resolveConversationIntake, recordConversationAdmission, setConversationPaused } from './conversation-intake.js'
 import {
   reserveThreadIngress,
   runInThreadIngressSlot,
 } from './session-handler/thread-ingress.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
@@ -360,6 +361,18 @@ export function registerInteractionHandler({
           })
         }
 
+        if (interaction.isChatInputCommand() && ['off', 'on'].includes(interaction.commandName) && interaction.channel?.isThread()) {
+          const thread = interaction.channel
+          const off = interaction.commandName === 'off'
+          if (!(await getThreadSession(thread.id))) {
+            await interaction.reply({ content: 'Roadie has no conversation in this thread.', flags: MessageFlags.Ephemeral })
+            return
+          }
+          await setConversationPaused({ platform: 'discord', spaceId: thread.guildId, threadId: thread.id }, off)
+          if (off) await getRuntime(thread.id)?.abortActiveRun('paused with /off')
+          await interaction.reply({ content: off ? 'Paused. /on to resume.' : 'Resumed.', flags: MessageFlags.Ephemeral })
+          return
+        }
         if (!unboundPersonScoped && !interaction.isAutocomplete() && interaction.channel?.isThread() && interaction.isRepliable() && resolveChannelPolicy(interaction.channel.id)?.intake) {
           const thread = interaction.channel
           const scope = { platform: 'discord', spaceId: thread.guildId, threadId: thread.id }
