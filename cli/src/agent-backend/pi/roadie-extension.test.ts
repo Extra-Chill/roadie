@@ -5,7 +5,9 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
+import roadieExtension from './roadie-extension.js'
 import {
   FORM_TITLE,
   MAX_FORM_ROUNDS,
@@ -22,6 +24,81 @@ import {
   type NativeToolAsk,
 } from './roadie-extension.js'
 import type { NativeCallContinuation, NativeCallResult } from './mcp-native.js'
+
+describe('bounded compaction through the extension hook', () => {
+  function setup() {
+    let handler!: (event: SessionBeforeCompactEvent, ctx: ExtensionContext) => Promise<SessionBeforeCompactResult | undefined>
+    roadieExtension({
+      on: (name: string, callback: typeof handler) => { if (name === 'session_before_compact') handler = callback },
+      registerTool: () => {},
+      getAllTools: () => [],
+    } as unknown as Parameters<typeof roadieExtension>[0])
+    const completeSimple = vi.fn()
+    const ctx = { model: { id: 'current-model', reasoning: true }, modelRegistry: { streamSimple: (...args: unknown[]) => ({ result: () => completeSimple(...args) }) } } as unknown as ExtensionContext
+    const event = {
+      preparation: {
+        previousSummary: 'old decisions '.repeat(6000),
+        messagesToSummarize: [{ role: 'user', content: 'NEW_WORK path/to/file.ts abc123', timestamp: 1 }],
+        turnPrefixMessages: [{ role: 'user', content: 'TURN_PREFIX', timestamp: 2 }],
+        isSplitTurn: true,
+        fileOps: { read: new Set(['z.ts', 'a.ts']), edited: new Set(['a.ts']), written: new Set(['b.ts']) },
+        firstKeptEntryId: 'kept-id', tokensBefore: 190000,
+      },
+      customInstructions: 'Focus on migration IDs',
+      signal: new AbortController().signal,
+    } as unknown as SessionBeforeCompactEvent
+    return { handler, ctx, event, completeSimple }
+  }
+  const reply = (text: string, stopReason = 'stop') => ({ content: [{ type: 'text', text }], stopReason, usage: { output: 20 } })
+
+  test('merges long history with a fixed output budget, focus and file lists', async () => {
+    const { handler, ctx, event, completeSimple } = setup()
+    completeSimple.mockResolvedValue(reply('bounded summary'))
+    const result = await handler(event, ctx)
+    expect(completeSimple).toHaveBeenCalledTimes(1)
+    const [model, request, options] = completeSimple.mock.calls[0]!
+    expect(model).toBe(ctx.model)
+    expect(request.systemPrompt).toContain('at most 8192 tokens')
+    expect(request.systemPrompt).toContain('Compress and merge older sections')
+    expect(request.messages[0].content).toContain(event.preparation.previousSummary)
+    expect(request.messages[0].content).toContain('NEW_WORK path/to/file.ts abc123')
+    expect(request.messages[0].content).toContain('TURN_PREFIX')
+    expect(request.messages[0].content).toContain('Additional focus:\nFocus on migration IDs')
+    expect(options).toEqual({ maxTokens: 16384, reasoning: 'minimal', signal: event.signal, cacheRetention: 'none' })
+    expect(result?.compaction).toEqual({
+      summary: 'bounded summary\n\n<read-files>\nz.ts\n</read-files>\n\n<modified-files>\na.ts\nb.ts\n</modified-files>',
+      firstKeptEntryId: 'kept-id', tokensBefore: 190000, usage: { output: 20 },
+    })
+  })
+
+  test.each(['length', 'empty'])('%s retries exactly once with a tighter target, then falls back', async (failure) => {
+    const { handler, ctx, event, completeSimple } = setup()
+    completeSimple.mockResolvedValue(reply(failure === 'empty' ? '  ' : 'incomplete', failure === 'length' ? 'length' : 'stop'))
+    expect(await handler(event, ctx)).toBeUndefined()
+    expect(completeSimple).toHaveBeenCalledTimes(2)
+    expect(completeSimple.mock.calls[1]![1].systemPrompt).toContain('at most 4096 tokens')
+    expect(completeSimple.mock.calls[1]![2].maxTokens).toBe(16384)
+  })
+
+  test('retry succeeds and excludes an unsplit turn prefix', async () => {
+    const { handler, ctx, event, completeSimple } = setup()
+    event.preparation.isSplitTurn = false
+    completeSimple.mockResolvedValueOnce(reply('partial', 'length')).mockResolvedValueOnce(reply('compressed'))
+    expect((await handler(event, ctx))?.compaction?.summary).toContain('compressed')
+    expect(completeSimple.mock.calls[1]![1].messages[0].content).not.toContain('TURN_PREFIX')
+  })
+
+  test('aborted or failed requests fall back to Pi', async () => {
+    const { handler, ctx, event, completeSimple } = setup()
+    completeSimple.mockRejectedValue(new Error('unavailable'))
+    expect(await handler(event, ctx)).toBeUndefined()
+    expect(completeSimple).toHaveBeenCalledTimes(1)
+    completeSimple.mockClear()
+    event.signal = AbortSignal.abort()
+    expect(await handler(event, ctx)).toBeUndefined()
+    expect(completeSimple).not.toHaveBeenCalled()
+  })
+})
 
 describe('native MCP tool names', () => {
   test('keeps the mcp__<server>__<tool> shape Pi\'s built-in client uses', () => {

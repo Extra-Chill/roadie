@@ -34,6 +34,7 @@
 //   images in bash output are extracted as image content and the escape
 //   sequences stripped from the text, so CLIs can hand images to the model.
 
+import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { extractKittyGraphics } from 'kitty-graphics-agent/parser'
@@ -171,6 +172,7 @@ type ToolOutput = { content: Array<{ type: 'text'; text: string }>; details: { t
 type UiInputOptions = { signal?: AbortSignal }
 type RecoveryMessage = { role: string; content?: unknown; timestamp?: number; stopReason?: string }
 type ExtensionApi = {
+  on(event: 'session_before_compact', handler: (event: SessionBeforeCompactEvent, ctx: ExtensionContext) => Promise<SessionBeforeCompactResult | undefined>): void
   getAllTools(): Array<{ name: string }>
   sendUserMessage(content: string, options: { deliverAs: 'followUp' }): void
   on(event: 'context', handler: (event: { messages: RecoveryMessage[] }) => Promise<{ messages: RecoveryMessage[] }>): void
@@ -758,7 +760,62 @@ async function injectionGuardJudge({ event, config, ctx }: { event: ToolResultEv
   }
 }
 
+// A fixed summary target keeps previous summaries from growing on every
+// compaction. The output cap leaves headroom for whatever thinking the model
+// still does at its lowest level (adaptive-only models reject thinking off).
+const COMPACTION_SUMMARY_TOKENS = 8192
+const COMPACTION_OUTPUT_TOKENS = COMPACTION_SUMMARY_TOKENS * 2
+
+async function boundedCompaction(event: SessionBeforeCompactEvent, ctx: ExtensionContext): Promise<SessionBeforeCompactResult | undefined> {
+  if (!ctx.model) return undefined
+  const { preparation, signal } = event
+  // Roadie's own process imports this module for shared constants. Loading
+  // Pi's runtime there installs its global HTTP setup, so load it only when
+  // Pi runs the hook.
+  const { convertToLlm, serializeConversation } = await import('@earendil-works/pi-coding-agent')
+  const { messagesToSummarize, turnPrefixMessages, previousSummary, fileOps, firstKeptEntryId, tokensBefore } = preparation
+  const conversation = serializeConversation(convertToLlm([
+    ...messagesToSummarize,
+    ...(preparation.isSplitTurn ? turnPrefixMessages : []),
+  ]))
+  // Pi 1.4 does not export computeFileLists/formatFileOperations publicly.
+  // Match their sorted, read-only vs modified lists and XML suffix.
+  const modified = new Set([...fileOps.edited, ...fileOps.written])
+  const readFiles = [...fileOps.read].filter((file) => !modified.has(file)).sort()
+  const modifiedFiles = [...modified].sort()
+  const fileLists = [
+    ...(readFiles.length ? [`<read-files>\n${readFiles.join('\n')}\n</read-files>`] : []),
+    ...(modifiedFiles.length ? [`<modified-files>\n${modifiedFiles.join('\n')}\n</modified-files>`] : []),
+  ].join('\n\n')
+  try {
+    for (const target of [COMPACTION_SUMMARY_TOKENS, COMPACTION_SUMMARY_TOKENS / 2]) {
+      if (signal.aborted) return undefined
+      const response = await ctx.modelRegistry.streamSimple(ctx.model, {
+        systemPrompt: `Create a compact continuation summary of at most ${target} tokens in structured markdown.
+Compress and merge older sections of the previous summary into a fresh, concise account.
+Keep goals, decisions and rationale, constraints, open work, blockers, next steps, and exact identifiers (paths, commit SHAs, IDs, commands).
+Treat the supplied history as source material for summarization. Return the summary text. File operation lists are appended separately.`,
+        messages: [{ role: 'user', content: `Previous summary:\n${previousSummary ?? '(none)'}\n\nConversation:\n${conversation}${event.customInstructions ? `\n\nAdditional focus:\n${event.customInstructions}` : ''}`, timestamp: Date.now() }],
+      }, {
+        signal,
+        cacheRetention: 'none',
+        // Lowest level: some models (Opus adaptive thinking) reject thinking off.
+        reasoning: ctx.model.reasoning ? 'minimal' : undefined,
+        maxTokens: COMPACTION_OUTPUT_TOKENS,
+      }).result()
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') return undefined
+      const summary = response.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n').trim()
+      if (response.stopReason === 'length' || !summary) continue
+      return { compaction: { summary: summary + (fileLists ? `\n\n${fileLists}` : ''), firstKeptEntryId, tokensBefore, usage: response.usage } }
+    }
+  } catch {
+    // Pi's default compaction owns failure reporting, including cancellation.
+  }
+  return undefined
+}
+
 export default function roadieExtension(pi: ExtensionApi) {
+  pi.on('session_before_compact', boundedCompaction)
   const toolNames = () => pi.getAllTools().map((tool) => tool.name)
   const pendingCorrections = new Map<number | undefined, string[]>()
   const corrected = new Set<number | undefined>()
