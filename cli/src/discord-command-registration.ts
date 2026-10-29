@@ -214,6 +214,11 @@ export function buildStaticSlashCommands() {
       })
       .setDMPermission(false)
       .toJSON(),
+    ...(['off', 'on'] as const).map((name) => new SlashCommandBuilder()
+      .setName(name)
+      .setDescription(name === 'off' ? 'Pause Roadie in this conversation' : 'Resume Roadie in this conversation')
+      .setDMPermission(false)
+      .toJSON()),
     new SlashCommandBuilder()
       .setName('last-sessions')
       .setDescription(truncateCommandDescription('List the 20 most recently active sessions across all projects'))

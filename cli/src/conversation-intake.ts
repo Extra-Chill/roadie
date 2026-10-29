@@ -10,7 +10,7 @@ import type { IdentityActor } from './identity.js'
 export type IntakeOutcome = 'respond' | 'context' | 'ignore'
 export type IntakeDecision = { outcome: IntakeOutcome; admit: boolean }
 export type ConversationScope = { platform: string; spaceId: string; threadId: string }
-export type ConversationAdmission = { starterActorId: string | null; participants: string[] }
+export type ConversationAdmission = { starterActorId: string | null; participants: string[]; pausedAt?: string | null }
 export type ConversationIntakeRequest = {
   actor: IdentityActor
   personId?: string
@@ -45,6 +45,7 @@ export function decideConversationIntake({
 }): IntakeDecision {
   if (!request.eligible || policy === null || policy?.respond === 'never') return ignored
   if (request.createsThread && policy?.threads === 'existing-only') return ignored
+  if (admission?.pausedAt) return request.hasSession ? { outcome: 'context', admit: false } : ignored
   if (!policy?.intake)
     return { outcome: request.legacyOutcome, admit: request.legacyOutcome === 'respond' }
 
@@ -86,7 +87,20 @@ export async function readConversationAdmission(
   return {
     starterActorId: conversation.starter_actor_id,
     participants: participants.map((row) => row.actor_id),
+    pausedAt: conversation.paused_at?.toISOString() ?? null,
   }
+}
+
+/** Pause or resume replies in a conversation Roadie already holds. */
+export async function setConversationPaused(scope: ConversationScope, paused: boolean): Promise<void> {
+  const db = await getDb()
+  const paused_at = paused ? new Date() : null
+  await db.insert(schema.conversation_admissions)
+    .values({ platform: scope.platform, space_id: scope.spaceId, thread_id: scope.threadId, paused_at })
+    .onConflictDoUpdate({
+      target: [schema.conversation_admissions.platform, schema.conversation_admissions.space_id, schema.conversation_admissions.thread_id],
+      set: { paused_at },
+    })
 }
 
 /** Forget admission when an inline conversation explicitly starts afresh. */

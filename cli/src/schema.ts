@@ -63,6 +63,7 @@ export const conversation_admissions = sqliteCore.sqliteTable('conversation_admi
   space_id: sqliteCore.text('space_id').notNull(),
   thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onDelete: 'cascade' }),
   starter_actor_id: sqliteCore.text('starter_actor_id'),
+  paused_at: datetime('paused_at'),
 }, (table) => [sqliteCore.primaryKey({ columns: [table.platform, table.space_id, table.thread_id] })])
 
 export const conversation_participants = sqliteCore.sqliteTable('conversation_participants', {
