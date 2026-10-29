@@ -34,7 +34,7 @@
 //   images in bash output are extracted as image content and the escape
 //   sequences stripped from the text, so CLIs can hand images to the model.
 
-import { convertToLlm, serializeConversation, type ExtensionContext, type SessionBeforeCompactEvent, type SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
+import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { extractKittyGraphics } from 'kitty-graphics-agent/parser'
@@ -769,6 +769,10 @@ const COMPACTION_OUTPUT_TOKENS = COMPACTION_SUMMARY_TOKENS * 2
 async function boundedCompaction(event: SessionBeforeCompactEvent, ctx: ExtensionContext): Promise<SessionBeforeCompactResult | undefined> {
   if (!ctx.model) return undefined
   const { preparation, signal } = event
+  // Roadie's own process imports this module for shared constants. Loading
+  // Pi's runtime there installs its global HTTP setup, so load it only when
+  // Pi runs the hook.
+  const { convertToLlm, serializeConversation } = await import('@earendil-works/pi-coding-agent')
   const { messagesToSummarize, turnPrefixMessages, previousSummary, fileOps, firstKeptEntryId, tokensBefore } = preparation
   const conversation = serializeConversation(convertToLlm([
     ...messagesToSummarize,
