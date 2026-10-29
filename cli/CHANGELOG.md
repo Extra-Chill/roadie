@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.8] - 2026-10-29
+
+### Changed
+- Bound Pi compaction summaries in Roadie
+
 ## [0.83.7] - 2026-10-28
 
 ### Fixed
