@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.9] - 2026-10-29
+
+### Changed
+- Pause Roadie in a thread with /off and resume with /on
+
 ## [0.83.8] - 2026-10-29
 
 ### Changed
