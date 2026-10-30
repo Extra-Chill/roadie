@@ -189,7 +189,7 @@ describe('formatSessionSleepToolOutput', () => {
     })
 
     expect(output).toBe(
-      'Sleeping until 2026-09-07 13:21 UTC. Reason: Wait 1 day, then check mail. This tool result is not a wake. Do not continue the waited work. Do not call more tools. Reply with one short line that you are waiting until that time, then stop. The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason. A new user message in this thread cancels the sleep. If you still need that later wake after answering, call roadie_sleep again with until set to the same UTC time.',
+      'Sleeping until 2026-09-07 13:21 UTC. Reason: Wait 1 day, then check mail. This tool result is not a wake. Do not continue the waited work. Do not call more tools. Reply with one short line that you are waiting until <t:1788787260:f>, written exactly like that so chat shows the reader\'s local time, then stop. The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason. A new user message in this thread cancels the sleep. If you still need that later wake after answering, call roadie_sleep again with until set to the same UTC time.',
     )
     expect(output.startsWith('Sleeping until ')).toBe(true)
     expect(output).toContain('This tool result is not a wake')
@@ -210,7 +210,7 @@ describe('formatSessionSleepToolOutput', () => {
         reason: 'Wait 1 day, then check mail',
       }),
     ).toBe(
-      '-# Woke after sleeping until 2026-09-07 13:21 UTC\nReason: Wait 1 day, then check mail\nContinue the work you were waiting for.',
+      '-# Woke after sleeping until <t:1788787260:f>\nReason: Wait 1 day, then check mail\nContinue the work you were waiting for.',
     )
   })
 })

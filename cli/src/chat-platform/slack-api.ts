@@ -288,6 +288,8 @@ export function slackText(markdown: string, notify = false): string {
         .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<$2|$1>')
         .replace(/<@([A-Z0-9]+)>/g, notify ? '<@$1>' : '&lt;@$1&gt;')
         .replace(/<!([^>]+)>/g, '&lt;!$1&gt;')
+        .replace(/<t:(\d+)(?::[tTdDfFR])?>/g, (_, seconds: string) =>
+          `<!date^${seconds}^{date_short_pretty} at {time}|${new Date(Number(seconds) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC>`)
     })
     .join('')
 }

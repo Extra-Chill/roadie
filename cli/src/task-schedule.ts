@@ -2,7 +2,7 @@
 
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
-import { asSubtext } from './message-formatting.js'
+import { asSubtext, formatChatTime } from './message-formatting.js'
 
 export type ScheduledTaskPayload = {
   preRunCommand: string | null
@@ -192,7 +192,7 @@ export function formatSessionSleepWakePrompt({
   wakeAt: Date
   reason: string | null
 }): string {
-  const until = formatSessionSleepWakeAt(wakeAt)
+  const until = formatChatTime(wakeAt)
   const reasonLine = reason?.trim() ? `\nReason: ${reason.trim()}` : ''
   return `${asSubtext(`Woke after sleeping until ${until}`)}${reasonLine}\nContinue the work you were waiting for.`
 }
@@ -211,7 +211,7 @@ export function formatSessionSleepToolOutput({
   return [
     `Sleeping until ${until}.${reasonText}`,
     'This tool result is not a wake. Do not continue the waited work. Do not call more tools.',
-    'Reply with one short line that you are waiting until that time, then stop.',
+    `Reply with one short line that you are waiting until ${formatChatTime(wakeAt)}, written exactly like that so chat shows the reader's local time, then stop.`,
     'The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason.',
     'A new user message in this thread cancels the sleep. If you still need that later wake after answering, call roadie_sleep again with until set to the same UTC time.',
   ].join(' ')

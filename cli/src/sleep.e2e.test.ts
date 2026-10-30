@@ -364,11 +364,11 @@ describe.skipIf(!findPi())('roadie_sleep', () => {
         -# *using fake/fake-1*
         waiting for the deploy
 
-        -# ┣ roadie_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
+        -# ┣ roadie_sleep until <t:1893488400:f> _waiting for the deploy_
 
         sleep-started
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*
-        -# Woke after sleeping until 2030-01-01 09:00 UTC
+        -# Woke after sleeping until <t:1893488400:f>
         Reason: waiting for the deploy
         Continue the work you were waiting for.
         [embed]

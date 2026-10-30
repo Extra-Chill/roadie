@@ -429,6 +429,7 @@ describe('system-message', () => {
       Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
       Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
       Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_action_buttons\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool.
+      Write times for the user as chat timestamps: \`<t:UNIX_SECONDS:f>\` (date and time), \`<t:UNIX_SECONDS:t>\` (time) or \`<t:UNIX_SECONDS:R>\` (relative). Chat renders them in each reader's own timezone. Keep UTC ISO for tool arguments.
 
       ## bash tool
 
