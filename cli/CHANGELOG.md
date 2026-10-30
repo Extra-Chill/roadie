@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.13] - 2026-10-30
+
+### Changed
+- Show when a queued Discord message was sent and how long it waited
+
 ## [0.83.12] - 2026-10-30
 
 ### Fixed
