@@ -21,6 +21,9 @@ import {
   getTextAttachments,
 } from './message-formatting.js'
 import { getThreadSession } from './database.js'
+import { channelAllowsSpeaker } from './channel-policy.js'
+import { getCachedPerson, resolvePerson } from './identity.js'
+import { hasNoRoadieRole, hasRoadieBotPermission, resolveGuildMessageMember } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -28,6 +31,55 @@ const logger = createLogger(LogPrefix.SESSION)
 export type { PreprocessResult }
 
 const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
+const THREAD_HISTORY_LIMIT = 20
+const THREAD_HISTORY_TEXT_LIMIT = 8_000
+
+/** Apply the same audience and session permissions as live Discord ingress,
+ * without sending denial replies for historical messages. */
+async function admitsHistoryAuthor(message: Message): Promise<boolean> {
+  if (message.author.bot || message.system || !message.guild) return false
+  const member = await resolveGuildMessageMember(message)
+  if (!member) return false
+  await resolvePerson({
+    actor: {
+      platform: 'discord', id: message.author.id,
+      name: member.displayName || message.author.displayName,
+    },
+    context: { guildId: message.guild.id, channelId: message.channelId },
+  })
+  return channelAllowsSpeaker(message.channelId, {
+    userId: message.author.id,
+    isGuildOwner: message.guild.ownerId === message.author.id,
+    roleNames: member.roles.cache.map((role) => role.name),
+    roleIds: [...member.roles.cache.keys()],
+    personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId,
+  }) && !hasNoRoadieRole(member) && hasRoadieBotPermission(member, message.guild)
+}
+
+async function getEarlierThreadMessages(message: Message, thread: ThreadChannel, starterId?: string): Promise<string> {
+  try {
+    const messages = await thread.messages.fetch({ before: message.id, limit: THREAD_HISTORY_LIMIT })
+    const lines: string[] = []
+    let remaining = THREAD_HISTORY_TEXT_LIMIT
+    // Prefer the most recent context within the budget, then render chronologically.
+    const recent = [...messages.values()].sort((a, b) => a.id === b.id ? 0 : BigInt(a.id) > BigInt(b.id) ? -1 : 1)
+    for (const earlier of recent) {
+      if (remaining <= 0) break
+      if (earlier.id === starterId || earlier.id === thread.id || BigInt(earlier.id) >= BigInt(message.id)) continue
+      if (!await admitsHistoryAuthor(earlier)) continue
+      const text = [resolveMentions(earlier), await getTextAttachments(earlier)].filter(Boolean).join('\n\n')
+      if (!text.trim()) continue
+      const name = earlier.member?.displayName || earlier.author.displayName || earlier.author.username
+      const line = `[${name}]: ${text}`.slice(0, remaining)
+      lines.unshift(line)
+      remaining -= line.length + 1
+    }
+    return lines.join('\n')
+  } catch (error) {
+    logger.warn(`[SESSION] Failed to fetch thread history for thread ${thread.id}:`, error)
+    return ''
+  }
+}
 
 /**
  * Shared ingress step for every Discord message that becomes a prompt: user
@@ -182,6 +234,7 @@ export async function preprocessNewSessionMessage({
       )
       return null
     })
+  let context = ''
   if (starterMessage && starterMessage.content !== message.content) {
     const starterTextAttachments = await getTextAttachments(starterMessage)
     const starterContent = resolveMentions(starterMessage)
@@ -189,8 +242,16 @@ export async function preprocessNewSessionMessage({
       ? `${starterContent}\n\n${starterTextAttachments}`
       : starterContent
     if (starterText) {
-      prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
+      context = starterText
     }
+  }
+
+  const earlierMessages = await getEarlierThreadMessages(message, thread, starterMessage?.id)
+  if (earlierMessages) {
+    context = [context, `Earlier messages in thread:\n${earlierMessages}`].filter(Boolean).join('\n\n')
+  }
+  if (context) {
+    prompt = `Context from thread:\n${context}\n\nUser request:\n${prompt}`
   }
 
   const resolved = await resolveMessagePrompt({ message, text: prompt })
