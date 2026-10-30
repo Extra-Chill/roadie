@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.10] - 2026-10-30
+
+### Changed
+- Record a context-only forked-to note in the source session
+
 ## [0.83.9] - 2026-10-29
 
 ### Changed
