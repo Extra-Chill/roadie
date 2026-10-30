@@ -99,6 +99,7 @@ export const SHELL_ENV_TEMPLATES_ENV = 'ROADIE_SHELL_ENV'
  *   {channel_id}  the parent channel of that thread (turn attribution)
  *   {platform}    chat platform of the current turn's speaker
  *   {actor_id}    opaque platform user id of the current turn's speaker
+ *   {actor_name}  display name of the current turn's speaker, for display only
  *   {person_id}   opaque host person id from the person filter, recorded with
  *                 the actor
  *
@@ -112,6 +113,7 @@ export const SHELL_ENV_TEMPLATE_FIELDS = [
   'channel_id',
   'platform',
   'actor_id',
+  'actor_name',
   'person_id',
 ] as const
 
@@ -245,6 +247,7 @@ export function applyShellEnvTemplates({
     channel_id: attribution?.channelId,
     platform: attribution?.actor?.platform,
     actor_id: attribution?.actor?.id,
+    actor_name: attribution?.actor?.name,
     person_id: attribution?.personId,
   }
   for (const [name, template] of Object.entries(templates)) {

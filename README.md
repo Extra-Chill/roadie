@@ -281,6 +281,7 @@ Names come only from your configuration; Roadie never adds variables on its own 
 | `{channel_id}` | The parent channel of that thread |
 | `{platform}` | Chat platform of the current turn's speaker |
 | `{actor_id}` | Platform user id of the current turn's speaker |
+| `{actor_name}` | Display name of the current turn's speaker, for display only (not an identity) |
 | `{person_id}` | Host person id from the `person` filter, recorded with the actor |
 
 There is no `{thread_url}`: building one needs platform-specific context (a Discord guild id, a Slack workspace) that Roadie does not track per turn. An invalid variable name or an unknown field stops startup with an error rather than exporting a wrong value, and a field with no value for a turn (no channel yet, a turn without a human speaker) leaves that variable unset.
