@@ -43,6 +43,11 @@ export const SUBTEXT_PREFIX = '-# '
 export const STATUS_PREFIX = '⬦ '
 export const QUEUE_PREFIX = '» '
 
+/** Chat timestamp markup. Discord renders it in each reader's timezone; Slack output converts it. */
+export function formatChatTime(at: Date): string {
+  return `<t:${Math.floor(at.getTime() / 1000)}:f>`
+}
+
 export function asSubtext(text: string): string {
   const lead = text.startsWith('\n') ? '\n' : ''
   const body = lead ? text.slice(1) : text
@@ -727,9 +732,12 @@ export function getToolSummaryText(part: AgentPart): string {
     const until = (part.input?.until as string) || ''
     const duration = (part.input?.duration as string) || ''
     const reason = (part.input?.reason as string) || ''
-    const when = until ? `until ${until}` : duration ? `for ${duration}` : ''
+    const untilAt = until ? new Date(until) : null
+    const when = untilAt && !Number.isNaN(untilAt.getTime())
+      ? `until ${formatChatTime(untilAt)}`
+      : until ? escapeInlineMarkdown(`until ${until}`) : duration ? escapeInlineMarkdown(`for ${duration}`) : ''
     const reasonText = reason ? `_${escapeInlineMarkdown(reason)}_` : ''
-    return [when && escapeInlineMarkdown(when), reasonText]
+    return [when, reasonText]
       .filter(Boolean)
       .join(' ')
   }

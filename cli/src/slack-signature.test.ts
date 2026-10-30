@@ -21,4 +21,7 @@ test('Slack prose conversion preserves code and makes silent mentions inert', ()
     '*Bold* `**code**`\n```\n**code block**\n```\n&lt;@U123&gt;',
   )
   expect(slackText('<@U123>', true)).toBe('<@U123>')
+  expect(slackText('until <t:1893488400:f>')).toBe(
+    'until <!date^1893488400^{date_short_pretty} at {time}|2030-01-01 09:00 UTC>',
+  )
 })

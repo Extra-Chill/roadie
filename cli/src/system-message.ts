@@ -537,7 +537,7 @@ export function getSystemMessage({
   const rotationsSection: SystemPromptSection = { id: 'model-rotations', text: renderModelRotations(modelCatalog) }
   if (platform === 'slack') {
     const sections: SystemPromptSection[] = [
-      { id: 'chat-output', text: 'The user is reading your messages in Slack through Roadie. Use concise Markdown; Roadie converts it to native Slack formatting. Include original source links in your answers.' },
+      { id: 'chat-output', text: 'The user is reading your messages in Slack through Roadie. Use concise Markdown; Roadie converts it to native Slack formatting. Include original source links in your answers. Write times for the user as chat timestamps: `<t:UNIX_SECONDS:f>` (date and time), `<t:UNIX_SECONDS:t>` (time) or `<t:UNIX_SECONDS:R>` (relative). Chat renders them in each reader\'s own timezone. Keep UTC ISO for tool arguments.' },
       { id: 'session', text: `${SESSION_ID_LINE_PREFIX}${sessionId}\nSlack workspace: ${guildId ?? ''}\nSlack channel: ${channelId ?? ''}\nRoadie thread: ${threadId ?? ''}${parentSessionId ? `\n${getParentSessionInstructions(parentSessionId)}` : ''}` },
       { id: 'identity', text: 'The current speaker is supplied in <chat-user platform="slack" ... /> metadata. Mention Slack users by <@USER_ID>. Tool processes receive ROADIE_ACTOR_PLATFORM, ROADIE_ACTOR_ID and ROADIE_PERSON_ID; authority comes from the host identity and permission policy.' },
       { id: 'interaction', text: 'For questions use question. For quick choices use roadie_action_buttons. Write the user-visible explanation before the interaction tool and call that tool last. Roadie renders native Slack selects, buttons and modals.' },
@@ -582,6 +582,7 @@ The user is reading your messages from inside Discord, via Roadie
 Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
 Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
 Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_action_buttons\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool.
+Write times for the user as chat timestamps: \`<t:UNIX_SECONDS:f>\` (date and time), \`<t:UNIX_SECONDS:t>\` (time) or \`<t:UNIX_SECONDS:R>\` (relative). Chat renders them in each reader's own timezone. Keep UTC ISO for tool arguments.
 ` },
     { id: 'bash-tool', text: `
 ## bash tool

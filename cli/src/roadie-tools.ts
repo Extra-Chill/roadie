@@ -156,7 +156,8 @@ export const roadieSleep = defineTool({
     reason: z.string().optional().describe('Why the session is sleeping. Shown when it wakes.'),
   },
   async execute({ duration, until, reason }, context) {
-    const { parseSleepWakeAt, formatSessionSleepWakeAt, formatSessionSleepToolOutput } = await import('./task-schedule.js')
+    const { parseSleepWakeAt, formatSessionSleepToolOutput } = await import('./task-schedule.js')
+    const { formatChatTime } = await import('./message-formatting.js')
     const wakeAt = parseSleepWakeAt({ duration, until, now: new Date() })
     if (wakeAt instanceof Error) return wakeAt.message
     const { getThreadIdBySessionId, upsertSessionSleep } = await loadDatabaseModule()
@@ -168,7 +169,7 @@ export const roadieSleep = defineTool({
     await upsertSessionSleep({ sessionId: context.sessionId, wakeAt, reason })
     // The title carries the resolved absolute time so the chat shows the
     // real wake instant instead of a relative input like "2h".
-    return { title: `until ${formatSessionSleepWakeAt(wakeAt)}`, output: formatSessionSleepToolOutput({ wakeAt, reason }) }
+    return { title: `until ${formatChatTime(wakeAt)}`, output: formatSessionSleepToolOutput({ wakeAt, reason }) }
   },
 })
 
