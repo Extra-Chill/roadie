@@ -22,6 +22,7 @@ export type QueuedMessage = SessionTitleTurn & {
   // Stable id for this queue entry. Used by Discord remove-queue buttons so
   // position shifts after earlier drains do not remove the wrong item.
   queueId?: string
+  sourceMessageTimestamp?: string
   // The text content to send to the agent session (user message or
   // transcribed voice message). Always present.
   prompt: string

@@ -220,6 +220,21 @@ describe('system-message', () => {
     expect(context).not.toContain('OpenCode')
   })
 
+  test('a late message carries its send time and how long it waited', () => {
+    const sentAt = '2026-10-30T13:57:02.000Z'
+    const sent = Date.parse(sentAt)
+    for (const [waitedMs, expected] of [
+      [20_000, ` sent-at="${sentAt}" thread-id`],
+      [105 * 60_000, ` sent-at="${sentAt}" queued-for="1h45m" thread-id`],
+    ] as const) {
+      const context = getPromptContext({
+        username: 'roadie-cli', sourceMessageId: 'msg_1', sourceThreadId: 'thread_1',
+        sourceMessageTimestamp: sentAt, now: sent + waitedMs,
+      })
+      expect(context).toContain(`message-id="msg_1"${expected}`)
+    }
+  })
+
   test('persisted fork origin adds a fork notice without a stale system prompt', () => {
     const context = getPromptContext({
       sessionId: 'ses_fork',

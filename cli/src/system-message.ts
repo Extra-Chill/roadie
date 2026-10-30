@@ -391,6 +391,16 @@ function formatWorkingDirectoryReminder(dir: WorkingDirectoryInfo): string {
   return `<system-reminder>\n${lines.join('\n')}\n</system-reminder>`
 }
 
+// A message held behind a busy turn reaches the agent late. Its original send
+// time and the wait let the agent tell a late message from a fresh one.
+function formatQueuedFor(sentAt: string | undefined, now: number): string | undefined {
+  const sent = sentAt ? Date.parse(sentAt) : NaN
+  const minutes = Math.floor((now - sent) / 60_000)
+  if (!(minutes >= 1)) return undefined
+  const hours = Math.floor(minutes / 60)
+  return hours ? `${hours}h${minutes % 60}m` : `${minutes}m`
+}
+
 export function getPromptContext({
   platform = 'discord',
   sessionId,
@@ -399,6 +409,8 @@ export function getPromptContext({
   username,
   userId,
   sourceMessageId,
+  sourceMessageTimestamp,
+  now = Date.now(),
   sourceThreadId,
   threadName,
   repliedMessage,
@@ -423,6 +435,8 @@ export function getPromptContext({
   username?: string
   userId?: string
   sourceMessageId?: string
+  sourceMessageTimestamp?: string
+  now?: number
   sourceThreadId?: string
   threadName?: string
   repliedMessage?: RepliedMessageContext
@@ -430,6 +444,7 @@ export function getPromptContext({
   currentAgent?: string
   workingDirectoryChanged?: boolean
 }): string {
+  const queuedFor = formatQueuedFor(sourceMessageTimestamp, now)
   const userAttrs = [
     ...(username
       ? [` name="${escapePromptAttribute(username)}"`]
@@ -440,6 +455,10 @@ export function getPromptContext({
     ...(sourceMessageId
       ? [` message-id="${escapePromptAttribute(sourceMessageId)}"`]
       : []),
+    ...(sourceMessageTimestamp
+      ? [` sent-at="${escapePromptAttribute(sourceMessageTimestamp)}"`]
+      : []),
+    ...(queuedFor ? [` queued-for="${queuedFor}"`] : []),
     ...(sourceThreadId
       ? [` thread-id="${escapePromptAttribute(sourceThreadId)}"`]
       : []),

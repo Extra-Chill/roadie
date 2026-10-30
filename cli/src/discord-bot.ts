@@ -1024,6 +1024,7 @@ export async function startDiscordBot({
             message.member?.displayName ||
             message.author.displayName,
           sourceMessageId: message.id,
+          sourceMessageTimestamp: message.createdAt.toISOString(),
           sourceThreadId: thread.id,
           sourceChannelId: message.channelId,
           appId: currentAppId,

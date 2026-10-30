@@ -102,6 +102,7 @@ export type IngressInput = {
   // Discord message ID and thread ID for the source message, embedded in
   // <discord-user> synthetic context so the model knows which message it answers.
   sourceMessageId?: string
+  sourceMessageTimestamp?: string
   sourceThreadId?: string
   // Channel that holds the source message. Differs from the thread for the
   // thread starter message, which lives in the parent channel.
