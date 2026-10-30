@@ -389,6 +389,19 @@ export async function forkSessionToThread({
     })
   }
 
+  // Tell the source session where the work went, as context only: no model
+  // turn starts, and a busy source receives it after its current turn.
+  const forkedNote = await backend.sessions.prompt({
+    sessionId, directory: sdkDirectory, noReply: true,
+    parts: [{ kind: 'text', text: [
+      `This session was forked to thread <#${thread.id}> (session ${forkedSession.id})`,
+      crossChannel ? ` in <#${targetChannel.id}>, working in ${forkProjectDirectory}` : '',
+      fromMessageId ? `, before message ${fromMessageId}` : '',
+      '. Work continuing there is not visible here.',
+    ].join('') }],
+  })
+  if (forkedNote instanceof Error) forkLogger.warn(`Could not record the fork in source session ${sessionId}:`, forkedNote)
+
   return { thread, forkedSessionId: forkedSession.id }
 }
 

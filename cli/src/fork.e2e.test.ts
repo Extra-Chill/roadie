@@ -215,6 +215,20 @@ describe.skipIf(!findPi())('/fork', () => {
     // The fork carries the source conversation.
     const messages = await sessionMessages(forkSession)
     expect(messages.some((m) => m.message.role === 'assistant')).toBe(true)
+    expect(JSON.stringify(messages)).not.toContain('This session was forked to')
+    // The source learns where the work went, as context only: no new turn, no reply.
+    const sourceBefore = await ctx.discord.thread(source.id).text()
+    const noteIn = (entries: Awaited<ReturnType<typeof sessionMessages>>) => entries.filter((entry) =>
+      entry.parts.some((part) => part.kind === 'text' && part.text.includes(`This session was forked to thread <#${fork.id}> (session ${forkSession})`)))
+    let sourceMessages = await sessionMessages(sourceSession!)
+    for (const deadline = Date.now() + 4_000; noteIn(sourceMessages).length === 0 && Date.now() < deadline;) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      sourceMessages = await sessionMessages(sourceSession!)
+    }
+    expect(noteIn(sourceMessages)).toHaveLength(1)
+    expect(sourceMessages.at(-1)?.message.role).not.toBe('assistant')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(await ctx.discord.thread(source.id).text()).toBe(sourceBefore)
   }, 25_000)
 
   test('channel: moves the conversation and subsequent turns to the target project', async () => {
@@ -476,8 +490,11 @@ describe.skipIf(!findPi())('/fork', () => {
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
       titles.push(title)
-      const sourceHistory = await sessionMessages((await getThreadSession(source.id))!)
-      const history = await sessionMessages(sessionId)
+      // Forked-to notes are context only; a later fork also inherits earlier ones.
+      const withoutNotes = (entries: Awaited<ReturnType<typeof sessionMessages>>) => entries.filter((entry) =>
+        !entry.parts.some((part) => part.kind === 'text' && part.text.includes('This session was forked to')))
+      const sourceHistory = withoutNotes(await sessionMessages((await getThreadSession(source.id))!))
+      const history = withoutNotes(await sessionMessages(sessionId))
       expect(history.filter((entry) => entry.message.role === 'user')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'user').length + 1)
       expect(history.filter((entry) => entry.message.role === 'assistant')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'assistant').length + 1)
       expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain(`Forked from <#SOURCE_THREAD>.\n${prompt}`)
