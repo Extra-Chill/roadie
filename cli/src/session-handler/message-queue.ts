@@ -76,6 +76,7 @@ export class MessageQueue {
       injectionGuardPatterns: input.injectionGuardPatterns,
       parentSessionId: input.parentSessionId,
       sourceMessageId: input.sourceMessageId,
+      sourceMessageTimestamp: input.sourceMessageTimestamp,
       sourceThreadId: input.sourceThreadId,
       sourceChannelId: input.sourceChannelId,
       repliedMessage: input.repliedMessage,

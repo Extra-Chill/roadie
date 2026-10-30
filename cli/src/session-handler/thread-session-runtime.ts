@@ -2690,6 +2690,7 @@ export class ThreadSessionRuntime {
           const context = getPromptContext({
             platform: this.chat.platform, sessionId: existingSessionId, backend: agentBackendLabel(), threadId: this.threadId,
             username: input.username, userId: input.userId, sourceMessageId: input.sourceMessageId,
+            sourceMessageTimestamp: input.sourceMessageTimestamp,
             sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
             repliedMessage: input.repliedMessage,
           })
@@ -2913,6 +2914,7 @@ export class ThreadSessionRuntime {
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
+        sourceMessageTimestamp: input.sourceMessageTimestamp,
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
@@ -3635,6 +3637,7 @@ export class ThreadSessionRuntime {
       username: input.username,
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
+      sourceMessageTimestamp: input.sourceMessageTimestamp,
       sourceThreadId: input.sourceThreadId || this.thread.id,
       threadName: this.chat.name || undefined,
       repliedMessage: input.repliedMessage,
@@ -3675,6 +3678,7 @@ export class ThreadSessionRuntime {
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
+        sourceMessageTimestamp: input.sourceMessageTimestamp,
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
