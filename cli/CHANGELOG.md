@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.11] - 2026-10-30
+
+### Changed
+- Show chat times in each reader's timezone
+
 ## [0.83.10] - 2026-10-30
 
 ### Changed
