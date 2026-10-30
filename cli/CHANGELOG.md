@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.83.12] - 2026-10-30
+
+### Fixed
+- include earlier thread messages when a session starts from a mention
+
 ## [0.83.11] - 2026-10-30
 
 ### Changed
