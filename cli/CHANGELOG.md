@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.84.1] - 2026-10-31
+
+### Changed
+- Word fork notes as background so the source keeps working and the fork leads with the user's request
+
+### Fixed
+- Fix workspace-root deterministic test gate
+
 ## [0.84.0] - 2026-10-31
 
 ### Added
