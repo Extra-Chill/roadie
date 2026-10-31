@@ -243,7 +243,7 @@ export type ForkOrigin = {
 }
 
 function getForkOriginNotice({ sourceSessionId, sourceThreadId }: ForkOrigin): string {
-  return `This session was forked from thread ${sourceThreadId} (session ${sourceSessionId}). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.`
+  return `This session was forked from thread ${sourceThreadId} (session ${sourceSessionId}); earlier history came from that thread, which continues independently. Message or act on the source session only when the user asks.`
 }
 
 /** A thread bound to a directory other than its project root. */
