@@ -150,6 +150,7 @@ describe('applyShellEnvTemplates', () => {
         CHANNEL: '{channel_id}',
         PLATFORM: '{platform}',
         ACTOR: '{actor_id}',
+        NAME: 'Requested by {actor_name}',
         PERSON: '{person_id}',
         MIXED: '{platform}:{actor_id}@{session_id}',
       },
@@ -160,6 +161,7 @@ describe('applyShellEnvTemplates', () => {
       CHANNEL: 'channel-1',
       PLATFORM: 'discord',
       ACTOR: '38',
+      NAME: 'Requested by Team Member',
       PERSON: 'host:38',
       MIXED: 'discord:38@ses_1',
     })
@@ -171,7 +173,7 @@ describe('applyShellEnvTemplates', () => {
       env,
       sessionId: 'ses_2',
       attribution: { sessionId: 'ses_2', threadId: 'thread-2' },
-      templates: { THREAD: '{thread_id}', CHANNEL: '{channel_id}', SPEAKER: '{actor_id}', SESSION: '{session_id}' },
+      templates: { THREAD: '{thread_id}', CHANNEL: '{channel_id}', SPEAKER: '{actor_id}', SPEAKER_NAME: '{actor_name}', SESSION: '{session_id}' },
     })
     // No channel and no actor on this turn: those variables are unset, and a
     // stale value from an earlier turn cannot survive.

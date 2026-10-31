@@ -187,7 +187,7 @@ cli
       .array(z.string())
       .optional()
       .describe(
-        'Extra environment variable for agent tool shells, as NAME=template. Repeatable. Templates may use {session_id}, {thread_id}, {channel_id}, {platform}, {actor_id} and {person_id}; a field with no value for a turn leaves the variable unset. Also ROADIE_SHELL_ENV (JSON object). Invalid names or unknown fields stop startup.',
+        'Extra environment variable for agent tool shells, as NAME=template. Repeatable. Templates may use {session_id}, {thread_id}, {channel_id}, {platform}, {actor_id}, {actor_name} and {person_id}; a field with no value for a turn leaves the variable unset. Also ROADIE_SHELL_ENV (JSON object). Invalid names or unknown fields stop startup.',
       ),
   )
   .action(

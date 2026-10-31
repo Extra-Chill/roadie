@@ -51,12 +51,14 @@ describe('Pi backend writeShellEnv with configured templates', () => {
       ROADIE_DEPLOY_HOOK: 'https://ops.example/hook/{session_id}',
       ROADIE_LABEL: '{platform}:{actor_id}',
       ROADIE_PERSON: '{person_id}',
+      ROADIE_SPEAKER: '{actor_name}',
     })
     try {
       const env = await writeShellEnv(provider, sessionId)
       expect(env.ROADIE_DEPLOY_HOOK).toBe(`https://ops.example/hook/${sessionId}`)
       expect(env.ROADIE_LABEL).toBe('discord:38')
       expect(env.ROADIE_PERSON).toBe('host:38')
+      expect(env.ROADIE_SPEAKER).toBe('Team Member')
       // The rest of the shell env contract is untouched.
       expect(env.ROADIE_SESSION_ID).toBe(sessionId)
       expect(env.ROADIE_THREAD_ID).toBe('thread-1')
