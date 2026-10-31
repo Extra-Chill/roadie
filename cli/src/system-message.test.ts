@@ -185,7 +185,7 @@ describe('system-message', () => {
       "<system-reminder>
       Your current session ID is: ses_fork
       Your current Discord thread ID is: thread_fork
-      This session was forked from thread thread_source (session ses_source). Earlier conversation history came from that source thread. Do not act on the source's in-flight work or message the source session unless the user asks you to.
+      This session was forked from thread thread_source (session ses_source); earlier history came from that thread, which continues independently. Message or act on the source session only when the user asks.
       The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every roadie command (--session, --parent-session, --thread, session archive).
       Your parent session ID is: ses_parent_added_later
       You can send a message back to the parent session with:
@@ -242,9 +242,8 @@ describe('system-message', () => {
       systemPromptFromSourceSession: false,
       forkOrigin: { sourceSessionId: 'ses_source', sourceThreadId: 'thread_source' },
     })
-    expect(context).toContain('This session was forked from thread thread_source (session ses_source).')
-    expect(context).toContain('Earlier conversation history came from that source thread.')
-    expect(context).toContain("Do not act on the source's in-flight work or message the source session unless the user asks")
+    expect(context).toContain('This session was forked from thread thread_source (session ses_source); earlier history came from that thread, which continues independently.')
+    expect(context).toContain('Message or act on the source session only when the user asks.')
     expect(context).not.toContain('belong to the source session')
   })
 

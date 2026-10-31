@@ -362,13 +362,15 @@ export async function forkSessionToThread({
     // Parent context stays in the user prompt only. Passing parentSessionId
     // would add a parent block to the system message and bust the prompt
     // cache shared with the source session.
+    // The user's request comes first; the fork context is one background line
+    // after it. The system message (fork origin notice) carries the rule about
+    // not messaging the source session.
     const forkedPrompt = [
-      crossChannel
-        ? `This conversation was forked from thread <#${sourceThread.id}> in <#${sourceThread.parentId}> (session ${sessionId}). Now working in the target project: ${forkProjectDirectory}.`
-        : `This conversation was forked from thread <#${sourceThread.id}> (session ${sessionId}) into a new thread.`,
-      `Do not send messages to the source session unless the user asks you to.`,
-      ``,
       trimmedPrompt,
+      ``,
+      crossChannel
+        ? `(Forked from thread <#${sourceThread.id}> (session ${sessionId}) in <#${sourceThread.parentId}>; now working in the target project: ${forkProjectDirectory}.)`
+        : `(Forked from thread <#${sourceThread.id}> (session ${sessionId}).)`,
     ].join('\n')
     // Not awaited: the caller confirms right away while the runtime resolves
     // preferences and dispatches. Failures are reported in the fork.
@@ -389,15 +391,16 @@ export async function forkSessionToThread({
     })
   }
 
-  // Tell the source session where the work went, as context only: no model
-  // turn starts, and a busy source receives it after its current turn.
+  // Tell the source session where the copy went, as context only: no model
+  // turn starts, and the note lands at the next step boundary, so it can
+  // arrive mid-run, between a tool result and the next LLM call.
   const forkedNote = await backend.sessions.prompt({
     sessionId, directory: sdkDirectory, noReply: true,
     parts: [{ kind: 'text', text: [
-      `This session was forked to thread <#${thread.id}> (session ${forkedSession.id})`,
+      `A copy of this conversation was made in thread <#${thread.id}> (session ${forkedSession.id})`,
       crossChannel ? ` in <#${targetChannel.id}>, working in ${forkProjectDirectory}` : '',
       fromMessageId ? `, before message ${fromMessageId}` : '',
-      '. Work continuing there is not visible here.',
+      ". This thread continues unchanged: keep working on the current task here. The copy's later messages are not visible here.",
     ].join('') }],
   })
   if (forkedNote instanceof Error) forkLogger.warn(`Could not record the fork in source session ${sessionId}:`, forkedNote)

@@ -215,17 +215,18 @@ describe.skipIf(!findPi())('/fork', () => {
     // The fork carries the source conversation.
     const messages = await sessionMessages(forkSession)
     expect(messages.some((m) => m.message.role === 'assistant')).toBe(true)
-    expect(JSON.stringify(messages)).not.toContain('This session was forked to')
-    // The source learns where the work went, as context only: no new turn, no reply.
+    expect(JSON.stringify(messages)).not.toContain('A copy of this conversation was made in thread')
+    // The source learns where the copy went, as context only: no new turn, no reply.
     const sourceBefore = await ctx.discord.thread(source.id).text()
     const noteIn = (entries: Awaited<ReturnType<typeof sessionMessages>>) => entries.filter((entry) =>
-      entry.parts.some((part) => part.kind === 'text' && part.text.includes(`This session was forked to thread <#${fork.id}> (session ${forkSession})`)))
+      entry.parts.some((part) => part.kind === 'text' && part.text.includes(`A copy of this conversation was made in thread <#${fork.id}> (session ${forkSession})`)))
     let sourceMessages = await sessionMessages(sourceSession!)
     for (const deadline = Date.now() + 4_000; noteIn(sourceMessages).length === 0 && Date.now() < deadline;) {
       await new Promise((resolve) => setTimeout(resolve, 50))
       sourceMessages = await sessionMessages(sourceSession!)
     }
     expect(noteIn(sourceMessages)).toHaveLength(1)
+    expect(noteIn(sourceMessages)[0]?.parts.some((part) => part.kind === 'text' && part.text.includes('This thread continues unchanged'))).toBe(true)
     expect(sourceMessages.at(-1)?.message.role).not.toBe('assistant')
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(await ctx.discord.thread(source.id).text()).toBe(sourceBefore)
@@ -492,12 +493,17 @@ describe.skipIf(!findPi())('/fork', () => {
       titles.push(title)
       // Forked-to notes are context only; a later fork also inherits earlier ones.
       const withoutNotes = (entries: Awaited<ReturnType<typeof sessionMessages>>) => entries.filter((entry) =>
-        !entry.parts.some((part) => part.kind === 'text' && part.text.includes('This session was forked to')))
+        !entry.parts.some((part) => part.kind === 'text' && part.text.includes('A copy of this conversation was made in thread')))
       const sourceHistory = withoutNotes(await sessionMessages((await getThreadSession(source.id))!))
       const history = withoutNotes(await sessionMessages(sessionId))
       expect(history.filter((entry) => entry.message.role === 'user')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'user').length + 1)
       expect(history.filter((entry) => entry.message.role === 'assistant')).toHaveLength(sourceHistory.filter((entry) => entry.message.role === 'assistant').length + 1)
       expect((await ctx.discord.thread(fork.id).text()).replace(`<#${source.id}>`, '<#SOURCE_THREAD>')).toContain(`Forked from <#SOURCE_THREAD>.\n${prompt}`)
+      // The fork's new prompt leads with the user's request; the fork context trails it.
+      const forkPrompt = history.filter((entry) => entry.message.role === 'user').at(-1)
+      const forkPromptText = forkPrompt?.parts.find((part) => part.kind === 'text')?.text ?? ''
+      expect(forkPromptText.startsWith(prompt)).toBe(true)
+      expect(forkPromptText.startsWith('(Forked from')).toBe(false)
     }
     expect(titles).toMatchInlineSnapshot(`
       [
