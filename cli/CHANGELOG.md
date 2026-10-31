@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.2] - 2026-10-31
+
+### Changed
+- Report credential pool capacity and fix clean-install typecheck
+
 ## [0.84.1] - 2026-10-31
 
 ### Changed
