@@ -57,7 +57,7 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import YAML from 'yaml'
-import { getFileAttachments, getStarterMessageText, getTextAttachments, resolveContentMentions } from './message-formatting.js'
+import { getFileAttachments, getStarterMessageText, getTextAttachments, isMissingReadableMessageContent, resolveContentMentions } from './message-formatting.js'
 import {
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
@@ -177,15 +177,6 @@ const MISSING_MESSAGE_CONTENT_REPLY = dedent`
   Mention me and send it again, like \`@Roadie fix the failing test\`, so I can read it.
   To avoid this reminder, start Roadie with \`--mention-mode\` so it only reacts to mentioned messages.
 `
-
-function isMissingReadableMessageContent(message: Message) {
-  if (message.author.bot) return false
-  if (message.content.trim()) return false
-  if (message.attachments.size > 0) return false
-  if (message.embeds.length > 0) return false
-  if (message.stickers.size > 0) return false
-  return true
-}
 
 // Well-known WebSocket and Discord Gateway close codes for diagnostic logging.
 // Gateway proxy redeploys cause an abrupt TCP drop (code 1006) because the proxy
