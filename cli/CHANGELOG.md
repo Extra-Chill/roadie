@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.0] - 2026-10-31
+
+### Added
+- add {actor_name} template field
+
 ## [0.83.13] - 2026-10-30
 
 ### Changed
