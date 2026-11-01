@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.3] - 2026-11-01
+
+### Fixed
+- accept forwarded Discord messages and process snapshot attachments
+
 ## [0.84.2] - 2026-10-31
 
 ### Changed
