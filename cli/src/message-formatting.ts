@@ -112,10 +112,22 @@ export function serializePoll(poll: Poll | null): string {
   return `<poll>\n${lines.join('\n')}\n</poll>`
 }
 
-/**
- * Serialize forwarded message snapshots into plain text. Each snapshot is a
- * partial Message with content and embeds.
- */
+type ReadableMessagePayload = Pick<Message | MessageSnapshot, 'content' | 'attachments' | 'embeds' | 'stickers'>
+
+function hasReadablePayload(message: ReadableMessagePayload): boolean {
+  return Boolean(
+    message.content?.trim() || message.attachments?.size ||
+    message.embeds?.length || message.stickers?.size,
+  )
+}
+
+/** Both ingress paths must accept payloads carried inside forwarded snapshots. */
+export function isMissingReadableMessageContent(message: Message): boolean {
+  if (message.author.bot || hasReadablePayload(message)) return false
+  return !Array.from(message.messageSnapshots?.values() ?? []).some(hasReadablePayload)
+}
+
+/** Serialize forwarded payloads, including metadata for attachment/sticker-only forwards. */
 export function serializeMessageSnapshots(
   snapshots: Message['messageSnapshots'],
 ): string {
@@ -129,6 +141,12 @@ export function serializeMessageSnapshots(
     if (snapshot.embeds.length > 0) {
       const embedText = serializeEmbeds(snapshot.embeds)
       if (embedText) lines.push(embedText)
+    }
+    for (const attachment of snapshot.attachments?.values() ?? []) {
+      lines.push(`<attachment ${textAttachmentAttrs(attachment)} />`)
+    }
+    for (const sticker of snapshot.stickers?.values() ?? []) {
+      lines.push(`<sticker name="${sticker.name}" url="${sticker.url}" />`)
     }
     if (lines.length > 0) {
       parts.push(`<forwarded-message>\n${lines.join('\n\n')}\n</forwarded-message>`)
@@ -444,8 +462,17 @@ function localAttachmentPath(attachment: { id?: string; name: string; url: strin
   return path.join(getDataDir(), 'attachments', `${id}-${safeAttachmentBasename(attachment.name)}`)
 }
 
+/** Share the same download/processing paths for direct and forwarded attachments. */
+function getAllAttachments(message: Message) {
+  return [
+    ...message.attachments.values(),
+    ...Array.from(message.messageSnapshots?.values() ?? [])
+      .flatMap((snapshot) => Array.from(snapshot.attachments?.values() ?? [])),
+  ]
+}
+
 export async function getTextAttachments(message: Message): Promise<string> {
-  const textAttachments = Array.from(message.attachments.values()).filter(
+  const textAttachments = getAllAttachments(message).filter(
     (attachment) => isTextMimeType(attachment.contentType),
   )
 
@@ -524,7 +551,7 @@ export async function getStarterMessageText(message: Message): Promise<string> {
 export async function getFileAttachments(
   message: Message,
 ): Promise<DiscordFileAttachment[]> {
-  const fileAttachments = Array.from(message.attachments.values()).filter(
+  const fileAttachments = getAllAttachments(message).filter(
     (attachment) => {
       const contentType = attachment.contentType || ''
       return (
