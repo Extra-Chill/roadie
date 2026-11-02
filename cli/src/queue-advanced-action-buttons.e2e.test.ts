@@ -39,7 +39,71 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
     channelName: 'qa-action-buttons-e2e',
     dirName: 'qa-action-buttons-e2e',
     username: 'queue-action-tester',
+    extraMatchers: [{
+      id: 'action-buttons-before-text',
+      priority: 120,
+      when: {
+        lastMessageRole: 'user',
+        latestUserTextIncludes: 'ACTION_BUTTONS_BEFORE_TEXT_MARKER',
+      },
+      then: {
+        parts: [
+          { type: 'stream-start', warnings: [] },
+          {
+            type: 'tool-call',
+            toolCallId: 'action-buttons-before-text-call',
+            toolName: 'roadie_action_buttons',
+            input: JSON.stringify({ buttons: [{ label: 'Continue' }] }),
+          },
+          {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+      },
+    }, {
+      id: 'action-buttons-later-text',
+      priority: 120,
+      when: {
+        lastMessageRole: 'tool',
+        latestUserTextIncludes: 'ACTION_BUTTONS_BEFORE_TEXT_MARKER',
+      },
+      then: {
+        parts: [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'action-buttons-summary' },
+          { type: 'text-delta', id: 'action-buttons-summary', delta: 'Summary after the button tool.' },
+          { type: 'text-end', id: 'action-buttons-summary' },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+      },
+    }],
   })
+
+  test('renders buttons after text from a following assistant message', async () => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: 'ACTION_BUTTONS_BEFORE_TEXT_MARKER',
+    })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({ timeout: 4_000 })
+
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      text: 'Summary after the button tool.',
+      timeout: 12_000,
+    })
+    await waitForPendingActionButtons({ threadId: thread.id, timeoutMs: 12_000 })
+
+    const timeline = await ctx.discord.thread(thread.id).text()
+    expect(timeline.indexOf('Summary after the button tool.')).toBeLessThan(
+      timeline.indexOf('**Action Required**'),
+    )
+  }, 20_000)
 
   for (const restart of [false, true]) {
     test(`button click continues the session with a follow-up assistant reply (restart: ${restart})`, async () => {

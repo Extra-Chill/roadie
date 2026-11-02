@@ -112,6 +112,7 @@ import {
 import {
   showActionButtons,
   waitForQueuedActionButtonsRequest,
+  type ActionButtonsRequest,
 } from '../commands/action-buttons.js'
 import {
   pendingFileUploadContexts,
@@ -260,6 +261,7 @@ export class ThreadSessionRuntime {
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, AgentPart>>()
+  private heldActionButtons: ActionButtonsRequest | undefined
 
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
@@ -694,6 +696,7 @@ export class ThreadSessionRuntime {
     this.eventBuffer = []
     this.nextEventIndex = 0
     this.partBuffer.clear()
+    this.heldActionButtons = undefined
     this.preprocessChain = Promise.resolve()
 
     // Don't clear actionQueue here — queued closures own resolve/reject for
@@ -1814,44 +1817,26 @@ export class ThreadSessionRuntime {
       part.tool.endsWith('roadie_action_buttons')
     ) {
       const sessionId = this.state?.sessionId
-      await this.interactiveUi.showInteractiveUi({
-        skipPartId: part.id,
-        flushMessageId: part.messageId,
-        show: async () => {
-          if (!sessionId) {
-            return
-          }
-          const request = await waitForQueuedActionButtonsRequest({
-            sessionId,
-            timeoutMs: 1500,
-          })
-          if (!request) {
-            logger.warn(
-              `[ACTION] No queued action-buttons request found for session ${sessionId}`,
-            )
-            return
-          }
-          if (request.threadId !== this.thread.id) {
-            logger.warn(
-              `[ACTION] Ignoring queued action-buttons for different thread`,
-            )
-            return
-          }
-          const showResult = await this.chat.interactions.actions({
-            sessionId: request.sessionId,
-            directory: request.directory,
-            buttons: request.buttons,
-            silent: this.getQueueLength() > 0,
-          }).catch((e) => new DiscordOperationError({ operation: 'showActionButtons', cause: e }))
-          if (showResult instanceof Error) {
-            logger.error(
-              '[ACTION] Failed to show action buttons:',
-              showResult,
-            )
-            await this.chat.sendMessage(`Failed to show action buttons: ${showResult.message}`, { notify: true })
-          }
-        },
+      if (!sessionId) {
+        return
+      }
+      const request = await waitForQueuedActionButtonsRequest({
+        sessionId,
+        timeoutMs: 1500,
       })
+      if (!request) {
+        logger.warn(
+          `[ACTION] No queued action-buttons request found for session ${sessionId}`,
+        )
+        return
+      }
+      if (request.threadId !== this.thread.id) {
+        logger.warn(
+          `[ACTION] Ignoring queued action-buttons for different thread`,
+        )
+        return
+      }
+      this.heldActionButtons = request
       return
     }
 
@@ -2011,6 +1996,27 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
+      const request = this.heldActionButtons
+      this.heldActionButtons = undefined
+      if (request) {
+        // Buttons close the turn: post any text the model wrote after the tool first.
+        await this.flushCurrentTurnParts({ mode: 'final', repulseTyping: false })
+        await this.interactiveUi.showInteractiveUi({
+          show: async () => {
+            const showResult = await this.chat.interactions.actions({
+              sessionId: request.sessionId,
+              directory: request.directory,
+              buttons: request.buttons,
+              silent: this.getQueueLength() > 0,
+            }).catch((e) => new DiscordOperationError({ operation: 'showActionButtons', cause: e }))
+            if (showResult instanceof Error) {
+              logger.error('[ACTION] Failed to show action buttons:', showResult)
+              await this.chat.sendMessage(`Failed to show action buttons: ${showResult.message}`, { notify: true })
+            }
+          },
+        })
+      }
+
       // The run ended; anything still marked pending was taken or dropped.
       this.clearPendingDeliveries()
       const shouldDrainQueuedMessages = doesLatestUserTurnHaveNaturalCompletion({
@@ -2179,6 +2185,9 @@ export class ThreadSessionRuntime {
       )
       return
     }
+
+    // Drop held buttons on abort/error: incomplete turns must not offer follow-up actions.
+    this.heldActionButtons = undefined
 
     // Skip abort errors — they are expected when operations are cancelled
     if (event.error?.name === 'MessageAbortedError') {
@@ -3247,6 +3256,7 @@ export class ThreadSessionRuntime {
     const sessionIsBusy = this.isBusy()
     this.restartContinuation = undefined
     this.roadieAbortPending = true
+    this.heldActionButtons = undefined
 
     logger.log(
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} sessionBusy=${sessionIsBusy}`,
