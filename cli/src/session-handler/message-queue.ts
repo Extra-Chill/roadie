@@ -16,6 +16,7 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { asSubtext } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
+import { getPromptContext } from '../system-message.js'
 import {
   isSessionBusy,
   type EventBufferEntry,
@@ -37,6 +38,24 @@ export type MessageQueueOptions = {
   markQueueDispatchBusy: (sessionId: string) => void
   markQueueDispatchIdle: (sessionId: string) => void
   dispatchPrompt: (input: QueuedMessage) => Promise<boolean>
+}
+
+// Source metadata may differ within a turn; dispatch-affecting overrides may
+// not. Even identical commands/overrides keep their original per-item dispatch.
+function canShareTurn(first: QueuedMessage, next: QueuedMessage): boolean {
+  const hasOverrides = (item: QueuedMessage): boolean => Boolean(
+    item.command || item.agent || item.model || item.variant
+    || item.permissions || item.images?.length || item.injectionGuardPatterns
+    || item.parentSessionId || item.sessionStartScheduleKind
+    || item.sessionStartScheduledTaskId || item.titlePrompt || item.noReply
+    || item.contextOnly || item.isSleepWake || item.isRestartContinuation,
+  )
+  return !hasOverrides(first) && !hasOverrides(next)
+    && first.userId === next.userId
+    && first.personId === next.personId
+    && first.actorVia === next.actorVia
+    && first.appId === next.appId
+    && first.sourceThreadId === next.sourceThreadId
 }
 
 export class MessageQueue {
@@ -373,6 +392,26 @@ export class MessageQueue {
     if (!next) {
       return
     }
+    const batch = [next]
+    for (const item of thread.queueItems.slice(1)) {
+      if (!canShareTurn(next, item)) break
+      batch.push(item)
+    }
+    const input = batch.length === 1 ? next : {
+      ...next,
+      prompt: batch.map((item) => {
+        const attribution = getPromptContext({
+          platform: this.opts.chat.platform,
+          username: item.username,
+          userId: item.userId,
+          sourceMessageId: item.sourceMessageId,
+          sourceMessageTimestamp: item.sourceMessageTimestamp,
+          sourceThreadId: item.sourceThreadId || this.threadId,
+          repliedMessage: item.repliedMessage,
+        })
+        return `${attribution}\n${item.prompt}`
+      }).join('\n\n'),
+    }
     this.dispatchingQueueId = next.queueId
 
     logger.log(
@@ -382,7 +421,7 @@ export class MessageQueue {
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
     if (showIndicator) {
-      await this.sendQueueDrainIndicator(next)
+      for (const item of batch) await this.sendQueueDrainIndicator(item)
     }
 
     // Start dispatch (detached — does not block the action queue).
@@ -395,10 +434,10 @@ export class MessageQueue {
       this.opts.markQueueDispatchBusy(dispatchSessionId)
     }
     let accepted = false
-    void this.opts.dispatchPrompt(next).then(async (ok) => {
+    void this.opts.dispatchPrompt(input).then(async (ok) => {
       accepted = ok
       if (ok) {
-        await this.acknowledgeAcceptedQueueItem(next)
+        for (const item of batch) await this.acknowledgeAcceptedQueueItem(item)
       }
     }).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
