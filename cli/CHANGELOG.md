@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.4] - 2026-11-02
+
+### Changed
+- Hold action buttons until the turn ends
+
 ## [0.84.3] - 2026-11-01
 
 ### Fixed
