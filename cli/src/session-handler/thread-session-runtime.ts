@@ -1996,10 +1996,11 @@ export class ThreadSessionRuntime {
     // The event is also pushed into the event buffer by handleEvent(),
     // so waitForEvent() consumers (abort settlement) will see it too.
     if (idleSessionId === sessionId) {
-      await this.flushCurrentTurnParts({ mode: 'final', repulseTyping: false })
       const request = this.heldActionButtons
       this.heldActionButtons = undefined
       if (request) {
+        // Buttons close the turn: post any text the model wrote after the tool first.
+        await this.flushCurrentTurnParts({ mode: 'final', repulseTyping: false })
         await this.interactiveUi.showInteractiveUi({
           show: async () => {
             const showResult = await this.chat.interactions.actions({
