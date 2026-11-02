@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.5] - 2026-11-02
+
+### Changed
+- Coalesce compatible queued messages into one attributed prompt
+
 ## [0.84.4] - 2026-11-02
 
 ### Changed
