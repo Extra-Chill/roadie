@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.6] - 2026-11-03
+
+### Changed
+- Idle fires on agent_settled so post-turn auto-compaction cannot leave a thread busy
+
 ## [0.84.5] - 2026-11-02
 
 ### Changed
