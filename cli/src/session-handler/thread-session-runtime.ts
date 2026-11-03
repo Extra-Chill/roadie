@@ -1110,7 +1110,7 @@ export class ThreadSessionRuntime {
         this.handleFormReplied(agentEvent)
         break
       case 'status':
-        await this.handleSessionStatus(agentEvent)
+        await this.handleSessionStatus(agentEvent, rawBackendEvent)
         break
       case 'session.updated':
         await this.handleSessionUpdated(agentEvent.session)
@@ -2326,7 +2326,7 @@ export class ThreadSessionRuntime {
   private async handleSessionStatus(event: {
     sessionId: string
     status: AgentStatus
-  }): Promise<void> {
+  }, rawBackendEvent?: unknown): Promise<void> {
     const sessionId = this.state?.sessionId
     if (event.sessionId !== sessionId) {
       return
@@ -2338,12 +2338,23 @@ export class ThreadSessionRuntime {
     }
 
     if (event.status.state === 'busy') {
+      // compaction_end translates to busy (#373); the raw record says how the
+      // compaction ended, so the lifecycle is diagnosable without the Pi JSONL.
+      const record = rawBackendEvent as { type?: unknown; reason?: unknown; aborted?: unknown } | undefined
+      if (record?.type === 'compaction_end') {
+        logger.info(`[COMPACTION] ended ${record.aborted ? 'aborted' : 'success'} reason=${String(record.reason ?? 'threshold')} sessionId=${sessionId}`)
+      }
       this.typing.ensureTypingNow()
       return
     }
 
     if (event.status.state === 'compacting' || event.status.state === 'compaction-failed') {
       this.typing.ensureTypingNow()
+      if (event.status.state === 'compacting') {
+        logger.info(`[COMPACTION] started reason=${event.status.reason} sessionId=${sessionId}`)
+      } else {
+        logger.info(`[COMPACTION] failed error=${event.status.message} sessionId=${sessionId}`)
+      }
       const notice = event.status.state === 'compacting'
         ? `compacting context (${event.status.reason})…`
         : `compaction failed: ${event.status.message}`

@@ -22,7 +22,8 @@ function records(name: string): PiRecord[] {
 
 function translate(name: string): AgentEvent[] {
   const translator = new PiEventTranslator('ses-pi')
-  return records(name).flatMap((record) => translator.translate(record))
+  // Pi 1.4 ends every run with agent_settled; the recording predates that record.
+  return [...records(name), { type: 'agent_settled', aborted: false } as PiRecord].flatMap((record) => translator.translate(record))
 }
 
 describe('splitRecords', () => {
@@ -394,8 +395,50 @@ describe('Pi 1.x stream shape', () => {
     expect(end).toEqual([])
     const finalized = translator.translate({ type: 'message_end', message: { role: 'assistant', timestamp: 7, content: [{ type: 'text', text: 'hi' }] } })
     expect(finalized.some((e) => e.type === 'part' && e.part.kind === 'text' && e.part.text === 'hi' && e.part.startedAt === 7)).toBe(true)
-    expect(translator.translate({ type: 'agent_settled', aborted: false })).toEqual([])
+    // agent_settled ends the run: the idle status followed by the idle event (#410).
+    expect(translator.translate({ type: 'agent_settled', aborted: false })).toEqual([
+      { type: 'status', sessionId: 'ses-pi', status: { state: 'idle' } },
+      { type: 'idle', sessionId: 'ses-pi' },
+    ])
   })
+})
+
+// Pi 1.4 keeps a run active past agent_end: auto-retry, post-turn compaction
+// and queued continuations all happen after it, and agent_settled ends the run
+// (#410). Each run must produce exactly one idle, as the last status, after
+// any compaction — a compaction_end alone would leave the session busy.
+describe('Pi 1.4 run lifecycle: idle at agent_settled (#410)', () => {
+  const turn = (timestamp: number): PiRecord[] => [
+    { type: 'agent_start' },
+    { type: 'message_start', message: { role: 'assistant', content: [], timestamp } },
+    { type: 'message_end', message: { role: 'assistant', timestamp, content: [{ type: 'text', text: `reply ${timestamp}` }], stopReason: 'stop' } },
+    { type: 'agent_end' },
+  ]
+  const settled: PiRecord = { type: 'agent_settled', aborted: false }
+
+  const cases: Array<{ name: string; stream: PiRecord[] }> = [
+    { name: 'a normal turn', stream: [...turn(1), settled] },
+    {
+      name: 'post-turn auto-compaction',
+      stream: [...turn(1), { type: 'compaction_start', reason: 'threshold' }, { type: 'compaction_end', reason: 'threshold', result: {}, aborted: false, willRetry: false }, settled],
+    },
+    {
+      name: 'overflow compaction with a retry',
+      stream: [...turn(1), { type: 'compaction_start', reason: 'overflow' }, { type: 'compaction_end', reason: 'overflow', result: {}, aborted: false, willRetry: true }, ...turn(2), settled],
+    },
+  ]
+
+  for (const { name, stream } of cases) {
+    test(`${name}: exactly one idle, the last status, after any compaction`, () => {
+      const translator = new PiEventTranslator('ses-pi')
+      const events = stream.flatMap((record) => translator.translate(record))
+      expect(events.filter((event) => event.type === 'idle')).toEqual([{ type: 'idle', sessionId: 'ses-pi' }])
+      expect(events.filter((event) => event.type === 'status').at(-1)).toEqual({ type: 'status', sessionId: 'ses-pi', status: { state: 'idle' } })
+      const idleAt = events.findIndex((event) => event.type === 'idle')
+      const compactingAt = events.findIndex((event) => event.type === 'status' && event.status.state === 'compacting')
+      if (compactingAt >= 0) expect(idleAt).toBeGreaterThan(compactingAt)
+    })
+  }
 })
 
 describe('MCP config for Pi', () => {

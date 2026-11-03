@@ -337,7 +337,14 @@ export class PiEventTranslator {
         this.aborting = false
         return [{ type: 'status', sessionId, status: { state: 'busy' } }]
       case 'agent_end':
+        // Pi 1.4 keeps the run active past agent_end (auto-retry, post-turn
+        // compaction, queued continuations), so idle waits for agent_settled.
         this.assistantId = undefined
+        return []
+      case 'agent_settled':
+        // The actual end of a Pi run, aborted or not (#410): only here does
+        // the last status become idle, after any post-turn compaction whose
+        // compaction_end otherwise leaves the session busy.
         return [{ type: 'status', sessionId, status: { state: 'idle' } }, { type: 'idle', sessionId }]
       case 'message_start':
         return this.messageStart(record.message as PiMessage)
