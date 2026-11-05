@@ -1,9 +1,9 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import type { AgentBackend } from '../agent-backend/types.js'
 import { registerSpeakerMcpServers, personMcpServerName } from '../person-mcp.js'
-import { getCachedPerson, isIdentityConfigured } from '../identity.js'
+import { getKnownPerson, isIdentityConfigured } from '../identity.js'
 
-vi.mock('../identity.js', () => ({ getCachedPerson: vi.fn(), isIdentityConfigured: vi.fn() }))
+vi.mock('../identity.js', () => ({ getKnownPerson: vi.fn(), isIdentityConfigured: vi.fn() }))
 vi.mock('../config.js', () => ({ getDataDir: () => '/data' }))
 vi.mock('../credentials/person-mcp-store.js', () => ({
   MCP_NAME_PATTERN: /^[a-z]+$/,
@@ -16,7 +16,7 @@ const person = { allowed: true, personId: 'person', capabilities: new Set(['sess
 
 beforeEach(() => {
   vi.mocked(isIdentityConfigured).mockReturnValue(true)
-  vi.mocked(getCachedPerson).mockReturnValue(person)
+  vi.mocked(getKnownPerson).mockReturnValue(person)
 })
 
 test.each([
@@ -28,7 +28,7 @@ test.each([
   { input: { userId: 'speaker' }, configured: true, cached: { ...person, mcpServers: [] } },
 ])('skips speakers without eligible cached chat identity: %j', async ({ input, configured, cached }) => {
   vi.mocked(isIdentityConfigured).mockReturnValue(configured)
-  vi.mocked(getCachedPerson).mockReturnValue(cached)
+  vi.mocked(getKnownPerson).mockReturnValue(cached)
   const addRemote = vi.fn()
   await registerSpeakerMcpServers({ mcp: { addRemote } } as unknown as AgentBackend, 'slack', '/checkout', input)
   expect(addRemote).not.toHaveBeenCalled()
@@ -38,7 +38,7 @@ test('uses the cached platform identity and checkout, not the ingress person hin
   const addRemote = vi.fn(async () => undefined)
   const client = { mcp: { addRemote } } as unknown as AgentBackend
   await registerSpeakerMcpServers(client, 'slack', '/checkout', { userId: 'speaker', personId: 'untrusted' })
-  expect(getCachedPerson).toHaveBeenCalledWith({ platform: 'slack', id: 'speaker' })
+  expect(getKnownPerson).toHaveBeenCalledWith({ platform: 'slack', id: 'speaker' })
   expect(addRemote).toHaveBeenCalledWith({
     directory: '/checkout', name: personMcpServerName({ personKey: 'person', name: 'tools' }),
     url: servers[0]!.url, headers: { Authorization: 'Bearer token' }, owner: 'person',
@@ -50,4 +50,11 @@ test('registration failures do not stop the turn', async () => {
   await expect(registerSpeakerMcpServers(
     { mcp: { addRemote } } as unknown as AgentBackend, 'discord', '/checkout', { userId: 'speaker' },
   )).resolves.toBeUndefined()
+})
+
+test('a speaker with no known identity is skipped with a warning, not silently (issue #412)', async () => {
+  vi.mocked(getKnownPerson).mockReturnValue(undefined)
+  const addRemote = vi.fn()
+  await registerSpeakerMcpServers({ mcp: { addRemote } } as unknown as AgentBackend, 'discord', '/checkout', { userId: 'speaker' })
+  expect(addRemote).not.toHaveBeenCalled()
 })
