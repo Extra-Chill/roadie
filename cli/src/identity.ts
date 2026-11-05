@@ -172,6 +172,21 @@ export function getCachedPerson(actor: IdentityActor): Person | undefined {
 }
 
 /**
+ * Person for an actor without running the lookup: the live cache entry, else
+ * the last successful allowed lookup within the stale window. For work that
+ * runs after its entry point resolved the person but may outlive the cache
+ * TTL (queued turns), where no guild/channel context exists to look up again.
+ */
+export function getKnownPerson(actor: IdentityActor): Person | undefined {
+  const cached = getCachedPerson(actor)
+  if (cached) return cached
+  const known = lastKnown.get(cacheKey(actor))
+  if (!known?.person.allowed) return undefined
+  if (Date.now() - known.resolvedAt > STALE_WINDOW_SECONDS * 1000) return undefined
+  return known.person
+}
+
+/**
  * Resolve the person behind an actor. Returns null when no `person` filter is
  * registered, so callers fall back to built-in checks.
  *

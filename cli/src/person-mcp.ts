@@ -22,7 +22,7 @@
 import crypto from 'node:crypto'
 import type { AgentBackend } from './agent-backend/types.js'
 import { MCP_NAME_PATTERN, getPersonMcpAccessToken, isAllowedMcpUrl } from './credentials/person-mcp-store.js'
-import { getCachedPerson, isIdentityConfigured, type PersonMcpServer } from './identity.js'
+import { getKnownPerson, isIdentityConfigured, type PersonMcpServer } from './identity.js'
 import { personKeyFrom } from './credentials/person-pool.js'
 import { getDataDir } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -40,8 +40,15 @@ export async function registerSpeakerMcpServers(
   if (!isIdentityConfigured()) return
   if (!input.userId || (input.actorVia ?? 'chat') !== 'chat') return
   const actor = { platform, id: input.userId }
-  const person = getCachedPerson(actor)
-  if (!person?.allowed || !person.mcpServers?.length) return
+  // A queued turn can run long after ingress resolved the speaker, when the
+  // cache entry has expired. Fall back to the last known lookup so the
+  // person's MCP tokens are still refreshed for this turn (issue #412).
+  const person = getKnownPerson(actor)
+  if (!person) {
+    sessionLogger.warn(`[PERSON-MCP] no known identity for ${platform}:${input.userId}; person MCP servers not refreshed for this turn`)
+    return
+  }
+  if (!person.allowed || !person.mcpServers?.length) return
   const personKey = personKeyFrom({ personId: person.personId, platform: actor.platform, actorId: actor.id })
   if (!personKey) return
   await registerPersonMcpServers({

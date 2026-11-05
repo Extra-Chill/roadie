@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } 
 import {
   clearIdentityCache,
   getCachedPerson,
+  getKnownPerson,
   isIdentityConfigured,
   personHas,
   resolvePerson,
@@ -79,6 +80,54 @@ describe('person filter', () => {
       // registerSpeakerMcpServers performs this cached-only lookup.
       expect(getCachedPerson(actor)?.allowed).toBe(true)
       expect(invocations).toEqual([{ guildId: 'guild-1', channelId: 'channel-1' }])
+    } finally {
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
+  test('known person outlives the cache TTL for queued turns (issue #412)', async () => {
+    const actor = { platform: 'discord', id: 'queued-speaker' }
+    const removeFilter = addFilter('person', () => ({
+      allowed: true, capabilities: new Set(['sessions'] as const), permissions: [], ttlSeconds: 300,
+    }))
+    try {
+      await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+      const now = Date.now()
+      // 31 minutes later: the cache entry is gone, the last lookup still stands.
+      const later = vi.spyOn(Date, 'now').mockReturnValue(now + 31 * 60_000)
+      try {
+        expect(getCachedPerson(actor)).toBeUndefined()
+        expect(getKnownPerson(actor)?.allowed).toBe(true)
+      } finally {
+        later.mockRestore()
+      }
+      // Past the stale window it is no longer trusted.
+      const expired = vi.spyOn(Date, 'now').mockReturnValue(now + 61 * 60_000)
+      try {
+        expect(getKnownPerson(actor)).toBeUndefined()
+      } finally {
+        expired.mockRestore()
+      }
+    } finally {
+      removeFilter()
+      clearIdentityCache(actor)
+    }
+  })
+
+  test('known person never revives a denied lookup', async () => {
+    const actor = { platform: 'discord', id: 'denied-speaker' }
+    const removeFilter = addFilter('person', () => ({
+      allowed: false, capabilities: new Set<never>(), permissions: [], ttlSeconds: 300,
+    }))
+    try {
+      await resolvePerson({ actor, context: { guildId: 'guild-1' } })
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000)
+      try {
+        expect(getKnownPerson(actor)).toBeUndefined()
+      } finally {
+        clock.mockRestore()
+      }
     } finally {
       removeFilter()
       clearIdentityCache(actor)
