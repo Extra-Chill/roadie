@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.7] - 2026-11-05
+
+### Fixed
+- refresh speaker MCP tokens on queued turns after the identity cache expires
+
 ## [0.84.6] - 2026-11-03
 
 ### Changed
