@@ -221,7 +221,7 @@ function readToolSchemas(): ToolSchema[] {
  */
 async function syncMcpServers(pi: ExtensionApi, registered: Map<string, string>, native: Map<string, NativeRegistration>): Promise<void> {
   // Serial: overlapping syncs (load, then an early run) must not double-register.
-  syncChain = syncChain.then(() => syncMcpServersOnce(pi, registered, native))
+  syncChain = syncChain.catch(() => {}).then(() => syncMcpServersOnce(pi, registered, native))
   try {
     await syncChain
   } catch {
@@ -250,13 +250,21 @@ async function syncMcpServersOnce(pi: ExtensionApi, registered: Map<string, stri
       continue
     }
     const candidate = nativeCandidate(name, config)
+    const existing = native.get(name)
+    if (candidate && existing?.url === candidate.url) {
+      // Executing tools read this shared object: rotating credentials must not
+      // withdraw tools or rediscover the server between turns.
+      existing.headers = candidate.headers
+      existing.configKey = key
+      continue
+    }
     if (candidate) {
       const discover = await discoverServer({ url: candidate.url, headers: candidate.headers, version })
       if (discover instanceof Error || !supportsNativeProtocol(discover)) {
         // No 2026-07-28 (or discover unavailable): Pi's built-in client, as before.
         console.error(`[roadie-mcp] ${name}: native protocol unavailable (${discover instanceof Error ? discover.message : 'revision not advertised'}); using the built-in MCP client`)
       } else {
-        const how = await registerNativeServer(pi, { name, configKey: key, url: candidate.url, headers: candidate.headers, version, native })
+        const how = await registerNativeServer(pi, { name, configKey: key, url: candidate.url, headers: candidate.headers, version, native, replaceBuiltin: registered.has(name) })
         if (how === 'builtin') registered.set(name, key)
         continue
       }
@@ -285,7 +293,7 @@ type McpServerConfig = {
   enabled?: boolean
 }
 
-type NativeRegistration = { configKey: string; tools: string[] }
+type NativeRegistration = { configKey: string; tools: string[]; url: string; headers: Record<string, string> }
 
 /** Person-scoped remote servers are the native client's slice-1 targets. */
 function nativeCandidate(name: string, config: McpServerConfig): { url: string; headers: Record<string, string> } | undefined {
@@ -309,6 +317,7 @@ async function registerNativeServer(pi: ExtensionApi, input: {
   headers: Record<string, string>
   version: string
   native: Map<string, NativeRegistration>
+  replaceBuiltin: boolean
 }): Promise<'native' | 'builtin'> {
   const { name, configKey, url, headers, version, native } = input
   const tools = await listTools({ url, headers, version })
@@ -322,8 +331,9 @@ async function registerNativeServer(pi: ExtensionApi, input: {
   }
   // The same name may have been registered built-in before a config change:
   // a registered MCP server overrides nothing here, so drop it first.
-  pi.unregisterMcpServer?.(name)
+  if (input.replaceBuiltin) pi.unregisterMcpServer?.(name)
   const names: string[] = []
+  const registration: NativeRegistration = { configKey, tools: names, url, headers }
   for (const tool of tools) {
     const toolName = nativeMcpToolName(name, tool.name)
     names.push(toolName)
@@ -337,7 +347,7 @@ async function registerNativeServer(pi: ExtensionApi, input: {
           server: name,
           tool: tool.name,
           args: (params ?? {}) as Record<string, unknown>,
-          call: (args, continuation) => callTool({ url, headers, version, tool: tool.name, args, continuation, signal }),
+          call: (args, continuation) => callTool({ url, headers: registration.headers, version, tool: tool.name, args, continuation, signal }),
           ask: async (payload) => {
             const answer = await ctx.ui.input(FORM_TITLE, JSON.stringify(payload), { signal })
             if (answer === undefined) return undefined
@@ -360,7 +370,7 @@ async function registerNativeServer(pi: ExtensionApi, input: {
       },
     })
   }
-  native.set(name, { configKey, tools: names })
+  native.set(name, registration)
   return 'native'
 }
 

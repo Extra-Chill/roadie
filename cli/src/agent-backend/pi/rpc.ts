@@ -7,6 +7,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import * as errore from 'errore'
 import { childProcesses } from '../../child-process-lifecycle.js'
+import { createLogger } from '../../logger.js'
+
+const logger = createLogger('PI')
 import { PROCESS_GROUP_SPAWN_OPTIONS, terminateProcessGroup } from '../../process-group.js'
 
 export class PiRpcError extends errore.createTaggedError({
@@ -53,6 +56,7 @@ export class PiProcess {
   private listeners = new Set<(record: PiRecord) => void>()
   private exitListeners = new Set<(code: number | null) => void>()
   private stderrTail = ''
+  private stderrBuffer = ''
   exited = false
 
   constructor(options: PiProcessOptions) {
@@ -67,6 +71,15 @@ export class PiProcess {
     this.child.stderr.setEncoding('utf8')
     this.child.stderr.on('data', (chunk: string) => {
       this.stderrTail = (this.stderrTail + chunk).slice(-4000)
+      const { lines, rest } = splitRecords(this.stderrBuffer + chunk)
+      this.stderrBuffer = rest
+      for (const line of lines) {
+        if (line.includes('[roadie-mcp]')) logger.warn(line)
+      }
+    })
+    this.child.stderr.on('end', () => {
+      if (this.stderrBuffer.includes('[roadie-mcp]')) logger.warn(this.stderrBuffer)
+      this.stderrBuffer = ''
     })
     this.child.on('exit', (code) => {
       this.exited = true
