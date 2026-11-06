@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.8] - 2026-11-06
+
+### Changed
+- Keep Discord system messages, such as thread renames, out of agent input
+
 ## [0.84.7] - 2026-11-05
 
 ### Fixed
