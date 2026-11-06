@@ -479,7 +479,7 @@ export class PiEventTranslator {
     // ahead of the tool call it introduces.
     const content = contentList(assistant.content)
     const narration = content.flatMap((item, index): AgentEvent[] => (
-      narrationIsText(item, content)
+      item.type === 'thinking' && narrationIsText(item, content)
         ? [{
             type: 'part',
             part: {

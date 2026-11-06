@@ -442,7 +442,7 @@ describe('system-message', () => {
 
       Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
       Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
-      Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_action_buttons\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool.
+      Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool. For \`roadie_action_buttons\`, put the explanation in its message argument.
       Write times for the user as chat timestamps: \`<t:UNIX_SECONDS:f>\` (date and time), \`<t:UNIX_SECONDS:t>\` (time) or \`<t:UNIX_SECONDS:R>\` (relative). Chat renders them in each reader's own timezone. Keep UTC ISO for tool arguments.
 
       ## bash tool
@@ -882,7 +882,7 @@ describe('system-message', () => {
       You MUST call \`question\` LAST, after ALL text parts.
       NEVER call \`question\` before your text. Discord will hide the message.
 
-      The same rule applies to \`roadie_action_buttons\`, \`roadie_file_upload\`, and \`roadie_sleep\`.
+      For \`roadie_action_buttons\`, put the explanation in its message argument. The same rule applies to \`roadie_file_upload\` and \`roadie_sleep\`.
       You MUST call them LAST, after ALL text.
 
       ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.
