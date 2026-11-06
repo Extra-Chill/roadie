@@ -93,6 +93,23 @@ export function isNarrationThinking(item: PiContent): boolean {
   return bytes.includes(NARRATION_LABEL)
 }
 
+/**
+ * The verbatim `message` of a `roadie_action_buttons` call. Opus often writes
+ * the prose before buttons as narration, which the API returns only as a
+ * paraphrased summary (#418), so the words the user must read travel as a
+ * tool argument and are posted from there.
+ */
+export function actionButtonsMessage(item: PiContent): string | undefined {
+  if (item.type !== 'toolCall' || !item.name.endsWith('roadie_action_buttons')) return undefined
+  const message = item.arguments?.message
+  return typeof message === 'string' && message.trim() ? message : undefined
+}
+
+/** Whether a narration block should post as text: not when a buttons message in the same reply carries the verbatim words. */
+function narrationIsText(item: PiContent, content: PiContent[]): boolean {
+  return isNarrationThinking(item) && !content.some((other) => actionButtonsMessage(other) !== undefined)
+}
+
 function textOf(content: unknown): string {
   return contentList(content)
     .flatMap((item) => (item.type === 'text' ? [item.text] : []))
@@ -178,18 +195,20 @@ export function toAgentParts({
 }): AgentPart[] {
   const messageId = piMessageId(message)
   if (message.role !== 'user' && message.role !== 'assistant' && !isContextMessage(message)) return []
-  const parts: AgentPart[] = contentList(message.content).flatMap((item, index): AgentPart[] => {
+  const content = contentList(message.content)
+  const parts: AgentPart[] = content.flatMap((item, index): AgentPart[] => {
     const base = { id: `${messageId}-${index}`, sessionId, messageId }
     if (item.type === 'text') {
       return [{ ...base, kind: 'text', text: item.text, startedAt: message.timestamp, endedAt: message.timestamp }]
     }
     if (item.type === 'thinking') {
-      const kind = isNarrationThinking(item) ? 'text' : 'reasoning'
+      const kind = narrationIsText(item, content) ? 'text' : 'reasoning'
       return [{ ...base, kind, text: item.thinking, startedAt: message.timestamp, endedAt: message.timestamp }]
     }
     if (item.type === 'toolCall') {
       const result = toolResults?.get(item.id)
-      return [{
+      const buttonsMessage = actionButtonsMessage(item)
+      return [...(buttonsMessage === undefined ? [] : [{ ...base, id: `${base.id}-message`, kind: 'text' as const, text: buttonsMessage, startedAt: message.timestamp, endedAt: message.timestamp }]), {
         id: item.id,
         sessionId,
         messageId,
@@ -437,6 +456,8 @@ export class PiEventTranslator {
           this.heldText.delete(part.id)
           this.sentText.add(part.id)
         }
+        const buttonsMessage = actionButtonsMessage({ type: 'toolCall', id: call.id, name: call.name, arguments: call.arguments ?? {} })
+        if (buttonsMessage !== undefined) leadIn.push({ id: `${partId}-message`, sessionId, messageId, kind: 'text', text: buttonsMessage, startedAt, endedAt: Date.now() })
         return [...leadIn.map((part): AgentEvent => ({ type: 'part', part })), { type: 'part', part: { id: call.id, sessionId, messageId, kind: 'tool', callId: call.id, tool: call.name, status: 'pending', input: call.arguments ?? {} } }]
       }
       default:
@@ -456,8 +477,9 @@ export class PiEventTranslator {
     // Narration arrived as reasoning while streaming; it is user-facing text.
     // Same part id, so the runtime replaces the reasoning part in place, still
     // ahead of the tool call it introduces.
-    const narration = contentList(assistant.content).flatMap((item, index): AgentEvent[] => (
-      item.type === 'thinking' && isNarrationThinking(item)
+    const content = contentList(assistant.content)
+    const narration = content.flatMap((item, index): AgentEvent[] => (
+      narrationIsText(item, content)
         ? [{
             type: 'part',
             part: {

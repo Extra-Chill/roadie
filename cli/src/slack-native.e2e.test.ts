@@ -323,6 +323,7 @@ describe.skipIf(!findPi())('native Slack', () => {
                       toolCallId: 'native-actions-call',
                       toolName: 'roadie_action_buttons',
                       input: JSON.stringify({
+                        message: 'NATIVE_SLACK choose',
                         buttons: [{ label: 'NATIVE_SLACK continue', color: 'green' }],
                       }),
                     },

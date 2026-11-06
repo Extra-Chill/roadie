@@ -89,18 +89,18 @@ export const roadieActionButtons = defineTool({
     Prefer a single button whenever possible.
     Default color is white (same visual style as permission deny button).
     If you need more than 3 options, use \`question\` instead.
-    You MUST call roadie_action_buttons LAST, after ALL text.
-    NEVER call roadie_action_buttons before your text.
+    Put everything the user should read before clicking (explanation, links,
+    codes, instructions) in \`message\`. Roadie posts it verbatim ahead of the
+    buttons; do not repeat it as text. Call roadie_action_buttons LAST.
 
     Examples:
-    - buttons: [{"label":"Yes, proceed"}]
-    - buttons: [{"label":"Approve","color":"green"}]
-    - buttons: [
-        {"label":"Confirm","color":"blue"},
-        {"label":"Cancel","color":"white"}
-      ]
+    - message: "Deploy **v2.3** to production?"
+      buttons: [{"label":"Yes, proceed"}]
+    - message: "Open https://example.com/approve and approve the request, then click below."
+      buttons: [{"label":"Approved","color":"green"}]
   `,
   args: {
+    message: z.string().min(1).describe('Markdown the user reads with the buttons, posted verbatim. Put every link, code and instruction here; do not repeat it as text.'),
     buttons: z
       .array(
         z.object({
