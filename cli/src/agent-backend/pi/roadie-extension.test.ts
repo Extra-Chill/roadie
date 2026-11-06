@@ -100,6 +100,73 @@ describe('bounded compaction through the extension hook', () => {
   })
 })
 
+describe('person MCP token rotation between turns', () => {
+  test('keeps tools registered and uses the new token on the next turn first call', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-mcp-rotation-'))
+    const file = path.join(directory, 'mcp.json')
+    const server = 'rpm_abc123def456_extrachill'
+    const toolName = nativeMcpToolName(server, 'search')
+    const writeConfig = (token: string, url = 'https://example.com/mcp') => fs.writeFileSync(file, JSON.stringify({
+      [server]: { url, headers: { Authorization: `Bearer ${token}` }, enabled: true },
+    }))
+    const calls: string[] = []
+    const fetchMock = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const request = JSON.parse(init.body as string)
+      const result = request.method === 'server/discover'
+        ? { supportedVersions: ['2026-07-28'] }
+        : request.method === 'tools/list'
+          ? { tools: [{ name: 'search', inputSchema: { type: 'object', properties: {} } }] }
+          : { content: [{ type: 'text', text: 'found' }] }
+      if (request.method === 'tools/call') calls.push((init.headers as Record<string, string>).Authorization!)
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }))
+    })
+    const handlers = new Map<string, (event: { systemPrompt: string }) => Promise<unknown>>()
+    type Tool = { name: string; execute: (...args: any[]) => Promise<unknown> }
+    const tools = new Map<string, Tool>()
+    const unregisterMcpServer = vi.fn()
+    const registerTool = vi.fn((tool: Tool) => tools.set(tool.name, tool))
+    vi.stubEnv('ROADIE_PI_MCP_FILE', file)
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      writeConfig('A')
+      roadieExtension({
+        on: (name: string, handler: (event: { systemPrompt: string }) => Promise<unknown>) => handlers.set(name, handler),
+        getAllTools: () => [...tools.values()],
+        registerTool,
+        unregisterMcpServer,
+        registerMcpServer: vi.fn(),
+      } as unknown as Parameters<typeof roadieExtension>[0])
+      const turn = () => handlers.get('before_agent_start')!({ systemPrompt: '' })
+      const call = () => tools.get(toolName)!.execute('call', {}, undefined, undefined, { ui: {} })
+      await turn()
+      await expect(call()).resolves.toMatchObject({ content: [{ text: 'found' }] })
+      const originalTool = tools.get(toolName)
+      const registrations = registerTool.mock.calls.length
+      const requests = fetchMock.mock.calls.length
+      writeConfig('B')
+      await turn()
+      expect(fetchMock).toHaveBeenCalledTimes(requests)
+      expect(registerTool).toHaveBeenCalledTimes(registrations)
+      expect(tools.get(toolName)).toBe(originalTool)
+      expect(unregisterMcpServer).not.toHaveBeenCalled()
+      await expect(call()).resolves.toMatchObject({ content: [{ text: 'found' }] })
+      expect(calls).toEqual(['Bearer A', 'Bearer B'])
+
+      // A changed endpoint does need discovery and a fresh tool definition;
+      // the awaited turn hook must finish registration before the first call.
+      writeConfig('C', 'https://example.com/new-mcp')
+      await turn()
+      expect(tools.get(toolName)).not.toBe(originalTool)
+      await expect(call()).resolves.toMatchObject({ content: [{ text: 'found' }] })
+      expect(calls).toEqual(['Bearer A', 'Bearer B', 'Bearer C'])
+    } finally {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('native MCP tool names', () => {
   test('keeps the mcp__<server>__<tool> shape Pi\'s built-in client uses', () => {
     expect(nativeMcpToolName('rpm_abc123def456_wordpress', 'search')).toBe('mcp__rpm_abc123def456_wordpress__search')
