@@ -130,7 +130,7 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
   }, 30_000)
 
   test('text-only tool_use is hidden and corrected into a real tool call', async () => {
-    const args = JSON.stringify({ buttons: [{ label: 'Proceed' }] })
+    const args = JSON.stringify({ message: 'Proceed?', buttons: [{ label: 'Proceed' }] })
     const fake = await startFakeModelServer({ matchers: [
       { id: 'malformed', when: { latestUserTextEquals: 'MALFORMED_CALL' }, then: { parts: [
         { type: 'text-delta', id: 'bad', delta: `Ready. <invoke name="roadie_action_buttons"><parameter name="buttons">${args}</parameter></invoke>` },
