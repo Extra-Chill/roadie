@@ -11,6 +11,7 @@ import {
   GatewayDispatchEvents,
   InteractionType,
   ComponentType,
+  MessageType,
 } from 'discord-api-types/v10'
 import type {
   APIMessage,
@@ -344,6 +345,7 @@ export class DigitalDiscord {
     embeds,
     attachments,
     messageReference,
+    type,
   }: {
     channelId: string
     userId: string
@@ -351,6 +353,8 @@ export class DigitalDiscord {
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
     messageReference?: APIMessageReference
+    /** Discord message type; system events such as a channel rename carry the acting user as author. */
+    type?: MessageType
   }): Promise<APIMessage> {
     if (!this.server) {
       throw new Error('Server not started')
@@ -362,6 +366,7 @@ export class DigitalDiscord {
         channelId,
         authorId: userId,
         content,
+        ...(type === undefined ? {} : { type }),
         embeds: JSON.stringify(embeds ?? []),
         attachments: JSON.stringify(attachments ?? []),
         messageReference: messageReference

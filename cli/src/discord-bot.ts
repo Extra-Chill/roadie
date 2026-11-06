@@ -618,6 +618,12 @@ export async function startDiscordBot({
         ? promptMarker?.parentSessionId
         : undefined
 
+      // System events (thread renames, pins, joins) are not speech: Discord
+      // authors them as the acting user, with the event payload as content.
+      if (message.system) {
+        return
+      }
+
       // Always ignore our own messages (unless CLI-injected prompt above).
       // Without this, assigning the Roadie role to the bot itself would loop.
       if (isSelfBotMessage && !isCliInjectedPrompt) {
