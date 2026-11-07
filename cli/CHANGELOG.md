@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.10] - 2026-11-07
+
+### Changed
+- Name sessions from the title reply's final text block
+
 ## [0.84.9] - 2026-11-07
 
 ### Changed
