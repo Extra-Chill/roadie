@@ -116,6 +116,15 @@ function textOf(content: unknown): string {
     .join('\n')
 }
 
+/**
+ * The last non-empty text block of `message`: its answer. Some providers lead
+ * with commentary blocks ("I'll review the task…") before the answer block.
+ */
+export function finalTextBlock(message: PiMessage): string {
+  const texts = contentList(message.content).flatMap((item) => (item.type === 'text' && item.text.trim() ? [item.text.trim()] : []))
+  return texts.at(-1) ?? ''
+}
+
 export function toUsage(usage: PiUsage | undefined): AgentUsage {
   const result: AgentUsage = {
     input: usage?.input ?? 0,
