@@ -165,6 +165,26 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     }
   })
 
+  test('a title reply that leads with commentary is named from its final text block', async () => {
+    const fake = await startFakeModelServer({ matchers: [
+      { id: 'commentary-title', when: { toolsEmpty: true }, then: { parts: [
+        { type: 'text-delta', id: 'commentary', delta: 'Need title only. The attachment describes a failed import.' },
+        { type: 'text-delta', id: 'answer', delta: 'Debug Failed Static Site Import\n' },
+        { type: 'finish', finishReason: 'stop' },
+      ] } },
+    ] })
+    const agentDir = path.join(root, 'commentary-title-agent')
+    fs.mkdirSync(agentDir)
+    fs.writeFileSync(path.join(agentDir, 'models.json'), fakeModelsJson(fake.baseUrl.replace(/\/v1$/, ''), { api: 'anthropic-messages' }))
+    const target = new PiBackendProvider({ bin: bin!, sessionDir: path.join(root, 'commentary-title-sessions'), model: 'fake/fake-1', env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' } })
+    try {
+      expect(await target.getBackend().sessions.generateTitle!({ sessionId: 'ses_title', directory: project, prompt: '<attachment filename="message.txt">Import source failed</attachment>' })).toBe('Debug Failed Static Site Import')
+    } finally {
+      await target.dispose()
+      await fake.close()
+    }
+  })
+
   test('a tool call asks Roadie; an allow rule lets it run', async () => {
     const before = idleCount(sessionId)
     await provider.getBackend().sessions.prompt({ sessionId, directory: project, parts: [{ kind: 'text', text: 'RUN_TOOL echo allowed-output' }] })

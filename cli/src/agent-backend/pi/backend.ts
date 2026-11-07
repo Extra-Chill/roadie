@@ -53,7 +53,7 @@ import {
   type AgentProviderCatalog,
   type AgentSessionOperations,
 } from '../types.js'
-import { PiEventTranslator, finalAssistantText, toAgentHistory, type PiMessage } from './events.js'
+import { PiEventTranslator, finalAssistantText, finalTextBlock, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
@@ -575,7 +575,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       const accepted = await child.request({ type: 'prompt', message: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) })
       if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
       const reply = await Promise.race([done, new Promise<undefined>((resolve) => setTimeout(resolve, 15_000))])
-      const text = reply ? finalAssistantText([reply]) : ''
+      const text = reply ? finalTextBlock(reply) : ''
       if (text) return text
       if (reply?.errorMessage) return new AgentRequestError({ detail: `Title model failed: ${reply.errorMessage}` })
       return new AgentRequestError({ detail: reply ? 'Pi returned an empty title' : 'Title request ended without a reply' })
