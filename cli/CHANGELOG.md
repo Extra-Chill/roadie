@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.9] - 2026-11-07
+
+### Changed
+- Post the action-buttons message verbatim instead of Opus's paraphrased narration
+
 ## [0.84.8] - 2026-11-06
 
 ### Changed
