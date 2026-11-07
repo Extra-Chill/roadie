@@ -559,7 +559,7 @@ export function getSystemMessage({
       { id: 'chat-output', text: 'The user is reading your messages in Slack through Roadie. Use concise Markdown; Roadie converts it to native Slack formatting. Include original source links in your answers. Write times for the user as chat timestamps: `<t:UNIX_SECONDS:f>` (date and time), `<t:UNIX_SECONDS:t>` (time) or `<t:UNIX_SECONDS:R>` (relative). Chat renders them in each reader\'s own timezone. Keep UTC ISO for tool arguments.' },
       { id: 'session', text: `${SESSION_ID_LINE_PREFIX}${sessionId}\nSlack workspace: ${guildId ?? ''}\nSlack channel: ${channelId ?? ''}\nRoadie thread: ${threadId ?? ''}${parentSessionId ? `\n${getParentSessionInstructions(parentSessionId)}` : ''}` },
       { id: 'identity', text: 'The current speaker is supplied in <chat-user platform="slack" ... /> metadata. Mention Slack users by <@USER_ID>. Tool processes receive ROADIE_ACTOR_PLATFORM, ROADIE_ACTOR_ID and ROADIE_PERSON_ID; authority comes from the host identity and permission policy.' },
-      { id: 'interaction', text: 'For questions use question. For quick choices use roadie_action_buttons. Write the user-visible explanation before the interaction tool and call that tool last. Roadie renders native Slack selects, buttons and modals.' },
+      { id: 'interaction', text: 'For questions use question. For quick choices use roadie_action_buttons. Put the complete user-visible explanation in the required message argument for roadie_action_buttons and call that tool last. Roadie renders native Slack selects, buttons and modals.' },
       { id: 'file-upload', text: `Upload screenshots, images and other artifacts with roadie upload-to-chat --session ${sessionId} <file paths>. Use roadie_file_upload to request files through Slack's native file picker. Local Markdown image paths are not visible to the user.` },
       { id: 'automation', text: `Use roadie send --platform slack --thread '${threadId ?? ''}' --prompt '<message>' to continue this thread. Use --channel '${channelId ?? ''}' to create a new session, --notify-only for notifications, --send-at for schedules, and roadie_sleep for a persistent wake. A new human message cancels a pending sleep.` },
       rotationsSection,
@@ -600,7 +600,7 @@ The user is reading your messages from inside Discord, via Roadie
 
 Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
 Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
-Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_action_buttons\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool.
+Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool. For \`roadie_action_buttons\`, put the explanation in its message argument.
 Write times for the user as chat timestamps: \`<t:UNIX_SECONDS:f>\` (date and time), \`<t:UNIX_SECONDS:t>\` (time) or \`<t:UNIX_SECONDS:R>\` (relative). Chat renders them in each reader's own timezone. Keep UTC ISO for tool arguments.
 ` },
     { id: 'bash-tool', text: `
@@ -1058,7 +1058,7 @@ You MUST write ALL user-visible text FIRST.
 You MUST call \`question\` LAST, after ALL text parts.
 NEVER call \`question\` before your text. Discord will hide the message.
 
-The same rule applies to \`roadie_action_buttons\`, \`roadie_file_upload\`, and \`roadie_sleep\`.
+For \`roadie_action_buttons\`, put the explanation in its message argument. The same rule applies to \`roadie_file_upload\` and \`roadie_sleep\`.
 You MUST call them LAST, after ALL text.
 
 ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.

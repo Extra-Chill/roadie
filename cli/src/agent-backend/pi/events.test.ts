@@ -228,6 +228,22 @@ describe('narration thinking (#288)', () => {
     expect(parts[0]).toMatchObject({ text: narration.thinking })
   })
 
+  test('a buttons message posts verbatim ahead of the call, and the paraphrased narration stays reasoning (#418)', () => {
+    const message = 'Open https://example.com/device?code=AB12 and approve **AB12**.'
+    const call = { type: 'toolCall' as const, id: 'call-buttons', name: 'roadie_action_buttons', arguments: { message, buttons: [{ label: 'Approved' }] } }
+    const translator = new PiEventTranslator('ses-pi')
+    translator.translate({ type: 'message_start', message: { role: 'assistant', content: [], timestamp: 12 } })
+    const streamed = translator.translate({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end', contentIndex: 2, toolCall: call } })
+    const ended = translator.translate({ type: 'message_end', message: { role: 'assistant', content: [thinking, narration, call], stopReason: 'toolUse', timestamp: 12 } })
+    const live = [...streamed, ...ended].flatMap((event) => (event.type === 'part' ? [[event.part.kind, 'text' in event.part ? event.part.text : event.part.kind]] : []))
+    const [entry] = toAgentHistory({ sessionId: 'ses-pi', messages: [{ role: 'assistant', content: [thinking, narration, call], stopReason: 'toolUse', timestamp: 12 }] })
+    const history = entry!.parts.map((part) => [part.kind, 'text' in part ? part.text : part.kind])
+    for (const parts of [live, history]) {
+      expect(parts.filter(([kind]) => kind === 'text')).toEqual([['text', message]])
+      expect(parts.findIndex(([kind]) => kind === 'text')).toBeLessThan(parts.findIndex(([kind]) => kind === 'tool'))
+    }
+  })
+
   test('history maps narration to text and keeps ordinary thinking as reasoning', () => {
     const [entry] = toAgentHistory({
       sessionId: 'ses-pi',

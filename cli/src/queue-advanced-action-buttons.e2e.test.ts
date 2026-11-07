@@ -12,6 +12,8 @@ import { showActionButtons } from './commands/action-buttons.js'
 import { disposeRuntime } from './session-handler/runtime-registry.js'
 
 const TEXT_CHANNEL_ID = '200000000000001006'
+// What the user must read before clicking: every piece Discord used to lose (#418).
+const BUTTONS_MESSAGE = 'New code: **4RM7-QEN6**\n\nOpen it on any device: https://example.com/device?user_code=4RM7QEN6\n\n- take `alpha` offline\n- take `beta` offline'
 
 async function waitForPendingActionButtons({
   threadId,
@@ -53,7 +55,7 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
             type: 'tool-call',
             toolCallId: 'action-buttons-before-text-call',
             toolName: 'roadie_action_buttons',
-            input: JSON.stringify({ buttons: [{ label: 'Continue' }] }),
+            input: JSON.stringify({ message: BUTTONS_MESSAGE, buttons: [{ label: 'Continue' }] }),
           },
           {
             type: 'finish',
@@ -85,7 +87,7 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
     }],
   })
 
-  test('renders buttons after text from a following assistant message', async () => {
+  test('posts the buttons message verbatim, then later text, then the buttons', async () => {
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
       content: 'ACTION_BUTTONS_BEFORE_TEXT_MARKER',
     })
@@ -100,6 +102,8 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
     await waitForPendingActionButtons({ threadId: thread.id, timeoutMs: 12_000 })
 
     const timeline = await ctx.discord.thread(thread.id).text()
+    expect(timeline).toContain(BUTTONS_MESSAGE)
+    expect(timeline.indexOf(BUTTONS_MESSAGE)).toBeLessThan(timeline.indexOf('Summary after the button tool.'))
     expect(timeline.indexOf('Summary after the button tool.')).toBeLessThan(
       timeline.indexOf('**Action Required**'),
     )
