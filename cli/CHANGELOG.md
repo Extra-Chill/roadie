@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.11] - 2026-11-07
+
+### Fixed
+- keep person MCP tools registered across token rotation
+
 ## [0.84.10] - 2026-11-07
 
 ### Changed
