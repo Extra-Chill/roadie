@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.12] - 2026-11-08
+
+### Fixed
+- open one thread for a forward sent with a comment
+
 ## [0.84.11] - 2026-11-07
 
 ### Fixed
