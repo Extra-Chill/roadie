@@ -20,6 +20,7 @@ import type {
   APIAttachment,
   APIInteraction,
   APIMessageReference,
+  APIMessageSnapshot,
 } from 'discord-api-types/v10'
 import { createPrismaClient, type PrismaClient } from './db.js'
 import { generateSnowflake } from './snowflake.js'
@@ -345,6 +346,7 @@ export class DigitalDiscord {
     embeds,
     attachments,
     messageReference,
+    messageSnapshots,
     type,
   }: {
     channelId: string
@@ -353,6 +355,8 @@ export class DigitalDiscord {
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
     messageReference?: APIMessageReference
+    /** Forwarded message payloads; delivered on the gateway event only. */
+    messageSnapshots?: APIMessageSnapshot[]
     /** Discord message type; system events such as a channel rename carry the acting user as author. */
     type?: MessageType
   }): Promise<APIMessage> {
@@ -406,7 +410,11 @@ export class DigitalDiscord {
       await this.prisma.user.findMany({ where: { id: { in: [...new Set([...content.matchAll(/<@!?(\d+)>/g)].map((match) => match[1]!))] } } }),
     )
     this.server.gateway.broadcastMessageCreate(
-      { ...apiMessage, ...(!guildId ? { channel_type: channel?.type } : {}) },
+      {
+        ...apiMessage,
+        ...(messageSnapshots ? { message_snapshots: messageSnapshots } : {}),
+        ...(!guildId ? { channel_type: channel?.type } : {}),
+      },
       guildId ?? '',
     )
     return apiMessage
@@ -1413,11 +1421,13 @@ export class ScopedUserActor {
     embeds,
     attachments,
     messageReference,
+    messageSnapshots,
   }: {
     content: string
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
     messageReference?: APIMessageReference
+    messageSnapshots?: APIMessageSnapshot[]
   }) {
     return this.discord.simulateUserMessage({
       channelId: this.channelId,
@@ -1426,6 +1436,7 @@ export class ScopedUserActor {
       embeds,
       attachments,
       messageReference,
+      messageSnapshots,
     })
   }
 

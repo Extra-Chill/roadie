@@ -161,6 +161,7 @@ import {
   applicationDirectory,
 } from './channel-policy.js'
 import { createDiscordChatChannel } from './chat-platform/discord.js'
+import { claimParkedForward, isBareForward, parkForward } from './forward-pairing.js'
 import { readConversationAdmission, resetConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -664,6 +665,16 @@ export async function startDiscordBot({
           return
         }
       }
+
+      // Forward + comment arrive as two messages: the bare forward waits for
+      // its comment, which then carries it into a single conversation turn.
+      const pairsForwards =
+        !isCliInjectedPrompt && !message.author.bot &&
+        (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.DM)
+      if (pairsForwards && isBareForward(message) && (await parkForward(message))) {
+        return
+      }
+      const forwarded = pairsForwards ? claimParkedForward(message) : undefined
 
       // Check mention mode BEFORE permission check for text channels.
       // When mention mode is enabled, users without Roadie role can message
@@ -1194,7 +1205,7 @@ export async function startDiscordBot({
             noReply: intake.outcome === 'context' || undefined,
             contextOnly: intake.outcome === 'context' || undefined,
             preprocess: async () => {
-              return preprocessChannelMessage({ message, isCliInjected: isCliInjectedPrompt })
+              return preprocessChannelMessage({ message, isCliInjected: isCliInjectedPrompt, forwarded })
             },
           })
           return
@@ -1256,7 +1267,7 @@ export async function startDiscordBot({
           sourceChannelId: message.channelId,
           appId: currentAppId,
           preprocess: async () => {
-            return preprocessNewThreadMessage({ message, thread })
+            return preprocessNewThreadMessage({ message, thread, forwarded })
           },
         })
       } else {
