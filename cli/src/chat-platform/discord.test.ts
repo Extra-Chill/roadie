@@ -89,10 +89,23 @@ describe('Discord chat thread', () => {
     ])
   })
 
-  test('channel topic comes from the cached parent, trimmed', async () => {
-    expect(await createDiscordChatThread(fakeThread().thread).channelTopic()).toBe('project topic')
+  test.each([ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum])(
+    'channel topic supports parent type %s (cached and fetched)', async (type) => {
+      const cached = fakeThread({ parent: { type, topic: '  project topic  ' } })
+      expect(await createDiscordChatThread(cached.thread).channelTopic()).toBe('project topic')
+      const fetched = fakeThread({
+        parent: null,
+        guild: { channels: { fetch: async () => ({ type, topic: '  fetched topic  ' }) } },
+      })
+      expect(await createDiscordChatThread(fetched.thread).channelTopic('c-2')).toBe('fetched topic')
+    },
+  )
+
+  test('channel topic preserves missing parent and no-topic behavior', async () => {
     const uncached = fakeThread({ parent: null, guild: { channels: { fetch: async () => null } } })
     expect(await createDiscordChatThread(uncached.thread).channelTopic('c-2')).toBeUndefined()
+    const noTopic = fakeThread({ parent: { type: ChannelType.GuildText, topic: null } })
+    expect(await createDiscordChatThread(noTopic.thread).channelTopic()).toBeUndefined()
   })
 })
 

@@ -128,18 +128,19 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
     },
 
     async channelTopic(channelId) {
-      if (thread.parent?.type === ChannelType.GuildText) {
-        return thread.parent.topic?.trim() || undefined
+      const topicTypes = [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum]
+      if (thread.parent && topicTypes.includes(thread.parent.type)) {
+        return ('topic' in thread.parent ? thread.parent.topic?.trim() : undefined) || undefined
       }
       if (!channelId) {
         return undefined
       }
       const fetched = await thread.guild.channels.fetch(channelId)
         .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
-      if (fetched instanceof Error || !fetched || fetched.type !== ChannelType.GuildText) {
+      if (fetched instanceof Error || !fetched || !topicTypes.includes(fetched.type)) {
         return undefined
       }
-      return fetched.topic?.trim() || undefined
+      return ('topic' in fetched ? fetched.topic?.trim() : undefined) || undefined
     },
   }
 }

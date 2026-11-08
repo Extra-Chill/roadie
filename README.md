@@ -220,6 +220,10 @@ Plugins can also register a whole chat platform with `roadie.registerChatPlatfor
 
 Hosts that prefer external commands to code can use the flags `--channels-config`, `--prompt-config` and `--context-provider`. They supply the starting value that filters then refine.
 
+#### Discord channel topics
+
+For per-channel context, set a Discord channel topic. Roadie injects its trimmed text into new sessions' system prompts as `<channel-topic>`. The system prompt is pinned per session, so topic changes apply only to new sessions. Discord limits topics to 1,024 characters. Disable or replace this section with the `channel-topic` section id in prompt config.
+
 #### Identity
 
 The `person` filter is Roadie's only identity input. It starts as `null` and returns the person behind a chat actor, or `null` to deny (nobody vouches for them). With no `person` filter registered, Roadie keeps its built-in Discord role checks.
