@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.13] - 2026-11-08
+
+### Changed
+- Support forum and announcement channel topics as session context
+
 ## [0.84.12] - 2026-11-08
 
 ### Fixed
