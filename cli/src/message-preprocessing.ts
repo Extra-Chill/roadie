@@ -117,6 +117,21 @@ export async function resolveMessagePrompt({
   }
 }
 
+/** Append a paired forward's rendered content and files to the comment's prompt. */
+async function withForwarded(
+  forwarded: Message | undefined,
+  resolved: Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>,
+): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
+  if (!forwarded) return resolved
+  const forward = await resolveMessagePrompt({ message: forwarded, text: '' })
+  const images = [...(resolved.images ?? []), ...(forward.images ?? [])]
+  return {
+    prompt: [resolved.prompt, forward.prompt].filter(Boolean).join('\n\n'),
+    images: images.length > 0 ? images : undefined,
+    mode: resolved.mode,
+  }
+}
+
 function shouldSkipEmptyPrompt({
   message,
   prompt,
@@ -268,19 +283,22 @@ export async function preprocessNewSessionMessage({
 export async function preprocessChannelMessage({
   message,
   isCliInjected,
+  forwarded,
 }: {
   message: Message
   isCliInjected: boolean
+  /** Forward the user sent together with this comment. */
+  forwarded?: Message
 }): Promise<PreprocessResult> {
   const messageContent = isCliInjected
     ? (message.content || '')
     : resolveContentMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
-  const resolved = await resolveMessagePrompt({
+  const resolved = await withForwarded(forwarded, await resolveMessagePrompt({
     message,
     text: messageContent,
     includeExtras: !isCliInjected,
-  })
+  }))
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
     return { prompt: '', mode: 'direct', skip: true }
   }
@@ -292,13 +310,19 @@ export async function preprocessChannelMessage({
  */
 export async function preprocessNewThreadMessage({
   message,
+  forwarded,
 }: {
   message: Message
   thread: ThreadChannel
+  /** Forward the user sent together with this comment. */
+  forwarded?: Message
 }): Promise<PreprocessResult> {
   const messageContent = resolveContentMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
-  const resolved = await resolveMessagePrompt({ message, text: messageContent })
+  const resolved = await withForwarded(
+    forwarded,
+    await resolveMessagePrompt({ message, text: messageContent }),
+  )
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
     return { prompt: '', mode: 'direct', skip: true }
   }
