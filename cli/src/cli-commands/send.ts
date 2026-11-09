@@ -18,7 +18,7 @@ import { applicationDirectory, resolveSendChannel, validateApplicationDirectory 
 import { getBotToken, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
-import { QUEUE_PREFIX } from '../message-formatting.js'
+import { QUEUE_PREFIX, sendPromptSender } from '../message-formatting.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
@@ -133,6 +133,10 @@ cli
   .option(
     '--wait',
     'Wait for session to complete, then print session text to stdout',
+  )
+  .option(
+    '--source-session <sessionId>',
+    'Sending session. Set by the running bot for agent-shell sends; the target thread sees where the prompt came from',
   )
   .action(async (options) => {
        if ((options.platform ?? process.env.ROADIE_PLATFORM) === 'slack') {
@@ -461,8 +465,38 @@ cli
             process.exit(0)
           }
 
+          // An agent's own replies already reach its thread, so a send to that
+          // same thread is a plain post: prompting it would hand the session
+          // its own words back as a new turn.
+          const sourceSessionId: string | undefined = options.sourceSession || undefined
+          const sourceThreadId = sourceSessionId
+            ? (await getThreadIdBySessionId(sourceSessionId)) ?? undefined
+            : undefined
+          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+          if (sourceThreadId === targetThreadId) {
+            if (options.wait) {
+              cliLogger.error('Cannot use --wait when sending to your own thread')
+              process.exit(EXIT_NO_RESTART)
+            }
+            await sendDiscordMessageWithOptionalAttachment({
+              channelId: targetThreadId,
+              prompt,
+              botToken,
+              rest,
+              files: filePaths,
+            })
+            note(
+              `Posted to this session's own thread: ${threadData.name}\nIt does not start a turn; your replies already appear in this thread.\n\nURL: ${threadUrl}`,
+              '✅ Message Sent',
+            )
+            process.stdout.write(`${threadUrl}\n`)
+            process.exit(0)
+          }
+
           const threadPromptMarker: ThreadStartMarker = {
             start: true,
+            ...(sourceSessionId && { sourceSessionId }),
+            ...(sourceThreadId && { sourceThreadId }),
             ...(threadTargetUser && {
               userId: threadTargetUser.id,
               ...(threadTargetUser.username && { username: threadTargetUser.username }),
@@ -478,7 +512,7 @@ cli
           // Prefix the prompt so it's clear who sent it (matches /queue format).
           // Use a newline between prefix and prompt so leading /command
           // detection can find the command on its own line.
-          const prefixedPrompt = `${QUEUE_PREFIX}**roadie-cli:**\n${prompt}`
+          const prefixedPrompt = `${QUEUE_PREFIX}${sendPromptSender({ sourceThreadId, sourceSessionId })}\n${prompt}`
 
           if (threadTargetUser) {
             cliLogger.log(
@@ -504,7 +538,6 @@ cli
             files: filePaths,
           })
 
-          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
           const existingSessionId = sessionId || await getThreadSession(targetThreadId)
           const sessionLine = existingSessionId ? `Session: ${existingSessionId}\n` : ''
           note(

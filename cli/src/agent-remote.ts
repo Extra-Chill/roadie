@@ -850,7 +850,17 @@ async function runOperatorRequest(
   }
 }
 
-async function runAgentSend(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+/**
+ * `roadie send` from an agent shell. The verified token names the sending
+ * session, so the bot (not the caller) sets --source-session: the target thread
+ * learns where the message came from, and a send to the caller's own thread
+ * posts without prompting it.
+ */
+async function runAgentSend(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  sessionId: string,
+): Promise<void> {
   const body = await readBody(req, REMOTE_SEND_MAX_BODY_BYTES)
   if (body instanceof Error) {
     respondJson(res, 413, { error: body.message })
@@ -860,7 +870,10 @@ async function runAgentSend(req: http.IncomingMessage, res: http.ServerResponse)
   try {
     let args: string[]
     try {
-      args = buildRemoteSendArgs(JSON.parse(body.toString('utf8')), fileDir)
+      args = [
+        ...buildRemoteSendArgs(JSON.parse(body.toString('utf8')), fileDir),
+        `--source-session=${sessionId}`,
+      ]
     } catch (error) {
       respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       return
@@ -943,7 +956,7 @@ export async function handleAgentRequest(
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_SEND_PATH) {
-      await runAgentSend(req, res)
+      await runAgentSend(req, res, sessionId)
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_OPERATOR_REQUESTS_PATH) {

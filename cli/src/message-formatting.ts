@@ -43,6 +43,22 @@ export const SUBTEXT_PREFIX = '-# '
 export const STATUS_PREFIX = '⬦ '
 export const QUEUE_PREFIX = '» '
 
+/**
+ * Sender line of a `roadie send` prompt. A send from another session names that
+ * session and links its thread, so the receiving thread knows where it came from.
+ */
+export function sendPromptSender({
+  sourceThreadId,
+  sourceSessionId,
+}: {
+  sourceThreadId?: string
+  sourceSessionId?: string
+}): string {
+  if (!sourceSessionId) return '**roadie-cli:**'
+  const origin = sourceThreadId ? `<#${sourceThreadId}> (session \`${sourceSessionId}\`)` : `session \`${sourceSessionId}\``
+  return `**roadie-cli** from ${origin}:`
+}
+
 /** Chat timestamp markup. Discord renders it in each reader's timezone; Slack output converts it. */
 export function formatChatTime(at: Date): string {
   return `<t:${Math.floor(at.getTime() / 1000)}:f>`

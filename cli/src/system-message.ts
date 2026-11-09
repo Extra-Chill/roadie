@@ -309,6 +309,10 @@ export type ThreadStartMarker = {
     * child can message the parent only when the user explicitly asks.
     */
   parentSessionId?: string
+  /** Session that sent this prompt with `roadie send` from its agent shell. */
+  sourceSessionId?: string
+  /** Thread of the sending session, rendered as a link in the prompt prefix. */
+  sourceThreadId?: string
   /** Wake prompt posted after roadie_sleep. Ingress must not cancel this sleep. */
   sleepWake?: boolean
   /** delivery_id of the session_sleeps row this wake delivers. */
