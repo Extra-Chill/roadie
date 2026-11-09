@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.14] - 2026-11-09
+
+### Fixed
+- agent sends carry their source session; sends to the caller's own thread post without prompting it
+
 ## [0.84.13] - 2026-11-08
 
 ### Changed
