@@ -484,15 +484,16 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
     expect(runs.at(-1)).not.toContain('--prune')
   })
 
-  test('send reuses the /roadie/send option allowlist', async () => {
+  test('send reuses the /roadie/send option allowlist and names the token session as its source', async () => {
     const before = runs.length
-    const rejected = await runClient({
-      method: 'POST',
-      path: AGENT_SEND_PATH,
-      body: { options: { prompt: 'hi', preRun: 'rm -rf /' } },
-    })
-    expect(rejected.exit).toBe(1)
-    expect(rejected.err).toContain('Option not allowed over the send endpoint: preRun')
+    for (const options of [
+      { prompt: 'hi', preRun: 'rm -rf /' },
+      { prompt: 'hi', sourceSession: 'someone-else' },
+    ]) {
+      const rejected = await runClient({ method: 'POST', path: AGENT_SEND_PATH, body: { options } })
+      expect(rejected.exit).toBe(1)
+      expect(rejected.err).toContain('Option not allowed over the send endpoint')
+    }
     expect(runs.length).toBe(before)
 
     const accepted = await runClient({
@@ -506,6 +507,7 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
       '--prompt=hi there',
       '--thread=42',
       '--permission=bash:deny',
+      `--source-session=${AGENT_SESSION}`,
     ])
   })
 
