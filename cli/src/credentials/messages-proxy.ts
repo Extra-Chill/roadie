@@ -22,6 +22,7 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { Readable } from 'node:stream'
+import zlib from 'node:zlib'
 import { stream as piStream } from '@earendil-works/pi-ai/compat'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { markCooldown, type PoolCandidate } from './router.js'
@@ -180,6 +181,20 @@ type Attempt = { served: true } | { served: false; status?: number; retryAfter?:
 
 /** How a non-Anthropic candidate is reached through pi-ai. */
 type TranslatedTarget = { model: Model<Api>; apiKey: string; headers: Record<string, string> }
+
+/**
+ * pi-ai zstd-compresses Codex request bodies, and the ChatGPT Codex backend
+ * answers `400 {"detail":"Bad Request"}` to any zstd body that decompresses
+ * past 128 KiB, the size a coding session reaches within a few dozen turns.
+ * Uncompressed bodies of any size are accepted, so the proxy sends them plain.
+ */
+export function uncompressedBody(init?: RequestInit): RequestInit | undefined {
+  if (!init || !(init.body instanceof Uint8Array)) return init
+  const headers = new Headers(init.headers)
+  if (headers.get('content-encoding') !== 'zstd') return init
+  headers.delete('content-encoding')
+  return { ...init, headers, body: zlib.zstdDecompressSync(init.body).toString('utf8') }
+}
 
 export async function startMessagesProxy(options: MessagesProxyOptions): Promise<MessagesProxy> {
   const keys = new Map<string, () => string | undefined>()
@@ -409,7 +424,7 @@ export async function startMessagesProxy(options: MessagesProxyOptions): Promise
     // fall-through and cooldown.
     let response: Response | undefined
     const observedFetch = async (input: string | URL | Request, init?: RequestInit) => {
-      response = await fetchImpl(input, init)
+      response = await fetchImpl(input, uncompressedBody(init))
       return response
     }
     const events = piStream(target.model, request.context, {
