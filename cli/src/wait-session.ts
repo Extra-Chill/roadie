@@ -274,33 +274,17 @@ function hasCompletedUserTurn({
   return isAssistantMessageNaturalCompletion({ message: latestAssistant })
 }
 
-/**
- * Wait for session completion and output the session markdown to stdout.
- * Orchestrates the full wait flow: session ID resolution -> completion -> output.
- */
+/** `send --wait`: resolve the thread's session, then wait for it and print it. */
 export async function waitAndOutputSession({
   threadId,
   sessionIdTimeoutMs,
-  completionTimeoutMs,
-  waitStartedAtMs,
+  ...wait
 }: {
   threadId: string
   sessionIdTimeoutMs?: number
   completionTimeoutMs?: number
   waitStartedAtMs?: number
 }): Promise<void> {
-  waitLogger.log('Waiting for session ID...')
-  const sessionId = await waitForSessionId({
-    threadId,
-    timeoutMs: sessionIdTimeoutMs,
-  })
-
-  waitLogger.log(`Waiting for session ${sessionId} to complete...`)
-  await waitForSessionComplete({
-    sessionId,
-    timeoutMs: completionTimeoutMs,
-    waitStartedAtMs,
-  })
-
-  await outputSessionMarkdown({ sessionId })
+  const sessionId = await waitForSessionId({ threadId, timeoutMs: sessionIdTimeoutMs })
+  await waitAndOutputExistingSession({ sessionId, ...wait })
 }
