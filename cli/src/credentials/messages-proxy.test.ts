@@ -346,6 +346,8 @@ describe('messages proxy: ChatGPT (Codex) candidates, translated', () => {
     expect(call?.url).toBe('https://chatgpt.com/backend-api/codex/responses')
     expect(call?.headers.get('authorization')).toBe(`Bearer ${jwt('acct-a')}`)
     expect(call?.headers.get('chatgpt-account-id')).toBe('acct-a')
+    // Codex rejects zstd bodies past 128 KiB; the proxy sends them plain.
+    expect(call?.headers.get('content-encoding')).toBeNull()
     const body = JSON.parse(call!.body) as Record<string, unknown>
     expect(body.model).toBe('gpt-6-luna')
     expect(body.instructions).toBe('You are pi.')
