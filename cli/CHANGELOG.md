@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.15] - 2026-11-10
+
+### Changed
+- Pool proxy: send Codex request bodies uncompressed
+
 ## [0.84.14] - 2026-11-09
 
 ### Fixed
