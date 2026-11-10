@@ -58,6 +58,10 @@ export class PiProcess {
   private stderrTail = ''
   private stderrBuffer = ''
   exited = false
+  /** Set by kill(); resolves once the process has exited. */
+  private stopping?: Promise<void>
+  /** Usable: not exited and not being stopped. */
+  get running(): boolean { return !this.exited && !this.stopping }
 
   constructor(options: PiProcessOptions) {
     this.child = childProcesses.track(spawn(options.bin, ['--mode', 'rpc', ...options.args], {
@@ -138,7 +142,7 @@ export class PiProcess {
 
   /** Send a command and wait for its response. A failed response becomes an error. */
   async request<T = unknown>(command: Record<string, unknown> & { type: string }): Promise<T | PiRpcError> {
-    if (this.exited) return new PiRpcError({ detail: `pi is not running (${command.type})` })
+    if (!this.running) return new PiRpcError({ detail: `pi is not running (${command.type})` })
     const id = `roadie-${++this.nextId}`
     const response = await new Promise<PiResponse>((resolve) => {
       this.pending.set(id, resolve)
@@ -155,7 +159,10 @@ export class PiProcess {
    * has exited, so its session file is no longer being written.
    */
   kill({ graceMs = 3_000 }: { graceMs?: number } = {}): Promise<void> {
-    childProcesses.captureDescendants()
-    return terminateProcessGroup(this.child, { graceMs }).then(() => {})
+    if (!this.stopping) {
+      childProcesses.captureDescendants()
+      this.stopping = terminateProcessGroup(this.child, { graceMs }).then(() => {})
+    }
+    return this.stopping
   }
 }
