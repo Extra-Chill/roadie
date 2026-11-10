@@ -226,6 +226,30 @@ type AbortRunOutcome = {
 
 // ── Runtime class ────────────────────────────────────────────────
 
+/** Shorten, in place, every string longer than `max` to a `max`-length preview. */
+function shortenLongStrings({
+  value,
+  max,
+  keep,
+  seen = new WeakSet<object>(),
+}: {
+  value: unknown
+  max: number
+  keep: (owner: object, key: string) => boolean
+  seen?: WeakSet<object>
+}): void {
+  if (typeof value !== 'object' || value === null || seen.has(value)) return
+  seen.add(value)
+  const entries = value as Record<string, unknown>
+  for (const [key, nested] of Object.entries(entries)) {
+    if (typeof nested !== 'string') {
+      shortenLongStrings({ value: nested, max, keep, seen })
+    } else if (nested.length > max && !keep(value, key)) {
+      entries[key] = `${nested.slice(0, max - 1)}…`
+    }
+  }
+}
+
 export class ThreadSessionRuntime {
   readonly threadId: string
   readonly projectDirectory: string
@@ -711,68 +735,6 @@ export class ThreadSessionRuntime {
     this.chat.interactions.dispose()
   }
 
-  /** Truncate to the cap, ellipsis included, so the large-string prune below keeps it. */
-  private compactTextForEventBuffer(text: string): string {
-    if (text.length <= ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
-      return text
-    }
-    return `${text.slice(0, ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS - 1)}…`
-  }
-
-  private isDefinedEventBufferValue<T>(value: T | undefined): value is T {
-    return value !== undefined
-  }
-
-  private pruneLargeStringsForEventBuffer(
-    value: unknown,
-    seen: WeakSet<object>,
-  ): void {
-    if (typeof value !== 'object' || value === null) {
-      return
-    }
-    if (seen.has(value)) {
-      return
-    }
-    seen.add(value)
-
-    if (Array.isArray(value)) {
-      const compactedItems = value
-        .map((item) => {
-          if (typeof item === 'string') {
-            if (item.length > ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
-              return undefined
-            }
-            return item
-          }
-          this.pruneLargeStringsForEventBuffer(item, seen)
-          return item
-        })
-        .filter((item) => {
-          return this.isDefinedEventBufferValue(item)
-        })
-      value.splice(0, value.length, ...compactedItems)
-      return
-    }
-
-    const objectValue = value as Record<string, unknown>
-    for (const [key, nestedValue] of Object.entries(objectValue)) {
-      if (typeof nestedValue === 'string') {
-        if (nestedValue.length > ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
-          delete objectValue[key]
-        }
-        continue
-      }
-      this.pruneLargeStringsForEventBuffer(nestedValue, seen)
-    }
-  }
-
-  private finalizeCompactedEventForEventBuffer(
-    event: EventBufferEvent,
-  ): EventBufferEvent {
-    this.pruneLargeStringsForEventBuffer(event, new WeakSet<object>())
-    return event
-  }
-
   private compactEventForEventBuffer(
     event: EventBufferEvent,
   ): EventBufferEvent | undefined {
@@ -783,51 +745,29 @@ export class ThreadSessionRuntime {
     const compacted = structuredClone(event)
 
     if (compacted.type === 'message') {
-      // Strip heavy fields. Derivation only needs lightweight metadata (ids,
-      // role, parent, time, finish, error, model, usage, partsSummary). The
-      // per-message system prompt is kept aside for prompt-cache diffs.
+      // The per-message system prompt is kept aside for prompt-cache diffs.
       const info = compacted.message
       if (info.role === 'user' && info.system) {
         this.userSystemByMessageId.set(info.id, info.system)
       }
       delete info.system
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (compacted.type !== 'part') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    const part = compacted.part
-
-    if (part.kind === 'text') {
-      // Text parts are the transcript: `send --wait` and `session wait` print
-      // it from these persisted events, so the text is kept whole.
-      const { text } = part
-      this.finalizeCompactedEventForEventBuffer(compacted)
-      part.text = text
-      return compacted
-    }
-
-    if (part.kind === 'reasoning') {
-      part.text = this.compactTextForEventBuffer(part.text)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.kind !== 'tool') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     // Subagent identity lives on part.subagent and child_session_* events,
     // which survive compaction; the delegation inputs do not.
-    part.input = {}
-    if (part.output !== undefined) {
-      part.output = this.compactTextForEventBuffer(part.output)
+    if (compacted.type === 'part' && compacted.part.kind === 'tool') {
+      compacted.part.input = {}
     }
-    if (part.error !== undefined) {
-      part.error = this.compactTextForEventBuffer(part.error)
-    }
-    return this.finalizeCompactedEventForEventBuffer(compacted)
+
+    // Text parts are the transcript `send --wait` and `session wait` print, so
+    // their text stays whole; every other long string becomes a preview.
+    const transcript = compacted.type === 'part' && compacted.part.kind === 'text' ? compacted.part : undefined
+    shortenLongStrings({
+      value: compacted,
+      max: ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS,
+      keep: (owner, key) => owner === transcript && key === 'text',
+    })
+    return compacted
   }
 
   private appendEventToBuffer(event: EventBufferEvent): void {
