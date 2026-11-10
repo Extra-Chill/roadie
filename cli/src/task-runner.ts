@@ -27,7 +27,7 @@ import {
   markSessionSleepFailed,
 } from './database.js'
 import { execAsync } from './exec-async.js'
-import { QUEUE_PREFIX } from './message-formatting.js'
+import { QUEUE_PREFIX, sendPromptSender } from './message-formatting.js'
 import { prepareDiscordPromptMessage } from './discord-prompt-message.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
@@ -107,7 +107,7 @@ async function executeThreadScheduledTask({
   const embed = await buildThreadStartEmbeds(marker)
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
-  const prefixedPrompt = `${QUEUE_PREFIX}**roadie-cli:**\n${prompt}`
+  const prefixedPrompt = `${QUEUE_PREFIX}${sendPromptSender({})}\n${prompt}`
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;

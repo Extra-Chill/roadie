@@ -495,8 +495,6 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             start: true,
-            ...(sourceSessionId && { sourceSessionId }),
-            ...(sourceThreadId && { sourceThreadId }),
             ...(threadTargetUser && {
               userId: threadTargetUser.id,
               ...(threadTargetUser.username && { username: threadTargetUser.username }),
