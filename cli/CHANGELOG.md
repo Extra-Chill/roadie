@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.17] - 2026-11-10
+
+### Changed
+- one-pass event compaction; drop unread marker provenance; one sender label
+
 ## [0.84.16] - 2026-11-10
 
 ### Fixed
