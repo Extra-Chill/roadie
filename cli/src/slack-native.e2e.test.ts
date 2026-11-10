@@ -732,8 +732,7 @@ describe.skipIf(!findPi())('native Slack', () => {
     ).toBe('native attachment bytes')
   })
 
-  test('native send rejects ambiguous project targeting, delivers notifications and scheduled thread turns', async () => {
-    expect(await bot.send({ project: 'shared', prompt: 'ambiguous' })).toBeInstanceOf(Error)
+  test('native send delivers notifications and scheduled thread turns', async () => {
     const notice = await bot.send({
       channel: secondChannelId,
       prompt: 'native notification',

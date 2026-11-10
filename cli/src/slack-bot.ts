@@ -172,7 +172,6 @@ const sendSchema = z.object({
   channel: z.string().optional(),
   thread: z.string().optional(),
   session: z.string().optional(),
-  project: z.string().optional(),
   prompt: z.string().default(''),
   name: z.string().optional(),
   user: z.string().optional(),
@@ -433,7 +432,6 @@ export class NativeSlackBot {
     if (!parsed.success)
       return new SlackApiError({ operation: 'send', detail: parsed.error.message })
     const options = parsed.data
-    if (options.project) return new SlackApiError({ operation: 'send', detail: '--project no longer selects channels; configure application.channel or use --channel' })
     const directoryError = validateApplicationDirectory(options.cwd)
     if (directoryError) return directoryError
     const sessionThread = options.session ? await getThreadIdBySessionId(options.session) : null

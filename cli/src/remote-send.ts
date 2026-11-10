@@ -26,11 +26,10 @@ type OptionKind = 'string' | 'boolean' | 'strings'
  * `roadie send` options a remote caller may set, keyed by the parsed option
  * name. Deliberately excluded: --pre-run (a shell command run directly, with no
  * agent involved), --app-id (the bot knows its own), --file (sent as content,
- * see `files`), and the removed --worktree.
+ * see `files`).
  */
 export const REMOTE_SEND_OPTIONS: Record<string, { flag: string; kind: OptionKind }> = {
   channel: { flag: '--channel', kind: 'string' },
-  project: { flag: '--project', kind: 'string' },
   prompt: { flag: '--prompt', kind: 'string' },
   name: { flag: '--name', kind: 'string' },
   notifyOnly: { flag: '--notify-only', kind: 'boolean' },
@@ -294,9 +293,7 @@ export function remoteSendOptions(options: Record<string, unknown>, cwd = proces
   for (const key of Object.keys(REMOTE_SEND_OPTIONS)) {
     if (options[key] !== undefined) picked[key] = options[key]
   }
-  for (const key of ['project', 'cwd']) {
-    if (typeof picked[key] === 'string') picked[key] = path.resolve(cwd, picked[key] as string)
-  }
+  if (typeof picked.cwd === 'string') picked.cwd = path.resolve(cwd, picked.cwd)
   // The running application resolves its configured destination. The caller's
   // cwd is never a project/channel selector.
   return picked

@@ -43,6 +43,41 @@ import {
 } from '../cli-runner.js'
 import { validateCliModelOption } from '../session-handler/model-utils.js'
 
+/**
+ * Where a send goes when this process cannot open the bot's database itself:
+ * the running bot, reached with an agent token (scoped endpoint) or the
+ * service send token. Undefined means send directly.
+ */
+function resolveRunningBotSend(options: { platform?: string }): { port: number; token: string; path?: string } | Error | undefined {
+  if ((options.platform ?? process.env.ROADIE_PLATFORM) === 'slack') {
+    const token = getSendToken()
+    if (!token) return new Error('Set ROADIE_SERVICE_TOKEN (or its _FILE variant) to send through the running Slack bot')
+    return { port: getLockPort(), token }
+  }
+  const agent = resolveAgentCredentials()
+  if (!(agent instanceof Error)) return { ...agent, path: AGENT_SEND_PATH }
+  if (shouldSendRemotely({ dataDir: getDataDir() })) return { port: getLockPort(), token: getSendToken()! }
+  return undefined
+}
+
+/** The start marker the bot reads off a `roadie send` message: who it is for and how to run it. */
+function startMarker({ options, user, cwd }: {
+  options: { agent?: string; model?: string; permission?: string[]; injectionGuard?: string[]; parentSession?: string }
+  user?: { id: string; username?: string }
+  cwd?: string
+}): ThreadStartMarker {
+  return {
+    start: true,
+    ...(cwd && { cwd }),
+    ...(user && { userId: user.id, ...(user.username && { username: user.username }) }),
+    ...(options.agent && { agent: options.agent }),
+    ...(options.model && { model: options.model }),
+    ...(options.permission?.length && { permissions: options.permission }),
+    ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
+    ...(options.parentSession && { parentSessionId: options.parentSession }),
+  }
+}
+
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
 
@@ -54,10 +89,6 @@ cli
   .alias('start-session') // backwards compatibility
   .option('--platform <name>', 'Chat platform: discord or slack. Defaults to ROADIE_PLATFORM')
   .option('-c, --channel <channelId>', 'Discord channel ID')
-  .option(
-    '-d, --project <path>',
-    'Removed: channels are application configuration; use --channel',
-  )
   .option(
     '-p, --prompt <prompt>',
     'Message content. A busy --thread/--session takes it at its next step boundary; it never interrupts the run',
@@ -73,10 +104,6 @@ cli
   .option(
     '--notify-only',
     'Create notification thread without starting AI session',
-  )
-  .option(
-    '--worktree [name]',
-    'Removed: create the checkout with your host tooling, then pass it with --cwd',
   )
   .option(
     '--cwd <path>',
@@ -139,45 +166,24 @@ cli
     'Sending session. Set by the running bot for agent-shell sends; the target thread sees where the prompt came from',
   )
   .action(async (options) => {
-       if ((options.platform ?? process.env.ROADIE_PLATFORM) === 'slack') {
-         const token = getSendToken()
-         if (!token) { cliLogger.error('Set ROADIE_SERVICE_TOKEN (or its _FILE variant) to send through the running Slack bot'); process.exit(EXIT_NO_RESTART) }
-         if (options.preRun || options.worktree || options.appId) { cliLogger.error('Use --cwd for native Slack working directories; --pre-run, --worktree and --app-id are not supported on this send path'); process.exit(EXIT_NO_RESTART) }
-         const picked = remoteSendOptions(options)
-         if (options.project) picked.project = options.project
-         const exitCode = await sendViaRunningBot({ port: getLockPort(), token, options: picked, filePaths: (options.file ?? []).map((file: string) => path.resolve(file)) })
-         process.exit(exitCode)
-       }
-      // An agent tool shell holds a per-session agent token instead of the
-      // database credentials, so its send goes through the running bot
-      // (POST /roadie/agent/send, see agent-remote.ts).
-      const agentCredentials = resolveAgentCredentials()
-      if (!(agentCredentials instanceof Error)) {
-        if (options.preRun) {
-          cliLogger.error('--pre-run is not available when sending through the running bot')
-          process.exit(EXIT_NO_RESTART)
-        }
-        const exitCode = await sendViaRunningBot({
-          port: agentCredentials.port,
-          token: agentCredentials.token,
-          path: AGENT_SEND_PATH,
-          options: remoteSendOptions(options),
-          filePaths: (options.file ?? []).map((f: string) => path.resolve(f)),
-        })
-        process.exit(exitCode)
+      // Sends that cannot open the bot's database go through the running bot:
+      // Slack, agent tool shells (per-session token, POST /roadie/agent/send,
+      // see agent-remote.ts) and host users without data-dir access
+      // (see remote-send.ts).
+      const runningBot = resolveRunningBotSend(options)
+      if (runningBot instanceof Error) {
+        cliLogger.error(runningBot.message)
+        process.exit(EXIT_NO_RESTART)
       }
-      // A host user with a send token but no access to the bot's data dir
-      // sends through the running bot instead (see remote-send.ts).
-      if (shouldSendRemotely({ dataDir: getDataDir() })) {
+      if (runningBot) {
         if (options.preRun) {
           cliLogger.error('--pre-run is not available when sending through the running bot')
           process.exit(EXIT_NO_RESTART)
         }
         const exitCode = await sendViaRunningBot({
-          port: getLockPort(),
-          token: getSendToken()!,
+          ...runningBot,
           options: remoteSendOptions(options),
-          filePaths: (options.file ?? []).map((f: string) => path.resolve(f)),
+          filePaths: (options.file ?? []).map((file: string) => path.resolve(file)),
         })
         process.exit(exitCode)
       }
@@ -194,7 +200,6 @@ cli
           session: sessionId,
         } = options
         let name: string | undefined = options.name || undefined
-        const { project: projectPath } = options
         const sendAt = options.sendAt
 
         const existingThreadMode = Boolean(threadId || sessionId)
@@ -209,16 +214,13 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
-        if (existingThreadMode && (channelId || projectPath)) {
+        if (existingThreadMode && channelId) {
           cliLogger.error(
-            'Cannot combine --thread/--session with --channel/--project',
+            'Cannot combine --thread/--session with --channel',
           )
           process.exit(EXIT_NO_RESTART)
         }
 
-        if (projectPath) {
-          throw new Error('--project no longer selects channels. Use --channel or configure application.channel')
-        }
         const directoryError = validateApplicationDirectory(options.cwd)
         if (directoryError) throw directoryError
         if (!existingThreadMode) {
@@ -301,13 +303,6 @@ cli
         }
 
         const waitStartedAtMs = options.wait ? Date.now() : undefined
-
-        if (options.worktree) {
-          cliLogger.error(
-            '--worktree was removed: Roadie no longer creates git worktrees. Create the checkout with your own tooling and pass it with --cwd <path>.',
-          )
-          process.exit(EXIT_NO_RESTART)
-        }
 
         if (options.cwd && notifyOnly) {
           cliLogger.error('Cannot use --cwd with --notify-only')
@@ -403,7 +398,7 @@ cli
           // has no channel_directories rows because the bot hasn't synced yet.
           // The running bot on the other end resolves the directory from its own DB.
           // We only require it for features that genuinely need a local directory
-          // (scheduled tasks and --wait).
+          // (scheduled tasks).
           const storedConfig = await getChannelDirectory(threadData.parent_id)
           const fixedDirectory = applicationDirectory()
           const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
@@ -418,11 +413,10 @@ cli
 
           // Guard early: fail before sending the message if a feature that
           // needs local project directory mapping is requested.
-          if (!channelConfig && (parsedSchedule || options.wait)) {
-            const flag = parsedSchedule ? '--send-at' : '--wait'
+          if (!channelConfig && parsedSchedule) {
             throw new Error(
               'Thread parent channel is not configured with a project directory. ' +
-              `${flag} requires a local project mapping. Run the bot first to sync channel data.`,
+              '--send-at requires a local project mapping. Run the bot first to sync channel data.',
             )
           }
 
@@ -493,18 +487,7 @@ cli
             process.exit(0)
           }
 
-          const threadPromptMarker: ThreadStartMarker = {
-            start: true,
-            ...(threadTargetUser && {
-              userId: threadTargetUser.id,
-              ...(threadTargetUser.username && { username: threadTargetUser.username }),
-            }),
-            ...(options.agent && { agent: options.agent }),
-            ...(options.model && { model: options.model }),
-            ...(options.permission?.length ? { permissions: options.permission } : {}),
-            ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
-            ...(options.parentSession && { parentSessionId: options.parentSession }),
-          }
+          const threadPromptMarker = startMarker({ options, user: threadTargetUser })
           const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
 
           // Prefix the prompt so it's clear who sent it (matches /queue format).
@@ -574,7 +557,7 @@ cli
         // has no channel_directories rows because the bot hasn't synced yet.
         // The running bot on the other end resolves the directory from its own DB.
         // We only require it for features that genuinely need a local directory
-        // (--send-at, --wait, --cwd).
+        // (--send-at, --cwd).
         const storedConfig = await getChannelDirectory(channelData.id)
         const fixedDirectory = applicationDirectory()
         const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
@@ -589,11 +572,10 @@ cli
         }
 
         // Features that require a local project directory mapping
-        const needsProjectDirectory = Boolean(parsedSchedule || options.wait || options.cwd)
-        if (!channelConfig && needsProjectDirectory) {
+        if (!channelConfig && (parsedSchedule || options.cwd)) {
           throw new Error(
             `Channel #${channelData.name} is not configured with a project directory. ` +
-            `${parsedSchedule ? '--send-at' : options.wait ? '--wait' : '--cwd'} requires a local project mapping. ` +
+            `${parsedSchedule ? '--send-at' : '--cwd'} requires a local project mapping. ` +
             'Run the bot first to sync channel data.',
           )
         }
@@ -677,21 +659,7 @@ cli
 
         // Embed marker for auto-start sessions (unless --notify-only)
         // Bot parses this YAML to know it should start a session and set the initial user
-        const embedMarker: ThreadStartMarker | undefined = notifyOnly
-          ? undefined
-          : {
-              start: true,
-              ...(resolvedCwd && { cwd: resolvedCwd }),
-              ...(resolvedUser && {
-                userId: resolvedUser.id,
-                ...(resolvedUser.username && { username: resolvedUser.username }),
-              }),
-              ...(options.agent && { agent: options.agent }),
-              ...(options.model && { model: options.model }),
-              ...(options.permission?.length && { permissions: options.permission }),
-              ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
-              ...(options.parentSession && { parentSessionId: options.parentSession }),
-            }
+        const embedMarker = notifyOnly ? undefined : startMarker({ options, user: resolvedUser, cwd: resolvedCwd })
         const autoStartEmbed = embedMarker
           ? await buildThreadStartEmbeds(embedMarker)
           : undefined
