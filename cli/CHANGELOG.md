@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.16] - 2026-11-10
+
+### Fixed
+- persist whole text parts; keep Discord markup in rendered prompts
+
 ## [0.84.15] - 2026-11-10
 
 ### Changed
