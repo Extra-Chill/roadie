@@ -267,13 +267,6 @@ export type RepliedMessageContext = {
 export type ThreadStartMarker = {
   /** Whether to auto-start an AI session */
   start?: boolean
-  /**
-   * Legacy marker for CLI-injected prompts into existing threads.
-   * @deprecated New injected prompts should use `start: true` instead.
-   */
-  cliThreadPrompt?: boolean
-  /** Legacy: worktree creation request from old clients; answered with a notice. */
-  worktree?: string
   /** Existing project subfolder or git worktree to bind the thread to */
   cwd?: string
   /** Discord username who initiated the thread */
@@ -323,7 +316,34 @@ export function isInjectedPromptMarker({
   if (!marker) {
     return false
   }
-  return Boolean(marker.cliThreadPrompt || marker.start)
+  return Boolean(marker.start)
+}
+
+/**
+ * How a sent or scheduled session runs. Scheduled-task payloads persist it and
+ * start markers carry it to the bot, so both are built from this one shape.
+ */
+export type SessionRun = {
+  agent: string | null
+  model: string | null
+  username: string | null
+  userId: string | null
+  permissions: string[] | null
+  injectionGuardPatterns: string[] | null
+  parentSessionId: string | null
+}
+
+/** The start marker for a session run, plus any caller-specific fields (cwd, schedule ids). */
+export function buildStartMarker(run: SessionRun, extra: Omit<ThreadStartMarker, keyof SessionRun> = {}): ThreadStartMarker {
+  const marker: ThreadStartMarker = { start: true, ...extra }
+  if (run.agent) marker.agent = run.agent
+  if (run.model) marker.model = run.model
+  if (run.username) marker.username = run.username
+  if (run.userId) marker.userId = run.userId
+  if (run.permissions?.length) marker.permissions = run.permissions
+  if (run.injectionGuardPatterns?.length) marker.injectionGuardPatterns = run.injectionGuardPatterns
+  if (run.parentSessionId) marker.parentSessionId = run.parentSessionId
+  return marker
 }
 
 export type AgentInfo = {

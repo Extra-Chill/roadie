@@ -3,39 +3,15 @@
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
 import { asSubtext, formatChatTime } from './message-formatting.js'
+import type { SessionRun } from './system-message.js'
 
-export type ScheduledTaskPayload = {
+export type ScheduledTaskPayload = SessionRun & {
+  prompt: string
   preRunCommand: string | null
   allowConcurrency: boolean
 } & (
-  | {
-      kind: 'thread'
-      threadId: string
-      prompt: string
-      agent: string | null
-      model: string | null
-      username: string | null
-      userId: string | null
-      permissions: string[] | null
-      injectionGuardPatterns: string[] | null
-      parentSessionId: string | null
-    }
-  | {
-      kind: 'channel'
-      channelId: string
-      prompt: string
-      name: string | null
-      notifyOnly: boolean
-      worktreeName: string | null
-      cwd: string | null
-      agent: string | null
-      model: string | null
-      username: string | null
-      userId: string | null
-      permissions: string[] | null
-      injectionGuardPatterns: string[] | null
-      parentSessionId: string | null
-    })
+  | { kind: 'thread'; threadId: string }
+  | { kind: 'channel'; channelId: string; name: string | null; notifyOnly: boolean; cwd: string | null })
 
 export type ParsedSendAt =
   | {
@@ -393,73 +369,36 @@ export function parseScheduledTaskPayload(
     return new Error('Task payload must be an object')
   }
 
+  const prompt = asString(parsed.prompt)
+  if (!prompt) return new Error('Task payload requires a prompt')
+  const common = {
+    prompt,
+    agent: asString(parsed.agent),
+    model: asString(parsed.model),
+    username: asString(parsed.username),
+    userId: asString(parsed.userId),
+    permissions: asStringArray(parsed.permissions),
+    injectionGuardPatterns: asStringArray(parsed.injectionGuardPatterns),
+    parentSessionId: asString(parsed.parentSessionId),
+    preRunCommand: asString(parsed.preRunCommand),
+    allowConcurrency: parsed.allowConcurrency === true,
+  }
   const kind = asString(parsed.kind)
-  const preRunCommand = asString(parsed.preRunCommand)
-  const allowConcurrency = parsed.allowConcurrency === true
   if (kind === 'thread') {
     const threadId = asString(parsed.threadId)
-    const prompt = asString(parsed.prompt)
-    const agent = asString(parsed.agent)
-    const model = asString(parsed.model)
-    const username = asString(parsed.username)
-    const userId = asString(parsed.userId)
-    const permissions = asStringArray(parsed.permissions)
-    const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
-    const parentSessionId = asString(parsed.parentSessionId)
-    if (!threadId || !prompt) {
-      return new Error('Thread task payload requires threadId and prompt')
-    }
-    return {
-      kind: 'thread',
-      threadId,
-      prompt,
-      agent,
-      model,
-      username,
-      userId,
-      permissions,
-      injectionGuardPatterns,
-      parentSessionId,
-      preRunCommand,
-      allowConcurrency,
-    }
+    if (!threadId) return new Error('Thread task payload requires threadId')
+    return { ...common, kind: 'thread', threadId }
   }
-
   if (kind === 'channel') {
     const channelId = asString(parsed.channelId)
-    const prompt = asString(parsed.prompt)
-    const nameValue = parsed.name
-    const name = typeof nameValue === 'string' ? nameValue : null
-    const notifyOnly = parsed.notifyOnly === true
-    const worktreeName = asString(parsed.worktreeName)
-    const cwd = asString(parsed.cwd)
-    const agent = asString(parsed.agent)
-    const model = asString(parsed.model)
-    const username = asString(parsed.username)
-    const userId = asString(parsed.userId)
-    const permissions = asStringArray(parsed.permissions)
-    const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
-    const parentSessionId = asString(parsed.parentSessionId)
-    if (!channelId || !prompt) {
-      return new Error('Channel task payload requires channelId and prompt')
-    }
+    if (!channelId) return new Error('Channel task payload requires channelId')
     return {
+      ...common,
       kind: 'channel',
       channelId,
-      prompt,
-      name,
-      notifyOnly,
-      worktreeName,
-      cwd,
-      agent,
-      model,
-      username,
-      userId,
-      permissions,
-      injectionGuardPatterns,
-      parentSessionId,
-      preRunCommand,
-      allowConcurrency,
+      name: typeof parsed.name === 'string' ? parsed.name : null,
+      notifyOnly: parsed.notifyOnly === true,
+      cwd: asString(parsed.cwd),
     }
   }
 
