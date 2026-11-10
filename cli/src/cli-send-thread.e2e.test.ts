@@ -581,7 +581,8 @@ describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
   test(
     'send --wait prints the whole turn: long prompt with a channel link, and a long reply',
     async () => {
-      const prompt = `» **roadie-cli** from <#${TEXT_CHANNEL_ID}> (session \`source\`):\nReply at length. ${'context line. '.repeat(50)}prompt-end`
+      const body = `Reply at length. ${'context line. '.repeat(50)}prompt-end`
+      const prompt = `» **roadie-cli** from <#${TEXT_CHANNEL_ID}> (session \`source\`):\n${body}`
       const waitStartedAtMs = Date.now()
       const marker: ThreadStartMarker = { start: true, username: 'cli-send-tester', userId: TEST_USER_ID }
       const starter = (await botClient.rest.post(Routes.channelMessages(TEXT_CHANNEL_ID), {
@@ -603,7 +604,7 @@ describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
         write.mockRestore()
       }
       const output = written.join('')
-      expect(output).toContain(prompt)
+      expect(output).toContain(body)
       expect(output).toContain(LONG_REPLY_TEXT)
     },
     60_000,
