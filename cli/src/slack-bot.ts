@@ -47,7 +47,7 @@ import {
 import type { IngressInput } from './session-handler/ingress-input.js'
 import type { ThreadSessionRuntime } from './session-handler/thread-session-runtime.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
-import { resolveForkWorkspace, forkWorkspaceNotice } from './fork-workspace.js'
+import { resolveForkWorkspace } from './fork-workspace.js'
 import { markPendingSessionTitle } from './session-title.js'
 import { recordSessionForkOrigin, setThreadSession } from './database.js'
 import { copySessionPreferences } from './commands/model.js'
@@ -1241,7 +1241,6 @@ export class NativeSlackBot {
         projectDirectory: runtime.projectDirectory, sourceDirectory: runtime.sdkDirectory, platform: 'slack',
         spaceId: this.workspaceId, channelId: event.channel_id, userId: event.user_id, prompt: words.join(' '),
       })
-      if (workspace instanceof Error) { await runtime.chat.sendNotice(workspace.message); return }
       const forkDirectory = workspace.binding?.workingDirectory ?? runtime.sdkDirectory
       const abandon = async () => {
         if (workspace.binding) await doAction('fork_workspace_abandoned', { request: workspace.request, binding: workspace.binding })
@@ -1302,7 +1301,7 @@ export class NativeSlackBot {
         })
       const fork = await this.runtimeFor(event.channel_id, root.id)
       if (fork instanceof Error) return fork
-      if (workspace.binding) await fork.chat.sendNotice(forkWorkspaceNotice(workspace.binding))
+      if (workspace.notice) await fork.chat.sendNotice(workspace.notice)
       if (words.length) {
         await fork.enqueueIncoming({
           prompt: words.join(' '),

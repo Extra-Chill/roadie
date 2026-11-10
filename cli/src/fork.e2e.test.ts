@@ -136,7 +136,7 @@ describe.skipIf(!findPi())('/fork', () => {
     throw new Error(`Generated title did not become ${expected}`)
   }
 
-  test.each(['success', 'denied', 'setup-error'] as const)(
+  test.each(['success', 'denied'] as const)(
     'acknowledges before a slow person filter and completes the %s reply',
     async (outcome) => {
       const source = await startSource()
@@ -148,20 +148,17 @@ describe.skipIf(!findPi())('/fork', () => {
         identityFinished = true
         return { allowed: outcome !== 'denied', capabilities: new Set(['sessions']), permissions: [] }
       })
-      const removeWorkspace = outcome === 'setup-error'
-        ? addFilter('fork_workspace', () => ({ async provision() { return new Error('delayed setup failed') } }))
-        : () => {}
       try {
         const started = Date.now()
         const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({
           name: 'fork',
-          options: [{ name: 'workspace', type: 3, value: outcome === 'setup-error' ? 'separate' : 'shared' }],
+          options: [],
         })
         const ack = await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 2_500 })
         expect(Date.now() - started).toBeLessThan(3_000)
         expect(ack.type).toBe(5)
         expect(identityFinished).toBe(false)
-        const expected = outcome === 'success' ? 'Session forked!' : outcome === 'denied' ? "You don't have permission" : 'Failed to fork session: delayed setup failed'
+        const expected = outcome === 'success' ? 'Session forked!' : "You don't have permission"
         await ctx.discord.thread(source.id).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes(expected) })
         expect(identityFinished).toBe(true)
         const after = (await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)
@@ -169,7 +166,6 @@ describe.skipIf(!findPi())('/fork', () => {
         else expect(after).toEqual(before)
       } finally {
         removePerson()
-        removeWorkspace()
         clearIdentityCache()
       }
     }, 25_000,
@@ -216,7 +212,9 @@ describe.skipIf(!findPi())('/fork', () => {
     const messages = await sessionMessages(forkSession)
     expect(messages.some((m) => m.message.role === 'assistant')).toBe(true)
     expect(JSON.stringify(messages)).not.toContain('A copy of this conversation was made in thread')
-    // The source learns where the copy went, as context only: no new turn, no reply.
+    // Wait for the slash-command reply before checking that the context note
+    // creates no additional reply in the source conversation.
+    await ctx.discord.thread(source.id).waitForMessage({ timeout: 4_000, predicate: (m) => m.content.includes('Session forked!') })
     const sourceBefore = await ctx.discord.thread(source.id).text()
     const noteIn = (entries: Awaited<ReturnType<typeof sessionMessages>>) => entries.filter((entry) =>
       entry.parts.some((part) => part.kind === 'text' && part.text.includes(`A copy of this conversation was made in thread <#${fork.id}> (session ${forkSession})`)))
@@ -433,17 +431,39 @@ describe.skipIf(!findPi())('/fork', () => {
     }
   }, 60_000)
 
-  test('provisioning failure creates no fork thread and runs no prompt', async () => {
+  test.each([
+    ['provision returns Error', 'fixture allocation failed'],
+    ['provision throws', 'delayed setup failed'],
+    ['filter returns Error', 'Multiple coding repositories'],
+    ['filter throws', 'host unavailable'],
+    ['invalid binding', 'invalid workspace binding'],
+  ])('%s still copies the session in the source directory', async (scenario, reason) => {
     const source = await startSource()
-    const beforeFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
-    const before = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
-    const remove = addFilter('fork_workspace', () => ({ async provision() { return new Error('fixture allocation failed') } }))
+    const sourceSession = await waitForThreadSession(source.id)
+    const remove = addFilter('fork_workspace', () => {
+      if (scenario === 'filter returns Error') return new Error(reason)
+      if (scenario === 'filter throws') throw new Error(reason)
+      return { async provision() {
+        if (scenario === 'provision throws') throw new Error(reason)
+        if (scenario === 'invalid binding') return {
+          workingDirectory: 'relative/path', projectDirectory: ctx.directories.projectDirectory,
+          label: 'invalid', kind: 'directory' as const,
+        }
+        return new Error(reason)
+      } }
+    })
     try {
-      const interaction = await ctx.discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork', options: [{ name: 'prompt', type: 3, value: 'WORKSPACE_WRITE_MARKER must not run' }] })
-      await ctx.discord.thread(source.id).waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
-      expect((await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id)).toEqual(before.map((thread) => thread.id))
-      const afterFile = fs.existsSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt')) ? fs.readFileSync(path.join(ctx.directories.projectDirectory, 'fork-result.txt'), 'utf8') : null
-      expect(afterFile).toBe(beforeFile)
+      const fork = await forkFrom(source.id)
+      const forkSession = await waitForThreadSession(fork.id)
+      expect(forkSession).not.toBe(sourceSession)
+      const session = await backendSessions().get({ sessionId: forkSession })
+      if (session instanceof Error) throw session
+      expect(session?.directory).toBe(ctx.directories.projectDirectory)
+      const copied = await sessionMessages(forkSession)
+      expect(copied.some((message) => message.parts.some((part) => part.kind === 'text' && part.text.includes('fork-first')))).toBe(true)
+      await ctx.discord.thread(fork.id).waitForMessage({ timeout: 5_000, predicate: (message) =>
+        message.content.includes(`sharing the source directory \`${ctx.directories.projectDirectory}\``) && message.content.includes(reason),
+      })
     } finally { remove() }
   }, 25_000)
 

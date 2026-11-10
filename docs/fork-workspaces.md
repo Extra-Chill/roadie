@@ -1,7 +1,7 @@
 # Fork workspaces
 
-When the host supplies a `fork_workspace` provider, `/fork` automatically works
-in a freshly provisioned independent host workspace. There is no user-facing
+When the host supplies a `fork_workspace` provider, `/fork` automatically tries
+to use a freshly provisioned independent host workspace. There is no user-facing
 workspace choice:
 
 ```text
@@ -32,9 +32,13 @@ provider returns a binding or an error:
 }
 ```
 
-A matching provider must provision successfully before the fork or its task
-starts. Provisioning and binding failures fail closed: no fork thread is
-created and no prompt runs.
+Workspace isolation is best effort. Filter, provisioning, or binding-validation
+failures fall back to copying the conversation in the source directory, including
+cross-channel forks. The fork result carries the degradation reason, and the new
+thread displays a short notice explaining the shared directory and reason. The
+full cause chain is logged. A returned binding is reported through
+`fork_workspace_abandoned` before falling back; no provider needs no warning.
+Successful isolated workspaces retain their workspace/committed-base notice.
 
 ## Conversations with a non-Git home
 
@@ -52,19 +56,21 @@ remove terminal tasks from that projection. The immutable admission context
 survives detachment, retry and restart; a new fork's task uses its own session ID.
 
 One active checkout selects the repository. Multiple active checkouts or pending
-allocation stop setup with an explanation. With no active task, an existing
+allocation can prevent isolation; the conversation still forks in the source
+directory with an explanation. With no active task, an existing
 Git/worktree-bound conversation uses its own checkout; a non-Git conversation
 retains ordinary conversation-fork behavior. `from:` controls the copied
 conversation boundary, while repository authority comes from the current task.
 The host verifies the selected checkout against its registered Homeboy owner.
-An unavailable ownership API fails closed; there is no history-based fallback.
+An unavailable ownership API also degrades to the source directory; there is no
+history-based repository-selection fallback.
 
 The host owns allocation, lifecycle and cleanup. Roadie validates the directory,
 persists the binding, and displays the workspace and committed base. It preserves
 conversation history/model preferences and injects the new working directory.
 Uncommitted source edits are not copied.
 
-If conversation setup fails after allocation, `fork_workspace_abandoned` informs
+If binding validation or conversation setup fails after allocation, `fork_workspace_abandoned` informs
 the host with the request and binding. A host can retain failure evidence and
 record a terminal disposition rather than deleting the workspace immediately.
 
