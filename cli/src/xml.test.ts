@@ -31,6 +31,11 @@ describe('extractNonXmlContent', () => {
     expect(extractNonXmlContent(xml)).toMatchInlineSnapshot(`"Just plain text"`)
   })
 
+  test('keeps Discord markup and comparisons, which are not tags', () => {
+    const text = '» **roadie-cli** from <#123> (<@456> at <t:789:f>):\nis a < b?<discord-user name="x" />'
+    expect(extractNonXmlContent(text)).toBe('» **roadie-cli** from <#123> (<@456> at <t:789:f>):\nis a < b?')
+  })
+
   test('handles empty string', () => {
     const xml = ''
     expect(extractNonXmlContent(xml)).toMatchInlineSnapshot(`""`)

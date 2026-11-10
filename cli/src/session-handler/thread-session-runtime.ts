@@ -711,11 +711,12 @@ export class ThreadSessionRuntime {
     this.chat.interactions.dispose()
   }
 
+  /** Truncate to the cap, ellipsis included, so the large-string prune below keeps it. */
   private compactTextForEventBuffer(text: string): string {
     if (text.length <= ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS) {
       return text
     }
-    return `${text.slice(0, ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS)}…`
+    return `${text.slice(0, ThreadSessionRuntime.EVENT_BUFFER_TEXT_MAX_CHARS - 1)}…`
   }
 
   private isDefinedEventBufferValue<T>(value: T | undefined): value is T {
@@ -799,7 +800,16 @@ export class ThreadSessionRuntime {
 
     const part = compacted.part
 
-    if (part.kind === 'text' || part.kind === 'reasoning') {
+    if (part.kind === 'text') {
+      // Text parts are the transcript: `send --wait` and `session wait` print
+      // it from these persisted events, so the text is kept whole.
+      const { text } = part
+      this.finalizeCompactedEventForEventBuffer(compacted)
+      part.text = text
+      return compacted
+    }
+
+    if (part.kind === 'reasoning') {
       part.text = this.compactTextForEventBuffer(part.text)
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
