@@ -13,7 +13,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { describe, beforeAll, afterAll, test, expect } from 'vitest'
+import { describe, beforeAll, afterAll, test, expect, vi } from 'vitest'
+import { waitAndOutputSession } from './wait-session.js'
 import {
   ChannelType,
   Client,
@@ -52,6 +53,8 @@ const BOT_USER_ID = '200000000000000832'
 const EMPTY_CONTENT_CHANNEL_ID = '200000000000000833'
 const MENTION_MODE_EMPTY_CONTENT_CHANNEL_ID = '200000000000000834'
 const THREAD_EMPTY_CONTENT_CHANNEL_ID = '200000000000000835'
+
+const LONG_REPLY_TEXT = `${'long reply line. '.repeat(60)}reply-end`
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'cli-send-thread-e2e')
@@ -108,6 +111,21 @@ function createMatchers(): FakeMatcher[] {
     },
   }
 
+  const longReplyMatcher: FakeMatcher = {
+    id: 'long-reply',
+    priority: 20,
+    when: { lastMessageRole: 'user', latestUserTextIncludes: 'Reply at length' },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'long' },
+        { type: 'text-delta', id: 'long', delta: `${LONG_REPLY_TEXT}` },
+        { type: 'text-end', id: 'long' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+      ],
+    },
+  }
+
   // Catch-all: any user message gets a reply
   const catchAll: FakeMatcher = {
     id: 'catch-all',
@@ -128,7 +146,7 @@ function createMatchers(): FakeMatcher[] {
     },
   }
 
-  return [userReplyMatcher, catchAll]
+  return [longReplyMatcher, userReplyMatcher, catchAll]
 }
 
 describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
@@ -558,5 +576,37 @@ describe.skipIf(!findPi())('roadie send --channel thread creation', () => {
       expect(botReplies.length).toBeGreaterThanOrEqual(1)
     },
     15_000,
+  )
+
+  test(
+    'send --wait prints the whole turn: long prompt with a channel link, and a long reply',
+    async () => {
+      const body = `Reply at length. ${'context line. '.repeat(50)}prompt-end`
+      const prompt = `» **roadie-cli** from <#${TEXT_CHANNEL_ID}> (session \`source\`):\n${body}`
+      const waitStartedAtMs = Date.now()
+      const marker: ThreadStartMarker = { start: true, username: 'cli-send-tester', userId: TEST_USER_ID }
+      const starter = (await botClient.rest.post(Routes.channelMessages(TEXT_CHANNEL_ID), {
+        body: { content: prompt, embeds: [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }] },
+      })) as { id: string }
+      const thread = (await botClient.rest.post(Routes.threads(TEXT_CHANNEL_ID, starter.id), {
+        body: { name: 'wait-long-turn', auto_archive_duration: 1440 },
+      })) as { id: string }
+      await botClient.rest.put(Routes.threadMembers(thread.id, TEST_USER_ID))
+
+      const written: string[] = []
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        written.push(String(chunk))
+        return true
+      })
+      try {
+        await waitAndOutputSession({ threadId: thread.id, waitStartedAtMs, completionTimeoutMs: 40_000 })
+      } finally {
+        write.mockRestore()
+      }
+      const output = written.join('')
+      expect(output).toContain(body)
+      expect(output).toContain(LONG_REPLY_TEXT)
+    },
+    60_000,
   )
 })
