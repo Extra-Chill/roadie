@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.18] - 2026-11-10
+
+### Changed
+- one running-bot path; drop removed --project/--worktree stubs; --wait needs no project dir; one start marker
+
 ## [0.84.17] - 2026-11-10
 
 ### Changed
