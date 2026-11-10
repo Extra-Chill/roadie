@@ -57,6 +57,7 @@ describe('PiBackend sessions.prompt over a stubbed rpc process', () => {
       requests,
       sent,
       exited,
+      running: !exited,
       request: async (command: Recorded) => {
         requests.push(command)
         if (fail.includes(String(command.type))) return new Error(`stub failure: ${String(command.type)}`)
@@ -295,6 +296,7 @@ describe('PiBackend thinking variants over a stubbed rpc process', () => {
     const process = {
       requests: [] as Recorded[],
       exited: false,
+      running: true,
       request: async (command: Recorded) => {
         process.requests.push(command)
         if (command.type === 'set_thinking_level' || command.type === 'set_model') return {}
@@ -361,6 +363,7 @@ describe('PiBackend sessions.summarize over a stubbed rpc process', () => {
     const process = {
       requests: [] as Recorded[],
       exited: false,
+      running: true,
       request: async (command: Recorded) => {
         process.requests.push(command)
         if (options.fail?.includes(String(command.type))) return new Error(`stub failure: ${String(command.type)}`)
@@ -394,6 +397,7 @@ describe('PiBackend sessions.abort over a stubbed rpc process', () => {
       requests: [] as Recorded[],
       sent: [] as Recorded[],
       exited,
+      running: !exited,
       request: async (command: Recorded) => {
         process.requests.push(command)
         return command.type === 'abort' ? undefined : new Error('stub: unexpected request')
@@ -471,6 +475,7 @@ describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', (
     const process = {
       requests: [] as Recorded[],
       exited: false,
+      running: true,
       request: async (command: Recorded) => {
         process.requests.push(command)
         if (command.type === 'prompt') {
