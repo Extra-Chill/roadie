@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.21] - 2026-11-11
+
+### Changed
+- cook candidate
+
 ## [0.84.20] - 2026-11-11
 
 ### Changed
