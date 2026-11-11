@@ -25,7 +25,6 @@ import {
   AGENT_TASKS_PATH,
   resolveAgentCredentials,
   runAgentCommand,
-  taskEditBody,
 } from '../agent-remote.js'
 import {
   EXIT_NO_RESTART,
@@ -250,7 +249,15 @@ cli
           request: {
             method: 'PATCH',
             path: `${AGENT_TASKS_PATH}/${encodeURIComponent(id)}`,
-            body: taskEditBody(options),
+            body: {
+              prompt: options.prompt,
+              sendAt: options.sendAt,
+              agent: options.agent,
+              model: options.model,
+              preRun: options.preRun,
+              allowConcurrency: options.allowConcurrency,
+              user: options.user,
+            },
           },
         })
         process.exit(exitCode)

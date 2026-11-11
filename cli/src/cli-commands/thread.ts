@@ -9,7 +9,6 @@ import {
   AGENT_THREADS_PATH,
   resolveAgentCredentials,
   runAgentCommand,
-  threadListQuery,
 } from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -46,11 +45,7 @@ cli
           request: {
             method: 'GET',
             path: AGENT_THREADS_PATH,
-            query: threadListQuery({
-              channel: options.channel,
-              json: options.json,
-              limit: options.limit,
-            }),
+            query: { channel: options.channel, json: options.json, limit: options.limit },
           },
         })
         process.exit(exitCode)

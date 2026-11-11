@@ -119,7 +119,8 @@ export function resolveAgentCredentials(): AgentCredentials | Error {
 export type AgentCommandRequest = {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   path: string
-  query?: Record<string, string>
+  /** `true` is sent as `1`; `undefined`, `false` and `''` are omitted. */
+  query?: Record<string, string | number | boolean | undefined>
   body?: unknown
 }
 
@@ -140,7 +141,8 @@ export async function runAgentCommand({
 }): Promise<number> {
   const url = new URL(`http://127.0.0.1:${agent.port}${request.path}`)
   for (const [key, value] of Object.entries(request.query ?? {})) {
-    if (value !== '') url.searchParams.set(key, value)
+    if (value === undefined || value === false || value === '') continue
+    url.searchParams.set(key, value === true ? '1' : String(value))
   }
   const response = await fetch(url, {
     method: request.method,
@@ -173,213 +175,6 @@ export async function runAgentOperatorRequest(argv: string[]): Promise<number> {
   const agent = resolveAgentCredentials()
   if (agent instanceof Error) throw agent
   return runAgentCommand({ agent, request: { method: 'POST', path: AGENT_OPERATOR_REQUESTS_PATH, body: { argv } } })
-}
-
-/** Query parameters for `session search` (the query text itself is `q`). */
-export function sessionSearchQuery(options: {
-  project?: string
-  channel?: string
-  all?: boolean
-  days?: string | number
-  limit?: string | number
-  json?: boolean
-}): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (options.project) query.project = options.project
-  if (options.channel) query.channel = options.channel
-  if (options.all) query.all = '1'
-  if (options.days !== undefined) query.days = String(options.days)
-  if (options.limit !== undefined) query.limit = String(options.limit)
-  if (options.json) query.json = '1'
-  return query
-}
-
-/** Query parameters for `session read <sessionId>`. */
-export function sessionReadQuery(options: {
-  project?: string
-  verbose?: boolean
-  thinking?: boolean
-  toolInputMaxChars?: string | number
-}): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (options.project) query.project = options.project
-  if (options.verbose) query.verbose = '1'
-  if (options.thinking) query.thinking = '1'
-  if (options.toolInputMaxChars !== undefined)
-    query.toolInputMaxChars = String(options.toolInputMaxChars)
-  return query
-}
-
-/** Query parameters for `session list`. */
-export function sessionListQuery(options: {
-  project?: string
-  all?: boolean
-  active?: boolean
-  exclude?: string
-  json?: boolean
-}): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (options.project) query.project = options.project
-  if (options.all) query.all = '1'
-  if (options.active) query.active = '1'
-  if (options.exclude) query.exclude = options.exclude
-  if (options.json) query.json = '1'
-  return query
-}
-
-/** Query parameters for `session editors <file>` (the file path itself is `file`). */
-export function sessionEditorsQuery(options: {
-  file: string
-  json?: boolean
-  limit?: string | number
-}): Record<string, string> {
-  const query: Record<string, string> = { file: options.file }
-  if (options.json) query.json = '1'
-  if (options.limit !== undefined) query.limit = String(options.limit)
-  return query
-}
-
-/** Query parameters for `session discord-url <sessionId>`. */
-export function sessionDiscordUrlQuery(options: { json?: boolean }): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (options.json) query.json = '1'
-  return query
-}
-
-export type AgentSessionArchiveBody = {
-  threadId?: string
-  sessionId?: string
-}
-
-/** JSON body for `POST /roadie/agent/sessions/archive` (`session archive`). */
-export function sessionArchiveBody(options: {
-  threadId?: string
-  session?: string
-}): AgentSessionArchiveBody {
-  const body: AgentSessionArchiveBody = {}
-  if (options.threadId) body.threadId = options.threadId
-  if (options.session) body.sessionId = options.session
-  return body
-}
-
-export type AgentSessionTitleBody = {
-  title: string
-}
-
-/** JSON body for `POST /roadie/agent/sessions/title` (`session title`). */
-export function sessionTitleBody(options: { title: string }): AgentSessionTitleBody {
-  return { title: options.title }
-}
-
-/** Query parameters for `project list`. */
-export function projectListQuery(options: {
-  json?: boolean
-  all?: boolean
-  guild?: string
-}): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (options.json) query.json = '1'
-  if (options.all) query.all = '1'
-  if (options.guild) query.guild = options.guild
-  return query
-}
-
-export type AgentProjectRemoveBody = {
-  channelId: string
-}
-
-/** JSON body for `POST /roadie/agent/projects/remove` (`project remove`). */
-export function projectRemoveBody(options: { channelId: string }): AgentProjectRemoveBody {
-  return { channelId: options.channelId }
-}
-
-export type AgentProjectOpenInDiscordBody = {
-  directory: string
-}
-
-/** JSON body for `POST /roadie/agent/projects/open-in-discord`. */
-export function projectOpenInDiscordBody(options: {
-  directory: string
-}): AgentProjectOpenInDiscordBody {
-  return { directory: options.directory }
-}
-
-/** Query parameters for `thread list`. */
-export function threadListQuery(options: {
-  channel: string
-  json?: boolean
-  limit?: string | number
-}): Record<string, string> {
-  const query: Record<string, string> = { channel: options.channel }
-  if (options.json) query.json = '1'
-  if (options.limit !== undefined) query.limit = String(options.limit)
-  return query
-}
-
-/** Query parameters for `channel list`. */
-export function channelListQuery(options: { guild: string; json?: boolean }): Record<string, string> {
-  const query: Record<string, string> = { guild: options.guild }
-  if (options.json) query.json = '1'
-  return query
-}
-
-/** Query parameters for `channel read`. */
-export function channelReadQuery(options: {
-  channel: string
-  limit?: string | number
-  before?: string
-  json?: boolean
-}): Record<string, string> {
-  const query: Record<string, string> = { channel: options.channel }
-  if (options.limit !== undefined) query.limit = String(options.limit)
-  if (options.before) query.before = options.before
-  if (options.json) query.json = '1'
-  return query
-}
-
-/** Query parameters for `channel webhooks`. */
-export function channelWebhooksQuery(options: { channel: string; json?: boolean }): Record<string, string> {
-  const query: Record<string, string> = { channel: options.channel }
-  if (options.json) query.json = '1'
-  return query
-}
-
-/** Query parameters for `user list` (the search text is `query`). */
-export function userListQuery(options: { guild: string; query?: string }): Record<string, string> {
-  const query: Record<string, string> = { guild: options.guild }
-  if (options.query) query.query = options.query
-  return query
-}
-
-export type AgentTaskEditBody = {
-  prompt?: string
-  sendAt?: string
-  agent?: string
-  model?: string
-  preRun?: string
-  allowConcurrency?: string
-  user?: string
-}
-
-/** JSON body for `PATCH /roadie/agent/tasks/:id` (`task edit`). */
-export function taskEditBody(options: {
-  prompt?: string
-  sendAt?: string
-  agent?: string
-  model?: string
-  preRun?: string
-  allowConcurrency?: string
-  user?: string
-}): AgentTaskEditBody {
-  const body: AgentTaskEditBody = {}
-  if (options.prompt !== undefined) body.prompt = options.prompt
-  if (options.sendAt !== undefined) body.sendAt = options.sendAt
-  if (options.agent !== undefined) body.agent = options.agent
-  if (options.model !== undefined) body.model = options.model
-  if (options.preRun !== undefined) body.preRun = options.preRun
-  if (options.allowConcurrency !== undefined) body.allowConcurrency = options.allowConcurrency
-  if (options.user !== undefined) body.user = options.user
-  return body
 }
 
 // ── Bot side: request shape → allowlisted subcommand arguments ──────

@@ -51,13 +51,6 @@ import {
   AGENT_OPERATOR_ONLY_MESSAGE,
   resolveAgentCredentials,
   runAgentCommand,
-  sessionArchiveBody,
-  sessionDiscordUrlQuery,
-  sessionEditorsQuery,
-  sessionListQuery,
-  sessionReadQuery,
-  sessionSearchQuery,
-  sessionTitleBody,
   isAgentMode,
 } from '../agent-remote.js'
 
@@ -167,7 +160,7 @@ cli
           request: {
             method: 'GET',
             path: AGENT_SESSIONS_PATH,
-            query: sessionListQuery({ ...options, project }),
+            query: { project, all: options.all, active: options.active, exclude: options.exclude, json: options.json },
           },
         })
         process.exit(exitCode)
@@ -402,11 +395,7 @@ cli
           request: {
             method: 'GET',
             path: AGENT_SESSION_EDITORS_PATH,
-            query: sessionEditorsQuery({
-              file: path.resolve(process.cwd, file),
-              json: options.json,
-              limit: options.limit,
-            }),
+            query: { file: path.resolve(process.cwd, file), json: options.json, limit: options.limit },
           },
         })
         process.exit(exitCode)
@@ -508,7 +497,12 @@ cli
           request: {
             method: 'GET',
             path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`,
-            query: sessionReadQuery({ ...options, project: path.resolve(options.project || '.') }),
+            query: {
+              project: path.resolve(options.project || '.'),
+              verbose: options.verbose,
+              thinking: options.thinking,
+              toolInputMaxChars: options.toolInputMaxChars,
+            },
           },
         })
         process.exit(exitCode)
@@ -665,7 +659,15 @@ cli
           request: {
             method: 'GET',
             path: AGENT_SESSION_SEARCH_PATH,
-            query: { q: query, ...sessionSearchQuery({ ...options, project }) },
+            query: {
+              q: query,
+              project,
+              channel: options.channel,
+              all: options.all,
+              days: options.days,
+              limit: options.limit,
+              json: options.json,
+            },
           },
         })
         process.exit(exitCode)
@@ -1048,7 +1050,7 @@ cli
           request: {
             method: 'POST',
             path: AGENT_SESSION_ARCHIVE_PATH,
-            body: sessionArchiveBody({ threadId: threadIdArg, session: options.session }),
+            body: { threadId: threadIdArg, sessionId: options.session },
           },
         })
         process.exit(exitCode)
@@ -1239,7 +1241,7 @@ cli
           request: {
             method: 'POST',
             path: AGENT_SESSION_TITLE_PATH,
-            body: sessionTitleBody({ title: trimmedTitle }),
+            body: { title: trimmedTitle },
           },
         })
         process.exit(exitCode)
@@ -1335,7 +1337,7 @@ cli
         request: {
           method: 'GET',
           path: `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/discord-url`,
-          query: sessionDiscordUrlQuery(options),
+          query: { json: options.json },
         },
       })
       process.exit(exitCode)
