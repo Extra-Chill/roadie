@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.24] - 2026-11-11
+
+### Fixed
+- steer busy same-person turns with verified agent sends
+
 ## [0.84.23] - 2026-11-11
 
 ### Changed

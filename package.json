@@ -1,6 +1,6 @@
 {
   "name": "roadie-workspace",
-  "version": "0.84.23",
+  "version": "0.84.24",
   "private": true,
   "files": [],
   "packageManager": "pnpm@9.15.9",
