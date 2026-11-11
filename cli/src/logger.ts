@@ -36,7 +36,6 @@ export const LogPrefix = {
   MARKDOWN: 'MARKDOWN',
   MCP: 'MCP',
   MODEL: 'MODEL',
-  OPENAI: 'OPENAI',
   PERMISSIONS: 'PERMS',
   QUEUE: 'QUEUE',
   REMOVE_PROJECT: 'RM_PROJ',
