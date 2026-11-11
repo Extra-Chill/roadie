@@ -159,16 +159,6 @@ export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
-export const thread_worktrees = sqliteCore.sqliteTable('thread_worktrees', {
-  thread_id: sqliteCore.text('thread_id').primaryKey().notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
-  worktree_name: sqliteCore.text('worktree_name').notNull(),
-  worktree_directory: sqliteCore.text('worktree_directory'),
-  project_directory: sqliteCore.text('project_directory').notNull(),
-  status: sqliteCore.text('status', { enum: ['pending', 'ready', 'error'] }).notNull().default('pending'),
-  error_message: sqliteCore.text('error_message'),
-  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
-})
-
 export const thread_workspaces = sqliteCore.sqliteTable('thread_workspaces', {
   thread_id: sqliteCore.text('thread_id').primaryKey().notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
   workspace_id: sqliteCore.text('workspace_id'),
@@ -268,13 +258,6 @@ export const session_agents = sqliteCore.sqliteTable('session_agents', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   agent_name: sqliteCore.text('agent_name').notNull(),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
-})
-
-export const channel_worktrees = sqliteCore.sqliteTable('channel_worktrees', {
-  channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
-  enabled: sqliteCore.integer('enabled', { mode: 'number' }).notNull().default(0),
-  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
-  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
 export const channel_verbosity = sqliteCore.sqliteTable('channel_verbosity', {
@@ -430,7 +413,6 @@ export const relations = defineRelations({
   part_messages,
   bot_tokens,
   bot_api_keys,
-  thread_worktrees,
   thread_workspaces,
   channel_directories,
   guild_categories,
@@ -438,7 +420,6 @@ export const relations = defineRelations({
   session_models,
   channel_agents,
   session_agents,
-  channel_worktrees,
   channel_verbosity,
   global_models,
   scheduled_tasks,
@@ -455,7 +436,6 @@ export const relations = defineRelations({
     session_events: r.many.session_events(),
     part_messages: r.many.part_messages(),
     scheduled_tasks: r.many.scheduled_tasks(),
-    thread_worktree: r.one.thread_worktrees({ from: r.thread_sessions.thread_id, to: r.thread_worktrees.thread_id }),
     thread_workspace: r.one.thread_workspaces({ from: r.thread_sessions.thread_id, to: r.thread_workspaces.thread_id }),
     ipc_requests: r.many.ipc_requests(),
   },
@@ -474,9 +454,6 @@ export const relations = defineRelations({
   bot_api_keys: {
     bot: r.one.bot_tokens({ from: r.bot_api_keys.app_id, to: r.bot_tokens.app_id }),
   },
-  thread_worktrees: {
-    thread: r.one.thread_sessions({ from: r.thread_worktrees.thread_id, to: r.thread_sessions.thread_id }),
-  },
   thread_workspaces: {
     thread: r.one.thread_sessions({ from: r.thread_workspaces.thread_id, to: r.thread_sessions.thread_id }),
   },
@@ -484,7 +461,6 @@ export const relations = defineRelations({
   channel_directories: {
     channel_model: r.one.channel_models({ from: r.channel_directories.channel_id, to: r.channel_models.channel_id }),
     channel_agent: r.one.channel_agents({ from: r.channel_directories.channel_id, to: r.channel_agents.channel_id }),
-    channel_worktree: r.one.channel_worktrees({ from: r.channel_directories.channel_id, to: r.channel_worktrees.channel_id }),
     channel_verbosity: r.one.channel_verbosity({ from: r.channel_directories.channel_id, to: r.channel_verbosity.channel_id }),
     scheduled_tasks: r.many.scheduled_tasks(),
   },
@@ -496,9 +472,6 @@ export const relations = defineRelations({
     channel: r.one.channel_directories({ from: r.channel_agents.channel_id, to: r.channel_directories.channel_id }),
   },
   session_agents: {},
-  channel_worktrees: {
-    channel: r.one.channel_directories({ from: r.channel_worktrees.channel_id, to: r.channel_directories.channel_id }),
-  },
   channel_verbosity: {
     channel: r.one.channel_directories({ from: r.channel_verbosity.channel_id, to: r.channel_directories.channel_id }),
   },
@@ -532,5 +505,4 @@ export type IpcRequestType = typeof ipc_requests.$inferSelect.type
 export type SessionSleepStatus = typeof session_sleeps.$inferSelect.status
 export type SessionEvent = typeof session_events.$inferSelect
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity
-export type WorktreeStatus = typeof thread_worktrees.$inferSelect.status
 export type WorkspaceStatus = typeof thread_workspaces.$inferSelect.status

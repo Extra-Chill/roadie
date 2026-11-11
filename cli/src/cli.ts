@@ -83,24 +83,12 @@ cli
   )
   .option('--install-url', 'Print the bot install URL and exit')
   .option(
-    '--use-worktrees',
-    'Deprecated no-op: worktrees are created by host tooling; use roadie send --cwd',
-  )
-  .option(
-    '--enable-voice-channels',
-    'Deprecated no-op: voice support was removed',
-  )
-  .option(
     '--verbosity <level>',
     'Default verbosity for all channels (tools_and_text, text_and_essential_tools, or text_only)',
   )
   .option(
     '--mention-mode',
     'Bot only responds when @mentioned (default for all channels)',
-  )
-  .option(
-    '--no-critique',
-    'Deprecated no-op: Roadie no longer includes critique.work instructions',
   )
   .option(
     '--enable-footer-mentions',
@@ -139,10 +127,6 @@ cli
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
   .option(
-    '--disable-sync',
-    'Deprecated no-op: Roadie no longer mirrors external sessions into Discord',
-  )
-  .option(
     '--credential-pools',
     'No-op: credential pools are enabled by default (the shared pool rotations are exposed as roadie/<rotation> models). Kept for compatibility with earlier invocations',
   )
@@ -157,10 +141,6 @@ cli
   .option(
     '--thread-billing <billing>',
     'Who pays for a thread in per-person credential routing: owner (default, the first speaker owns the session) or speaker (each turn bills to whoever sent it). Same as ROADIE_THREAD_BILLING',
-  )
-  .option(
-    '--no-analytics',
-    'Deprecated no-op: Roadie no longer sends product analytics',
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
@@ -196,11 +176,8 @@ cli
       addChannels?: boolean
       dataDir?: string
       installUrl?: boolean
-      useWorktrees?: boolean
-      enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
-      noCritique?: boolean
       enableFooterMentions?: boolean
       allowAllUsers?: boolean
       channelsConfig?: string
@@ -209,12 +186,10 @@ cli
       restrictDirectories?: boolean
       isolateShells?: string
       permissionTimeoutMinutes?: string
-      disableSync?: boolean
       credentialPools?: boolean
       credentials?: string
       threadBilling?: string
       autoRestart?: boolean
-      noAnalytics?: boolean
       noAutoUpgrade?: boolean
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
@@ -450,12 +425,6 @@ cli
             'Default mention mode: enabled (bot only responds when @mentioned)',
           )
         }
-        if (options.useWorktrees) {
-          cliLogger.log('--use-worktrees is a no-op: create checkouts with host tooling and use roadie send --cwd')
-        }
-        if (options.noCritique) {
-          cliLogger.log('--no-critique is a no-op: critique support was removed')
-        }
         if (options.enableFooterMentions) {
           cliLogger.log(
             'Footer mentions enabled: final session footers will mention thread creators',
@@ -482,9 +451,6 @@ cli
           cliLogger.log(
             `Credential routing: ${credentialsMode} (thread billing: ${threadBilling ?? 'owner'})`,
           )
-        }
-        if (options.noAnalytics) {
-          cliLogger.log('--no-analytics is a no-op: Roadie no longer sends product analytics')
         }
 
         if (options.installUrl) {
@@ -571,16 +537,6 @@ cli.use(channelCommands)
 cli.use(userCommands)
 cli.use(sessionCommands)
 cli.use(maintenanceCommands)
-
-// The external identity command was removed (#312): identity comes only from
-// a plugin's `person` filter. Fail loudly instead of a bare unknown-option error.
-const removedIdentityFlag = process.argv.slice(2).find((arg) => /^--identity[-_]?hook(=|$)/i.test(arg))
-if (removedIdentityFlag) {
-  cliLogger.error(
-    `${removedIdentityFlag.split('=')[0]} was removed. Identity now comes only from the \`person\` filter: register it in a Roadie plugin with roadie.addFilter('person', ...) (see "Plugins and hooks" in the README).`,
-  )
-  process.exit(EXIT_NO_RESTART)
-}
 
 cli.version(getCurrentVersion())
 cli.help()
