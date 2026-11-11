@@ -77,6 +77,416 @@ function sessionRun(
 }
 
 const cliLogger = createLogger(LogPrefix.CLI)
+
+/** Everything both send modes need once the options are validated. */
+type SendContext = {
+  options: Record<string, any>
+  prompt: string
+  notifyOnly?: boolean
+  threadId?: string
+  sessionId?: string
+  channelId?: string
+  name?: string
+  filePaths?: string[]
+  parsedSchedule: Exclude<ReturnType<typeof parseSendAtValue>, Error> | null
+  waitStartedAtMs?: number
+  rest: ReturnType<typeof createDiscordRest>
+  botToken: string
+}
+
+/** `--thread`/`--session`: schedule, plain-post to the caller's own thread, or prompt an existing thread. */
+async function sendToThread(ctx: SendContext): Promise<void> {
+  const { options, prompt, notifyOnly, threadId, sessionId, channelId, name, filePaths, parsedSchedule, waitStartedAtMs, rest, botToken } = ctx
+  const targetThreadId = await (async (): Promise<string> => {
+    if (threadId) {
+      return threadId
+    }
+    if (!sessionId) {
+      throw new Error('Thread ID not resolved')
+    }
+    const resolvedThreadId = await getThreadIdBySessionId(sessionId)
+    if (!resolvedThreadId) {
+      throw new Error(
+        `No Discord thread found for session: ${sessionId}`,
+      )
+    }
+    return resolvedThreadId
+  })()
+
+  const threadData = (await rest.get(
+    Routes.channel(targetThreadId),
+  )) as {
+    id: string
+    name: string
+    type: number
+    parent_id?: string
+    guild_id: string
+  }
+
+  if (!isThreadChannelType(threadData.type)) {
+    throw new Error(`Channel is not a thread: ${targetThreadId}`)
+  }
+
+  if (!threadData.parent_id) {
+    throw new Error(`Thread has no parent channel: ${targetThreadId}`)
+  }
+  const destination = resolveSendChannel(threadData.parent_id)
+  if (destination instanceof Error) throw destination
+
+  // Adding the user as a thread member is what makes the thread appear
+  // in their Discord left sidebar. Without it a scheduled reminder posts
+  // into a thread the user may have already left or never joined, so
+  // they never see it.
+  const threadTargetUser = await resolveDiscordUserOption({
+    user: options.user,
+    guildId: threadData.guild_id,
+    rest,
+  })
+  if (threadTargetUser instanceof Error) {
+    cliLogger.error(threadTargetUser.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // channelConfig is optional: in CI/headless environments the local DB
+  // has no channel_directories rows because the bot hasn't synced yet.
+  // The running bot on the other end resolves the directory from its own DB.
+  // We only require it for features that genuinely need a local directory
+  // (scheduled tasks).
+  const storedConfig = await getChannelDirectory(threadData.parent_id)
+  const fixedDirectory = applicationDirectory()
+  const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
+  const threadModelCheck = await validateCliModelOption({
+    model: options.model,
+    directory: channelConfig?.directory,
+  })
+  if (threadModelCheck instanceof Error) {
+    cliLogger.error(threadModelCheck.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // Guard early: fail before sending the message if a feature that
+  // needs local project directory mapping is requested.
+  if (!channelConfig && parsedSchedule) {
+    throw new Error(
+      'Thread parent channel is not configured with a project directory. ' +
+      '--send-at requires a local project mapping. Run the bot first to sync channel data.',
+    )
+  }
+
+  if (parsedSchedule) {
+    const payload: ScheduledTaskPayload = {
+      kind: 'thread',
+      threadId: targetThreadId,
+      prompt,
+      ...sessionRun(options, threadTargetUser),
+      preRunCommand: options.preRun || null,
+      allowConcurrency: Boolean(options.allowConcurrency),
+    }
+    const taskId = await createScheduledTask({
+      scheduleKind: parsedSchedule.scheduleKind,
+      runAt: parsedSchedule.runAt,
+      cronExpr: parsedSchedule.cronExpr,
+      timezone: parsedSchedule.timezone,
+      nextRunAt: parsedSchedule.nextRunAt,
+      payloadJson: serializeScheduledTaskPayload(payload),
+      promptPreview: getPromptPreview(prompt),
+      channelId: threadData.parent_id,
+      threadId: targetThreadId,
+      sessionId: sessionId || undefined,
+      // channelConfig is guaranteed: early guard threw if missing with --send-at
+      projectDirectory: channelConfig!.directory,
+    })
+
+    const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+    note(
+      `Task ID: ${taskId}\nTarget thread: ${threadData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
+      '✅ Task Scheduled',
+    )
+    cliLogger.log(threadUrl)
+    process.exit(0)
+  }
+
+  // An agent's own replies already reach its thread, so a send to that
+  // same thread is a plain post: prompting it would hand the session
+  // its own words back as a new turn.
+  const sourceSessionId: string | undefined = options.sourceSession || undefined
+  const sourceThreadId = sourceSessionId
+    ? (await getThreadIdBySessionId(sourceSessionId)) ?? undefined
+    : undefined
+  const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+  if (sourceThreadId === targetThreadId) {
+    if (options.wait) {
+      cliLogger.error('Cannot use --wait when sending to your own thread')
+      process.exit(EXIT_NO_RESTART)
+    }
+    await sendDiscordMessageWithOptionalAttachment({
+      channelId: targetThreadId,
+      prompt,
+      botToken,
+      rest,
+      files: filePaths,
+    })
+    note(
+      `Posted to this session's own thread: ${threadData.name}\nIt does not start a turn; your replies already appear in this thread.\n\nURL: ${threadUrl}`,
+      '✅ Message Sent',
+    )
+    process.stdout.write(`${threadUrl}\n`)
+    process.exit(0)
+  }
+
+  const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser))
+  const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
+
+  // Prefix the prompt so it's clear who sent it (matches /queue format).
+  // Use a newline between prefix and prompt so leading /command
+  // detection can find the command on its own line.
+  const prefixedPrompt = `${QUEUE_PREFIX}${sendPromptSender({ sourceThreadId, sourceSessionId })}\n${prompt}`
+
+  if (threadTargetUser) {
+    cliLogger.log(
+      `Adding user ${threadTargetUser.username || threadTargetUser.id} to thread...`,
+    )
+    const addMemberResult = await ensureThreadMember({
+      rest,
+      threadId: targetThreadId,
+      userId: threadTargetUser.id,
+    })
+    if (addMemberResult instanceof Error) {
+      cliLogger.error(addMemberResult.message)
+      process.exit(EXIT_NO_RESTART)
+    }
+  }
+
+  await sendDiscordMessageWithOptionalAttachment({
+    channelId: targetThreadId,
+    prompt: prefixedPrompt,
+    botToken,
+    embeds: promptEmbed,
+    rest,
+    files: filePaths,
+  })
+
+  const existingSessionId = sessionId || await getThreadSession(targetThreadId)
+  const sessionLine = existingSessionId ? `Session: ${existingSessionId}\n` : ''
+  note(
+    `Prompt sent to thread: ${threadData.name}\n${sessionLine}\nURL: ${threadUrl}`,
+    '✅ Message Sent',
+  )
+  if (existingSessionId) process.stdout.write(`Session: ${existingSessionId}\n`)
+  process.stdout.write(`${threadUrl}\n`)
+
+  if (options.wait) {
+    const { waitAndOutputSession } = await import('../wait-session.js')
+    await waitAndOutputSession({
+      threadId: targetThreadId,
+      waitStartedAtMs,
+    })
+  }
+}
+
+/** `--channel` (or the configured channel): post a starter message and open a thread the bot picks up. */
+async function sendToChannel(ctx: SendContext): Promise<void> {
+  const { options, prompt, notifyOnly, threadId, sessionId, channelId, name, filePaths, parsedSchedule, waitStartedAtMs, rest, botToken } = ctx
+  cliLogger.log('Fetching channel info...')
+
+  if (!channelId) {
+    throw new Error('Channel ID not resolved')
+  }
+
+  // Get channel info to extract directory from topic
+  const channelData = (await rest.get(Routes.channel(channelId))) as {
+    id: string
+    name: string
+    topic?: string
+    guild_id: string
+  }
+
+  // channelConfig is optional: in CI/headless environments the local DB
+  // has no channel_directories rows because the bot hasn't synced yet.
+  // The running bot on the other end resolves the directory from its own DB.
+  // We only require it for features that genuinely need a local directory
+  // (--send-at, --cwd).
+  const storedConfig = await getChannelDirectory(channelData.id)
+  const fixedDirectory = applicationDirectory()
+  const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
+  const projectDirectory = channelConfig?.directory
+  const channelModelCheck = await validateCliModelOption({
+    model: options.model,
+    directory: projectDirectory,
+  })
+  if (channelModelCheck instanceof Error) {
+    cliLogger.error(channelModelCheck.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // Features that require a local project directory mapping
+  if (!channelConfig && (parsedSchedule || options.cwd)) {
+    throw new Error(
+      `Channel #${channelData.name} is not configured with a project directory. ` +
+      `${parsedSchedule ? '--send-at' : '--cwd'} requires a local project mapping. ` +
+      'Run the bot first to sync channel data.',
+    )
+  }
+
+  // Validate --cwd is inside the project or an existing git worktree.
+  let resolvedCwd: string | undefined
+  if (options.cwd) {
+    // projectDirectory is guaranteed here: needsProjectDirectory check above
+    // already threw if channelConfig is missing when --cwd is used.
+    const cwdResult = await resolveSessionWorkingDirectory({
+      projectDirectory: projectDirectory!,
+      candidatePath: options.cwd,
+    })
+    if (cwdResult instanceof Error) {
+      cliLogger.error(cwdResult.message)
+      process.exit(EXIT_NO_RESTART)
+    }
+    resolvedCwd = cwdResult.directory
+  }
+
+  const resolvedUser = await resolveDiscordUserOption({
+    user: options.user,
+    guildId: channelData.guild_id,
+    rest,
+  })
+  if (resolvedUser instanceof Error) {
+    cliLogger.error(resolvedUser.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  cliLogger.log('Creating starter message...')
+
+  const cleanPrompt = stripMentions(prompt)
+  const baseThreadName =
+    name ||
+    (cleanPrompt.length > 80
+      ? cleanPrompt.slice(0, 77) + '...'
+      : cleanPrompt)
+  const threadName = baseThreadName
+
+  if (parsedSchedule) {
+    const payload: ScheduledTaskPayload = {
+      kind: 'channel',
+      channelId,
+      prompt,
+      name: name || null,
+      notifyOnly: Boolean(notifyOnly),
+      cwd: resolvedCwd || null,
+      ...sessionRun(options, resolvedUser),
+      preRunCommand: options.preRun || null,
+      allowConcurrency: Boolean(options.allowConcurrency),
+    }
+    const taskId = await createScheduledTask({
+      scheduleKind: parsedSchedule.scheduleKind,
+      runAt: parsedSchedule.runAt,
+      cronExpr: parsedSchedule.cronExpr,
+      timezone: parsedSchedule.timezone,
+      nextRunAt: parsedSchedule.nextRunAt,
+      payloadJson: serializeScheduledTaskPayload(payload),
+      promptPreview: getPromptPreview(prompt),
+      channelId,
+      projectDirectory,
+    })
+
+    const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}`
+    note(
+      `Task ID: ${taskId}\nTarget channel: #${channelData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
+      '✅ Task Scheduled',
+    )
+    cliLogger.log(channelUrl)
+    process.exit(0)
+  }
+
+  // Embed marker for auto-start sessions (unless --notify-only)
+  // Bot parses this YAML to know it should start a session and set the initial user
+  const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), resolvedCwd ? { cwd: resolvedCwd } : {})
+  const autoStartEmbed = embedMarker
+    ? await buildThreadStartEmbeds(embedMarker)
+    : undefined
+
+  const starterMessage = await sendDiscordMessageWithOptionalAttachment({
+    channelId,
+    prompt,
+    botToken,
+    embeds: autoStartEmbed,
+    rest,
+    splitInsteadOfAttach: notifyOnly,
+    files: filePaths,
+  })
+
+  // For notify-only on non-project channels, just post the message without
+  // creating a thread. There's no session to start, so a thread is unnecessary.
+  if (notifyOnly && !channelConfig) {
+    const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessage.id}`
+    note(
+      `Channel: #${channelData.name}\n\nMessage sent.\n\nURL: ${messageUrl}`,
+      '✅ Message Sent',
+    )
+    process.stdout.write(`${messageUrl}\n`)
+    process.exit(0)
+  }
+
+  cliLogger.log('Creating thread...')
+
+  const threadData = (await rest.post(
+    Routes.threads(channelId, starterMessage.id),
+    {
+      body: {
+        name: threadName.slice(0, 100),
+        auto_archive_duration: 1440, // 1 day
+      },
+    },
+  )) as { id: string; name: string }
+
+  cliLogger.log('Thread created!')
+
+  // Add user to thread if specified
+  if (resolvedUser) {
+    cliLogger.log(
+      `Adding user ${resolvedUser.username || resolvedUser.id} to thread...`,
+    )
+    await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
+  }
+
+  const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
+
+  // Poll for session ID if the bot is expected to auto-start (not --notify-only).
+  // The bot picks up the thread and creates a session asynchronously;
+  // we wait briefly so the caller can reference the session immediately.
+  let newSessionId: string | undefined
+  if (!notifyOnly) {
+    const { waitForSessionId } = await import('../wait-session.js')
+    newSessionId = await waitForSessionId({
+      threadId: threadData.id,
+      timeoutMs: 15_000,
+    }).catch((e) => {
+      cliLogger.warn(`Could not resolve session ID: ${e instanceof Error ? e.message : String(e)}`)
+      return undefined
+    })
+  }
+
+  const cwdLine = resolvedCwd
+    ? `\nWorking directory: ${resolvedCwd}`
+    : ''
+  const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
+  const directoryLine = projectDirectory ? `\nDirectory: ${projectDirectory}` : ''
+  const successMessage = notifyOnly
+    ? `Thread: ${threadData.name}${directoryLine}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
+    : `Thread: ${threadData.name}${directoryLine}${cwdLine}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+
+  note(successMessage, '✅ Thread Created')
+
+  if (newSessionId) process.stdout.write(`Session: ${newSessionId}\n`)
+  process.stdout.write(`${threadUrl}\n`)
+
+  if (options.wait) {
+    const { waitAndOutputSession } = await import('../wait-session.js')
+    await waitAndOutputSession({
+      threadId: threadData.id,
+      waitStartedAtMs,
+    })
+  }
+}
 const cli = goke()
 
 cli
@@ -341,396 +751,8 @@ cli
 
         const rest = createDiscordRest(botToken)
 
-        if (existingThreadMode) {
-          const targetThreadId = await (async (): Promise<string> => {
-            if (threadId) {
-              return threadId
-            }
-            if (!sessionId) {
-              throw new Error('Thread ID not resolved')
-            }
-            const resolvedThreadId = await getThreadIdBySessionId(sessionId)
-            if (!resolvedThreadId) {
-              throw new Error(
-                `No Discord thread found for session: ${sessionId}`,
-              )
-            }
-            return resolvedThreadId
-          })()
-
-          const threadData = (await rest.get(
-            Routes.channel(targetThreadId),
-          )) as {
-            id: string
-            name: string
-            type: number
-            parent_id?: string
-            guild_id: string
-          }
-
-          if (!isThreadChannelType(threadData.type)) {
-            throw new Error(`Channel is not a thread: ${targetThreadId}`)
-          }
-
-          if (!threadData.parent_id) {
-            throw new Error(`Thread has no parent channel: ${targetThreadId}`)
-          }
-          const destination = resolveSendChannel(threadData.parent_id)
-          if (destination instanceof Error) throw destination
-
-          // Adding the user as a thread member is what makes the thread appear
-          // in their Discord left sidebar. Without it a scheduled reminder posts
-          // into a thread the user may have already left or never joined, so
-          // they never see it.
-          const threadTargetUser = await resolveDiscordUserOption({
-            user: options.user,
-            guildId: threadData.guild_id,
-            rest,
-          })
-          if (threadTargetUser instanceof Error) {
-            cliLogger.error(threadTargetUser.message)
-            process.exit(EXIT_NO_RESTART)
-          }
-
-          // channelConfig is optional: in CI/headless environments the local DB
-          // has no channel_directories rows because the bot hasn't synced yet.
-          // The running bot on the other end resolves the directory from its own DB.
-          // We only require it for features that genuinely need a local directory
-          // (scheduled tasks).
-          const storedConfig = await getChannelDirectory(threadData.parent_id)
-          const fixedDirectory = applicationDirectory()
-          const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
-          const threadModelCheck = await validateCliModelOption({
-            model: options.model,
-            directory: channelConfig?.directory,
-          })
-          if (threadModelCheck instanceof Error) {
-            cliLogger.error(threadModelCheck.message)
-            process.exit(EXIT_NO_RESTART)
-          }
-
-          // Guard early: fail before sending the message if a feature that
-          // needs local project directory mapping is requested.
-          if (!channelConfig && parsedSchedule) {
-            throw new Error(
-              'Thread parent channel is not configured with a project directory. ' +
-              '--send-at requires a local project mapping. Run the bot first to sync channel data.',
-            )
-          }
-
-          if (parsedSchedule) {
-            const payload: ScheduledTaskPayload = {
-              kind: 'thread',
-              threadId: targetThreadId,
-              prompt,
-              ...sessionRun(options, threadTargetUser),
-              preRunCommand: options.preRun || null,
-              allowConcurrency: Boolean(options.allowConcurrency),
-            }
-            const taskId = await createScheduledTask({
-              scheduleKind: parsedSchedule.scheduleKind,
-              runAt: parsedSchedule.runAt,
-              cronExpr: parsedSchedule.cronExpr,
-              timezone: parsedSchedule.timezone,
-              nextRunAt: parsedSchedule.nextRunAt,
-              payloadJson: serializeScheduledTaskPayload(payload),
-              promptPreview: getPromptPreview(prompt),
-              channelId: threadData.parent_id,
-              threadId: targetThreadId,
-              sessionId: sessionId || undefined,
-              // channelConfig is guaranteed: early guard threw if missing with --send-at
-              projectDirectory: channelConfig!.directory,
-            })
-
-            const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
-            note(
-              `Task ID: ${taskId}\nTarget thread: ${threadData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
-              '✅ Task Scheduled',
-            )
-            cliLogger.log(threadUrl)
-            process.exit(0)
-          }
-
-          // An agent's own replies already reach its thread, so a send to that
-          // same thread is a plain post: prompting it would hand the session
-          // its own words back as a new turn.
-          const sourceSessionId: string | undefined = options.sourceSession || undefined
-          const sourceThreadId = sourceSessionId
-            ? (await getThreadIdBySessionId(sourceSessionId)) ?? undefined
-            : undefined
-          const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
-          if (sourceThreadId === targetThreadId) {
-            if (options.wait) {
-              cliLogger.error('Cannot use --wait when sending to your own thread')
-              process.exit(EXIT_NO_RESTART)
-            }
-            await sendDiscordMessageWithOptionalAttachment({
-              channelId: targetThreadId,
-              prompt,
-              botToken,
-              rest,
-              files: filePaths,
-            })
-            note(
-              `Posted to this session's own thread: ${threadData.name}\nIt does not start a turn; your replies already appear in this thread.\n\nURL: ${threadUrl}`,
-              '✅ Message Sent',
-            )
-            process.stdout.write(`${threadUrl}\n`)
-            process.exit(0)
-          }
-
-          const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser))
-          const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
-
-          // Prefix the prompt so it's clear who sent it (matches /queue format).
-          // Use a newline between prefix and prompt so leading /command
-          // detection can find the command on its own line.
-          const prefixedPrompt = `${QUEUE_PREFIX}${sendPromptSender({ sourceThreadId, sourceSessionId })}\n${prompt}`
-
-          if (threadTargetUser) {
-            cliLogger.log(
-              `Adding user ${threadTargetUser.username || threadTargetUser.id} to thread...`,
-            )
-            const addMemberResult = await ensureThreadMember({
-              rest,
-              threadId: targetThreadId,
-              userId: threadTargetUser.id,
-            })
-            if (addMemberResult instanceof Error) {
-              cliLogger.error(addMemberResult.message)
-              process.exit(EXIT_NO_RESTART)
-            }
-          }
-
-          await sendDiscordMessageWithOptionalAttachment({
-            channelId: targetThreadId,
-            prompt: prefixedPrompt,
-            botToken,
-            embeds: promptEmbed,
-            rest,
-            files: filePaths,
-          })
-
-          const existingSessionId = sessionId || await getThreadSession(targetThreadId)
-          const sessionLine = existingSessionId ? `Session: ${existingSessionId}\n` : ''
-          note(
-            `Prompt sent to thread: ${threadData.name}\n${sessionLine}\nURL: ${threadUrl}`,
-            '✅ Message Sent',
-          )
-          if (existingSessionId) process.stdout.write(`Session: ${existingSessionId}\n`)
-          process.stdout.write(`${threadUrl}\n`)
-
-          if (options.wait) {
-            const { waitAndOutputSession } = await import('../wait-session.js')
-            await waitAndOutputSession({
-              threadId: targetThreadId,
-              waitStartedAtMs,
-            })
-          }
-
-          process.exit(0)
-        }
-
-        cliLogger.log('Fetching channel info...')
-
-        if (!channelId) {
-          throw new Error('Channel ID not resolved')
-        }
-
-        // Get channel info to extract directory from topic
-        const channelData = (await rest.get(Routes.channel(channelId))) as {
-          id: string
-          name: string
-          topic?: string
-          guild_id: string
-        }
-
-        // channelConfig is optional: in CI/headless environments the local DB
-        // has no channel_directories rows because the bot hasn't synced yet.
-        // The running bot on the other end resolves the directory from its own DB.
-        // We only require it for features that genuinely need a local directory
-        // (--send-at, --cwd).
-        const storedConfig = await getChannelDirectory(channelData.id)
-        const fixedDirectory = applicationDirectory()
-        const channelConfig = fixedDirectory ? { directory: fixedDirectory } : storedConfig
-        const projectDirectory = channelConfig?.directory
-        const channelModelCheck = await validateCliModelOption({
-          model: options.model,
-          directory: projectDirectory,
-        })
-        if (channelModelCheck instanceof Error) {
-          cliLogger.error(channelModelCheck.message)
-          process.exit(EXIT_NO_RESTART)
-        }
-
-        // Features that require a local project directory mapping
-        if (!channelConfig && (parsedSchedule || options.cwd)) {
-          throw new Error(
-            `Channel #${channelData.name} is not configured with a project directory. ` +
-            `${parsedSchedule ? '--send-at' : '--cwd'} requires a local project mapping. ` +
-            'Run the bot first to sync channel data.',
-          )
-        }
-
-        // Validate --cwd is inside the project or an existing git worktree.
-        let resolvedCwd: string | undefined
-        if (options.cwd) {
-          // projectDirectory is guaranteed here: needsProjectDirectory check above
-          // already threw if channelConfig is missing when --cwd is used.
-          const cwdResult = await resolveSessionWorkingDirectory({
-            projectDirectory: projectDirectory!,
-            candidatePath: options.cwd,
-          })
-          if (cwdResult instanceof Error) {
-            cliLogger.error(cwdResult.message)
-            process.exit(EXIT_NO_RESTART)
-          }
-          resolvedCwd = cwdResult.directory
-        }
-
-        const resolvedUser = await resolveDiscordUserOption({
-          user: options.user,
-          guildId: channelData.guild_id,
-          rest,
-        })
-        if (resolvedUser instanceof Error) {
-          cliLogger.error(resolvedUser.message)
-          process.exit(EXIT_NO_RESTART)
-        }
-
-        cliLogger.log('Creating starter message...')
-
-        const cleanPrompt = stripMentions(prompt)
-        const baseThreadName =
-          name ||
-          (cleanPrompt.length > 80
-            ? cleanPrompt.slice(0, 77) + '...'
-            : cleanPrompt)
-        const threadName = baseThreadName
-
-        if (parsedSchedule) {
-          const payload: ScheduledTaskPayload = {
-            kind: 'channel',
-            channelId,
-            prompt,
-            name: name || null,
-            notifyOnly: Boolean(notifyOnly),
-            cwd: resolvedCwd || null,
-            ...sessionRun(options, resolvedUser),
-            preRunCommand: options.preRun || null,
-            allowConcurrency: Boolean(options.allowConcurrency),
-          }
-          const taskId = await createScheduledTask({
-            scheduleKind: parsedSchedule.scheduleKind,
-            runAt: parsedSchedule.runAt,
-            cronExpr: parsedSchedule.cronExpr,
-            timezone: parsedSchedule.timezone,
-            nextRunAt: parsedSchedule.nextRunAt,
-            payloadJson: serializeScheduledTaskPayload(payload),
-            promptPreview: getPromptPreview(prompt),
-            channelId,
-            projectDirectory,
-          })
-
-          const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}`
-          note(
-            `Task ID: ${taskId}\nTarget channel: #${channelData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
-            '✅ Task Scheduled',
-          )
-          cliLogger.log(channelUrl)
-          process.exit(0)
-        }
-
-        // Embed marker for auto-start sessions (unless --notify-only)
-        // Bot parses this YAML to know it should start a session and set the initial user
-        const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), resolvedCwd ? { cwd: resolvedCwd } : {})
-        const autoStartEmbed = embedMarker
-          ? await buildThreadStartEmbeds(embedMarker)
-          : undefined
-
-        const starterMessage = await sendDiscordMessageWithOptionalAttachment({
-          channelId,
-          prompt,
-          botToken,
-          embeds: autoStartEmbed,
-          rest,
-          splitInsteadOfAttach: notifyOnly,
-          files: filePaths,
-        })
-
-        // For notify-only on non-project channels, just post the message without
-        // creating a thread. There's no session to start, so a thread is unnecessary.
-        if (notifyOnly && !channelConfig) {
-          const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessage.id}`
-          note(
-            `Channel: #${channelData.name}\n\nMessage sent.\n\nURL: ${messageUrl}`,
-            '✅ Message Sent',
-          )
-          process.stdout.write(`${messageUrl}\n`)
-          process.exit(0)
-        }
-
-        cliLogger.log('Creating thread...')
-
-        const threadData = (await rest.post(
-          Routes.threads(channelId, starterMessage.id),
-          {
-            body: {
-              name: threadName.slice(0, 100),
-              auto_archive_duration: 1440, // 1 day
-            },
-          },
-        )) as { id: string; name: string }
-
-        cliLogger.log('Thread created!')
-
-        // Add user to thread if specified
-        if (resolvedUser) {
-          cliLogger.log(
-            `Adding user ${resolvedUser.username || resolvedUser.id} to thread...`,
-          )
-          await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
-        }
-
-        const threadUrl = `https://discord.com/channels/${channelData.guild_id}/${threadData.id}`
-
-        // Poll for session ID if the bot is expected to auto-start (not --notify-only).
-        // The bot picks up the thread and creates a session asynchronously;
-        // we wait briefly so the caller can reference the session immediately.
-        let newSessionId: string | undefined
-        if (!notifyOnly) {
-          const { waitForSessionId } = await import('../wait-session.js')
-          newSessionId = await waitForSessionId({
-            threadId: threadData.id,
-            timeoutMs: 15_000,
-          }).catch((e) => {
-            cliLogger.warn(`Could not resolve session ID: ${e instanceof Error ? e.message : String(e)}`)
-            return undefined
-          })
-        }
-
-        const cwdLine = resolvedCwd
-          ? `\nWorking directory: ${resolvedCwd}`
-          : ''
-        const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
-        const directoryLine = projectDirectory ? `\nDirectory: ${projectDirectory}` : ''
-        const successMessage = notifyOnly
-          ? `Thread: ${threadData.name}${directoryLine}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}${directoryLine}${cwdLine}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
-
-        note(successMessage, '✅ Thread Created')
-
-        if (newSessionId) process.stdout.write(`Session: ${newSessionId}\n`)
-        process.stdout.write(`${threadUrl}\n`)
-
-        if (options.wait) {
-          const { waitAndOutputSession } = await import('../wait-session.js')
-          await waitAndOutputSession({
-            threadId: threadData.id,
-            waitStartedAtMs,
-          })
-        }
-
+        const ctx: SendContext = { options, prompt, notifyOnly, threadId, sessionId, channelId, name, filePaths, parsedSchedule, waitStartedAtMs, rest, botToken }
+        await (existingThreadMode ? sendToThread(ctx) : sendToChannel(ctx))
         process.exit(0)
       } catch (error) {
         cliLogger.error(
