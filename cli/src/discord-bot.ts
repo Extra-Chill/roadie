@@ -1381,16 +1381,6 @@ export async function startDiscordBot({
         return
       }
 
-      // Worktree creation is left to host tooling. A marker from
-      // an older `send --worktree` client gets a clear notice; the session
-      // runs in the project directory instead.
-      if (marker.worktree) {
-        await thread.send({
-          content: `Roadie no longer creates worktrees (requested: \`${String(marker.worktree).slice(0, 100)}\`). Create the checkout with your host tooling and use \`roadie send --cwd <path>\`. Continuing in the project directory.`,
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
-      }
-
       // --cwd binds the thread to an existing project subfolder or worktree.
       // Revalidated here because the path could have gone stale since send
       // time. The binding is stored so restarts and forks keep it; the

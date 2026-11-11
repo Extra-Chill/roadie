@@ -19,7 +19,7 @@ import { getBotToken, getThreadSession, getThreadIdBySessionId, getSessionEventS
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { QUEUE_PREFIX, sendPromptSender } from '../message-formatting.js'
-import type { ThreadStartMarker } from '../system-message.js'
+import { buildStartMarker, type SessionRun } from '../system-message.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, getDataDir, getLockPort } from '../config.js'
@@ -60,21 +60,19 @@ function resolveRunningBotSend(options: { platform?: string }): { port: number; 
   return undefined
 }
 
-/** The start marker the bot reads off a `roadie send` message: who it is for and how to run it. */
-function startMarker({ options, user, cwd }: {
-  options: { agent?: string; model?: string; permission?: string[]; injectionGuard?: string[]; parentSession?: string }
-  user?: { id: string; username?: string }
-  cwd?: string
-}): ThreadStartMarker {
+/** How the sent session runs, from the send options and the resolved target user. */
+function sessionRun(
+  options: { agent?: string; model?: string; permission?: string[]; injectionGuard?: string[]; parentSession?: string },
+  user: { id: string; username?: string } | undefined,
+): SessionRun {
   return {
-    start: true,
-    ...(cwd && { cwd }),
-    ...(user && { userId: user.id, ...(user.username && { username: user.username }) }),
-    ...(options.agent && { agent: options.agent }),
-    ...(options.model && { model: options.model }),
-    ...(options.permission?.length && { permissions: options.permission }),
-    ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
-    ...(options.parentSession && { parentSessionId: options.parentSession }),
+    agent: options.agent || null,
+    model: options.model || null,
+    username: user?.username || null,
+    userId: user?.id || null,
+    permissions: options.permission?.length ? options.permission : null,
+    injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
+    parentSessionId: options.parentSession || null,
   }
 }
 
@@ -425,13 +423,7 @@ cli
               kind: 'thread',
               threadId: targetThreadId,
               prompt,
-              agent: options.agent || null,
-              model: options.model || null,
-              username: threadTargetUser?.username || null,
-              userId: threadTargetUser?.id || null,
-              permissions: options.permission?.length ? options.permission : null,
-              injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
-              parentSessionId: options.parentSession || null,
+              ...sessionRun(options, threadTargetUser),
               preRunCommand: options.preRun || null,
               allowConcurrency: Boolean(options.allowConcurrency),
             }
@@ -487,7 +479,7 @@ cli
             process.exit(0)
           }
 
-          const threadPromptMarker = startMarker({ options, user: threadTargetUser })
+          const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser))
           const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
 
           // Prefix the prompt so it's clear who sent it (matches /queue format).
@@ -608,7 +600,6 @@ cli
 
         cliLogger.log('Creating starter message...')
 
-        // Compute thread name and worktree name early (needed for embed)
         const cleanPrompt = stripMentions(prompt)
         const baseThreadName =
           name ||
@@ -624,15 +615,8 @@ cli
             prompt,
             name: name || null,
             notifyOnly: Boolean(notifyOnly),
-            worktreeName: null,
             cwd: resolvedCwd || null,
-            agent: options.agent || null,
-            model: options.model || null,
-            username: resolvedUser?.username || null,
-            userId: resolvedUser?.id || null,
-            permissions: options.permission?.length ? options.permission : null,
-            injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
-            parentSessionId: options.parentSession || null,
+            ...sessionRun(options, resolvedUser),
             preRunCommand: options.preRun || null,
             allowConcurrency: Boolean(options.allowConcurrency),
           }
@@ -659,7 +643,7 @@ cli
 
         // Embed marker for auto-start sessions (unless --notify-only)
         // Bot parses this YAML to know it should start a session and set the initial user
-        const embedMarker = notifyOnly ? undefined : startMarker({ options, user: resolvedUser, cwd: resolvedCwd })
+        const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), resolvedCwd ? { cwd: resolvedCwd } : {})
         const autoStartEmbed = embedMarker
           ? await buildThreadStartEmbeds(embedMarker)
           : undefined
@@ -725,14 +709,14 @@ cli
           })
         }
 
-        const worktreeNote = resolvedCwd
+        const cwdLine = resolvedCwd
           ? `\nWorking directory: ${resolvedCwd}`
           : ''
         const sessionLine = newSessionId ? `\nSession: ${newSessionId}` : ''
         const directoryLine = projectDirectory ? `\nDirectory: ${projectDirectory}` : ''
         const successMessage = notifyOnly
           ? `Thread: ${threadData.name}${directoryLine}\n\nNotification created. Reply to start a session.\n\nURL: ${threadUrl}`
-          : `Thread: ${threadData.name}${directoryLine}${worktreeNote}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
+          : `Thread: ${threadData.name}${directoryLine}${cwdLine}${sessionLine}\n\nThe running bot will pick this up and start the session.\n\nURL: ${threadUrl}`
 
         note(successMessage, '✅ Thread Created')
 

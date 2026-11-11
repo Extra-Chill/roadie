@@ -32,7 +32,7 @@ import { prepareDiscordPromptMessage } from './discord-prompt-message.js'
 import { getAgentBackendProvider } from './agent-backend/registry.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import type { ThreadStartMarker } from './system-message.js'
+import { buildStartMarker, type ThreadStartMarker } from './system-message.js'
 import {
   type ScheduledTaskPayload,
   appendTaskCommandOutput,
@@ -86,24 +86,7 @@ async function executeThreadScheduledTask({
   prompt: string
   runId?: number
 }): Promise<string | Error> {
-  const marker: ThreadStartMarker = {
-    start: true,
-    scheduledKind: task.schedule_kind,
-    // Only include scheduledTaskId for cron tasks. One-shot tasks are deleted
-    // after execution, so the ID would be stale by the time the bot processes
-    // the Discord event and tries to insert a session_start_sources row.
-    ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
-    ...(runId ? { scheduledTaskRunId: runId } : {}),
-    ...(payload.agent ? { agent: payload.agent } : {}),
-    ...(payload.model ? { model: payload.model } : {}),
-    ...(payload.username ? { username: payload.username } : {}),
-    ...(payload.userId ? { userId: payload.userId } : {}),
-    ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
-    ...(payload.injectionGuardPatterns?.length
-      ? { injectionGuardPatterns: payload.injectionGuardPatterns }
-      : {}),
-    ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
-  }
+  const marker = buildStartMarker(payload, scheduledMarkerFields(task, runId))
   const embed = await buildThreadStartEmbeds(marker)
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
@@ -275,6 +258,19 @@ export async function wakeDueSessionSleeps({
   }
 }
 
+/**
+ * Schedule fields on a scheduled task's start marker. Only cron tasks carry
+ * scheduledTaskId: one-shot tasks are deleted after execution, so the ID would
+ * be stale by the time the bot inserts the session_start_sources row.
+ */
+function scheduledMarkerFields(task: ScheduledTask, runId: number | undefined) {
+  return {
+    scheduledKind: task.schedule_kind,
+    ...(task.schedule_kind === 'cron' && { scheduledTaskId: task.id }),
+    ...(runId && { scheduledTaskRunId: runId }),
+  }
+}
+
 async function executeChannelScheduledTask({
   rest,
   task,
@@ -288,26 +284,9 @@ async function executeChannelScheduledTask({
   prompt: string
   runId?: number
 }): Promise<string | null | Error> {
-  const marker: ThreadStartMarker | undefined = payload.notifyOnly
+  const marker = payload.notifyOnly
     ? undefined
-    : {
-        start: true,
-        scheduledKind: task.schedule_kind,
-        // Only include scheduledTaskId for cron tasks (see thread variant comment)
-        ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
-        ...(runId ? { scheduledTaskRunId: runId } : {}),
-        ...(payload.worktreeName ? { worktree: payload.worktreeName } : {}),
-        ...(payload.cwd ? { cwd: payload.cwd } : {}),
-        ...(payload.agent ? { agent: payload.agent } : {}),
-        ...(payload.model ? { model: payload.model } : {}),
-        ...(payload.username ? { username: payload.username } : {}),
-        ...(payload.userId ? { userId: payload.userId } : {}),
-        ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
-        ...(payload.injectionGuardPatterns?.length
-          ? { injectionGuardPatterns: payload.injectionGuardPatterns }
-          : {}),
-        ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
-      }
+    : buildStartMarker(payload, { ...scheduledMarkerFields(task, runId), ...(payload.cwd && { cwd: payload.cwd }) })
   const embeds = marker
     ? await buildThreadStartEmbeds(marker)
     : undefined

@@ -502,7 +502,6 @@ export class NativeSlackBot {
             channelId,
             name: options.name ?? null,
             notifyOnly: options.notifyOnly,
-            worktreeName: null,
             cwd: options.cwd ?? null,
           }
       const taskId = await createScheduledTask({
