@@ -701,7 +701,7 @@ export async function setSessionAgent(sessionId: string, agentName: string) {
 // A thread can work in a directory other than its channel's project root
 // (`roadie send --cwd`; forks inherit the binding). Roadie never creates these
 // directories, it only remembers which one a thread works in. Rows live in
-// thread_workspaces; legacy thread_worktrees rows are migrated there on startup.
+// thread_workspaces.
 
 export type ThreadWorkingDirectory = {
   /** The channel's project root, where the agent server for the thread runs. */
@@ -1435,7 +1435,6 @@ export async function deleteChannelDirectoryById(
       )),
     db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, channelId)),
     db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)),
-    db.delete(schema.channel_worktrees).where(orm.eq(schema.channel_worktrees.channel_id, channelId)),
     db.delete(schema.channel_verbosity).where(orm.eq(schema.channel_verbosity.channel_id, channelId)),
   ] as const)
   if (preserveMapping) {

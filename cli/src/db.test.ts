@@ -683,17 +683,6 @@ describe('getDb', () => {
           created_at datetime DEFAULT CURRENT_TIMESTAMP
         )
       `)
-      await client.execute(`
-        CREATE TABLE thread_worktrees (
-          thread_id text PRIMARY KEY,
-          worktree_name text NOT NULL,
-          worktree_directory text,
-          project_directory text NOT NULL,
-          status text DEFAULT 'pending' NOT NULL,
-          error_message text,
-          created_at datetime DEFAULT CURRENT_TIMESTAMP
-        )
-      `)
       // The gateway row was used most recently, so it would win the lookup.
       await client.execute(`
         INSERT INTO bot_tokens (app_id, token, bot_mode, client_id, client_secret, proxy_url, last_used_at) VALUES
@@ -707,13 +696,7 @@ describe('getDb', () => {
           ('thr-old-worktree', 'ses-old-worktree', 'roadie')
       `)
       await client.execute(`
-        INSERT INTO thread_workspaces (thread_id, workspace_type, status, project_directory, workspace_directory, workspace_name) VALUES
-          ('thr-kimaki', 'kimaki-worktree', 'ready', '/p', '/w/kimaki', 'kimaki'),
-          ('thr-roadie', 'roadie-worktree', 'ready', '/p', '/w/roadie', 'roadie')
-      `)
-      await client.execute(`
-        INSERT INTO thread_worktrees (thread_id, worktree_name, worktree_directory, project_directory, status)
-        VALUES ('thr-old-worktree', 'old', '/w/old', '/p', 'ready')
+        CREATE TABLE thread_worktrees (thread_id text PRIMARY KEY)
       `)
       client.close()
 
@@ -726,19 +709,14 @@ describe('getDb', () => {
       expect(await columnsOf('thread_sessions')).not.toContain('source')
       expect(await columnsOf('bot_tokens')).not.toContain('bot_mode')
       expect(await columnsOf('bot_tokens')).not.toContain('proxy_url')
+      // The pre-thread_workspaces worktree table is gone.
+      expect((await inspect.execute("SELECT name FROM sqlite_master WHERE name = 'thread_worktrees'")).rows).toEqual([])
       inspect.close()
 
       // Gateway credentials are gone; the self-hosted bot is what remains.
       expect((await db.query.bot_tokens.findMany()).map((row) => row.app_id)).toEqual(['app-self'])
       expect(await getBotToken()).toMatchObject({ appId: 'app-self', token: 'self-token' })
 
-      const types = await db.query.thread_workspaces.findMany({ columns: { thread_id: true, workspace_type: true } })
-      expect(types.sort((a, b) => a.thread_id.localeCompare(b.thread_id))).toEqual([
-        { thread_id: 'thr-kimaki', workspace_type: 'git-worktree' },
-        { thread_id: 'thr-old-worktree', workspace_type: 'git-worktree' },
-        { thread_id: 'thr-roadie', workspace_type: 'git-worktree' },
-      ])
-      expect((await getThreadWorkingDirectory('thr-kimaki'))?.kind).toBe('git-worktree')
 
       // Session bindings still write without the dropped column.
       await setThreadSession('thr-kimaki', 'ses-rebound')

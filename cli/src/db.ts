@@ -196,6 +196,9 @@ async function migrateSchema({
 }): Promise<void> {
   // The per-channel mention toggle is retired; behavior lives in the channel policy (#342).
   await client.execute('DROP TABLE IF EXISTS channel_mention_mode')
+  // Worktree tables from before thread_workspaces; their rows were migrated.
+  await client.execute('DROP TABLE IF EXISTS thread_worktrees')
+  await client.execute('DROP TABLE IF EXISTS channel_worktrees')
   // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
   // Rebuild first so CREATE INDEX (... id) does not hit the old queue_id table.
   await rebuildLegacyThreadQueueItems(client)
@@ -270,7 +273,6 @@ async function migrateSchema({
     "UPDATE channel_verbosity SET verbosity = 'tools_and_text' WHERE verbosity = 'tools-and-text'",
     "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
     "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
-    "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
     "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
     'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
   ]
@@ -293,25 +295,6 @@ async function migrateSchema({
   await dropLegacySessionSleepsColumns(client)
   await dropRetiredGatewayAndSourceColumns(client)
 
-  // Migrate legacy thread_worktrees rows into thread_workspaces.
-  // Rows that already exist in thread_workspaces (by thread_id) are skipped.
-  await client.execute(`
-    INSERT OR IGNORE INTO thread_workspaces (
-      thread_id, workspace_type, status, error_message,
-      project_directory, workspace_directory, workspace_name, created_at
-    )
-    SELECT
-      thread_id, 'git-worktree', status, error_message,
-      project_directory, worktree_directory, worktree_name, created_at
-    FROM thread_worktrees
-    WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)
-  `).catch(() => undefined)
-  // Worktree bindings used to be stored as 'roadie-worktree' or
-  // 'kimaki-worktree'; the current kind is 'git-worktree'.
-  await client.execute(`
-    UPDATE thread_workspaces SET workspace_type = 'git-worktree'
-    WHERE workspace_type IN ('roadie-worktree', 'kimaki-worktree')
-  `)
 
   const botRows = await db.query.bot_tokens.findMany({
     columns: {

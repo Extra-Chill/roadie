@@ -49,14 +49,6 @@ CREATE TABLE IF NOT EXISTS `channel_verbosity` (
 	CONSTRAINT `fk_channel_verbosity_channel_id_channel_directories_channel_id_fk` FOREIGN KEY (`channel_id`) REFERENCES `channel_directories`(`channel_id`) ON UPDATE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS `channel_worktrees` (
-	`channel_id` text PRIMARY KEY,
-	`enabled` integer DEFAULT 0 NOT NULL,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_channel_worktrees_channel_id_channel_directories_channel_id_fk` FOREIGN KEY (`channel_id`) REFERENCES `channel_directories`(`channel_id`) ON UPDATE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS `chat_ingress_events` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`event_id` text NOT NULL UNIQUE,
@@ -306,17 +298,6 @@ CREATE TABLE IF NOT EXISTS `thread_workspaces` (
 	`workspace_name` text NOT NULL,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
 	CONSTRAINT `fk_thread_workspaces_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS `thread_worktrees` (
-	`thread_id` text PRIMARY KEY,
-	`worktree_name` text NOT NULL,
-	`worktree_directory` text,
-	`project_directory` text NOT NULL,
-	`status` text DEFAULT 'pending' NOT NULL,
-	`error_message` text,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_thread_worktrees_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `forum_sync_configs_app_id_forum_channel_id_key` ON `forum_sync_configs` (`app_id`,`forum_channel_id`);
