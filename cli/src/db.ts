@@ -6,10 +6,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { createClient, type Client } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
-import * as orm from 'drizzle-orm'
 import { fileURLToPath } from 'node:url'
 
 import { getDataDir, readRoadieSecret } from './config.js'
@@ -104,7 +102,7 @@ async function initializeDb(): Promise<RoadieDb> {
     }
 
     dbLogger.log('Running schema migrations...')
-    await migrateSchema({ db, client })
+    await migrateSchema(client)
     dbLogger.log('Schema migration complete')
   } catch (error) {
     dbLogger.error('Drizzle init failed:', formatErrorWithStack(error))
@@ -116,94 +114,11 @@ async function initializeDb(): Promise<RoadieDb> {
   return db
 }
 
-async function rebuildLegacyThreadQueueItems(client: Client) {
-  const info = await client.execute('PRAGMA table_info(thread_queue_items)').catch(() => undefined)
-  if (!info) {
-    return
+async function migrateSchema(client: Client): Promise<void> {
+  // Tables retired from schema.sql: worktree bindings (now thread_workspaces).
+  for (const table of ['thread_worktrees', 'channel_worktrees']) {
+    await client.execute(`DROP TABLE IF EXISTS ${table}`)
   }
-  const columns = new Set(info.rows.map((row) => String(row.name)))
-  if (columns.has('id')) {
-    return
-  }
-  if (!columns.has('queue_id')) {
-    return
-  }
-  await client.execute('ALTER TABLE thread_queue_items RENAME TO thread_queue_items_legacy')
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS thread_queue_items (
-      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-      queue_id text NOT NULL UNIQUE,
-      thread_id text NOT NULL,
-      payload_json text NOT NULL,
-      created_at datetime DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-  await client.execute(`
-    INSERT INTO thread_queue_items (queue_id, thread_id, payload_json, created_at)
-    SELECT queue_id, thread_id, payload_json, created_at
-    FROM thread_queue_items_legacy
-    ORDER BY created_at, queue_id
-  `)
-  await client.execute('DROP TABLE thread_queue_items_legacy')
-  await client.execute(
-    'CREATE INDEX IF NOT EXISTS thread_queue_items_thread_id_id_idx ON thread_queue_items (thread_id, id)',
-  )
-}
-
-async function tableColumns(client: Client, table: string): Promise<Set<string>> {
-  const info = await client.execute(`PRAGMA table_info(${table})`)
-  return new Set(info.rows.map((row) => String(row.name)))
-}
-
-// CREATE TABLE IF NOT EXISTS cannot drop columns, so retired ones go here.
-async function dropColumnsIfPresent(client: Client, table: string, drop: string[]) {
-  const columns = await tableColumns(client, table)
-  for (const column of drop) {
-    if (columns.has(column)) {
-      await client.execute(`ALTER TABLE ${table} DROP COLUMN ${column}`)
-    }
-  }
-}
-
-// The first two session_sleeps shapes kept thread_id NOT NULL and posted_at.
-// Inserts now omit thread_id, so existing DBs fail with
-// SQLITE_CONSTRAINT_NOTNULL until those columns go away.
-async function dropLegacySessionSleepsColumns(client: Client) {
-  await dropColumnsIfPresent(client, 'session_sleeps', ['thread_id', 'posted_at'])
-  await client.execute(
-    "UPDATE session_sleeps SET status = 'planned' WHERE status = 'posted'",
-  )
-}
-
-// Hosted gateway mode is gone. Its saved rows hold shared hosted-bot
-// credentials that cannot log in as a self-hosted bot, so they are deleted
-// and the next start runs onboarding. thread_sessions.source only ever held
-// 'roadie' once the Kimaki and external-poll writers were removed.
-async function dropRetiredGatewayAndSourceColumns(client: Client) {
-  if ((await tableColumns(client, 'bot_tokens')).has('bot_mode')) {
-    await client.execute("DELETE FROM bot_tokens WHERE bot_mode = 'gateway'")
-  }
-  await dropColumnsIfPresent(client, 'bot_tokens', ['bot_mode', 'proxy_url'])
-  await dropColumnsIfPresent(client, 'thread_sessions', ['source'])
-}
-
-async function migrateSchema({
-  db,
-  client,
-}: {
-  db: RoadieDb
-  client: Client
-}): Promise<void> {
-  // The per-channel mention toggle is retired; behavior lives in the channel policy (#342).
-  await client.execute('DROP TABLE IF EXISTS channel_mention_mode')
-  // Worktree tables from before thread_workspaces; their rows were migrated.
-  await client.execute('DROP TABLE IF EXISTS thread_worktrees')
-  await client.execute('DROP TABLE IF EXISTS channel_worktrees')
-  // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
-  // Rebuild first so CREATE INDEX (... id) does not hit the old queue_id table.
-  await rebuildLegacyThreadQueueItems(client)
-  // Pending titles began fork-only; keep any in-flight markers across the rename.
-  await client.execute('ALTER TABLE pending_fork_titles RENAME TO pending_session_titles').catch(() => undefined)
 
   const schemaPath = path.join(__dirname, '../src/schema.sql')
   const sql = fs.readFileSync(schemaPath, 'utf-8')
@@ -233,53 +148,6 @@ async function migrateSchema({
     await client.execute(statement)
   }
 
-  const alterStatements = [
-    'ALTER TABLE pending_session_titles ADD COLUMN task_prompt TEXT',
-    'ALTER TABLE channel_models ADD COLUMN variant TEXT',
-    'ALTER TABLE session_models ADD COLUMN variant TEXT',
-    'ALTER TABLE global_models ADD COLUMN variant TEXT',
-    'ALTER TABLE bot_api_keys ADD COLUMN openai_api_key TEXT',
-    'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
-    'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
-    'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
-    'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
-    'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
-    'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
-    'ALTER TABLE channel_directories ADD COLUMN guild_id TEXT',
-    // First session_sleeps shape had thread_id only. Later ticks query these.
-    'ALTER TABLE session_sleeps ADD COLUMN delivery_id TEXT',
-    'ALTER TABLE session_sleeps ADD COLUMN attempts INTEGER DEFAULT 0',
-    'ALTER TABLE session_sleeps ADD COLUMN last_attempt_at DATETIME',
-    // session_actors shipped without person_id (identity lookup added later).
-    'ALTER TABLE session_actors ADD COLUMN person_id TEXT',
-    // session_actors shipped without credential_pool (credential pools phase 2a).
-    'ALTER TABLE session_actors ADD COLUMN credential_pool TEXT',
-    // conversation_admissions shipped without paused_at (/off and /on).
-    'ALTER TABLE conversation_admissions ADD COLUMN paused_at DATETIME',
-  ]
-  for (const stmt of alterStatements) {
-    await client.execute(stmt).catch(() => undefined)
-  }
-
-  const migrationStatements = [
-    `
-      UPDATE session_models SET variant = (
-        SELECT thinking_value FROM session_thinking
-        WHERE session_thinking.session_id = session_models.session_id
-      ) WHERE variant IS NULL AND EXISTS (
-        SELECT 1 FROM session_thinking WHERE session_thinking.session_id = session_models.session_id
-      )
-    `,
-    "UPDATE channel_verbosity SET verbosity = 'tools_and_text' WHERE verbosity = 'tools-and-text'",
-    "UPDATE channel_verbosity SET verbosity = 'text_and_essential_tools' WHERE verbosity = 'text-and-essential-tools'",
-    "UPDATE channel_verbosity SET verbosity = 'text_only' WHERE verbosity = 'text-only'",
-    "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
-    'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
-  ]
-  for (const stmt of migrationStatements) {
-    await client.execute(stmt).catch(() => undefined)
-  }
-
   // Existing part_messages tables never get a rewritten FK. Drop orphans.
   // NOT EXISTS, not NOT IN: a NULL thread_sessions.thread_id would make
   // NOT IN unknown for every row and skip the whole cleanup.
@@ -291,30 +159,6 @@ async function migrateSchema({
       WHERE thread_sessions.thread_id = part_messages.thread_id
     )
   `)
-
-  await dropLegacySessionSleepsColumns(client)
-  await dropRetiredGatewayAndSourceColumns(client)
-
-
-  const botRows = await db.query.bot_tokens.findMany({
-    columns: {
-      app_id: true,
-      client_id: true,
-      client_secret: true,
-    },
-  }).catch(() => [])
-  for (const botRow of botRows) {
-    if (botRow.client_id && botRow.client_secret) {
-      continue
-    }
-    await db.update(schema.bot_tokens)
-      .set({
-        client_id: crypto.randomUUID(),
-        client_secret: crypto.randomBytes(32).toString('hex'),
-      })
-      .where(orm.eq(schema.bot_tokens.app_id, botRow.app_id))
-      .catch(() => undefined)
-  }
 }
 
 export async function closeDb(): Promise<void> {
