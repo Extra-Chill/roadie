@@ -263,7 +263,7 @@ export type AgentEvent =
   | { type: 'form.asked'; request: AgentFormRequest }
   | { type: 'form.replied'; sessionId: string; requestId: string; action: 'accept' | 'decline' | 'cancel' }
   /** A transient message for the user, not tied to a session. */
-  | { type: 'notice'; title?: string; message: string; level: 'info' | 'success' | 'warning' | 'error' }
+  | { type: 'notice'; sessionId?: string; title?: string; message: string; level: 'info' | 'success' | 'warning' | 'error' }
 
 export type AgentEventType = AgentEvent['type']
 

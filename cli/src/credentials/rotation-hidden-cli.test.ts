@@ -40,7 +40,9 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string; s
   try {
     const { stdout, stderr } = await execAsync(
       { command: tsxBinary, args: [cliEntry, ...args] },
-      { env: childEnv(), cwd: cliRoot, timeout: 30_000 },
+      // The real CLI loads the full application; concurrent suites on cold
+      // workers can push startup past 30s before this local command runs.
+      { env: childEnv(), cwd: cliRoot, timeout: 60_000 },
     )
     return { code: 0, stdout, stderr }
   } catch (error) {
@@ -94,5 +96,5 @@ describe('credentials rotation set --hidden / --shown', () => {
     const both = await runCli(['credentials', 'rotation', 'set', 'cook-heavy', 'openai/gpt-6.1-sol', '--hidden', '--shown'])
     expect(both.code).not.toBe(0)
     expect(both.stderr).toContain('--hidden')
-  }, 120_000)
+  }, 360_000)
 })

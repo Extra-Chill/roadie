@@ -464,11 +464,13 @@ describe('PiBackend sessions.abort over a stubbed rpc process', () => {
 describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', () => {
   const root = workspace()
   const endedTurns: string[] = []
+  let recover = () => {}
+  let recovery = Promise.resolve()
   const provider = new PiBackendProvider({
     bin: 'pi',
     sessionDir: path.join(root, 'sessions'),
     idleTimeoutMs: 0,
-    pool: { issueKey: () => 'pool-key', revokeKey: () => {}, endTurn: (sessionId) => endedTurns.push(sessionId) },
+    pool: { issueKey: () => 'pool-key', revokeKey: () => {}, endTurn: (sessionId) => endedTurns.push(sessionId), waitForRecovery: () => recovery },
   })
 
   function stubSession() {
@@ -529,6 +531,32 @@ describe('PiBackend busy follows Pi\'s active run over a stubbed rpc process', (
       { type: 'prompt', message: 'one', streamingBehavior: 'steer' },
       { type: 'prompt', message: 'two', streamingBehavior: 'steer' },
       { type: 'prompt', message: 'three', streamingBehavior: 'steer' },
+    ])
+  })
+
+  test('transport failures notify once, queue new prompts and replay on recovery', async () => {
+    recovery = new Promise<void>((resolve) => { recover = resolve })
+    const { session, process, directory } = stubSession()
+    const events = collectEvents(provider)
+    const onRecord = (record: Recorded) => internalsOf(provider).onRecord(session, record)
+    onRecord({ type: 'auto_retry_end', success: false, finalError: '502 {"error":{"type":"api_error","message":"pool host http://host is unreachable: fetch failed"}}' })
+    expect(events.filter((event) => event.type === 'error')).toEqual([])
+    onRecord({ type: 'agent_settled' })
+    onRecord({ type: 'auto_retry_end', success: false, finalError: 'pool host http://host is unreachable: fetch failed' })
+    onRecord({ type: 'agent_settled' })
+    expect(events.filter((event) => event.type === 'error')).toEqual([
+      expect.objectContaining({ error: expect.objectContaining({ name: 'TransportUnavailableError' }) }),
+    ])
+    expect(await prompt('queued while offline', directory)).toBeUndefined()
+    expect(process.requests).toEqual([])
+    recover()
+    await vi.waitFor(() => expect(process.requests.filter((request) => request.type === 'prompt')).toHaveLength(2))
+    expect(process.requests.filter((request) => request.type === 'prompt')).toEqual([
+      { type: 'prompt', message: 'Continue the interrupted turn.', streamingBehavior: 'steer' },
+      { type: 'prompt', message: 'queued while offline', streamingBehavior: 'steer' },
+    ])
+    expect(events.filter((event) => event.type === 'notice')).toEqual([
+      expect.objectContaining({ sessionId: session.id, message: expect.stringContaining('back online') }),
     ])
   })
 
