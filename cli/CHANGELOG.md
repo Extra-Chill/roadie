@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.23] - 2026-11-11
+
+### Changed
+- drop per-endpoint client query and body builders
+- split thread and channel modes out of the action
+- forkFrom waits for the command's reply
+
 ## [0.84.22] - 2026-11-11
 
 ### Changed
