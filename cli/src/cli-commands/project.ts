@@ -23,9 +23,6 @@ import {
   AGENT_PROJECTS_PATH,
   AGENT_PROJECT_REMOVE_PATH,
   AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
-  projectListQuery,
-  projectOpenInDiscordBody,
-  projectRemoveBody,
   resolveAgentCredentials,
   runAgentCommand,
 } from '../agent-remote.js'
@@ -74,7 +71,7 @@ cli
         request: {
           method: 'GET',
           path: AGENT_PROJECTS_PATH,
-          query: projectListQuery(options),
+          query: { json: options.json, all: options.all, guild: options.guild },
         },
       })
       process.exit(exitCode)
@@ -325,7 +322,7 @@ cli
         request: {
           method: 'POST',
           path: AGENT_PROJECT_REMOVE_PATH,
-          body: projectRemoveBody({ channelId }),
+          body: { channelId },
         },
       })
       process.exit(exitCode)
@@ -372,7 +369,7 @@ cli
         request: {
           method: 'POST',
           path: AGENT_PROJECT_OPEN_IN_DISCORD_PATH,
-          body: projectOpenInDiscordBody({ directory: path.resolve(directory || '.') }),
+          body: { directory: path.resolve(directory || '.') },
         },
       })
       process.exit(exitCode)

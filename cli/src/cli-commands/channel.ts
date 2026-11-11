@@ -19,9 +19,6 @@ import {
   AGENT_CHANNEL_MESSAGES_PATH,
   AGENT_CHANNEL_WEBHOOKS_PATH,
   AGENT_CHANNELS_PATH,
-  channelListQuery,
-  channelReadQuery,
-  channelWebhooksQuery,
   resolveAgentCredentials,
   runAgentCommand,
   type AgentCommandRequest,
@@ -76,7 +73,7 @@ cli
     try {
       const guild = requireOption(options.guild, 'Guild ID is required. Use --guild <guildId>.', exit)
       await relayIfAgent(
-        { method: 'GET', path: AGENT_CHANNELS_PATH, query: channelListQuery({ guild, json: options.json }) },
+        { method: 'GET', path: AGENT_CHANNELS_PATH, query: { guild, json: options.json } },
         exit,
       )
       const channels = failOn(await listGuildChannels({ rest: await operatorRest(), guildId: guild }), exit)
@@ -128,12 +125,7 @@ cli
         {
           method: 'GET',
           path: AGENT_CHANNEL_MESSAGES_PATH,
-          query: channelReadQuery({
-            channel,
-            limit: options.limit,
-            before: options.before,
-            json: options.json,
-          }),
+          query: { channel, limit: options.limit, before: options.before, json: options.json },
         },
         exit,
       )
@@ -194,7 +186,7 @@ cli
         {
           method: 'GET',
           path: AGENT_CHANNEL_WEBHOOKS_PATH,
-          query: channelWebhooksQuery({ channel, json: options.json }),
+          query: { channel, json: options.json },
         },
         exit,
       )

@@ -38,7 +38,6 @@ import {
   AGENT_USERS_PATH,
   resolveAgentCredentials,
   runAgentCommand,
-  userListQuery,
 } from '../agent-remote.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -71,7 +70,7 @@ cli
           request: {
             method: 'GET',
             path: AGENT_USERS_PATH,
-            query: userListQuery({ guild: guildId, query }),
+            query: { guild: guildId, query },
           },
         })
         process.exit(exitCode)
