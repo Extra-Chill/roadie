@@ -6,6 +6,9 @@ vi.mock('../discord-bot.js', () => ({ initDatabase: vi.fn(), getChannelDirectory
 
 const sendCommands = (await import('./send.js')).default
 
+// CI terminals may colorize goke output; compare the plain text.
+const plain = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '')
+
 function makeCli() {
   const stdout = { text: '', write(data: string) { this.text += String(data) } }
   const stderr = { text: '', write(data: string) { this.text += String(data) } }
@@ -19,11 +22,12 @@ describe('send help and removed options', () => {
   test('help describes cross-thread messaging, not delegation', async () => {
     const { cli, stdout } = makeCli()
     await cli.parse(['node', 'roadie', 'send', '--help'])
-    expect(stdout.text).not.toContain('Removed:')
-    expect(stdout.text).not.toMatch(/--project|--worktree|child sessions/)
-    expect(stdout.text).toContain('subagent tool')
-    expect(stdout.text).toContain('this is not in-thread delegation')
-    expect(stdout.text).toMatchSnapshot()
+    const help = plain(stdout.text)
+    expect(help).not.toContain('Removed:')
+    expect(help).not.toMatch(/--project|--worktree|child sessions/)
+    expect(help).toContain('subagent tool')
+    expect(help).toContain('this is not in-thread delegation')
+    expect(help).toMatchSnapshot()
   })
 
   test.each([
@@ -37,12 +41,12 @@ describe('send help and removed options', () => {
     const argv = ['node', 'roadie', 'send', flag]
     if (value !== undefined) argv.push(value)
     await expect(cli.parse(argv)).rejects.toThrow()
-    expect(stderr.text.trim()).toBe(`error: ${hint}\n\nRun "roadie send --help" for usage information.`)
+    expect(plain(stderr.text).trim()).toBe(`error: ${hint}\n\nRun "roadie send --help" for usage information.`)
   })
 
   test('unrelated unknown options still fail validation', async () => {
     const { cli, stderr } = makeCli()
     await expect(cli.parse(['node', 'roadie', 'send', '--typo'])).rejects.toThrow()
-    expect(stderr.text).toContain('Unknown option `--typo`')
+    expect(plain(stderr.text)).toContain('Unknown option `--typo`')
   })
 })

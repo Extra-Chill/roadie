@@ -24,7 +24,7 @@ test('real CLI fails before database or Discord mutations instead of creating a 
   }, { cwd: caller, env: { ...env, ROADIE_DATA_DIR: data, ...(config ? { ROADIE_CHANNELS_CONFIG: config } : {}) } })
 
   await expect(run([])).rejects.toMatchObject({ stderr: expect.stringContaining('configure application.channel') })
-  await expect(run(['--project', caller])).rejects.toMatchObject({ stderr: expect.stringContaining('Unknown option `--project`') })
+  await expect(run(['--project', caller])).rejects.toMatchObject({ stderr: expect.stringContaining('--project was removed') })
   const config = path.join(root, 'channels.json')
   fs.writeFileSync(config, JSON.stringify({ application: { channel: '123', directory: root }, channels: { '123': {} } }))
   await expect(run(['--channel', '456'], config)).rejects.toMatchObject({ stderr: expect.stringContaining('not explicitly configured') })
