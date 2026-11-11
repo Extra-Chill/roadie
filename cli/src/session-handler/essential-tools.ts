@@ -31,9 +31,5 @@ export function isEssentialToolPart(part: AgentPart): boolean {
   if (!isEssentialToolName(part.tool)) {
     return false
   }
-  if (part.tool === 'bash') {
-    const hasSideEffect = part.input?.hasSideEffect
-    return hasSideEffect !== false
-  }
   return true
 }

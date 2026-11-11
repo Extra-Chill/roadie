@@ -628,16 +628,14 @@ const MAX_BASH_COMMAND_INLINE_LENGTH = 50
 
 export function formatBashToolTitle({
   command,
-  description,
   summary,
   stateTitle,
 }: {
   command: string
-  description?: string
   summary?: string
   stateTitle?: string
 }): string {
-  const label = description || summary
+  const label = summary
   if (!command && !label && !stateTitle) return ''
 
   const isSingleLine = !command.includes('\n')
@@ -919,11 +917,9 @@ function formatPartBody(part: AgentPart, prefix?: string): string {
         return ''
       }
       const command = (part.input?.command as string) || ''
-      const description = (part.input?.description as string) || ''
       const summary = (part.input?.summary as string) || ''
       const toolTitle = formatBashToolTitle({
         command,
-        description,
         summary,
       })
       return `${TOOL_PREFIX}${pfx}bash${toolTitle}`
@@ -937,11 +933,9 @@ function formatPartBody(part: AgentPart, prefix?: string): string {
       toolTitle = part.error || 'error'
     } else if (part.tool === 'bash') {
       const command = (part.input?.command as string) || ''
-      const description = (part.input?.description as string) || ''
       const summary = (part.input?.summary as string) || ''
       const formatted = formatBashToolTitle({
         command,
-        description,
         summary,
         stateTitle,
       })

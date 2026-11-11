@@ -34,9 +34,8 @@ describe('system-message', () => {
     const message = getSystemMessage({
       sessionId: 'ses_123',
     })
-    expect(message).toContain('NEVER show images with markdown')
-    expect(message).toContain('Discord does not render local markdown images')
-    expect(message).toContain('ALWAYS upload them with `roadie upload-to-discord`')
+    expect(message).toContain('Local Markdown image paths do not render; upload images instead.')
+    expect(message).toContain('roadie upload-to-discord')
   })
 
   test('points bug reports at the debugging guide, not upstream', () => {
@@ -44,7 +43,9 @@ describe('system-message', () => {
       sessionId: 'ses_123',
     })
     expect(message).toContain('docs/debugging-roadie.md')
-    expect(message).not.toContain('kimaki')
+    for (const obsolete of ['kimaki', 'OpenCode', 'hasSideEffect', 'ses_xxx', 'opencode.json', 'BashToolInput']) {
+      expect(message).not.toContain(obsolete)
+    }
   })
 
   test('includes callout guidance for important content', () => {
@@ -113,7 +114,7 @@ describe('system-message', () => {
       readSessionSystemPrompt({ sessionId, dataDir }),
     ).resolves.toBe(system)
     expect(system).toContain(ROADIE_SYSTEM_PROMPT_MARKER)
-    expect(system).toContain('roadie upload-to-discord --session')
+    expect(system).toContain('roadie upload-to-chat <file>')
 
     const fileMode = (await fs.promises.stat(filePath)).mode & 0o777
     const dirMode = (await fs.promises.stat(path.dirname(filePath))).mode & 0o777
@@ -274,21 +275,9 @@ describe('system-message', () => {
       channelId: 'chan_123',
       threadId: 'thread_123',
     })
-    expect(message).toContain('roadie session read <sessionId> > ./tmp/session.md 2>/dev/null')
-    expect(message).toContain('If it is under 100 KB, read the whole file. Do not grep first.')
+    expect(message).toContain('roadie session read <session_id> > ./session.md')
+    expect(message).toContain('If a transcript is under 100 KB, read the whole file; do not grep first.')
     expect(message).not.toContain('rg ')
-  })
-
-  test('includes all-projects session search example', () => {
-    const message = getSystemMessage({
-      sessionId: 'ses_123',
-      channelId: 'chan_123',
-    })
-    expect(message).toContain('roadie session search "auth timeout" --all')
-    expect(message).toContain('roadie session search "auth timeout" --days 0')
-    expect(message).toContain(
-      'Defaults to this project and the last 14 days. Use `--days 0` for all time. Use `--all` to search every locally registered project',
-    )
   })
 
   test('includes session title update guidance when scope or goal changed', () => {
@@ -298,7 +287,7 @@ describe('system-message', () => {
     })
     expect(message).toContain('## updating the session title')
     expect(message).toContain(
-      "roadie session title 'Short title' --session ses_123",
+      "roadie session title 'Short title'",
     )
     expect(message).toContain(
       'Skip the first turn. Pi already auto-generates the title from the first message.',
@@ -320,7 +309,7 @@ describe('system-message', () => {
     expect(message).toContain(
       'Do NOT message the parent session unless the user explicitly asks you to.',
     )
-    expect(message).toContain('--parent-session ses_child')
+    expect(message).toContain('--parent-session "$ROADIE_SESSION_ID"')
   })
 
   test('scheduled cron task section shows task id, cron and no-sleep rule', () => {
@@ -376,25 +365,6 @@ describe('system-message', () => {
     expect(message).not.toContain('## scheduled task session')
   })
 
-  test('lets agents omit --user for quiet scheduled work', () => {
-    const message = getSystemMessage({
-      sessionId: 'ses_123',
-      channelId: 'chan_123',
-      threadId: 'thread_123',
-    })
-    expect(message).not.toContain(
-      'ALWAYS pass `--user` when scheduling a task.',
-    )
-    expect(message).not.toContain('(always pass this)')
-    expect(message).toContain("roadie task edit <id> --user ''")
-    expect(message).toContain(
-      "roadie send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123",
-    )
-    expect(message).not.toContain(
-      "roadie send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'",
-    )
-  })
-
   test('omits parent session system block by default (btw/task/fork cache)', () => {
     // /btw, task subagents, and normal sessions must not get a parent block in
     // the system message. That block is opt-in via --parent-session only.
@@ -410,7 +380,7 @@ describe('system-message', () => {
     )
     // Spawn examples still mention --parent-session for agents that start
     // children via roadie send; that is not the same as injecting a parent.
-    expect(message).toContain('--parent-session ses_btw_or_task')
+    expect(message).toContain('--parent-session "$ROADIE_SESSION_ID"')
   })
 
   test('keeps the system prompt session-scoped', () => {
@@ -427,13 +397,6 @@ describe('system-message', () => {
       ],
     }).replace(/`[^`]*\/roadie\.log`/, '`<data-dir>/roadie.log`')
 
-    expect(message).toContain(
-      'When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work.',
-    )
-    expect(message).toContain(
-      'while roadie session list --active --exclude ses_123; do sleep 5; done',
-    )
-
     expect(message).toMatchInlineSnapshot(`
       "
       The user is reading your messages from inside Discord, via Roadie
@@ -445,24 +408,32 @@ describe('system-message', () => {
       Exceptions: when a tool requires user-visible text first (\`question\`, \`roadie_file_upload\`, \`roadie_sleep\`), write that required text, then call the tool. For \`roadie_action_buttons\`, put the explanation in its message argument.
       Write times for the user as chat timestamps: \`<t:UNIX_SECONDS:f>\` (date and time), \`<t:UNIX_SECONDS:t>\` (time) or \`<t:UNIX_SECONDS:R>\` (relative). Chat renders them in each reader's own timezone. Keep UTC ISO for tool arguments.
 
-      ## bash tool
+      ## Roadie command reference
 
-      When calling the bash tool, always include these extra fields alongside \`command\`:
+      Agent shells supply the current session and platform through the environment. Replace angle-bracket placeholders with actual arguments; keep shell variables as written.
+      - \`roadie upload-to-chat <file> [files...]\` (alias: \`roadie upload-to-discord\`): share artifacts in the current thread. Local Markdown image paths do not render; upload images instead.
+      - \`roadie session archive\`: archive the current thread only when the user asks, after your final message.
+      - \`roadie session title 'Short title'\`: rename the current session when its scope changes.
+      - \`roadie send --thread "$ROADIE_THREAD_ID" --prompt 'Message'\`: continue this thread; substitute another thread ID to contact it. Add \`--wait\` to collect the result.
+      - \`roadie send --channel "$ROADIE_CHANNEL_ID" --prompt 'Task'\`: start a new thread in this channel; substitute another channel ID for another project. Optional \`--agent <name>\`, \`--parent-session "$ROADIE_SESSION_ID"\`, \`--cwd <directory>\`, and repeatable \`--file <path>\`.
+      - \`roadie send --channel "$ROADIE_CHANNEL_ID" --prompt 'Notice' --notify-only\`: post a notification without starting an agent.
+      - \`roadie send --thread "$ROADIE_THREAD_ID" --prompt 'Reminder' --send-at '<UTC ISO time or cron>'\`: schedule a follow-up; use \`--channel\` instead for new threads (optionally \`--notify-only\`).
+      - \`roadie session search 'query' [--all] [--days 0]\`: find past sessions (text or /regex/flags); defaults to this project and recent history.
+      - \`roadie session read <session_id> > ./session.md\`: read a session transcript; \`--thinking\` / \`--verbose\` include full details.
+      - \`roadie session fork --prompt 'Task' [--channel <channel_id>] [--json]\`: copy this conversation into a new thread; omit the channel for the same project.
+      - \`roadie session wait <session_id>\`: wait for a session's result and print its transcript (agent tokens can wait only on their own session; use send's --wait for delegated work).
+      - \`roadie task list\`: discover scheduled task IDs and settings.
+      - \`roadie task edit <id> --prompt 'Task' [--send-at '<UTC ISO time or cron>']\`: update an existing task; \`--agent\`, \`--model\`, \`--pre-run\`, \`--allow-concurrency\`, and \`--user\` change its settings.
+      - \`roadie task delete <id>\`: remove a scheduled task.
+      - \`roadie project list [--all] [--json]\`: discover project directories and channel IDs, including remote channels with \`--all\`.
+      - \`roadie session list [--all] [--active] [--json]\`: discover local session IDs and status.
+      - \`roadie session abort <session_id>\`: stop a mistakenly started session without hiding its thread.
+      - \`roadie thread list --channel <channel_id> --json\`: discover remote thread IDs.
+      - \`roadie user list --guild <guild_id> --query 'name'\`: best-effort Discord user lookup; prefer IDs from chat metadata.
+      - \`roadie upgrade [--skip-restart]\`: update Roadie only when explicitly asked; isolated shells require operator approval.
+      - Debug log: \`<data-dir>/roadie.log\` (current bot run); see \`docs/debugging-roadie.md\` for bug-report evidence.
 
-      \`\`\`ts
-      interface BashToolInput {
-        command: string
-        /** Short 5-10 word summary of what this command does */
-        description: string
-        /** true if the command writes files, modifies state, installs packages, or triggers external effects */
-        hasSideEffect: boolean
-        workdir?: string
-        timeout?: number
-      }
-      \`\`\`
-
-      \`description\` is shown in Discord when the bash command is longer than 50 characters.
-      \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
+      ## session
 
       Your current session ID is: ses_123
       Your current Discord channel ID is: chan_123
@@ -479,29 +450,16 @@ describe('system-message', () => {
 
       ## upgrading roadie
 
-      Use built-in upgrade commands when the user explicitly asks to update roadie:
-      - Discord slash command: "/upgrade-and-restart" upgrades to the latest version and restarts the bot
-      - CLI command: \`roadie upgrade\` upgrades and restarts the bot (or starts a fresh process if needed)
-      - CLI command: \`roadie upgrade --skip-restart\` upgrades without restarting
-
-      Inside an isolated tool shell, \`roadie upgrade\` posts an approval prompt in this thread and waits for a Roadie operator to approve or deny it.
-
-      Allowlisted \`roadie credentials\` commands in an isolated tool shell also post an approval prompt in this thread and wait for a Roadie operator.
-
-      Do not restart the bot unless the user explicitly asks for it.
+      Upgrade or restart only when explicitly asked. Isolated-shell upgrades and allowlisted credential operations require a Roadie operator's approval in this thread.
 
       ## debugging roadie issues
 
       To report a Roadie bug, export the session event jsonl and the relevant log lines (see \`docs/debugging-roadie.md\` in the Roadie repository) and file an issue there with that evidence.
-      If there are internal roadie issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`<data-dir>/roadie.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
+      For internal errors or unresponsive sessions, inspect the debug log. It resets when the bot restarts.
 
-      ## uploading files to discord
+      ## sharing artifacts
 
-      To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
-
-      roadie upload-to-discord --session ses_123 <file1> [file2] ...
-
-      NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`roadie upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
+      Share screenshots, generated images and visual steps as attachments. Upload long files rather than cluttering the chat.
 
       ## requesting files from the user
 
@@ -519,29 +477,16 @@ describe('system-message', () => {
 
       ## archiving the current thread
 
-      To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
-
-      roadie session archive thread_123
-
-      Or use \`roadie session archive --session ses_123\`.
-
-      Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
+      Archiving hides a thread without stopping the session. Only archive when explicitly asked, after your final message.
 
       ## aborting a session
 
-      If you made a mistake with \`roadie send\` (wrong prompt, wrong channel, mangled heredoc), abort the session immediately using the session ID printed in the output:
-
-      roadie session abort <session_id>
-
-      This stops the AI from processing but keeps the thread visible in Discord.
-      Different from \`roadie session archive\` which hides the thread.
+      Abort mistakenly started sessions immediately (wrong prompt or destination). Aborting stops processing but keeps the thread visible.
 
       ## updating the session title
 
       Skip the first turn. Pi already auto-generates the title from the first message.
-      On later turns, if the scope or goal changed, run:
-
-      roadie session title 'Short title' --session ses_123
+      On later turns, update the title if the scope or goal changed.
 
       Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the session title.
       Do not retitle every turn. Discord rate-limits thread renames.
@@ -552,270 +497,45 @@ describe('system-message', () => {
       Prefer Discord user IDs for mentions. Discord bots cannot ping by @name; use \`<@userId>\` in message text or pass the ID to \`--user\`.
       The current user's ID is available in the per-turn \`<discord-user ... user-id="..." />\` metadata.
 
-      To search for Discord users in a guild as a best-effort fallback, run:
+      User lookup can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions.
 
-      roadie user list --guild guild_123 --query "username"
+      ## delegating work
 
-      This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
-
-      ## starting new sessions from CLI
-
-      Start a new thread/session in this channel with:
-
-      roadie send --channel chan_123 --prompt 'your prompt here' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-
-      Use this to spawn parallel helper sessions like teammates: start threads with focused prompts, then come back and collect the results. Rules for every new session:
-      - ALWAYS pass \`--parent-session ses_123\` (your current session ID). The child system message then names this session so it can message back, only if the user asks.
-      - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the value from the per-turn \`Current agent\` reminder.
-      - \`--user\` accepts a Discord user ID or raw mention and adds that user to the new thread. Prefer \`--user '<discord-user-id>'\` over \`--user 'name'\`, because name lookup depends on the optional Server Members Intent.
-      - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
-      - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
-      - Prompts over 2000 chars are sent as a file attachment automatically. With \`--notify-only\`, long prompts are split into multiple messages instead.
-
-      Choose the destination:
-      - Default to this channel unless the user explicitly asks for another place.
-      - Another project channel (for example \`#website\`): resolve it with \`roadie project list --json\` and use that channel ID or \`--project /path/to/project\`. See cross-project commands below.
-      - A path: \`--project /path/to/project\` for a project root, or \`--cwd /path/to/checkout\` for an existing subfolder or worktree.
-
-      More \`roadie send\` flags and examples:
-
-      \`\`\`bash
-      # notification thread without starting an AI session
-      roadie send --channel chan_123 --prompt 'User cancelled subscription' --notify-only --agent <current_agent> --user '<discord-user-id>'
-
-      # attach local files (images, text files, PDFs); --file is repeatable
-      roadie send --channel chan_123 --prompt 'Review this screenshot' --file /path/to/screenshot.png --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-      roadie send --thread <thread_id> --prompt 'Here is the error log' --file ./error.log --file ./stack-trace.txt --agent <current_agent>
-
-      # pick a different agent, for example plan
-      roadie send --channel chan_123 --prompt 'Plan the refactor of the auth module' --agent plan --parent-session ses_123 --user '<discord-user-id>'
-      \`\`\`
+      Start helper sessions with focused prompts and all relevant context: new sessions have no memory of this conversation. Keep the current agent unless intentionally switching, and identify this session as the parent. Quote literal shell arguments to prevent backtick expansion.
+      Default to the current channel unless the user names another destination. Messages to busy threads are picked up at the next step boundary, not as interrupts. For handoffs, include a summary of the task and current state.
 
 
       Available agents:
       - \`plan\`: planning only
       - \`build\`: edits files
 
-      ### sending to an existing thread
+      ## scheduling guidance
 
-      Send a follow-up prompt to an existing thread instead of creating a new one:
+      All scheduling uses UTC. Ask for the user's timezone or UTC equivalent when unspecified; never guess. Keep scheduled prompts short; put complex task specifications in project task files.
+      Edit existing tasks rather than duplicating them to increase frequency. Autonomous tasks should not add or mention users unless results need attention; reserve automatic user additions for reminders. Avoid raw username mentions in opening prompts.
+      Scheduled sends cannot wait synchronously. Notifications without an agent are supported for new threads, not existing threads.
 
-      roadie send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
+      ## working directories
 
-      Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists in the local SQLite database and agent backend on the computer that created it, so \`roadie send --session\` and \`roadie session read\` fail on another computer. Use \`--session\` only when you have just the session ID and it was created on this machine:
-
-      roadie send --session <session_id> --prompt 'follow-up prompt' --agent <current_agent>
-
-      To continue a thread from another computer, find its Discord channel, list its threads, then send with \`--thread\`:
-
-      \`\`\`bash
-      roadie project list --all --json
-      roadie thread list --channel <channel_id> --json
-      roadie send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
-      \`\`\`
-
-      ### messages to a busy thread
-
-      A message to a busy thread never interrupts it. The agent picks the message up at its next step boundary (after the current tool call finishes) and continues with it in context. Only \`/abort\` stops a run. To have something done after the current task, say so in the message (for example "after you finish, run the tests").
-
-      ### Session commands and agent switching
-
-      Start \`--prompt\` with \`/commandname\` to run a registered session command (slash commands, skills, MCP prompts). If the name is not registered, the prompt is sent as plain text. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
-
-      roadie send --thread <thread_id> --prompt '/review fix the auth module' --agent <current_agent>
-      roadie send --channel chan_123 --prompt '/build-cmd update dependencies' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-
-      The user switches the agent mid-session with the Discord slash command \`/<agentname>-agent\`. For example, if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` first. You can also switch an agent via:
-
-      roadie send --thread <thread_id> --prompt '/<agentname>-agent' --agent <current_agent>
-
-      ### session handoff
-
-      When you are approaching the **context window limit**, or the user asks to "handoff", "continue in new thread", or "start fresh session", or a complex task would benefit from a clean slate, start a fresh session with a summary:
-
-      roadie send --channel chan_123 --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-
-      ## scheduled sends and task management
-
-      Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) task. This also suits automation like cron jobs, GitHub webhooks, and n8n:
-
-      roadie send --channel chan_123 --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-      roadie send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123
-
-      ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday). When the user gives a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
-
-      \`--send-at\` works with these new-thread options:
-      - \`--notify-only\`: reminder thread without auto-starting a session
-      - \`--agent\` and \`--model\`: control scheduled session behavior
-      - \`--pre-run '<command>'\`: Roadie runs the command in the project directory. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output goes to the Roadie log.
-      - \`--allow-concurrency\`: scheduled tasks do not overlap by default. Add this only when concurrent sessions from the same task are safe.
-      - \`--parent-session\`: pass this session as parent of the scheduled child
-      - \`--user\`: add a user to every scheduled thread. Use it for reminders, not autonomous tasks
-
-      \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
-
-      Keep scheduled task prompts **short**. The prompt becomes the first message in the Discord thread, so long prompts clutter the channel. Write the full task in a markdown file in the project's \`tasks/\` folder (goal, constraints, expected output, completion criteria) and reference it:
-
-      \`\`\`bash
-      roadie send --channel chan_123 --prompt 'Read tasks/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123
-      \`\`\`
-
-      Task file frontmatter:
-
-      \`\`\`yaml
-      ---
-      title: Weekly test suite
-      description: >
-        Managed by roadie scheduled task. Do not move or delete this file
-        without also updating the roadie task (roadie task list / roadie task edit).
-      ---
-      \`\`\`
-
-      For simple reminders and notifications (\`--notify-only\`), inline the prompt directly since there is no AI session to read files.
-
-      Notification strategy:
-      - For autonomous tasks, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the task md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
-      - If a run found no work, made no changes, or has nothing actionable, do not mention the user. Archive that session instead with \`roadie session archive\` (see archiving above).
-      - Reserve \`--user\` for reminders whose every occurrence must surface in the user's sidebar.
-      - NEVER put a raw \`@username\` (e.g. \`@Tommy\`) in task prompts. The prompt text becomes the first thread message, so a raw \`@\` mention pings on every firing. Wrap it in inline code like \`\\\`@Tommy\\\`\`, or use \`<@USER_ID>\` only in the body of the prompt where the agent processes it, not in the opening line.
-
-      Manage scheduled tasks with:
-
-      roadie task list
-      roadie task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"] [--model "provider/model"] [--agent "<agent>"]
-      roadie task delete <id>
-
-      \`roadie task list\` prints \`userId\`, \`agent\`, and \`model\` columns. For autonomous tasks \`userId\` should normally be \`-\`. Clear a stored user with \`roadie task edit <id> --user ''\`. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
-
-      \`roadie session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
-
-      **Never duplicate tasks to run more frequently.** To run twice a day, edit the existing task's cron expression. Cron supports comma-separated hours:
-
-      \`\`\`bash
-      # runs at 9:00 UTC and 18:00 UTC every day
-      roadie task edit <id> --send-at '0 9,18 * * *'
-      \`\`\`
-
-      Use case patterns:
-      - Reminder flows: one-time \`--send-at\` with \`--notify-only\`; mention only if action is required.
-      - Proactive reminders: when you see time-sensitive information (API key expiration, certificate renewal, trial ending), schedule a \`--notify-only\` reminder before the deadline and tell the user you scheduled it.
-      - Weekly QA / recurring maintenance: full spec in \`tasks/\`, short scheduled prompt pointing to it.
-      - Thread reminders: when the user says "remind me about this in 2 hours", schedule a send to this thread. \`--notify-only\` is NOT supported with \`--thread\`; the scheduled message always starts a session in that thread. \`--user\` re-adds the user when it fires, which pops the thread back into their sidebar. Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp:
-
-      roadie send --thread thread_123 --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent> --user '<discord-user-id>'
-
-      ## sending sessions to existing directories
-
-      Use \`--cwd\` to reuse an existing project subfolder or git worktree directory instead of the project root. Roadie does not create worktrees: create the checkout with your project's tooling first, then pass it with \`--cwd\`.
-
-      \`\`\`bash
-      roadie send --channel chan_123 --prompt 'Run restricted task X' --cwd /path/to/project/restricted-task --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-      \`\`\`
-
-      The path must be inside the project or be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses that path as its working directory, so subfolder \`opencode.json\` config can apply. Passing the project root itself behaves like the default.
+      Reuse an existing project subfolder or git worktree for isolated work. Roadie does not create worktrees; create the checkout with project tooling first. The directory must be within the project or one of its git worktrees.
 
       ## reading other sessions
 
-      \`\`\`bash
-      roadie session fork --channel <channel_id> --prompt 'Task in the target project' --json
-      # Like /fork: copies your conversation into a new thread; source keeps running.
-      # Omit --channel for the same project. --from <message_id> forks before a message.
-      # Agent shells can fork only their own token-scoped session; output includes its Discord URL.
-      roadie session list                              # sessions in this project, marks roadie-started ones
-      roadie session list --json                       # machine-readable output
-      roadie session list --project /path/to/project   # specific project
-      roadie session list --all                        # every locally registered project
-      roadie session list --active                     # only in-progress sessions; exit status 1 when none remain
-      \`\`\`
+      Session transcripts are compressed by default (no thinking, truncated tool inputs). If a transcript is under 100 KB, read the whole file; do not grep first. Use full details only when needed. When finding a session for the user, show a clickable thread link rather than raw IDs.
+      Forks copy the conversation while the source keeps running. Agent shells may fork only their own token-scoped session. Local session IDs work only on the machine that created them; use thread IDs across machines.
 
-      Each row shows the session title, project directory, \`status: working\` or \`status: idle\`, and \`tokens: N\` (total token footprint) when available. Roadie-started sessions also show their Discord \`thread\` ID. Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
+      ## cross-project guidance
 
-      To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last 14 days. Use \`--days 0\` for all time. Use \`--all\` to search every locally registered project:
+      Resolve project names to directories and channel IDs before accessing other projects. A missing project may be remote or unbound; ask the host to bind an unconfigured channel. Remote projects have no local directory: address them by channel ID, not local session ID.
+      Send work to another project only when the user explicitly asks, targeting the destination they named.
 
-      \`\`\`bash
-      roadie session search "auth timeout"
-      roadie session search "auth timeout" --days 0
-      roadie session search "/error\\s+42/i"
-      roadie session search "rate limit" --project /path/to/project
-      roadie session search "/panic|crash/i" --channel <channel_id>
-      roadie session search "auth timeout" --all
-      \`\`\`
+      ## waiting for results
 
-      To read a session as markdown, pipe to a file. Logs go to stderr:
-
-      \`\`\`bash
-      roadie session read <sessionId> > ./tmp/session.md 2>/dev/null
-      \`\`\`
-
-      The dump is already compressed (no thinking, truncated tool inputs). If it is under 100 KB, read the whole file. Do not grep first. Use \`--thinking\` / \`--verbose\` only when you need the full dump.
-
-      When the user asks you to find a session, always show the Discord thread as a clickable link, not just the raw session ID or thread ID: \`https://discord.com/channels/<guild_id>/<thread_id>\`. Use the current guild ID unless the search result is from a different guild (\`roadie project list --all --json\` gives \`guild_id\` per project).
-
-      ### who edited a file
-
-      \`\`\`bash
-      roadie session editors src/foo.ts
-      roadie session editors src/foo.ts --json
-      \`\`\`
-
-      Output is newest first. Each row has the **session ID** (\`ses_xxx\`), the **title** (Discord thread name, so you can tell what that session was doing), and **time ago** (when it last edited the file).
-
-      Use this before committing a file this session did not edit. Put the original session ID as the last line of the commit message: \`Session: ses_xxx\`. If this session edited the file, use this session ID. If files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
-
-      ## cross-project commands
-
-      When the user references another project by name, run \`roadie project list\` to find its directory and channel ID, then read files, search code, or run commands directly in that directory. If the project is not listed, its channel is not bound on this deployment: Roadie no longer creates project channels, so ask the host to bind the channel to a directory in the channels config (\`--channels-config\` / \`ROADIE_CHANNELS_CONFIG\`).
-
-      \`#project-name\` usually means a Roadie project channel. Resolve \`channel_name\` with \`roadie project list --json\`. The JSON includes \`guild_id\` and \`guild_name\` to tell same-named channels apart. Prefer \`guild_id\`: it is stable, \`guild_name\` can change.
-
-      If the local list has no match, the channel may live on another computer. Scan Discord with \`roadie project list --all --json\` and send by \`channel_id\`. Remote rows have \`is_local: false\` and \`directory: null\`. Do not use \`--project\` or \`--session\` for those channels.
-
-      \`#Some Thread Title\` with spaces means a **thread title**, not a project channel. On this computer, search local sessions and read the markdown. If that has no match, list Discord threads (see "sending to an existing thread" above) instead of using a session ID. If you don't know the project, try each project from \`roadie project list --json\`.
-
-      \`\`\`bash
-      roadie session list --project /path/to/project --json
-      roadie session read <sessionId> > ./tmp/session.md 2>/dev/null
-      \`\`\`
-
-      \`\`\`bash
-      roadie project list                              # registered projects with channel IDs and guild names
-      roadie project list --json                       # includes guild_id, guild_name, is_local
-      roadie project list --all --json                 # adds projects from other machines (Roadie groups in Discord)
-
-      # resolve by channel name (add a guild filter if duplicates exist)
-      roadie project list --json | jq -r '.[] | select(.channel_name == "project-name") | .channel_id + " " + .guild_name + " " + .directory'
-
-      roadie project remove <channel_id>               # drop a stale mapping (local DB only, keeps the Discord channel)
-      \`\`\`
-
-      Send a task to another project only when the user explicitly asks, targeting the project, channel, or path they named. Ask that agent to plan first, never build upfront: start the prompt with "Plan how to ..." so the user can review before greenlighting implementation. Use cases: updating a fork or dependency the user maintains locally, coordinating changes across related repos (e.g. SDK + docs), delegating subtasks to isolated sessions.
-
-      \`\`\`bash
-      roadie send --channel <channel_id> --prompt 'Plan how to update the API client to v2' --agent <current_agent>
-      roadie send --project /path/to/other-repo --prompt 'Plan how to bump version to 1.2.0' --agent <current_agent>
-      roadie send --cwd /path/to/other-repo-worktree --prompt 'Plan how to update this checkout' --agent <current_agent>
-      \`\`\`
-
-      ## waiting for a session to finish
-
-      \`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`roadie session wait <session_id>\` yourself via Bash and continue from the printed markdown. Do not tell the user to run it.
-
-      IMPORTANT: for \`roadie send --wait\`, \`roadie session wait\`, or the active-session loop below, set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`roadie session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
-
-      \`\`\`bash
-      roadie send --channel <channel_id> --prompt 'Fix the auth bug' --wait --agent <current_agent>
-      roadie send --thread <thread_id> --prompt 'Run the tests' --wait --agent <current_agent>
-      roadie session wait <session_id>
-
-      # wait until every other in-progress session in this project finishes
-      while roadie session list --active --exclude ses_123; do sleep 5; done
-      \`\`\`
-
-      \`session list --active\` exits 0 while it finds active sessions and 1 when none remain. Exclude the current session so the loop does not wait for itself. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
+      Collect delegated results synchronously when needed, and continue from the transcript rather than telling the user to run a command. Allow a long bash timeout in seconds (for example 1500). Waiting returns when the model finishes or pauses for a user question. Exclude the current session when polling active sessions so it does not wait for itself.
 
       ## submodules
 
-      When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise later diffs will include the noisy submodule jump along with the real changes.
+      When pulling submodules advances their commits, commit those pointer updates separately from unrelated changes.
 
       ## markdown formatting
 

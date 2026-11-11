@@ -70,10 +70,9 @@ test('formatCompactToolSummary indexes read, task, and bash inputs', () => {
     tool: 'bash',
     input: {
       command: 'a'.repeat(120),
-      description: 'Rebuild native addon',
     },
     maxChars: 80,
-  })).toBe('Rebuild native addon')
+  })).toBe(`${'a'.repeat(79)}…`)
 
   expect(formatCompactToolSummary({
     tool: 'grep',
