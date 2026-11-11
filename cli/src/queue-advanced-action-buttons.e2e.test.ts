@@ -318,7 +318,9 @@ describe.skipIf(!findPi())('queue advanced: action buttons', () => {
       discord: ctx.discord,
       threadId: thread.id,
       timeout: 12_000,
-      afterMessageIncludes: 'Dismiss me',
+      // The click's own prompt; the button message also says "Dismiss me"
+      // and already has an earlier turn's footer after it.
+      afterMessageIncludes: '**queue-action-tester:** Dismiss me',
       afterAuthorId: ctx.discord.botUserId,
     })
 
