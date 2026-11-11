@@ -480,7 +480,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /** Project commands and skills Pi finds for a directory (extension commands are Pi's own UI). */
   private async commands(directory: string): Promise<AgentCommand[] | Error> {
-    const running = [...this.sessions.values()].find((session) => session.directory === directory && !session.process.exited)
+    const running = [...this.sessions.values()].find((session) => session.directory === directory && session.process.running)
     const probe = running?.process ?? new PiProcess({
       bin: this.options.bin,
       args: [...this.spawnArgs([], directory).filter((arg, i, all) => arg !== '--session-dir' && all[i - 1] !== '--session-dir'), '--no-session'],
@@ -790,7 +790,10 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** The running process for a session, resuming it from its file if needed. */
   private async ensure(sessionId: string, directory?: string): Promise<RunningSession | Error> {
     const running = this.sessions.get(sessionId)
-    if (running && !running.process.exited) return running
+    if (running?.process.running) return running
+    // A process being stopped (idle stop, finished subagent) cannot take new
+    // requests; let it exit, then resume the session from its file.
+    if (running && !running.process.exited) await running.process.kill()
     const inFlight = this.starting.get(sessionId)
     if (inFlight) return inFlight
     const file = this.findSessionFile(sessionId)
@@ -1110,7 +1113,7 @@ export class PiBackendProvider implements AgentBackendProvider {
   private refreshMcp(directory: string) {
     const servers = this.mcpServersFor(directory)
     for (const session of this.sessions.values()) {
-      if (session.directory === directory && !session.process.exited) writeMcpFile(session.mcpFile, servers)
+      if (session.directory === directory && session.process.running) writeMcpFile(session.mcpFile, servers)
     }
   }
 
@@ -1226,7 +1229,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     }
     const probe = (async () => {
       // Any running process can list models; otherwise start a throwaway one.
-      const running = [...this.sessions.values()].find((session) => !session.process.exited)
+      const running = [...this.sessions.values()].find((session) => session.process.running)
       const probe = running?.process ?? new PiProcess({
         bin: this.options.bin,
         args: ['--no-session', '--no-extensions', ...(this.options.model ? ['--model', this.options.model] : [])],
@@ -1444,7 +1447,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       abort: async ({ sessionId }) => {
         const session = this.sessions.get(sessionId)
-        const dead = !session || session.process.exited
+        const dead = !session?.process.running
         // A session that is not running cannot be aborted, but prompts it left
         // pending (an open question, task call or permission ask whose process
         // exited) must not outlive the abort — dismiss them so nothing answers
@@ -1452,7 +1455,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.cancelQuestions(sessionId, { permissions: dead })
         // Aborting a parent stops its running task children too.
         for (const child of this.sessions.values()) {
-          if (child.childOf === sessionId && !child.process.exited) {
+          if (child.childOf === sessionId && child.process.running) {
             child.translator.markAborting()
             void child.process.request({ type: 'abort' })
           }
