@@ -599,7 +599,7 @@ export async function startDiscordBot({
         ? parseSessionStartSourceFromMarker(promptMarker)
         : undefined
       const cliInjectedPersonId = isCliInjectedPrompt
-        ? await resolveAgentSendPerson(promptMarker?.agentToken)
+        ? await resolveAgentSendPerson(promptMarker?.agentSendNonce)
         : undefined
       const cliInjectedUsername = isCliInjectedPrompt
         ? promptMarker?.username || 'roadie-cli'

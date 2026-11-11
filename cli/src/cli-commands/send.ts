@@ -24,7 +24,7 @@ import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, getDataDir, getLockPort } from '../config.js'
 import { getSendToken, remoteSendOptions, sendViaRunningBot, shouldSendRemotely } from '../remote-send.js'
-import { AGENT_TOKEN_ENV } from '../agent-token.js'
+import { AGENT_SEND_NONCE_ENV } from '../session-handler/agent-send-person.js'
 import { AGENT_SEND_PATH, resolveAgentCredentials } from '../agent-remote.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -243,7 +243,7 @@ async function sendToThread(ctx: SendContext): Promise<void> {
     process.exit(0)
   }
 
-  const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser), { agentToken: process.env[AGENT_TOKEN_ENV] || undefined })
+  const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser), { agentSendNonce: process.env[AGENT_SEND_NONCE_ENV] || undefined })
   const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
 
   // Prefix the prompt so it's clear who sent it (matches /queue format).
@@ -408,7 +408,7 @@ async function sendToChannel(ctx: SendContext): Promise<void> {
 
   // Embed marker for auto-start sessions (unless --notify-only)
   // Bot parses this YAML to know it should start a session and set the initial user
-  const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), { cwd: resolvedCwd, agentToken: process.env[AGENT_TOKEN_ENV] || undefined })
+  const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), { cwd: resolvedCwd, agentSendNonce: process.env[AGENT_SEND_NONCE_ENV] || undefined })
   const autoStartEmbed = embedMarker
     ? await buildThreadStartEmbeds(embedMarker)
     : undefined

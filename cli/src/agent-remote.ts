@@ -30,6 +30,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as errore from 'errore'
 import { AGENT_TOKEN_ENV, verifyAgentToken } from './agent-token.js'
+import { AGENT_SEND_NONCE_ENV, issueAgentSendNonce } from './session-handler/agent-send-person.js'
 import { getLockPort, readRoadieSecret } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -655,7 +656,6 @@ async function runAgentSend(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   sessionId: string,
-  token: string,
 ): Promise<void> {
   const body = await readBody(req, REMOTE_SEND_MAX_BODY_BYTES)
   if (body instanceof Error) {
@@ -674,7 +674,7 @@ async function runAgentSend(
       respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       return
     }
-    await runAgentChild(args, res, { [AGENT_TOKEN_ENV]: token })
+    await runAgentChild(args, res, { [AGENT_SEND_NONCE_ENV]: issueAgentSendNonce(sessionId) })
   } finally {
     fs.rmSync(fileDir, { recursive: true, force: true })
   }
@@ -752,7 +752,7 @@ export async function handleAgentRequest(
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_SEND_PATH) {
-      await runAgentSend(req, res, sessionId, token!)
+      await runAgentSend(req, res, sessionId)
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_OPERATOR_REQUESTS_PATH) {

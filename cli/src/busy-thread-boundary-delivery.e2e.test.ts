@@ -8,7 +8,7 @@ import path from 'node:path'
 import { describe, test, expect, vi } from 'vitest'
 import { Routes } from 'discord.js'
 import YAML from 'yaml'
-import { ensureAgentTokenSecret, mintAgentToken } from './agent-token.js'
+import { issueAgentSendNonce, resolveAgentSendPerson } from './session-handler/agent-send-person.js'
 import { getThreadSession, listThreadQueueItems, setSessionTurnAttribution } from './database.js'
 import { getRuntime } from './session-handler/runtime-registry.js'
 import { sessionListIsBusy } from './session-handler/session-list-busy.js'
@@ -93,11 +93,12 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
   })
 
   test.each([
-    { name: 'same person', person: TEST_USER_ID, token: true, queued: false },
-    { name: 'different person', person: 'other-person', token: true, queued: true },
-    { name: 'no token', person: TEST_USER_ID, token: false, queued: true },
-    { name: 'invalid token', person: TEST_USER_ID, token: true, queued: true, invalid: true },
-  ])('agent send from $name respects busy-turn isolation', async (row) => {
+    { name: 'same person', person: TEST_USER_ID, nonce: 'fresh', queued: false },
+    { name: 'different person', person: 'other-person', nonce: 'fresh', queued: true },
+    { name: 'no nonce', person: TEST_USER_ID, nonce: 'none', queued: true },
+    { name: 'replayed nonce', person: TEST_USER_ID, nonce: 'replayed', queued: true },
+    { name: 'unknown nonce', person: TEST_USER_ID, nonce: 'unknown', queued: true },
+  ] as const)('agent send from $name respects busy-turn isolation', async (row) => {
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
       content: `BOUNDARY_SLOW_TOOL_MARKER ${row.name}`,
     })
@@ -115,9 +116,9 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
       sessionId: sourceSession, personId: row.person,
       actor: { platform: 'discord', id: TEST_USER_ID, name: 'source', via: 'chat' },
     })
-    const token = row.token
-      ? mintAgentToken({ secret: ensureAgentTokenSecret(), sessionId: sourceSession })
-      : undefined
+    const issued = issueAgentSendNonce(sourceSession)
+    if (row.nonce === 'replayed') await resolveAgentSendPerson(issued)
+    const nonce = { fresh: issued, replayed: issued, unknown: 'f'.repeat(64), none: undefined }[row.nonce]
     const runtime = getRuntime(thread.id)!
     const enqueue = vi.spyOn(runtime, 'enqueueIncoming')
     await ctx.botClient.rest.post(Routes.channelMessages(thread.id), {
@@ -125,7 +126,7 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
         content: 'BOUNDARY_STEER_MARKER please also note this',
         embeds: [{ footer: { text: YAML.stringify({
           start: true, userId: 'cli-asserted-user',
-          agentToken: row.invalid ? `${token}bad` : token,
+          agentSendNonce: nonce,
         }) } }],
       },
     })
