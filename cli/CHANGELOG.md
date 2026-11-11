@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.84.20] - 2026-11-11
+
+### Changed
+- drop legacy worktree tables and migrations; remove no-op bot flags
+- anchor the action-button footer wait on the click's prompt
+
 ## [0.84.19] - 2026-11-11
 
 ### Changed
