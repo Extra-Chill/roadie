@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.84.19] - 2026-11-11
+
+### Changed
+- one SessionRun shape for scheduled payloads and start markers; drop legacy marker fields
+
+### Fixed
+- a stopping process takes no requests; ensure() resumes the session after it exits
+
 ## [0.84.18] - 2026-11-10
 
 ### Changed
