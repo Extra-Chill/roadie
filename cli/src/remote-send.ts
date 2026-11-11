@@ -180,7 +180,7 @@ export async function relayRemoteRun(
   return exitCode
 }
 
-export type RemoteSendRunner = (args: string[], emit: (event: RemoteSendEvent) => void) => Promise<number>
+export type RemoteSendRunner = (args: string[], emit: (event: RemoteSendEvent) => void, shellEnv?: Record<string, string>) => Promise<number>
 
 /**
  * Roadie's CLI entry next to this module: dist/cli.js when built, src/cli.ts
@@ -225,8 +225,8 @@ export function roadieCliChildExecArgv({
 }
 
 /** Runs `roadie send` as a child of the bot process, i.e. as the bot user. */
-export const spawnRoadieSend: RemoteSendRunner = (args, emit) => {
-  const env = { ...process.env }
+export const spawnRoadieSend: RemoteSendRunner = (args, emit, shellEnv) => {
+  const env = { ...process.env, ...shellEnv }
   // The child is a local client: it must open the database directly, not
   // send back to this endpoint, and must not act as the bot's wrapper child.
   delete env.ROADIE_SERVICE_TOKEN

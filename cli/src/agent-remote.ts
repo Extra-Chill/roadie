@@ -512,7 +512,7 @@ function respondJson(
 }
 
 /** Run the mapped subcommand as a child of the bot, streaming NDJSON back. */
-async function runAgentChild(args: string[], res: http.ServerResponse): Promise<void> {
+async function runAgentChild(args: string[], res: http.ServerResponse, shellEnv?: Record<string, string>): Promise<void> {
   agentLogger.log(`Agent run: ${args.filter((arg) => !arg.startsWith('--prompt=')).join(' ')}`)
   if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson' })
   const emit = (event: RemoteSendEvent) => {
@@ -521,7 +521,7 @@ async function runAgentChild(args: string[], res: http.ServerResponse): Promise<
   // `session wait` and `send --wait` can stay quiet for a long time; keep
   // idle timeouts away.
   const keepalive = setInterval(() => emit({ keepalive: true }), 20_000)
-  const exit = await getRemoteSendRunner()(args, emit).finally(() => clearInterval(keepalive))
+  const exit = await getRemoteSendRunner()(args, emit, shellEnv).finally(() => clearInterval(keepalive))
   emit({ exit })
   res.end()
 }
@@ -655,6 +655,7 @@ async function runAgentSend(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   sessionId: string,
+  token: string,
 ): Promise<void> {
   const body = await readBody(req, REMOTE_SEND_MAX_BODY_BYTES)
   if (body instanceof Error) {
@@ -673,7 +674,7 @@ async function runAgentSend(
       respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       return
     }
-    await runAgentChild(args, res)
+    await runAgentChild(args, res, { [AGENT_TOKEN_ENV]: token })
   } finally {
     fs.rmSync(fileDir, { recursive: true, force: true })
   }
@@ -751,7 +752,7 @@ export async function handleAgentRequest(
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_SEND_PATH) {
-      await runAgentSend(req, res, sessionId)
+      await runAgentSend(req, res, sessionId, token!)
       return
     }
     if (req.method === 'POST' && url.pathname === AGENT_OPERATOR_REQUESTS_PATH) {

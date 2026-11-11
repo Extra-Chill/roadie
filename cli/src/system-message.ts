@@ -265,6 +265,8 @@ export type RepliedMessageContext = {
 
 /** YAML marker embedded in thread starter message footer for bot to parse */
 export type ThreadStartMarker = {
+  /** Bot-verifiable sending agent session credential, never a CLI-asserted person. */
+  agentToken?: string
   /** Whether to auto-start an AI session */
   start?: boolean
   /** Existing project subfolder or git worktree to bind the thread to */
