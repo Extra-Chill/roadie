@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.85.0] - 2026-11-11
+
+### Added
+- add a host-keepable commands section and retire OpenCode-only prompt guidance
+
 ## [0.84.25] - 2026-11-11
 
 ### Fixed
