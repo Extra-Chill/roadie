@@ -90,10 +90,17 @@ describe.skipIf(!findPi())('/fork', () => {
       options,
     })
     await ctx.discord.thread(sourceId).waitForInteractionAck({ interactionId, timeout: 4_000 })
-    return ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+    const fork = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 6_000,
       predicate: (t) => !existing.has(t.id),
     })
+    // The command is done once its reply lands in the source thread; a test
+    // that snapshots the source before then races that reply.
+    await ctx.discord.thread(sourceId).waitForMessage({
+      timeout: 6_000,
+      predicate: (m) => m.content.includes(`Session forked! Continue in <#${fork.id}>`),
+    })
+    return fork
   }
 
   // The fork thread appears before its session mapping is written.
