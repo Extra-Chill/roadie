@@ -7,6 +7,7 @@ import path from 'node:path'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 import {
   applyPromptConfig,
+  BUILTIN_PROMPT_SECTION_IDS,
   getPromptConfig,
   parsePromptConfig,
   setPromptConfigPath,
@@ -75,6 +76,31 @@ describe('parsePromptConfig', () => {
 })
 
 describe('system prompt with a config file', () => {
+  test.each(['discord', 'slack'])('commands alone retain the CLI reference on %s', (platform) => {
+    const file = path.join(dir, `commands-${platform}.json`)
+    fs.writeFileSync(file, JSON.stringify({
+      disable: BUILTIN_PROMPT_SECTION_IDS.filter((id) => id !== 'commands'),
+    }))
+    setPromptConfigPath(file)
+    const message = getSystemMessage({ platform, sessionId: 'current-session', channelId: 'current-channel', threadId: 'current-thread' })
+    for (const command of [
+      'upload-to-discord', 'upload-to-chat', 'session archive', 'session title',
+      'send --thread', 'send --channel', '--notify-only', '--send-at',
+      'session search', 'session read', 'session fork', 'session wait',
+      'task list', 'task edit', 'task delete', 'project list', '/roadie.log',
+    ]) {
+      expect(message).toContain(command)
+    }
+    for (const debt of ['hasSideEffect', 'ses_xxx', 'opencode.json', 'current-session', 'current-channel', 'current-thread']) {
+      expect(message).not.toContain(debt)
+    }
+    expect(message).toContain('Local Markdown image paths do not render')
+    expect(message).toContain('only when the user asks')
+    expect(message).toContain('$ROADIE_THREAD_ID')
+    expect(message).toContain('$ROADIE_CHANNEL_ID')
+    expect(message).not.toContain('## scheduling guidance')
+  })
+
   test('disabling a built-in section removes it; invalid files fall back to the built-in prompt', () => {
     const file = path.join(dir, 'prompt.yaml')
     fs.writeFileSync(file, 'disable: [permissions, upgrading]\nappend:\n  - id: host\n    content: "## host section\\nhello"\n')

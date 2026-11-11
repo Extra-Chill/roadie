@@ -142,8 +142,7 @@ export function formatCompactToolSummary({
     if (collapsedCommand.length > 0 && collapsedCommand.length <= maxChars) {
       return collapsedCommand
     }
-    const description = typeof record.description === 'string' ? record.description : ''
-    return truncateChars(description || collapsedCommand, maxChars)
+    return truncateChars(collapsedCommand, maxChars)
   }
   const parts: string[] = []
   for (const [key, value] of Object.entries(record)) {

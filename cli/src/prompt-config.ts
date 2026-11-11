@@ -16,11 +16,13 @@
 //         Never deploy on Fridays.
 //       file: /etc/roadie/extra.md            # or read content from a file
 //
-// Section ids are stable: discord-output, bash-tool, permissions, upgrading,
+// Section ids: commands (keepable CLI reference), discord-output, session,
+// permissions, upgrading,
 // debugging, file-upload, file-request, sleep, archive, abort, title,
 // mentions, send, scheduled-sends, cwd, reading-sessions, cross-project,
 // waiting, submodules, markdown, callouts, urls, diagrams, questions,
-// channel-topic. The scheduled-task section is part of `sleep`'s text when
+// channel-topic, model-rotations. Slack also uses chat-output, identity,
+// interaction, automation and agents. The scheduled-task context is part of `sleep`'s text when
 // present. Unknown ids in disable/replace are reported and ignored.
 //
 // The file is re-read when its mtime changes. An invalid file is reported and
@@ -36,7 +38,14 @@ const logger = createLogger(LogPrefix.SESSION)
 
 export const BUILTIN_PROMPT_SECTION_IDS = [
   'discord-output',
-  'bash-tool',
+  'commands',
+  'session',
+  'chat-output',
+  'identity',
+  'interaction',
+  'automation',
+  'agents',
+  'model-rotations',
   'permissions',
   'upgrading',
   'debugging',
