@@ -1,0 +1,39 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`send help and removed options > help describes cross-thread messaging, not delegation 1`] = `
+"roadie
+
+
+Usage:
+  $ roadie send
+
+
+Options:
+  --platform <name>             Chat platform: discord or slack. Defaults to ROADIE_PLATFORM
+  -c, --channel <channelId>     Discord channel ID
+  -p, --prompt <prompt>         Message content. Verified same-person sends steer busy sessions at the next step boundary; other sends wait for the turn to settle
+  -n, --name [name]             Thread name (optional, defaults to prompt preview)
+  -a, --app-id [appId]          Bot application ID (required if no local database)
+  --notify-only                 Create notification thread without starting AI session
+  --cwd <path>                  Start session in an existing project subfolder or git worktree directory
+  -u, --user <user>             Discord user ID, mention, or username to add to thread
+  --agent <agent>               Agent to use for the session
+  --model <model>               Model to use (format: provider/model)
+  --permission <rule>           Session permission rule (repeatable). Format: "tool:action" or "tool:pattern:action". Actions: allow, deny, ask. Examples: --permission "bash:deny" --permission "edit:deny"
+  --injection-guard <pattern>   Injection guard scan pattern (repeatable). Enables prompt injection detection for this session. Format: "tool:argsGlob". Examples: --injection-guard "bash:*" --injection-guard "webfetch:*"
+  -f, --file <path>             Local file to attach (repeatable). Images, text files, PDFs, etc. Examples: --file screenshot.png --file report.pdf
+  --send-at <schedule>          Schedule send for future (UTC ISO date/time ending in Z, or cron expression)
+  --pre-run <command>           Run a shell command in the project before starting a scheduled task
+  --allow-concurrency           Allow concurrent sessions from the same scheduled task
+  --thread <threadId>           Post to an existing thread (own thread: plain post). Busy sessions steer verified same-person sends; other sends wait for the turn to settle
+  --session <sessionId>         Post prompt to thread mapped to an existing session
+  --parent-session <sessionId>  Link the new thread's session to a parent session (for attribution; this is not in-thread delegation)
+  --wait                        Wait for session to complete, then print session text to stdout
+  --source-session <sessionId>  Sending session. Set by the running bot for agent-shell sends; the target thread sees where the prompt came from
+  -h, --help                    Display this message
+
+
+Description:
+  Message or create other threads. Default creates a thread; use --thread/--session to message an existing thread. For in-thread parallel work, use the agent runtime's subagent tool.
+"
+`;

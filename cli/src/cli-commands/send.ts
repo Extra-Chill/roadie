@@ -3,7 +3,7 @@
 // The local SQLite database (channel_directories) is NOT required for the basic
 // flow: post message → create thread → remote bot picks it up. The local project
 // directory mapping is only needed for --send-at, --wait, and --cwd.
-import { goke } from 'goke'
+import { goke, GokeError, type Goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
 import * as errore from 'errore'
@@ -501,7 +501,7 @@ const cli = goke()
 cli
   .command(
     'send',
-    'Send a message to a Discord channel/thread. Default creates a thread; use --thread/--session to continue existing.',
+    'Message or create other threads. Default creates a thread; use --thread/--session to message an existing thread. For in-thread parallel work, use the agent runtime\'s subagent tool.',
   )
   .alias('start-session') // backwards compatibility
   .option('--platform <name>', 'Chat platform: discord or slack. Defaults to ROADIE_PLATFORM')
@@ -572,7 +572,7 @@ cli
   )
   .option(
     '--parent-session <sessionId>',
-    'Parent session ID for newly created child sessions',
+    "Link the new thread's session to a parent session (for attribution; this is not in-thread delegation)",
   )
   .option(
     '--wait',
@@ -582,7 +582,28 @@ cli
     '--source-session <sessionId>',
     'Sending session. Set by the running bot for agent-shell sends; the target thread sees where the prompt came from',
   )
-  .action(async (options) => {
+  // Removed options are deliberately not registered, even as hidden flags.
+  // Validate here so their migration hints survive goke's command cloning.
+  .allowUnknownOptions()
+  .action(async function (this: Goke, options) {
+      let removedHint: string | undefined
+      if ('project' in options || 'd' in options) {
+        removedHint = '--project was removed: channels are application configuration; use --channel'
+      } else if ('worktree' in options) {
+        removedHint = '--worktree was removed: create the checkout with your host tooling, then pass it with --cwd'
+      }
+      if (removedHint) {
+        const error = new GokeError(removedHint)
+        error.stack = ''
+        throw error
+      }
+      const command = this.matchedCommand!
+      command.config.allowUnknownOptions = false
+      try {
+        command.checkUnknownOptions()
+      } finally {
+        command.config.allowUnknownOptions = true
+      }
       // Sends that cannot open the bot's database go through the running bot:
       // Slack, agent tool shells (per-session token, POST /roadie/agent/send,
       // see agent-remote.ts) and host users without data-dir access
@@ -772,6 +793,5 @@ cli
       }
     },
   )
-
 
 export default cli
