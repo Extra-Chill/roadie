@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.22] - 2026-11-11
+
+### Changed
+- retire one-shot startup migrations every install has run
+
 ## [0.84.21] - 2026-11-11
 
 ### Changed
