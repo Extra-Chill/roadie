@@ -80,7 +80,15 @@ const cliLogger = createLogger(LogPrefix.CLI)
 
 /** Everything both send modes need once the options are validated. */
 type SendContext = {
-  options: Record<string, any>
+  options: Parameters<typeof sessionRun>[0] & {
+    allowConcurrency?: boolean
+    cwd?: string
+    model?: string
+    preRun?: string
+    sourceSession?: string
+    user?: string
+    wait?: boolean
+  }
   prompt: string
   notifyOnly?: boolean
   threadId?: string
