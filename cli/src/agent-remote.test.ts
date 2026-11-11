@@ -12,7 +12,8 @@ import * as upgradeCommand from './commands/upgrade.js'
 import { closeDb } from './db.js'
 import { setDataDir } from './config.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { createScheduledTask } from './database.js'
+import { createScheduledTask, setSessionTurnAttribution } from './database.js'
+import { AGENT_SEND_NONCE_ENV, resolveAgentSendPerson } from './session-handler/agent-send-person.js'
 import { relayRemoteRun, setRemoteSendRunner } from './remote-send.js'
 import { chooseLockPort } from './test-utils.js'
 import {
@@ -54,6 +55,7 @@ import {
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-agent-remote-'))
 const AGENT_SESSION = 'ses_agent_test'
+let lastShellEnv: Record<string, string> | undefined
 const savedEnv = Object.fromEntries(
   [
     AGENT_TOKEN_ENV,
@@ -110,8 +112,9 @@ beforeAll(async () => {
   if (started instanceof Error) throw started
   url = started
   secret = ensureAgentTokenSecret()
-  restoreRunner = setRemoteSendRunner(async (args, emit) => {
+  restoreRunner = setRemoteSendRunner(async (args, emit, shellEnv) => {
     runs.push(args)
+    lastShellEnv = shellEnv
     emit({ stream: 'stdout', data: 'stub stdout line\n' })
     emit({ stream: 'stderr', data: 'stub stderr line\n' })
     return nextExit
@@ -509,6 +512,15 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
       '--permission=bash:deny',
       `--source-session=${AGENT_SESSION}`,
     ])
+    // The child gets a single-use nonce for its Discord marker, never the token.
+    expect(JSON.stringify(lastShellEnv)).not.toContain(token())
+    const nonce = lastShellEnv?.[AGENT_SEND_NONCE_ENV]
+    await setSessionTurnAttribution({
+      sessionId: AGENT_SESSION, personId: 'person-a',
+      actor: { platform: 'discord', id: 'u1', name: 'a', via: 'chat' },
+    })
+    expect(await resolveAgentSendPerson(nonce)).toBe('person-a')
+    expect(await resolveAgentSendPerson(nonce)).toBeUndefined()
   })
 
   test('project remove and open-in-discord map their bodies', async () => {

@@ -1,4 +1,5 @@
 // Session inspection and archival terminal commands.
+import { sessionListIsBusy } from '../session-handler/session-list-busy.js'
 import { goke } from 'goke'
 import { z } from 'zod'
 import dedent from 'string-dedent'
@@ -237,7 +238,7 @@ cli
 
         for (const session of sessionsResult instanceof Error ? [] : sessionsResult) {
           const status = statuses[session.id]
-          const isBusy = Boolean(status && status.state !== 'idle')
+          const isBusy = await sessionListIsBusy(session.id, Boolean(status && status.state !== 'idle'))
           // Only relabel to showing-question when the session is actually busy.
           // An orphaned question left in the list after an abort (session idle)
           // must not hide or relabel an otherwise-idle session.

@@ -5,7 +5,13 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, vi } from 'vitest'
+import { Routes } from 'discord.js'
+import YAML from 'yaml'
+import { issueAgentSendNonce, resolveAgentSendPerson } from './session-handler/agent-send-person.js'
+import { getThreadSession, listThreadQueueItems, setSessionTurnAttribution } from './database.js'
+import { getRuntime } from './session-handler/runtime-registry.js'
+import { sessionListIsBusy } from './session-handler/session-list-busy.js'
 import type { FakeMatcher } from './agent-backend/pi/fake-model-server.js'
 import { findPi } from './agent-backend/pi/find-pi.js'
 import {
@@ -85,6 +91,59 @@ describe.skipIf(!findPi())('busy thread: boundary delivery', () => {
     username: 'boundary-tester',
     extraMatchers: [slowToolMatcher, steerReplyMatcher],
   })
+
+  test.each([
+    { name: 'same person', person: TEST_USER_ID, nonce: 'fresh', queued: false },
+    { name: 'different person', person: 'other-person', nonce: 'fresh', queued: true },
+    { name: 'no nonce', person: TEST_USER_ID, nonce: 'none', queued: true },
+    { name: 'replayed nonce', person: TEST_USER_ID, nonce: 'replayed', queued: true },
+    { name: 'unknown nonce', person: TEST_USER_ID, nonce: 'unknown', queued: true },
+  ] as const)('agent send from $name respects busy-turn isolation', async (row) => {
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: `BOUNDARY_SLOW_TOOL_MARKER ${row.name}`,
+    })
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000, predicate: (t) => t.name === `BOUNDARY_SLOW_TOOL_MARKER ${row.name}`,
+    })
+    await waitForBotMessageContaining({
+      discord: ctx.discord, threadId: thread.id, userId: TEST_USER_ID,
+      text: 'running slow tool', timeout: 4_000,
+    })
+    const sessionId = (await getThreadSession(thread.id))!
+    expect(await sessionListIsBusy(sessionId, false)).toBe(true)
+    const sourceSession = `source-${row.name}`
+    await setSessionTurnAttribution({
+      sessionId: sourceSession, personId: row.person,
+      actor: { platform: 'discord', id: TEST_USER_ID, name: 'source', via: 'chat' },
+    })
+    const issued = issueAgentSendNonce(sourceSession)
+    if (row.nonce === 'replayed') await resolveAgentSendPerson(issued)
+    const nonce = { fresh: issued, replayed: issued, unknown: 'f'.repeat(64), none: undefined }[row.nonce]
+    const runtime = getRuntime(thread.id)!
+    const enqueue = vi.spyOn(runtime, 'enqueueIncoming')
+    await ctx.botClient.rest.post(Routes.channelMessages(thread.id), {
+      body: {
+        content: 'BOUNDARY_STEER_MARKER please also note this',
+        embeds: [{ footer: { text: YAML.stringify({
+          start: true, userId: 'cli-asserted-user',
+          agentSendNonce: nonce,
+        }) } }],
+      },
+    })
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalled(), { timeout: 1_000 })
+    const result = await enqueue.mock.results[0]!.value
+    expect(result.queued).toBe(row.queued)
+    expect((await listThreadQueueItems(thread.id)).length).toBe(row.queued ? 1 : 0)
+    enqueue.mockRestore()
+    await waitForBotMessageContaining({
+      discord: ctx.discord, threadId: thread.id, userId: TEST_USER_ID,
+      text: 'steer-received', timeout: 10_000,
+    })
+    await waitForFooterMessage({
+      discord: ctx.discord, threadId: thread.id, timeout: 6_000,
+      afterMessageIncludes: 'steer-received', afterAuthorId: ctx.discord.botUserId,
+    })
+  }, 20_000)
 
   test(
     'a message during a slow tool does not abort it and is answered after it',

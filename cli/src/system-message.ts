@@ -265,6 +265,8 @@ export type RepliedMessageContext = {
 
 /** YAML marker embedded in thread starter message footer for bot to parse */
 export type ThreadStartMarker = {
+  /** Single-use nonce the agent API issued for a verified sending session; never a credential. */
+  agentSendNonce?: string
   /** Whether to auto-start an AI session */
   start?: boolean
   /** Existing project subfolder or git worktree to bind the thread to */

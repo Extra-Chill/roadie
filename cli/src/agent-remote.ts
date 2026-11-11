@@ -30,6 +30,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as errore from 'errore'
 import { AGENT_TOKEN_ENV, verifyAgentToken } from './agent-token.js'
+import { AGENT_SEND_NONCE_ENV, issueAgentSendNonce } from './session-handler/agent-send-person.js'
 import { getLockPort, readRoadieSecret } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -512,7 +513,7 @@ function respondJson(
 }
 
 /** Run the mapped subcommand as a child of the bot, streaming NDJSON back. */
-async function runAgentChild(args: string[], res: http.ServerResponse): Promise<void> {
+async function runAgentChild(args: string[], res: http.ServerResponse, shellEnv?: Record<string, string>): Promise<void> {
   agentLogger.log(`Agent run: ${args.filter((arg) => !arg.startsWith('--prompt=')).join(' ')}`)
   if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson' })
   const emit = (event: RemoteSendEvent) => {
@@ -521,7 +522,7 @@ async function runAgentChild(args: string[], res: http.ServerResponse): Promise<
   // `session wait` and `send --wait` can stay quiet for a long time; keep
   // idle timeouts away.
   const keepalive = setInterval(() => emit({ keepalive: true }), 20_000)
-  const exit = await getRemoteSendRunner()(args, emit).finally(() => clearInterval(keepalive))
+  const exit = await getRemoteSendRunner()(args, emit, shellEnv).finally(() => clearInterval(keepalive))
   emit({ exit })
   res.end()
 }
@@ -673,7 +674,7 @@ async function runAgentSend(
       respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       return
     }
-    await runAgentChild(args, res)
+    await runAgentChild(args, res, { [AGENT_SEND_NONCE_ENV]: issueAgentSendNonce(sessionId) })
   } finally {
     fs.rmSync(fileDir, { recursive: true, force: true })
   }

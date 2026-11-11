@@ -24,6 +24,7 @@ import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, getDataDir, getLockPort } from '../config.js'
 import { getSendToken, remoteSendOptions, sendViaRunningBot, shouldSendRemotely } from '../remote-send.js'
+import { AGENT_SEND_NONCE_ENV } from '../session-handler/agent-send-person.js'
 import { AGENT_SEND_PATH, resolveAgentCredentials } from '../agent-remote.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -242,7 +243,7 @@ async function sendToThread(ctx: SendContext): Promise<void> {
     process.exit(0)
   }
 
-  const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser))
+  const threadPromptMarker = buildStartMarker(sessionRun(options, threadTargetUser), { agentSendNonce: process.env[AGENT_SEND_NONCE_ENV] || undefined })
   const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
 
   // Prefix the prompt so it's clear who sent it (matches /queue format).
@@ -407,7 +408,7 @@ async function sendToChannel(ctx: SendContext): Promise<void> {
 
   // Embed marker for auto-start sessions (unless --notify-only)
   // Bot parses this YAML to know it should start a session and set the initial user
-  const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), resolvedCwd ? { cwd: resolvedCwd } : {})
+  const embedMarker = notifyOnly ? undefined : buildStartMarker(sessionRun(options, resolvedUser), { cwd: resolvedCwd, agentSendNonce: process.env[AGENT_SEND_NONCE_ENV] || undefined })
   const autoStartEmbed = embedMarker
     ? await buildThreadStartEmbeds(embedMarker)
     : undefined
@@ -507,7 +508,7 @@ cli
   .option('-c, --channel <channelId>', 'Discord channel ID')
   .option(
     '-p, --prompt <prompt>',
-    'Message content. A busy --thread/--session takes it at its next step boundary; it never interrupts the run',
+    'Message content. Verified same-person sends steer busy sessions at the next step boundary; other sends wait for the turn to settle',
   )
   .option(
     '-n, --name [name]',
@@ -563,7 +564,7 @@ cli
   )
   .option(
     '--thread <threadId>',
-    'Post prompt to an existing thread. A busy session takes it at its next step boundary',
+    'Post to an existing thread (own thread: plain post). Busy sessions steer verified same-person sends; other sends wait for the turn to settle',
   )
   .option(
     '--session <sessionId>',

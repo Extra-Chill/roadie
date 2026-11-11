@@ -1,6 +1,7 @@
 // Core Discord bot module that handles message events and bot lifecycle.
 // Bridges Discord messages to agent sessions, manages voice connections,
 // and orchestrates the main event loop for the Roadie bot.
+import { resolveAgentSendPerson } from './session-handler/agent-send-person.js'
 //
 // Shutdown resilience: during self-restart (gateway reconnect limit, SIGUSR2),
 // discord.js can still fire errors from pending async operations (DNS lookups,
@@ -597,6 +598,9 @@ export async function startDiscordBot({
       const sessionStartSource = isCliInjectedPrompt
         ? parseSessionStartSourceFromMarker(promptMarker)
         : undefined
+      const cliInjectedPersonId = isCliInjectedPrompt
+        ? await resolveAgentSendPerson(promptMarker?.agentSendNonce)
+        : undefined
       const cliInjectedUsername = isCliInjectedPrompt
         ? promptMarker?.username || 'roadie-cli'
         : undefined
@@ -1025,8 +1029,9 @@ export async function startDiscordBot({
         // blocking SSE event handling in dispatchAction.
         await runtime.enqueueIncoming({
           prompt: '',
+          personId: cliInjectedPersonId,
           userId: cliInjectedUserId || message.author.id,
-            actorVia: cliInjectedUserId ? 'cli' : 'chat',
+          actorVia: cliInjectedPersonId || cliInjectedUserId ? 'cli' : 'chat',
           username:
             cliInjectedUsername ||
             message.member?.displayName ||
@@ -1190,8 +1195,9 @@ export async function startDiscordBot({
 
           await runtime.enqueueIncoming({
             prompt: '',
+            personId: cliInjectedPersonId,
             userId: cliInjectedUserId || message.author.id,
-            actorVia: cliInjectedUserId ? 'cli' : 'chat',
+            actorVia: cliInjectedPersonId || cliInjectedUserId ? 'cli' : 'chat',
             username: cliInjectedUsername || message.member?.displayName || message.author.displayName,
             sourceMessageId: message.id,
             sourceThreadId: channel.id,

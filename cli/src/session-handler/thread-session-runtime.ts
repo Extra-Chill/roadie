@@ -2600,6 +2600,11 @@ export class ThreadSessionRuntime {
   // last prompt that applied them.
   private permissionOwner: string | undefined
 
+  /** Bot-owned identity of the speaker whose permissions this session uses. */
+  getPermissionOwner(): string | undefined {
+    return this.permissionOwner
+  }
+
   private async submitToSession(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
