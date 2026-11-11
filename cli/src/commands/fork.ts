@@ -45,7 +45,7 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { getOrCreateRuntime } from '../session-handler/runtime-registry.js'
 import { AgentBackendError, DiscordOperationError } from '../errors.js'
-import { resolveForkWorkspace, forkWorkspaceNotice } from '../fork-workspace.js'
+import { resolveForkWorkspace } from '../fork-workspace.js'
 import { doAction } from '../hooks.js'
 import { markPendingSessionTitle } from '../session-title.js'
 import { replyOrEditInteraction } from '../interaction-reply.js'
@@ -155,7 +155,7 @@ export async function forkSessionToThread({
   username: string
   appId: string | undefined
   images?: DiscordFileAttachment[]
-}): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
+}): Promise<{ thread: ThreadChannel; forkedSessionId: string; degradationReason?: string } | Error> {
   const startedAt = Date.now()
   const crossChannel = !!targetChannel && targetChannel.id !== sourceThread.parentId
   const targetProject = crossChannel
@@ -189,9 +189,8 @@ export async function forkSessionToThread({
     projectDirectory: targetProject, sourceDirectory: sdkDirectory, prompt, userId,
     platform: 'discord', spaceId: sourceThread.guildId, channelId: crossChannel ? targetChannel.id : sourceThread.parentId ?? undefined,
   })
-  if (workspace instanceof Error) return workspace
-  const forkDirectory = workspace.binding?.workingDirectory ?? (crossChannel ? targetProject : sdkDirectory)
-  const forkProjectDirectory = workspace.binding?.projectDirectory ?? targetProject
+  const forkDirectory = workspace.binding?.workingDirectory ?? (crossChannel && workspace.degradationReason === undefined ? targetProject : sdkDirectory)
+  const forkProjectDirectory = workspace.binding?.projectDirectory ?? (workspace.degradationReason !== undefined ? projectDirectory : targetProject)
 
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
@@ -329,7 +328,7 @@ export async function forkSessionToThread({
     await cleanup()
     return noticeResult
   }
-  if (workspace.binding) await sendThreadMessage(thread, forkWorkspaceNotice(workspace.binding))
+  if (workspace.notice) await sendThreadMessage(thread, workspace.notice)
 
   forkLogger.log(
     `Created fork session ${forkedSession.id} in thread ${thread.id} from ${sourceThread.id} (session ${sessionId}${fromMessageId ? `, before message ${fromMessageId}` : ''}), system prompt ${copiedSystem ? 'reused' : 'regenerated'}`,
@@ -405,7 +404,7 @@ export async function forkSessionToThread({
   })
   if (forkedNote instanceof Error) forkLogger.warn(`Could not record the fork in source session ${sessionId}:`, forkedNote)
 
-  return { thread, forkedSessionId: forkedSession.id }
+  return { thread, forkedSessionId: forkedSession.id, degradationReason: workspace.degradationReason }
 }
 
 /** Shared slash/CLI target resolution; same-parent forks preserve source settings. */
