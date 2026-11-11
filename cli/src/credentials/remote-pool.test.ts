@@ -180,7 +180,9 @@ describe('startRemotePoolRelay', () => {
 
   test('an unreachable host is a 502, not a hang', async () => {
     relay = await startRemotePoolRelay({ config: { url: 'http://127.0.0.1:9', key: 'k' }, retryWindowMs: 30, retryDelayMs: 5 })
-    expect((await ask(relay.baseUrl, relay.issueKey(() => 'session-one'))).status).toBe(502)
+    const response = await ask(relay.baseUrl, relay.issueKey(() => 'session-one'))
+    expect(response.status).toBe(502)
+    expect(await response.json()).toMatchObject({ type: 'error', error: { type: 'api_error', message: expect.stringContaining('is unreachable:') } })
   })
 
   test('retries connection failures until the host comes up', async () => {

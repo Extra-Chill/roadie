@@ -936,7 +936,7 @@ export class ThreadSessionRuntime {
 
     const eventSessionId = agentEventSessionId(agentEvent)
     const toastSessionId = agentEvent.type === 'notice'
-      ? extractToastSessionId({ message: agentEvent.message })
+      ? agentEvent.sessionId ?? extractToastSessionId({ message: agentEvent.message })
       : undefined
 
     if (shouldLogSessionEvents) {
@@ -2154,6 +2154,12 @@ export class ThreadSessionRuntime {
       return
     }
 
+    if (event.error?.name === 'TransportUnavailableError') {
+      await this.chat.sendNotice(event.error.message)
+      await this.persistEventBufferDebounced.flush()
+      return
+    }
+
     const errorMessage = truncateSessionErrorMessage(
       formatSessionErrorFromProps(event.error),
     )
@@ -2425,6 +2431,7 @@ export class ThreadSessionRuntime {
   }
 
   private async handleTuiToast(properties: {
+    sessionId?: string
     title?: string
     message: string
     level: 'info' | 'success' | 'warning' | 'error'
@@ -2432,7 +2439,7 @@ export class ThreadSessionRuntime {
     if (properties.level === 'warning') {
       return
     }
-    const toastSessionId = extractToastSessionId({ message: properties.message })
+    const toastSessionId = properties.sessionId ?? extractToastSessionId({ message: properties.message })
     if (!toastSessionId) {
       return
     }

@@ -87,6 +87,7 @@ export type RemotePoolRelay = {
   revokeKey(key: string): void
   /** Release the session's route pin on the pool host. */
   endTurn(sessionId: string): Promise<void>
+  waitForRecovery(signal: AbortSignal): Promise<void>
   close(): Promise<void>
 }
 
@@ -112,7 +113,7 @@ export async function startRemotePoolRelay({
 
   function reject(res: http.ServerResponse, status: number, message: string) {
     res.writeHead(status, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message } }))
+    res.end(JSON.stringify({ type: 'error', error: { type: status === 429 ? 'rate_limit_error' : status === 401 ? 'authentication_error' : 'api_error', message } }))
   }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -178,6 +179,28 @@ export async function startRemotePoolRelay({
       await fetchImpl(`${config.url}${POOL_END_TURN_PATH}`, { method: 'POST', headers: { [PROXY_KEY_HEADER]: config.key, ...sessionHeader(sessionId) } })
         .then((response) => response.body?.cancel())
         .catch(() => {})
+    },
+    async waitForRecovery(signal) {
+      let delayMs = 1_000
+      while (!signal.aborted) {
+        const response = await fetchImpl(`${config.url}${POOL_CATALOG_PATH}`, {
+          headers: { [PROXY_KEY_HEADER]: config.key },
+          signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+        }).catch(() => undefined)
+        if (response) {
+          await response.body?.cancel()
+          // Any HTTP response proves transport recovery; auth/provider errors
+          // must go back through the ordinary request/error path.
+          return
+        }
+        await new Promise<void>((resolve) => {
+          const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve() }
+          const timer = setTimeout(done, delayMs)
+          signal.addEventListener('abort', done, { once: true })
+          if (signal.aborted) done()
+        })
+        delayMs = Math.min(delayMs * 2, 30_000)
+      }
     },
     close: () => new Promise((resolve) => server.close(() => resolve())),
   }

@@ -77,6 +77,7 @@ import {
 } from '../../turn-attribution-env.js'
 import { ensureIsolatedShellWrapper } from '../../isolated-shell.js'
 import { PI_KEY_ENV } from './pool.js'
+import { TransportRecovery } from '../../session-handler/transport-recovery.js'
 import { getCurrentVersion } from '../../upgrade.js'
 import { createLogger } from '../../logger.js'
 
@@ -209,6 +210,7 @@ export type PiBackendOptions = {
     revokeKey(key: string): void
     /** End the session's turn affinity (called when a run settles). */
     endTurn?(sessionId: string): void
+    waitForRecovery?(signal: AbortSignal): Promise<void>
   }
   /**
    * Shell isolation contract (--isolate-shells): require every session's bash
@@ -380,6 +382,8 @@ function readSessionHeader(file: string): { id: string; cwd: string; createdAt: 
 export class PiBackendProvider implements AgentBackendProvider {
   readonly id = 'pi'
   private sessions = new Map<string, RunningSession>()
+  private transportRecovery = new TransportRecovery()
+  private transportFailures = new Set<string>()
   /**
    * Pool keys for tool shells, one per session. A Pi process's own key is
    * revoked when the process exits (idle stop, crash), but a tool shell can
@@ -631,6 +635,7 @@ export class PiBackendProvider implements AgentBackendProvider {
 
   /** Stop every Pi process; resolves once they have all exited. */
   async dispose(): Promise<void> {
+    this.transportRecovery.dispose()
     const processes = [...this.sessions.values()].map((session) => session.process)
     // Open forms must not outlive the backend: answer them cancel.
     for (const sessionId of this.sessions.keys()) this.forms.cancelForSession(sessionId)
@@ -827,7 +832,40 @@ export class PiBackendProvider implements AgentBackendProvider {
       this.touch(session)
       this.options.pool?.endTurn?.(session.id)
     }
-    this.emit(session.translator.translate(record), record)
+    const events = session.translator.translate(record)
+    const wait = this.options.pool?.waitForRecovery
+    const outage = wait && events.some((event) => event.type === 'error'
+      && /pool host https?:\/\/\S+ is unreachable:/.test(event.error?.message ?? ''))
+    if (record.type === 'message_end') this.transportFailures.delete(session.id)
+    if (outage) this.transportFailures.add(session.id)
+    if (wait && record.type === 'agent_settled' && this.transportFailures.delete(session.id)) {
+      this.transportRecovery.start({
+        sessionId: session.id,
+        wait,
+        offline: () => this.emit([{ type: 'error', sessionId: session.id, error: {
+          name: 'TransportUnavailableError',
+          message: 'Credential pool host is offline — your message is queued and will run when it’s back. This affects all threads.',
+        } }], record),
+        online: () => this.emit([{ type: 'notice', sessionId: session.id, message: 'Credential pool host is back online — resuming queued messages.', level: 'info' }], record),
+        // The failed user/tool turn is already in Pi's history. A continuation
+        // resumes it without submitting the original message (or tools) twice.
+        resume: async () => {
+          const active = await this.ensure(session.id, session.directory)
+          if (active instanceof Error) return active
+          return active.process.request({ type: 'prompt', message: 'Continue the interrupted turn.', streamingBehavior: 'steer' })
+        },
+        failed: (error) => this.emit([{ type: 'error', sessionId: session.id, error: { name: 'APIError', message: String(error) } }], record),
+      })
+      this.emit(events.filter((event) => event.type !== 'error'), record)
+      return
+    }
+    this.emit(events.filter((event) => {
+      if (outage && event.type === 'error') return false
+      // Pi's bounded retries still run, but their raw transport JSON is not
+      // useful thread output. The settled failure gets the one outage notice.
+      return !(wait && event.type === 'status' && event.status.state === 'retry'
+        && /pool host https?:\/\/\S+ is unreachable:/.test(event.status.message))
+    }), record)
   }
 
   /** `roadie session editors` reads this log; Pi's edit/write take `path`. */
@@ -1352,6 +1390,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         return limit !== undefined ? history.slice(-limit) : history
       },
       prompt: async ({ sessionId, directory, parts, system, agent, model, variant, noReply }) => {
+        if (!noReply && this.transportRecovery.enqueue(sessionId, () => this.backend.sessions.prompt({ sessionId, directory, parts, system, agent, model, variant, noReply }))) return undefined
         const session = await this.ensure(sessionId, directory)
         if (session instanceof Error) return session
         // Context-only ingress must not alter an executing speaker's policy,
@@ -1446,6 +1485,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         })
       },
       abort: async ({ sessionId }) => {
+        this.transportRecovery.cancel(sessionId)
         const session = this.sessions.get(sessionId)
         const dead = !session?.process.running
         // A session that is not running cannot be aborted, but prompts it left

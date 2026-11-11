@@ -25,6 +25,7 @@ export async function startPiPool(): Promise<Error | {
   issueKey(sessionId: () => string | undefined): string
   revokeKey(key: string): void
   endTurn(sessionId: string): void
+  waitForRecovery?(signal: AbortSignal): Promise<void>
 }> {
   const dataDir = getDataDir()
   const agentDir = process.env['ROADIE_PI_AGENT_DIR'] || path.join(dataDir, 'pi-agent')
@@ -45,6 +46,7 @@ export async function startPiPool(): Promise<Error | {
       agentDir,
       issueKey: (sessionId) => relay.issueKey(sessionId),
       revokeKey: (key) => relay.revokeKey(key),
+      waitForRecovery: (signal) => relay.waitForRecovery(signal),
       endTurn: (sessionId) => {
         void relay.endTurn(sessionId)
       },
