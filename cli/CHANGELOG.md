@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.84.25] - 2026-11-11
+
+### Fixed
+- clarify cross-thread messaging and preserve removed flag hints
+
 ## [0.84.24] - 2026-11-11
 
 ### Fixed
