@@ -85,6 +85,16 @@ starters or participants. Existing conversations without recorded admission
 can explicitly admit eligible participants through their configured join rule;
 Roadie does not infer a trusted starter from display names or model text.
 
+## Pausing a conversation
+
+Discord `/off` pauses replies in the current conversation; `/on` resumes them.
+The durable admission includes `pausedAt` (an ISO timestamp or `null`), so the
+pause survives restart. While paused, the built-in intake decision records
+eligible messages as context when a session exists, without admitting new
+participants; without a session it ignores them. Mentions do not bypass the
+pause. Eligibility and disabled-channel checks still apply. The host filter
+receives this paused admission and can refine the decision.
+
 ## Host filter
 
 ```js

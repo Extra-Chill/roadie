@@ -40,12 +40,16 @@ full cause chain is logged. A returned binding is reported through
 `fork_workspace_abandoned` before falling back; no provider needs no warning.
 Successful isolated workspaces retain their workspace/committed-base notice.
 
-## Conversations with a non-Git home
+## Host example: conversations with a non-Git home
 
 A conversation can live at a WordPress site root while its active coding task
 owns a separate checkout. Roadie supplies the source session ID to the host;
 repository selection performs no transcript read, tool-history inspection or
 prompt parsing.
+
+For example, a host using wp-coding-agents and Homeboy can implement the
+following repository-selection policy. This is host-side behavior, not a
+Roadie requirement or a built-in Homeboy integration.
 
 The wp-coding-agents shell adapter exports an opaque source-session reference
 as `HOMEBOY_CALLER_CONTEXT`. Homeboy captures it at original task admission and

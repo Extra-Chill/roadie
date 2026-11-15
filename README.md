@@ -52,19 +52,21 @@ For a long-running install, see [Running as a service](#running-as-a-service).
 - **All your models, including subscriptions.** Run `/credentials add` to add an API key or an existing Claude Pro/Max or ChatGPT/Codex subscription to a credential pool. Add several accounts and Roadie rotates between them on rate limits.
 - **Credential pools.** Roadie's own rotation: ordered pools of API keys (any models.dev provider, or a custom endpoint) and Claude Pro/Max subscriptions exposed as `roadie/<rotation>` models, with per-person routing so each session bills to its owner's accounts. Manage everything from Discord with `/credentials`. See [Credential pools](docs/credential-pools.md) for modes, thread billing, the `person` filter's `credentialPool`, and the security limits.
 - **Live streaming.** Assistant text, tool calls, context usage and a footer with the model and agent stream into the thread as the run happens.
-- **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs.
+- **Interactive turns.** Permission requests, questions, action buttons and file requests from the agent become native buttons, selects and dialogs. Action buttons are held until the turn ends, so they follow the final explanation.
 - **Conversation intake.** Configure mention/command starts, natural participant follow-ups, and context-only messages with the same [intake policy](docs/conversation-intake.md) on Discord and Slack.
-- **Fork.** `/fork` branches the session into a new thread while the original keeps working. Host-provided [fork workspaces](docs/fork-workspaces.md) isolate the fork when available; allocation or validation failures still copy the conversation in the source directory and post a visible notice explaining why. Add `prompt:` to start the fork on something, `from:` to branch from an earlier message, or `channel:` to continue in another Roadie-bound channel's project with its defaults and system prompt. The title agent generates each fork's title from only its new task prompt (or its first message when created without a prompt). Naming runs in the background and never delays task startup. Title requests exclude parent history, tools and coding instructions, bound input to 2,048 characters and output to 96 tokens, and time out after 15 seconds. It runs on the same model routing as any other agent: its own `agent.title.model` when set, otherwise the default model rotation. The source link stays in the conversation; later messages preserve the fork's task title.
+- **Fork.** `/fork` branches the session into a new thread while the original keeps working. Host-provided [fork workspaces](docs/fork-workspaces.md) isolate the fork when available; allocation or validation failures still copy the conversation in the source directory and post a visible notice explaining why. Add `prompt:` to start the fork on something, `from:` to branch from an earlier message, or `channel:` to continue in another Roadie-bound channel's project with its defaults and system prompt. The title agent generates each fork's title from only its new task prompt (or its first message when created without a prompt). Naming runs in the background and never delays task startup. Title requests exclude parent history, tools and coding instructions, bound input to 2,048 characters and output to 96 tokens, and time out after 15 seconds. It runs on the same model routing as any other agent: its own `agent.title.model` when set, otherwise the default model rotation. The source link stays in the conversation; later messages preserve the fork's task title. The source session receives a context-only note linking to the copy, without starting another turn.
 - **Subagents.** When a session delegates to a child session, Roadie tracks it and reports it to plugins (see [Subagents](#subagents)).
 - **Scheduled tasks.** Run a prompt at a future time or on a cron schedule with `roadie send --send-at`; manage them with `/tasks` or `roadie task list`. Sessions can also sleep and wake themselves later.
 - **Thread working directories.** `roadie send --cwd <path>` runs a session in a project subfolder or an existing git worktree, and the thread keeps that folder across restarts. Creating and merging checkouts is left to your own tooling.
-- **Images and files** in both directions.
+- **Images and files** in both directions. Discord forwarded messages, including their attachments, are accepted too.
+- **Reader-local times.** Agents are guided to use chat timestamps, rendered in each reader's own timezone.
+- **Bounded compaction.** Pi compaction requests concise continuation summaries with a fixed output-token budget, rather than letting summaries grow unchecked.
 - **Project commands, skills and MCP prompts** become slash commands (Pi's own `.pi/prompts`, `.pi/skills` and `.agents/skills`; see [Agent backend](docs/agent-backend.md)). Switch agents with `/<name>-agent`.
 - **Shell commands.** Prefix a message with `!` to run it in the thread's working directory.
 
 ### How messages reach a busy session
 
-A message sent during an active run **never interrupts it**. The agent picks it up at its **next step boundary**, as soon as the current tool call finishes, and carries on with it in context. A long build, rebase or deploy is never killed halfway because someone typed. While the message waits, it carries a ⏳ reaction.
+A message sent during an active run **never interrupts it**. The agent picks it up at its **next step boundary**, as soon as the current tool call finishes, and carries on with it in context. A long build, rebase or deploy is never killed halfway because someone typed. While the message waits, it carries a ⏳ reaction. Compatible consecutive queued messages from the same author coalesce into one attributed prompt, preserving message IDs, send times and queue age; commands, images and explicit turn overrides stay separate.
 
 To stop a run, use `/abort`. To have something done after the current task, say so in the message ("after you finish, run the tests").
 
@@ -145,6 +147,10 @@ Service installs configure Roadie through the environment; nothing needs to touc
 | `ROADIE_BOT_TOKEN` | Discord bot token; the application ID is derived from it. The token stays in memory: the data directory records only the application ID, and a token saved there earlier for the same app is cleared. |
 | `ROADIE_SLACK_BOT_TOKEN`, `ROADIE_SLACK_SIGNING_SECRET` | Slack app credentials (see [Native Slack](docs/native-slack.md) for the rest). |
 | `ROADIE_CHANNELS_CONFIG` | The [channel and project file](#channels-and-projects). |
+| `ROADIE_CONTEXT_PROVIDER` | Host command supplying context as JSON on stdin/stdout. Same as `--context-provider`. |
+| `ROADIE_PROMPT_CONFIG` | YAML/JSON [system prompt overrides](docs/prompt-config.md). Same as `--prompt-config`. |
+| `ROADIE_ISOLATE_SHELLS` | Unprivileged tool-shell user (Linux, opt-in). Same as `--isolate-shells`; see [Credential pools](docs/credential-pools.md#--isolate-shells-user-opt-in-os-isolation). |
+| `ROADIE_CREDENTIALS` | Pool routing: `global` (default), `per-person`, or `per-person-fallback`. Same as `--credentials`. |
 | `ROADIE_SERVICE_TOKEN` | Send token (any secret string). Lets other OS users send through the running bot. Unset, the send endpoint is off. |
 | `ROADIE_DATA_DIR` | Data directory (default `~/.roadie`). Same as `--data-dir`. |
 | `ROADIE_LOCK_PORT` | Port of the local endpoint (bound to `127.0.0.1`). |
@@ -171,7 +177,7 @@ The send token only sends. It cannot open the bot's database, so it cannot read 
 
 Restart behavior is built in, so the unit needs no pre- or post-start scripts:
 
-- **Orphan cleanup.** The bot records the pid of the agent server it spawns. If a previous run died without cleaning up, the next start stops that leftover server first. A recorded pid that now belongs to another program is left alone.
+- **Child process cleanup.** Roadie owns process groups, not just their leaders. On shutdown it captures descendant groups before stopping Pi and terminates owned groups, including tools that outlive their parent. A shutdown watchdog force-kills owned groups if cleanup hangs.
 - **Restart continuation.** On shutdown the bot records which threads had a run in progress. The next start posts a notice in each one and gives the session a continuation turn. Records older than 15 minutes only get the notice. Disable with `ROADIE_RESUME_INTERRUPTED=0`.
 
 ## Extending Roadie
@@ -198,6 +204,8 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | `agent_backend` | the agent backend provider (default: Pi) | — |
 | `person` | the person behind a chat user, or `null` | `{ actor, context }` |
 | `channel_policy` | a channel's policy (`undefined` = built-in, `null` = don't answer) | `{ channelId }` |
+| `conversation_intake` | response/admission decision for eligible actors: `{ outcome, admit }` | `{ request, admission, policy }`; see [Conversation intake](docs/conversation-intake.md) |
+| `fork_workspace` | host workspace provider, `Error`, or `null` (ordinary conversation fork) | the [fork workspace request](docs/fork-workspaces.md) |
 | `welcome_message` | text of the private welcome a newly admitted person gets once (a DM on Discord and Slack) and `/start` (`/roadie start` on Slack) re-shows; starts as Roadie's generic default, `null` or `''` disables it | `{ actor, person, personKey, channelId?, pendingMcpServers, trigger }` |
 | `identity_link_provider` | async. Self-serve identity linking: `{ url, name?, credential? }` or `null` (default; linking not offered). `url` is an OAuth-protected resource, typically a person MCP server URL; Roadie discovers its authorization server like `/connect` does | `{ actor, context }` |
 | `link_identity` | async. Starts as `null` (not linked). Verify the sign-in token and record the link; return `{ linked: true }` or `{ linked: false, reason }`. The token is a secret: never log or store it | `{ actor, context, token: { access, refresh?, expires?, tokenEndpoint?, clientId?, revocationEndpoint? } }` |
@@ -211,6 +219,7 @@ Lower `priority` runs first (default 10); equal priorities run in registration o
 | Action | Context |
 |---|---|
 | `ready` | — |
+| `fork_workspace_abandoned` | `{ request, binding }` for a provisioned workspace whose setup failed; the host owns cleanup |
 | `session_idle` | `{ sessionId, threadId, parentSessionId? }` |
 | `session_error` | `{ sessionId, threadId, message, parentSessionId? }` |
 | `child_session_started` | `{ parentSessionId, childSessionId, agent?, description?, status?, threadId }` |
@@ -222,7 +231,7 @@ Hosts that prefer external commands to code can use the flags `--channels-config
 
 #### Discord channel topics
 
-For per-channel context, set a Discord channel topic. Roadie injects its trimmed text into new sessions' system prompts as `<channel-topic>`. The system prompt is pinned per session, so topic changes apply only to new sessions. Discord limits topics to 1,024 characters. Disable or replace this section with the `channel-topic` section id in prompt config.
+For per-channel context, set a Discord text, forum or announcement channel topic. Roadie injects its trimmed text into new sessions' system prompts as `<channel-topic>`. The system prompt is pinned per session, so topic changes apply only to new sessions. Discord text and announcement topics are limited to 1,024 characters; forum topics can be longer. Disable or replace this section with the `channel-topic` section id in prompt config.
 
 #### Identity
 
@@ -301,6 +310,12 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | Command | Description |
 |---|---|
 | `/abort` | Stop the current run |
+| `/off`, `/on` | Pause or resume replies in this conversation; paused messages remain context |
+| `/channel bind\|behavior\|unbind` | Enable a channel, change its response behavior, or stop responses while keeping history; see [Application bindings](docs/application-bindings.md) |
+| `/tasks [all]` | List scheduled tasks; optionally include completed, cancelled and failed tasks |
+| `/verbosity` | Set channel output verbosity |
+| `/session-id` | Show the current session ID |
+| `/remove-project` | Remove Discord channels for a project |
 | `/fork [prompt] [from] [channel]` | Branch the session into a new thread; the original keeps running |
 | `/model` | Choose a model for the session, channel, or global default; use **Change thinking level** or **Clear override** buttons for the current model. Goes straight to models when only one provider has pickable models |
 | `/agent` | Change the agent for this channel or session |
@@ -313,6 +328,12 @@ The most common Discord slash commands (Slack exposes the session commands throu
 | `/start` | Show the welcome and how to use Roadie, privately |
 
 The CLI covers the same ground for scripts and other agents: `roadie send` (start or continue sessions, schedule tasks, attach files), `roadie session` (`list`, `read`, `search`, `wait`, `archive`, `fork`). In an agent shell, `roadie session fork [--session <id>] [--channel <id>] [--prompt <text>] [--from <message id>] [--json]` branches your session just like `/fork`, optionally into another Roadie-bound project channel. Other CLI commands include `roadie project`, `roadie task` and `roadie upload-to-chat`. Run `roadie --help` or `roadie <command> --help` for the details.
+
+## Documentation
+
+- [Application channel and runtime bindings](docs/application-bindings.md)
+- [Host prompt configuration](docs/prompt-config.md)
+- [Debugging and profiling](docs/debugging-roadie.md)
 
 ## Troubleshooting
 
