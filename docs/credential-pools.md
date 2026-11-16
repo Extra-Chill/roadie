@@ -190,6 +190,23 @@ Pi's model picker displays that name. The currently installed Pi's
 `list`, `add-key`, `login` and `remove` manage the pool host's accounts when
 this Roadie uses a remote pool (see below).
 
+### Person MCP credentials
+
+Operators can manage the tokens used by the `person` filter's `mcpServers`
+entries separately from model accounts:
+
+```bash
+roadie credentials mcp list --person <key>
+roadie credentials mcp set --person <key> --credential <name> < token.json
+roadie credentials mcp remove --person <key> --credential <name>
+```
+
+The person key is the host `personId` or `<platform>:<actorId>`. `set` reads
+OAuth token JSON from stdin: `access_token` is required; `refresh_token`,
+`expires_in` (seconds), `token_endpoint`, `client_id` and `client_secret` are
+optional. The credential name matches the server entry's `credential` (or its
+server name when omitted there). `list` prints names only, never tokens.
+
 ## Remote pool
 
 One pool can serve many machines. A **pool host** runs the pool with no chat
@@ -204,7 +221,33 @@ roadie credentials serve --host 100.64.0.5 --port 47120
 Accounts, OAuth refresh, rotation and 429 cooldowns live only on the host, so
 each refresh token has exactly one holder. Every client is registered with
 `roadie credentials client add <name> [--pools <id,id>]`; the host stores only
-a hash of the key.
+a hash of the key. `roadie credentials client list` lists registrations without
+keys; `roadie credentials client remove <name>` revokes a key on the next request.
+
+The local bot's pool proxy accepts `ROADIE_POOL_PROXY_HOST` (default loopback)
+and `ROADIE_POOL_PROXY_PORT` (default an ephemeral port). Set a fixed port for
+external clients. Headless `credentials serve` requires a fixed port, supplied
+by `--port` or `ROADIE_POOL_PROXY_PORT`; `--host` overrides
+`ROADIE_POOL_PROXY_HOST`. Expose it only on a trusted network or behind an
+appropriately secured proxy.
+
+### Standalone Pi clients
+
+A standalone Pi process can bill to a registered client's pools without running
+a Roadie chat bot. On the pool host, generate its model configuration:
+
+```bash
+roadie credentials client add workstation --pools shared
+roadie credentials client pi-agent-dir ./workstation-agent --base-url http://100.64.0.5:47120 --pools shared
+```
+
+Copy the generated agent directory to the client. Run Pi there with
+`PI_CODING_AGENT_DIR` pointing to it and `ROADIE_PI_KEY` holding the key printed
+by `client add`. The generated `models.json` offers one `roadie/<rotation>`
+model per rotation. Requests authenticate with `x-roadie-key` and bill to the
+client's registered pools, not a chat session owner.
+
+### Roadie bot clients
 
 A Roadie bot uses the host instead of its local pool with:
 
@@ -335,11 +378,15 @@ billing entirely. The field is optional; an invalid pool id is ignored.
 
 **Read this before enabling per-person modes.**
 
-In phases 1–2, credentials live as files under `<dataDir>/credentials/`
-(mode 0600, one directory per pool) and, by default, agent tool shells run as
-the bot's OS user. That means **an agent with shell access can read every
-pool's keys and tokens** — theirs and everyone else's. The file permissions protect
-against other OS users, not against the agent your bot runs.
+Whenever pools are on, proxy-key isolation is on: the bot's pool proxy holds
+provider credentials, and Pi processes receive only per-process proxy keys.
+Refresh tokens and API keys do not enter Pi through pool routing.
+
+Credentials still live as files under `<dataDir>/credentials/` (mode 0600,
+one directory per pool). By default tool shells run as the bot's OS user,
+so **an agent with filesystem access can still read every pool's keys and
+tokens**. File permissions protect against other OS users, not the bot's own
+user. Proxy keys alone are not an OS security boundary.
 
 - `global` mode is unaffected in practice: the credentials are the operator's
   own, the same exposure as Pi's own `auth.json`.
@@ -347,14 +394,14 @@ against other OS users, not against the agent your bot runs.
   through the `person` filter** (`capabilities: new Set(['sessions'])`, no `'shell'`),
   and keep `!` shell-prefixed messages and similar power tools admin-only.
 
-Phase 3 removes the exposure: the bot process's pool proxy holds every
-credential, Pi processes only get a per-process proxy key, so refresh tokens
-and API keys never enter the agent's process (#144), and tool shells can be
-run as an unprivileged user (below). Until both are on, treat shell access as credential access.
+Tool shells can additionally run as an unprivileged user (below). Until that
+is configured and credential files are inaccessible to the agent user, treat
+shell access as credential access. Denying the chat `shell` capability does not
+by itself isolate the agent backend's filesystem tools.
 
 ### `--isolate-shells <user>` (opt-in OS isolation)
 
-Step 2 of phase 3. `roadie --isolate-shells <user>` (or
+`roadie --isolate-shells <user>` (or
 `ROADIE_ISOLATE_SHELLS=<user>`) makes every agent tool shell run as the given
 unprivileged user instead of the bot's own OS user. Off by default: with the
 flag unset, Pi runs its default shell.

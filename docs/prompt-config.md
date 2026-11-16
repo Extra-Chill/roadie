@@ -1,6 +1,6 @@
 # Host prompt configuration
 
-Hosts customize built-in guidance through `ROADIE_PROMPT_CONFIG`, a YAML or JSON file with `disable`, `replace`, and `append` entries. Unknown section IDs are warned about and ignored.
+Hosts customize built-in guidance through `--prompt-config <path>` or `ROADIE_PROMPT_CONFIG`, a YAML or JSON file with `disable`, `replace`, and `append` entries. Unknown section IDs are warned about and ignored.
 
 Keep `commands` for a compact, platform-neutral CLI reference even when disabling all policy and formatting guidance. Its shell examples use the agent environment rather than pinned session or channel IDs. Upload, archive, title and fork select the current session in agent shells; search defaults to the current project. Read and wait require an explicit target session ID. Send destinations are explicit shell variables so new-thread and existing-thread modes stay distinct.
 

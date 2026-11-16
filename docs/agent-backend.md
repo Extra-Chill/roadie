@@ -7,6 +7,14 @@ Roadie's session runtime talks to an *agent backend* through an interface: sessi
 - **Version gate.** Roadie needs the `pi` binary (from `ROADIE_PI_BIN`, default `pi`) at major version 1 or newer. If it is missing or older, startup fails with a clear error.
 - **`ROADIE_BACKEND`.** Optional; when set it must be `pi`. Any other value stops startup with an error.
 - **Variables.** `ROADIE_PI_BIN`, `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
+  `ROADIE_PI_AGENT_DIR` overrides the pool-managed agent directory (default
+  `<dataDir>/pi-agent`). With pools off, `PI_CODING_AGENT_DIR` selects Pi's own
+  agent directory (otherwise `~/.pi/agent`). With pools on, Roadie sets
+  `PI_CODING_AGENT_DIR` for its children to the pool-managed directory.
+  `ROADIE_PI_KEY` is the per-process proxy key injected by Roadie, not a provider
+  credential; standalone pool clients set it to their registered client key.
+  `ROADIE_PI_MCP_FILE` points to Roadie's private per-process MCP configuration
+  file, including auth headers; it is managed internally, not a host config knob.
 - **Catalogs and logins.** `/model` and `/agent` show Pi's models and agents, plus whatever plugins add through the `agent_providers`, `agent_definitions` and `agent_backend` filters. `/model` skips provider selection when exactly one connected provider has pickable models; otherwise it shows the provider menu first. Hidden pool rotations stay out of the menu (unless all rotations are hidden). Model and thinking-level changes retain session/channel/global scope selection. Use the **Change thinking level** and **Clear session/channel override** buttons on `/model`; there is no separate thinking-level slash command.
 - **Credential pools.** When credential pools are enabled (the default), Pi sessions bill to the pools through the loopback pool proxy, which starts with the bot. See [Credential pools](credential-pools.md).
 - **Channel setup.** Bind channels to project directories with `--channels-config` / `ROADIE_CHANNELS_CONFIG`.
@@ -24,7 +32,9 @@ Prompt templates and skills are Pi's own: `.pi/prompts`, `.pi/skills`, `.agents/
 - **Agents:** `.opencode/agent[s]/*.md` and `agent` entries in `opencode.json`, plus the built-in primary and subagent agents. A selected agent contributes its system prompt, model and permission rules to the turn.
 - **MCP servers:** `mcp` entries in `opencode.json` (local and remote), plus per-person servers.
 
-`opencode.jsonc` is read as well as `opencode.json`.
+`opencode.jsonc` is read as well as `opencode.json`. These and the
+`.opencode/agent[s]` directory names are intentional legacy compatibility names;
+they do not require an OpenCode backend.
 
 ## Person-scoped MCP servers
 

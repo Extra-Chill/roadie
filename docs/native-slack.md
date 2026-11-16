@@ -179,16 +179,16 @@ turn supersedes a pending sleep.
   or uses a modal instead of guessing the most recent session.
 - Native credential-login dialogs, the remaining Discord-only
   command UIs, HTML-action rendering, and complete cross-platform scenario
-  parameterization remain tracked by #14. Configure backend credentials through
-  the agent backend's own CLI until native login UI parity is complete.
+  parameterization remain tracked by #14. With pools on (the default), configure
+  accounts using `roadie credentials login` or `roadie credentials add-key`.
+  With `--no-credential-pools`, manage Pi's own auth with `pi` on the host.
 - Native `--pre-run` automation is not exposed through the send endpoint.
   Host-owned shell execution remains available through the shared scheduler.
 - Live Slack installation, production token/scope eligibility, real modal timing,
   and hosted pause/snapshot/replacement acceptance still require a live proof.
 
-The Discord-emulation packages remain available for existing deployments until
-native parity and that live acceptance are complete. Selecting Slack never loads
-their runtime.
+The old `discord-slack-bridge` Discord-emulation package has been removed.
+Use the native Slack path.
 
 ## Verification
 

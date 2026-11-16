@@ -75,8 +75,9 @@ including enabling an unbound channel or turning one off. Only `respond`,
 preserved. Live runtimes are disposed so the next message uses the new policy.
 Both commands report the active preset, or `custom` for other policies.
 
-`/toggle-mention-mode` is retired, and its per-channel rows are dropped at
-startup. Set channel behavior through the channel policy instead.
+`/toggle-mention-mode` is retired. Set channel behavior through the channel
+policy instead. The global `--mention-mode` flag remains available for built-in
+behavior when no channel configuration policy is in use.
 
 Create an ordinary Discord text channel, then run `/channel bind` in it. You can
 also run `/channel bind channel:#work` from another channel in the same server.

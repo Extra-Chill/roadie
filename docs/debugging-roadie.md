@@ -87,7 +87,7 @@ jq -r 'select(.event.type=="part")' ./tmp/session-events.jsonl
 
 ## heap snapshots and memory debugging
 
-roadie has a built-in heap monitor (`cli/src/heap-monitor.ts`) that runs every 30s and checks V8 heap usage. At **85% heap used** it writes a `.heapsnapshot` file to `~/.roadie/heap-snapshots/`. There is a 5 minute cooldown between automatic snapshots to avoid disk spam.
+roadie has a built-in heap monitor (`cli/src/heap-monitor.ts`) that runs every 30s and checks V8 heap usage. At **85% heap used** it writes a gzip-compressed `.heapsnapshot.gz` file to `<dataDir>/heap-snapshots/` (default `~/.roadie/heap-snapshots/`). There is a 5 minute cooldown between automatic snapshots to avoid disk spam.
 
 To trigger a heap snapshot manually at any time:
 
@@ -95,7 +95,7 @@ To trigger a heap snapshot manually at any time:
 kill -SIGUSR1 <PID>
 ```
 
-Snapshots are saved as `heap-<date>-<sizeMB>MB.heapsnapshot` in `~/.roadie/heap-snapshots/`. Open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memory.
+Snapshots are saved as `heap-<date>-<MB>MB.heapsnapshot.gz` in `<dataDir>/heap-snapshots/`. Gunzip them first (`gunzip heap-*.heapsnapshot.gz`), then open the resulting `.heapsnapshot` in Chrome DevTools (Memory tab > Load) to inspect what is holding memory.
 
 Signal summary:
 
