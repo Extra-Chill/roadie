@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.85.1] - 2026-11-18
+
+### Fixed
+- rewrite plain @name mentions to <@id> for known participants
+
 ## [0.85.0] - 2026-11-11
 
 ### Added
