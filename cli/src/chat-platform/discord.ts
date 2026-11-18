@@ -15,6 +15,7 @@ import { showMcpFormDialog, pendingMcpFormContexts } from '../commands/mcp-form.
 import { showActionButtons } from '../commands/action-buttons.js'
 import { pendingFileUploadContexts, showFileUploadButton } from '../commands/file-upload.js'
 import { DiscordOperationError } from '../errors.js'
+import { rewriteDiscordMentions } from '../discord-mentions.js'
 import type { ChatThread } from './types.js'
 
 function flagsFor(notify: boolean | undefined): number {
@@ -78,7 +79,9 @@ export function createDiscordChatThread(thread: ThreadChannel): ChatThread {
     },
 
     async sendPart(content, options) {
-      return sendSessionPartMessage(thread, content, {
+      // Agent text: turn plain @name into a real <@id> ping when the name is
+      // a known participant (in-memory lookup only).
+      return sendSessionPartMessage(thread, rewriteDiscordMentions(content, thread), {
         leadWithBlankLine: options?.leadWithBlankLine,
         flags: flagsFor(options?.notify),
       })
@@ -199,7 +202,7 @@ export function createDiscordChatChannel(channel: TextChannel | DMChannel | Part
       return sendThreadMessage(channel, content, { flags: flagsFor(options?.notify), replyTo: takeAnchor() })
     },
     async sendPart(content, options) {
-      return sendSessionPartMessage(channel, content, {
+      return sendSessionPartMessage(channel, rewriteDiscordMentions(content, channel), {
         leadWithBlankLine: options?.leadWithBlankLine,
         flags: flagsFor(options?.notify),
         replyTo: takeAnchor(),
