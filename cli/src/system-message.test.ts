@@ -494,7 +494,8 @@ describe('system-message', () => {
 
       ## discord user mentions
 
-      Prefer Discord user IDs for mentions. Discord bots cannot ping by @name; use \`<@userId>\` in message text or pass the ID to \`--user\`.
+      Discord does not ping plain @name text. Roadie converts \`@name\` in your replies to a real mention when the name matches exactly one known participant of this thread or cached server member; other names stay plain text.
+      Prefer \`<@userId>\` in message text (or pass the ID to \`--user\`) whenever you know the ID: it always pings.
       The current user's ID is available in the per-turn \`<discord-user ... user-id="..." />\` metadata.
 
       User lookup can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions.

@@ -162,6 +162,7 @@ import {
   applicationDirectory,
 } from './channel-policy.js'
 import { createDiscordChatChannel } from './chat-platform/discord.js'
+import { discordUserNames, recordDiscordParticipant } from './discord-mentions.js'
 import { claimParkedForward, isBareForward, parkForward } from './forward-pairing.js'
 import { readConversationAdmission, resetConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
@@ -633,6 +634,17 @@ export async function startDiscordBot({
       // Without this, assigning the Roadie role to the bot itself would loop.
       if (isSelfBotMessage && !isCliInjectedPrompt) {
         return
+      }
+
+      // Remember who speaks here so agent replies can turn a plain @name into
+      // a real <@id> ping without a network lookup on the send path.
+      if (!isSelfBotMessage && message.author) {
+        recordDiscordParticipant(message.channel.id, {
+          id: message.author.id,
+          names: [...discordUserNames(message.author), message.member?.nickname, message.member?.displayName],
+        })
+      } else if (cliInjectedUserId && promptMarker?.username) {
+        recordDiscordParticipant(message.channel.id, { id: cliInjectedUserId, names: [promptMarker.username] })
       }
 
       // Allow CLI-injected prompts from this Roadie bot through even when role
