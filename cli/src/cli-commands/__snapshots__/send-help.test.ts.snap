@@ -10,7 +10,7 @@ Usage:
 
 Options:
   --platform <name>             Chat platform: discord or slack. Defaults to ROADIE_PLATFORM
-  -c, --channel <channelId>     Discord channel ID
+  -c, --channel <channelId>     Discord channel ID, or '#name' to look the channel up by name
   -p, --prompt <prompt>         Message content. Verified same-person sends steer busy sessions at the next step boundary; other sends wait for the turn to settle
   -n, --name [name]             Thread name (optional, defaults to prompt preview)
   -a, --app-id [appId]          Bot application ID (required if no local database)

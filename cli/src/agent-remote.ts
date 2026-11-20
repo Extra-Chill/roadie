@@ -5,7 +5,8 @@
 // exports ROADIE_AGENT_TOKEN instead, see agent-token.ts). The `roadie`
 // subcommands agents are told to run — send, session list/search/read/wait/
 // editors/archive/abort/title/discord-url, task list/edit/delete, project
-// list/remove/open-in-discord, thread list, user list — detect
+// list/remove/open-in-discord, thread list, channel list/read/webhooks, user
+// list — detect
 // that mode here and call typed JSON endpoints on the bot's local HTTP server
 // instead of opening the database.
 //
@@ -422,7 +423,9 @@ function requireSnowflake(query: URLSearchParams, name: string): string {
 }
 
 export function buildAgentChannelListArgs(query: URLSearchParams): string[] {
-  const args = ['channel', 'list', `--guild=${requireSnowflake(query, 'guild')}`]
+  // No guild lists every guild the bot is in; a given guild must be an ID.
+  const args = ['channel', 'list']
+  if (queryValue(query, 'guild') !== undefined) args.push(`--guild=${requireSnowflake(query, 'guild')}`)
   if (queryFlag(query, 'json')) args.push('--json')
   return args
 }

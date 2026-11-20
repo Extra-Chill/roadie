@@ -13,7 +13,11 @@ export type DiscordGuildChannel = {
   name: string
   type: string
   parentId: string | null
+  /** Name of the parent category, when the parent is in the same listing. */
+  parentName: string | null
   position: number
+  /** Guild the channel belongs to; set by listChannelsForGuilds. */
+  guildId?: string
 }
 
 export type DiscordReadMessage = {
@@ -84,18 +88,28 @@ async function getJson({
 
 export function parseGuildChannels(payload: unknown): DiscordGuildChannel[] {
   if (!Array.isArray(payload)) return []
+  const categoryNames = new Map<string, string>()
+  for (const raw of payload) {
+    const channel = asRecord(raw)
+    const id = asString(channel.id)
+    if (id && channel.type === ChannelType.GuildCategory) {
+      categoryNames.set(id, asString(channel.name) ?? id)
+    }
+  }
   return payload
     .flatMap((raw) => {
       const channel = asRecord(raw)
       const id = asString(channel.id)
       const type = typeof channel.type === 'number' ? CHANNEL_TYPE_NAMES[channel.type] : undefined
       if (!id || !type) return []
+      const parentId = asString(channel.parent_id)
       return [
         {
           id,
           name: asString(channel.name) ?? id,
           type,
-          parentId: asString(channel.parent_id),
+          parentId,
+          parentName: parentId ? (categoryNames.get(parentId) ?? null) : null,
           position: typeof channel.position === 'number' ? channel.position : 0,
         },
       ]
@@ -186,6 +200,104 @@ export async function listGuildChannels({
   const payload = await getJson({ rest, route: Routes.guildChannels(guildId) })
   if (payload instanceof DiscordApiError) return payload
   return parseGuildChannels(payload)
+}
+
+/** IDs of the guilds the bot is a member of (first page; bots rarely exceed 200). */
+export async function listBotGuildIds({ rest }: { rest: REST }): Promise<string[] | DiscordApiError> {
+  const payload = await getJson({
+    rest,
+    route: Routes.userGuilds(),
+    query: new URLSearchParams({ limit: '200' }),
+  })
+  if (payload instanceof DiscordApiError) return payload
+  if (!Array.isArray(payload)) return []
+  return payload.flatMap((raw) => {
+    const id = asString(asRecord(raw).id)
+    return id ? [id] : []
+  })
+}
+
+/**
+ * Channels across the given guilds, or across every guild the bot is in when
+ * no guild is given. Each channel carries its guildId.
+ */
+export async function listChannelsForGuilds({
+  rest,
+  guildId,
+}: {
+  rest: REST
+  guildId?: string
+}): Promise<DiscordGuildChannel[] | DiscordApiError> {
+  const guildIds = guildId ? [guildId] : await listBotGuildIds({ rest })
+  if (guildIds instanceof DiscordApiError) return guildIds
+  const channels: DiscordGuildChannel[] = []
+  for (const id of guildIds) {
+    const listed = await listGuildChannels({ rest, guildId: id })
+    if (listed instanceof DiscordApiError) return listed
+    channels.push(...listed.map((channel) => ({ ...channel, guildId: id })))
+  }
+  return channels
+}
+
+/** One human-readable `roadie channel list` line: channels indented under their category. */
+export function formatChannelListLine(channel: DiscordGuildChannel): string {
+  if (channel.type === 'category') return `${channel.id} | ${channel.name.toUpperCase()} (category)`
+  const indent = channel.parentId ? '  ' : ''
+  const parent = channel.parentId ? ` in ${channel.parentName ?? channel.parentId}` : ''
+  return `${indent}${channel.id} | #${channel.name} (${channel.type}${parent})`
+}
+
+/** Channel types `roadie send --channel` can start a thread in. */
+const SENDABLE_CHANNEL_TYPES = new Set(['text', 'announcement', 'forum', 'media'])
+
+/**
+ * Resolve `#name` (or `name`) to one channel ID. Matching is
+ * case-insensitive and ignores categories and voice channels; more than one
+ * match is an error listing the candidates so the caller can pick an ID.
+ */
+export function resolveChannelName({
+  channels,
+  name,
+}: {
+  channels: DiscordGuildChannel[]
+  name: string
+}): string | Error {
+  const wanted = name.replace(/^#/, '').trim().toLowerCase()
+  if (!wanted) return new Error('Channel name is empty')
+  const matches = channels.filter(
+    (channel) => SENDABLE_CHANNEL_TYPES.has(channel.type) && channel.name.toLowerCase() === wanted,
+  )
+  const [match] = matches
+  if (!match) {
+    return new Error(`No channel named #${wanted} is visible to the bot. Run \`roadie channel list\` to see channel IDs.`)
+  }
+  if (matches.length > 1) {
+    const candidates = matches
+      .map((channel) => {
+        const where = [channel.parentName && `category ${channel.parentName}`, channel.guildId && `guild ${channel.guildId}`]
+          .filter(Boolean)
+          .join(', ')
+        return `  ${channel.id} #${channel.name}${where ? ` (${where})` : ''}`
+      })
+      .join('\n')
+    return new Error(`Channel name #${wanted} is ambiguous; pass one of these IDs with --channel:\n${candidates}`)
+  }
+  return match.id
+}
+
+/** `--channel '#name'` → channel ID, looked up across the bot's guilds. */
+export async function lookupChannelIdByName({
+  rest,
+  name,
+  guildId,
+}: {
+  rest: REST
+  name: string
+  guildId?: string
+}): Promise<string | Error> {
+  const channels = await listChannelsForGuilds({ rest, guildId })
+  if (channels instanceof DiscordApiError) return channels
+  return resolveChannelName({ channels, name })
 }
 
 export function clampReadLimit(limit: number | undefined): number {

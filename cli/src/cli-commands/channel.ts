@@ -11,8 +11,9 @@ import { DiscordApiError } from '../errors.js'
 import {
   CHANNEL_READ_DEFAULT_LIMIT,
   formatMessageLine,
+  formatChannelListLine,
   listChannelWebhooks,
-  listGuildChannels,
+  listChannelsForGuilds,
   readChannelMessages,
 } from '../discord-channel-reads.js'
 import {
@@ -64,19 +65,26 @@ function reportError(error: unknown, exit: Exit): never {
 }
 
 cli
-  .command('channel list', 'List the channels and categories in a Discord guild the bot is in.')
-  .option('-g, --guild <guildId>', 'Discord guild (server) ID')
+  .command(
+    'channel list',
+    'List channel IDs, names, types and parent categories in the Discord guilds the bot is in. Use it to find a channel ID by name.',
+  )
+  .option('-g, --guild <guildId>', 'Discord guild (server) ID. Defaults to every guild the bot is in')
   .option('--json', 'Output as JSON')
-  .example('roadie channel list --guild 123456789012345678')
+  .example('roadie channel list')
+  .example('roadie channel list --guild 123456789012345678 --json')
   .action(async (options, { console, process }) => {
     const exit = process.exit as Exit
     try {
-      const guild = requireOption(options.guild, 'Guild ID is required. Use --guild <guildId>.', exit)
+      const guild: string | undefined = options.guild || undefined
       await relayIfAgent(
         { method: 'GET', path: AGENT_CHANNELS_PATH, query: { guild, json: options.json } },
         exit,
       )
-      const channels = failOn(await listGuildChannels({ rest: await operatorRest(), guildId: guild }), exit)
+      const channels = failOn(
+        await listChannelsForGuilds({ rest: await operatorRest(), guildId: guild }),
+        exit,
+      )
       if (options.json) {
         console.log(
           JSON.stringify(
@@ -85,6 +93,8 @@ cli
               name: channel.name,
               type: channel.type,
               parent_id: channel.parentId,
+              parent_name: channel.parentName,
+              guild_id: channel.guildId ?? guild ?? null,
             })),
             null,
             2,
@@ -93,13 +103,17 @@ cli
         return exit(0)
       }
       if (channels.length === 0) {
-        console.log(`No channels visible in guild ${guild}`)
+        console.log(guild ? `No channels visible in guild ${guild}` : 'No channels visible to the bot')
         return exit(0)
       }
+      const multiGuild = new Set(channels.map((channel) => channel.guildId)).size > 1
+      let currentGuild: string | undefined
       for (const channel of channels) {
-        const indent = channel.type === 'category' || !channel.parentId ? '' : '  '
-        const label = channel.type === 'category' ? channel.name.toUpperCase() : `#${channel.name}`
-        console.log(`${indent}${channel.id} | ${label} (${channel.type})`)
+        if (multiGuild && channel.guildId !== currentGuild) {
+          currentGuild = channel.guildId
+          console.log(`Guild ${currentGuild}`)
+        }
+        console.log(formatChannelListLine(channel))
       }
       return exit(0)
     } catch (error) {
