@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.86.0] - 2026-11-21
+
+### Added
+- look up Discord channel IDs by name with roadie channel list
+
 ## [0.85.1] - 2026-11-18
 
 ### Fixed
