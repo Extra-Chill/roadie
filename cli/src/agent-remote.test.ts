@@ -578,7 +578,7 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
 
   test('channel reads require Discord IDs and map the flags', async () => {
     const before = runs.length
-    expect((await get(AGENT_CHANNELS_PATH, `Bearer ${token()}`)).status).toBe(400)
+    expect((await get(`${AGENT_CHANNELS_PATH}?guild=--help`, `Bearer ${token()}`)).status).toBe(400)
     expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=--help`, `Bearer ${token()}`)).status).toBe(400)
     expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=42&limit=500`, `Bearer ${token()}`)).status).toBe(400)
     expect((await get(`${AGENT_CHANNEL_MESSAGES_PATH}?channel=42&before=x`, `Bearer ${token()}`)).status).toBe(400)
@@ -587,6 +587,9 @@ describe('endpoints map to allowlisted subcommand arguments', () => {
 
     await runClient({ method: 'GET', path: AGENT_CHANNELS_PATH, query: { guild: '555', json: '1' } })
     expect(runs.at(-1)).toEqual(['channel', 'list', '--guild=555', '--json'])
+    // Without a guild the bot lists every guild it is in.
+    await runClient({ method: 'GET', path: AGENT_CHANNELS_PATH, query: { json: '1' } })
+    expect(runs.at(-1)).toEqual(['channel', 'list', '--json'])
     await runClient({
       method: 'GET',
       path: AGENT_CHANNEL_MESSAGES_PATH,

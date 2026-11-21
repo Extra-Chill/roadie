@@ -26,6 +26,7 @@ import { setDataDir, getDataDir, getLockPort } from '../config.js'
 import { getSendToken, remoteSendOptions, sendViaRunningBot, shouldSendRemotely } from '../remote-send.js'
 import { AGENT_SEND_NONCE_ENV } from '../session-handler/agent-send-person.js'
 import { AGENT_SEND_PATH, resolveAgentCredentials } from '../agent-remote.js'
+import { lookupChannelIdByName } from '../discord-channel-reads.js'
 import { execAsync, resolveSessionWorkingDirectory } from '../git-utils.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
@@ -505,7 +506,7 @@ cli
   )
   .alias('start-session') // backwards compatibility
   .option('--platform <name>', 'Chat platform: discord or slack. Defaults to ROADIE_PLATFORM')
-  .option('-c, --channel <channelId>', 'Discord channel ID')
+  .option('-c, --channel <channelId>', "Discord channel ID, or '#name' to look the channel up by name")
   .option(
     '-p, --prompt <prompt>',
     'Message content. Verified same-person sends steer busy sessions at the next step boundary; other sends wait for the turn to settle',
@@ -661,6 +662,18 @@ cli
 
         const directoryError = validateApplicationDirectory(options.cwd)
         if (directoryError) throw directoryError
+        if (!existingThreadMode && channelId?.startsWith('#')) {
+          // `--channel '#name'`: resolve through Discord before the channel
+          // policy check, which is keyed by ID. Ambiguous names fail.
+          await initDatabase()
+          const { token } = await resolveBotCredentials({ appIdOverride: optionAppId })
+          const resolved = await lookupChannelIdByName({ rest: createDiscordRest(token), name: channelId })
+          if (resolved instanceof Error) {
+            cliLogger.error(resolved.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+          channelId = resolved
+        }
         if (!existingThreadMode) {
           const destination = resolveSendChannel(channelId)
           if (destination instanceof Error) throw destination
