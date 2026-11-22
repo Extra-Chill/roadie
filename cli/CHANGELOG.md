@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.86.3] - 2026-11-22
+
+### Fixed
+- tell the model which person-scoped MCP tools the speaker may use
+
 ## [0.86.2] - 2026-11-22
 
 ### Fixed
