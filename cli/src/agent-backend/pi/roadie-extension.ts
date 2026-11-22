@@ -50,7 +50,7 @@ import {
   type NativeFormAnswer,
 } from './mcp-native.js'
 import { cleanMessageToolCalls } from './text-tool-calls.js'
-import { displayServerName, isPersonMcpServerName, mcpToolName } from '../../person-mcp-name.js'
+import { deniedToolReason, displayServerName, isPersonMcpServerName, mcpToolName } from '../../person-mcp-name.js'
 
 export const ROADIE_PERMISSION_TITLE = 'roadie:permission'
 export const ROADIE_TOOL_TITLE = 'roadie:tool'
@@ -953,7 +953,7 @@ export default function roadieExtension(pi: ExtensionApi) {
       ROADIE_PERMISSION_TITLE,
       JSON.stringify({ tool: event.toolName, callId: event.toolCallId, input: event.input, cwd: ctx.cwd }),
     )
-    if (!allowed) return { block: true, reason: 'Permission denied by Roadie' }
+    if (!allowed) return { block: true, reason: deniedToolReason(event.toolName) }
     if (event.toolName === 'bash' && typeof event.input.command === 'string') {
       const env = {
         ...readShellEnv(),
