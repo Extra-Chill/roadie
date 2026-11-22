@@ -12,7 +12,8 @@ const TEXT_CHANNEL_ID = '200000000000001560'
 function forwardedSnapshot(content: string): APIMessageSnapshot {
   return {
     message: {
-      content, embeds: [], attachments: [], mentions: [], mention_roles: [],
+      content, embeds: [{ title: 'Deployed to extrachill.com', description: '0 component(s) updated' }],
+      attachments: [], mentions: [], mention_roles: [],
       timestamp: new Date().toISOString(), edited_timestamp: null, type: MessageType.Default,
     },
   } as APIMessageSnapshot
@@ -33,7 +34,7 @@ describe.skipIf(!findPi())('forward with a comment', () => {
       messageReference: { type: MessageReferenceType.Forward, message_id: '300000000000001560', channel_id: '200000000000001561' },
       messageSnapshots: [forwardedSnapshot('FORWARDED BUG REPORT')],
     })
-    await user.sendMessage({ content: 'look at this forwarded report' })
+    await user.sendMessage({ content: 'look at this forwarded report. Reply with exactly: ok' })
 
     const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({ timeout: 10_000 })
     await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 20_000 })
@@ -42,7 +43,18 @@ describe.skipIf(!findPi())('forward with a comment', () => {
 
     const threads = await ctx.discord.channel(TEXT_CHANNEL_ID).getThreads()
     expect(threads.map((t) => t.id)).toEqual([thread.id])
-    const turn = ctx.modelServer.bodies.find((body) => body.includes('look at this forwarded report'))
-    expect(turn).toContain('FORWARDED BUG REPORT')
+    const messages = await ctx.discord.thread(thread.id).getMessages()
+    const snapshot = messages.find((message) => message.content?.includes('Forwarded by'))
+    expect(snapshot?.content).toContain(`Forwarded by <@${TEST_USER_ID}>`)
+    expect(snapshot?.content).toContain('>>> FORWARDED BUG REPORT')
+    expect(snapshot?.embeds).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Deployed to extrachill.com', description: '0 component(s) updated' }),
+    ]))
+    // Title generation also includes the prompt, but is not a conversation turn.
+    const turns = ctx.modelServer.bodies.filter((body) =>
+      body.includes('look at this forwarded report') && !body.includes('Generate a concise descriptive chat title'),
+    )
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toContain('FORWARDED BUG REPORT')
   }, 60_000)
 })
