@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.86.2] - 2026-11-22
+
+### Fixed
+- explain person-scoped MCP tool denials instead of bare 'Permission denied'
+
 ## [0.86.1] - 2026-11-22
 
 ### Fixed
