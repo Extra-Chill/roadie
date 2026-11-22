@@ -164,6 +164,7 @@ import {
 import { createDiscordChatChannel } from './chat-platform/discord.js'
 import { discordUserNames, recordDiscordParticipant } from './discord-mentions.js'
 import { claimParkedForward, isBareForward, parkForward } from './forward-pairing.js'
+import { postForwardedSnapshot } from './forward-thread-snapshot.js'
 import { readConversationAdmission, resetConversationAdmission, resolveConversationIntake, recordConversationAdmission } from './conversation-intake.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -1256,6 +1257,9 @@ export async function startDiscordBot({
           autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
           reason: 'Start Claude session',
         })
+
+        // Make the paired forward visible before any model output in the thread.
+        if (forwarded) await postForwardedSnapshot(thread, forwarded)
 
         // Add user to thread so it appears in their sidebar
         await thread.members.add(message.author.id)
