@@ -1,5 +1,5 @@
 import { GoogleGenAI, Modality, Type, type Session } from '@google/genai'
-import { dispatcherInstructions, voiceToolNames } from './voice-dispatcher.js'
+import { dispatcherInstructions, voiceTools } from './voice-dispatcher.js'
 
 export interface VoiceProviderSession {
   audio(pcm16: Buffer): void
@@ -26,20 +26,18 @@ export const geminiVoiceProvider: VoiceProvider = {
         systemInstruction: dispatcherInstructions,
         tools: [
           {
-            functionDeclarations: voiceToolNames.map((name) => ({
+            functionDeclarations: Object.entries(voiceTools).map(([name, tool]) => ({
               name,
-              description: `Roadie dispatcher: ${name}`,
+              description: tool.description,
               parameters: {
                 type: Type.OBJECT,
-                properties: {
-                  thread: {
-                    type: Type.STRING,
-                    description: 'Stable index or unambiguous label; omit for focused thread',
-                  },
-                  text: { type: Type.STRING },
-                  project: { type: Type.STRING },
-                  option: { type: Type.STRING },
-                },
+                properties: Object.fromEntries(
+                  Object.entries(tool.params).map(([key, description]) => [
+                    key,
+                    { type: Type.STRING, description },
+                  ]),
+                ),
+                required: tool.required,
               },
             })),
           },

@@ -30,18 +30,21 @@ afterEach(() => {
 })
 
 describe('ask-question', () => {
-  test.each(['merge', 'deploy', 'force-push', 'delete'])('voice never answers a destructive %s question', async (action) => {
+  test.each([
+    { question: 'Which approach?', options: ['Plan A', 'Plan B'], said: 'plan b', answered: true },
+    { question: 'Which approach?', options: ['Plan A', 'Plan B'], said: 'Plan C', answered: false },
+    ...['merge', 'deploy', 'force-push', 'delete'].map((action) => ({
+      question: `Should we ${action}?`, options: ['Yes', 'No'], said: 'Yes', answered: false,
+    })),
+  ])('voice answer for "$question" with "$said" answered=$answered', async ({ question, options, said, answered }) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     const thread = createFakeThread()
     await showAskUserQuestionDropdowns({
-      thread, sessionId: 'ses-1', directory: '/project', requestId: 'voice-danger',
-      input: { questions: [{ question: `Should we ${action}?`, header: 'Confirm', options: [
-        { label: 'Yes', description: action },
-        { label: 'Read only', description: `Also ${action}` },
-      ] }] },
+      thread, sessionId: 'ses-1', directory: '/project', requestId: 'voice-q',
+      input: { questions: [{ question, header: 'Pick', options: options.map((label) => ({ label, description: label })) }] },
     })
-    expect(await answerQuestionByVoice(thread.id, 'Yes', 'Alice')).toBe(false)
-    expect(await answerQuestionByVoice(thread.id, 'Read only', 'Alice')).toBe(false)
-    expect(pendingQuestionContexts.size).toBe(1)
+    expect(await answerQuestionByVoice(thread.id, said, 'Alice')).toBe(answered)
+    expect(pendingQuestionContexts.size).toBe(answered ? 0 : 1)
   })
 
   test('dedupes duplicate question requests for the same thread', async () => {

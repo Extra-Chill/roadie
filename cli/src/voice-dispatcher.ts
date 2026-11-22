@@ -8,17 +8,19 @@ export interface VoiceThreadHost {
   abort(id: string): Promise<void>
   answer(id: string, option: string): Promise<string>
 }
-export const voiceToolNames = [
-  'list_threads',
-  'focus_thread',
-  'send_to_thread',
-  'start_thread',
-  'thread_status',
-  'read_latest',
-  'abort_thread',
-  'answer_pending',
-] as const
-export type VoiceToolName = (typeof voiceToolNames)[number]
+const thread = { thread: 'Thread index from list_threads (e.g. "2") or a unique part of its label. Omit to use the focused thread.' }
+/** Dispatcher tool contract, shared by every live voice provider. */
+export const voiceTools = {
+  list_threads: { description: 'List active Roadie threads with index, label and status (idle, running, waiting on question or permission).', params: {}, required: [] },
+  focus_thread: { description: 'Make a thread the focused thread for later commands.', params: thread, required: ['thread'] },
+  send_to_thread: { description: "Send the user's instruction to a thread as their message. Use the user's words.", params: { ...thread, text: 'Message to send.' }, required: ['text'] },
+  start_thread: { description: 'Start a new thread in a project channel with an initial prompt, and focus it.', params: { project: 'Project channel name.', text: 'Initial prompt.' }, required: ['project', 'text'] },
+  thread_status: { description: 'Get the status of a thread.', params: thread, required: [] },
+  read_latest: { description: 'Get a short spoken summary of the latest assistant reply or pending question in a thread.', params: thread, required: [] },
+  abort_thread: { description: 'Stop the running turn in a thread.', params: thread, required: [] },
+  answer_pending: { description: "Answer a thread's pending question with one of its listed options. Destructive questions and permission requests are deferred until the user is parked.", params: { ...thread, option: 'Exact option label.' }, required: ['option'] },
+} satisfies Record<string, { description: string; params: Record<string, string>; required: string[] }>
+export type VoiceToolName = keyof typeof voiceTools
 export function spokenText(text: string): string {
   return text
     .replace(/```[\s\S]*?(?:```|$)/g, ' Code omitted. ')
