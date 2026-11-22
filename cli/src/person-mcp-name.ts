@@ -64,3 +64,16 @@ export function mcpToolLabel(tool: string): string {
   const short = name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : name
   return `${server} › ${short.replace(/_/g, '-')}`
 }
+
+/**
+ * Denial reason for a tool call the permission gate refused. Person-scoped MCP
+ * tools are refused on purpose when the current speaker is not the person who
+ * connected them, so the bare reason reads like a broken bridge. Explain the
+ * ownership instead (issue #458).
+ */
+export function deniedToolReason(tool: string): string {
+  const match = new RegExp(`^mcp__(${PERSON_MCP_PREFIX}[0-9a-f]+_.+?)__`).exec(tool)
+  if (!match) return 'Permission denied by Roadie'
+  const server = displayServerName(match[1]!)
+  return `Permission denied by Roadie: ${tool} runs as another person's connected "${server}" account, so it is only available on that person's own turns. The current speaker has not connected their own "${server}" account; ask the account owner to send the request, or have the current speaker connect "${server}" first.`
+}

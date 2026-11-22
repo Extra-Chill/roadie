@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   MAX_TOOL_NAME_LENGTH,
+  deniedToolReason,
   displayServerName,
   isPersonMcpServerName,
   mcpToolLabel,
@@ -45,5 +46,19 @@ describe('person MCP naming', () => {
     expect(mcpToolLabel('mcp__rpm_abc123def456_jira__search_issues')).toBe('jira › search-issues')
     expect(mcpToolLabel('mcp__docs__lookup')).toBe('docs › lookup')
     expect(mcpToolLabel('bash')).toBe('bash')
+  })
+})
+
+describe('deniedToolReason', () => {
+  test('explains that a person-scoped MCP tool belongs to another account', () => {
+    const reason = deniedToolReason('mcp__rpm_34273144a2e9_extrachill__extrachill_ability_call')
+    expect(reason).toMatch(/^Permission denied by Roadie: /)
+    expect(reason).toContain('another person\'s connected "extrachill" account')
+    expect(reason).toContain('connect "extrachill"')
+  })
+
+  test('keeps the plain reason for everything else', () => {
+    expect(deniedToolReason('bash')).toBe('Permission denied by Roadie')
+    expect(deniedToolReason('mcp__shared__tool')).toBe('Permission denied by Roadie')
   })
 })
