@@ -24,7 +24,9 @@ export async function resolveVoiceMessage(message: Message, thread?: ThreadChann
         if (attachment.size > 25 * 1024 * 1024) throw new Error('Voice note too large')
         const response = await fetch(attachment.url, { signal: AbortSignal.timeout(30_000) })
         if (!response.ok) throw new Error('Voice download failed')
-        return new Uint8Array(await response.arrayBuffer())
+        const data = new Uint8Array(await response.arrayBuffer())
+        const mimeType = attachment.contentType?.split(';')[0] || (/\.m4a$/i.test(attachment.name) ? 'audio/mp4' : 'audio/ogg')
+        return { data, mimeType, filename: attachment.name }
       },
     })
     if (result.notice) {

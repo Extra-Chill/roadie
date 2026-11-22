@@ -17,7 +17,7 @@ describe.skipIf(!findPi())('Discord voice messages', () => {
     let transcription = 'Reply with exactly: voice-note-ok'
     let status = 200
     let calls = 0
-    // Small valid PCM WAV; ffmpeg decoding and the actual provider request still run.
+    // Small valid PCM WAV; the real download and provider request still run.
     const wav = Buffer.alloc(44 + 3200)
     wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8)
     wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22)

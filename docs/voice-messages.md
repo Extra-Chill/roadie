@@ -4,7 +4,7 @@ Post a mobile voice note (or an audio attachment) in a Roadie conversation. Road
 
 ## Setup
 
-Install `ffmpeg` on the bot host and make it available on `PATH`. Roadie converts Discord OGG/Opus and M4A recordings to mono WAV before transcription. Notes are limited to 25 MiB.
+Roadie sends Discord's OGG/Opus and M4A recordings to the provider as-is; no local audio tooling is needed. Notes are limited to 25 MiB.
 
 Configure the bot process environment:
 
@@ -19,4 +19,4 @@ Keys use Roadie's secret handling: instead of a direct value, set `ROADIE_OPENAI
 
 Audio and a bounded vocabulary hint (the project's directory/repository name and the last 20 thread messages, up to 8,000 characters, including recent file/function names) are sent to the chosen provider. The hint instructs the model not to copy context as speech. Consider the provider's data policy before enabling this in sensitive projects.
 
-Missing keys, unreadable secrets, empty speech, missing ffmpeg and provider/download failures produce a short thread notice instead of an agent turn. Temporary conversion files are removed after each request. Transcription and download requests have timeouts. Multiple successful audio attachments become one prompt; failures receive notices. To retry, resend the note or type the request.
+Missing keys, unreadable secrets, empty speech and provider/download failures produce a short thread notice instead of an agent turn. Transcription and download requests have timeouts. Multiple successful audio attachments become one prompt; failures receive notices, and the cause is written to the bot log. To retry, resend the note or type the request.
