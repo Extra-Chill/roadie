@@ -2,7 +2,7 @@
 // per-turn rewrites applied to it (person, channel policy, leading command).
 
 import { getCachedPerson, isIdentityConfigured } from '../identity.js'
-import { personMcpPermissions } from '../person-mcp.js'
+import { personMcpPermissions, personMcpScope } from '../person-mcp.js'
 import { channelPolicyOverrides } from '../channel-policy.js'
 import { personKeyFrom } from '../credentials/person-pool.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
@@ -48,18 +48,20 @@ export function applyPersonToIngress(input: IngressInput): IngressInput {
   if (!person?.allowed) return input
   // Every person turn resets the session's person-scoped MCP access to the
   // speaker's own servers (none when they have no config).
-  const mcpPermissions = personMcpPermissions({
-    personKey: personKeyFrom({
-      personId: person.personId,
-      platform: input.actorPlatform ?? 'discord',
-      actorId: input.userId,
-    }) ?? undefined,
-    hasServers: (person.mcpServers?.length ?? 0) > 0,
-  })
+  const personKey = personKeyFrom({
+    personId: person.personId,
+    platform: input.actorPlatform ?? 'discord',
+    actorId: input.userId,
+  }) ?? undefined
+  const hasServers = (person.mcpServers?.length ?? 0) > 0
+  const mcpPermissions = personMcpPermissions({ personKey, hasServers })
   return {
     ...input,
     ...(person.personId ? { personId: person.personId } : {}),
     ...(person.credentialPool ? { credentialPool: person.credentialPool } : {}),
+    // Tell the model which person-scoped MCP tools this turn may call, so it
+    // does not reach for another speaker's (issue #458). '' = none.
+    personMcpScope: personKey && hasServers ? personMcpScope(personKey) : '',
     ...(input.agent || !person.agent ? {} : { agent: person.agent }),
     ...(input.model || !person.model ? {} : { model: person.model }),
     // The MCP pair goes before the person's own rules, which may refine it.
@@ -99,6 +101,10 @@ export type IngressInput = {
   // Credential pool override from the person filter (`credentialPool`),
   // applied to the speaker's billing pool when credential pools are enabled.
   credentialPool?: string
+  // Person-scoped MCP scope (`rpm_<hash>`) the speaker may use this turn, set
+  // by applyPersonToIngress. '' = the speaker has none; undefined = unknown
+  // (identity not configured or not a chat person), so nothing is said.
+  personMcpScope?: string
   // Discord message ID and thread ID for the source message, embedded in
   // <discord-user> synthetic context so the model knows which message it answers.
   sourceMessageId?: string

@@ -83,6 +83,7 @@ export class MessageQueue {
       prompt: input.prompt,
       userId: input.userId,
       personId: input.personId,
+      personMcpScope: input.personMcpScope,
       actorVia: input.actorVia,
       username: input.username,
       images: input.images,
