@@ -147,6 +147,7 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
+import { installVoiceDispatcher } from './voice-handler.js'
 import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityConfigured, personHas, resolvePerson } from './identity.js'
 import { offerDiscordLinkPrompt } from './commands/link.js'
 import { welcomeDiscordUser } from './commands/start.js'
@@ -581,7 +582,7 @@ export async function startDiscordBot({
     discordLogger.error('[GATEWAY] Session invalidated by Discord')
   })
 
-  discordClient.on(Events.MessageCreate, async (message: Message) => {
+  const handleNativeMessage = async (message: Message) => {
     const threadIngressSlot =
       message.channel.isThread() || message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.DM
         ? reserveThreadIngress(message.channel.id)
@@ -1314,7 +1315,10 @@ export async function startDiscordBot({
       }
     }
     })
-  })
+  }
+  discordClient.on(Events.MessageCreate, handleNativeMessage)
+  stopVoiceDispatcher?.()
+  stopVoiceDispatcher = installVoiceDispatcher(discordClient, handleNativeMessage)
 
   // Handle bot-initiated threads created by `roadie send` (without --notify-only)
   // Uses a YAML embed marker to pass options (start, cwd, agent, model)
@@ -1625,6 +1629,8 @@ export async function startDiscordBot({
 let activeDiscordClient: Client | null = null
 
 /** The connected bot client; scoped in-process operations must not log in again. */
+let stopVoiceDispatcher: (() => void) | undefined
+
 export function getActiveDiscordClient(): Client | null {
   return activeDiscordClient
 }
@@ -1692,6 +1698,8 @@ async function cleanupBot() {
       )
     }
 
+    stopVoiceDispatcher?.()
+    stopVoiceDispatcher = undefined
     voiceLogger.log('[SHUTDOWN] Stopping agent backend')
     await stopAgentBackend()
 

@@ -47,6 +47,7 @@ const whoEntrySchema = z.union([z.literal('owner'), z.string().regex(/^(role|use
 
 const policySchema = z
   .object({
+    voice: z.boolean().optional(),
     project: z.string().min(1).optional(),
     context: z.string().min(1).optional(),
     respond: z.enum(['always', 'mention', 'never']).optional(),

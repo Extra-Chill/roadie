@@ -44,7 +44,6 @@ type PendingQuestionContext = {
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
   contextHash: string
-
 }
 
 // Store pending question contexts by hash.
@@ -158,7 +157,6 @@ export async function showAskUserQuestionDropdowns({
     answers: {},
     totalQuestions: input.questions.length,
     contextHash,
-
   }
 
   pendingQuestionContexts.set(contextHash, context)
@@ -182,8 +180,7 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
-    const placeholder =
-      options.find((x) => x.label)?.label || 'Select an option'
+    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`ask_question:${contextHash}:${i}`)
       .setPlaceholder(placeholder)
@@ -195,14 +192,15 @@ export async function showAskUserQuestionDropdowns({
       selectMenu.setMaxValues(options.length)
     }
 
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
-    const sendResult = await thread.send({
-      content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
-      components: [actionRow],
-      flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
-    }).catch((e) => new DiscordOperationError({ operation: 'sendQuestionDropdown', cause: e }))
+    const sendResult = await thread
+      .send({
+        content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
+        components: [actionRow],
+        flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
+      })
+      .catch((e) => new DiscordOperationError({ operation: 'sendQuestionDropdown', cause: e }))
     // Without a visible dropdown the user can never answer, and there is no TTL
     // to rescue the run, so drop the context and abort so Pi unblocks.
     if (sendResult instanceof Error) {
@@ -219,9 +217,7 @@ export async function showAskUserQuestionDropdowns({
     }
   }
 
-  logger.log(
-    `Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`,
-  )
+  logger.log(`Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`)
 }
 
 /**
@@ -263,9 +259,7 @@ export async function handleAskQuestionSelectMenu(
   }
 
   if (context.answers[questionIndex]) {
-    logger.log(
-      `Ignored duplicate answer for question ${context.requestId} index ${questionIndex}`,
-    )
+    logger.log(`Ignored duplicate answer for question ${context.requestId} index ${questionIndex}`)
     return
   }
 
@@ -290,24 +284,48 @@ export async function handleAskQuestionSelectMenu(
   })
 
   const username = interaction.user.globalName || interaction.user.username
-  await sendThreadMessage(
-    context.thread,
-    `${QUEUE_PREFIX}**${username}:** ${answeredText}`,
-  )
+  await sendThreadMessage(context.thread, `${QUEUE_PREFIX}**${username}:** ${answeredText}`)
 
   // Check if all questions are answered. Claim the context synchronously
   // (delete before awaiting submit) so two concurrent final selections for a
   // multi-question tool cannot both submit and double-resume the session.
-  if (
-    areAllQuestionsAnswered(context)
-    && pendingQuestionContexts.get(contextHash) === context
-  ) {
+  if (areAllQuestionsAnswered(context) && pendingQuestionContexts.get(contextHash) === context) {
     deletePendingQuestionContextsForRequest({
       threadId: context.thread.id,
       requestId: context.requestId,
     })
     await submitQuestionAnswers(context)
   }
+}
+
+/** Voice can select only explicitly read-only options, never arbitrary approvals. */
+export async function answerQuestionByVoice(
+  threadId: string,
+  option: string,
+  username: string,
+): Promise<boolean> {
+  const context = [...pendingQuestionContexts.values()].find(
+    (entry) => entry.thread.id === threadId,
+  )
+  if (!context || context.questions.length !== 1) return false
+  const wording = JSON.stringify(context.questions)
+  if (
+    /merge|deploy|force[ -]?push|delete|remove|destroy|publish|release|approve|permission|execute|run command/i.test(
+      wording,
+    )
+  )
+    return false
+  const safeLabels = new Set(['explain only', 'read only', 'show status', 'do nothing'])
+  const choice = context.questions[0]?.options.find(
+    (entry) => entry.label.toLowerCase() === option.toLowerCase(),
+  )
+  if (!choice || !safeLabels.has(choice.label.toLowerCase())) return false
+  // No heuristic approval of yes/proceed/allow, even when a model claims it is safe.
+  context.answers[0] = [choice.label]
+  deletePendingQuestionContextsForRequest({ threadId, requestId: context.requestId })
+  await sendThreadMessage(context.thread, `🎙️ ${username}: ${choice.label}`)
+  await submitQuestionAnswers(context)
+  return true
 }
 
 /**
@@ -329,9 +347,7 @@ function formatQuestionAnswersText(context: PendingQuestionContext): string {
 }
 
 /** Resume the session by feeding the answers back as a new user prompt. */
-async function resumeSessionWithAnswers(
-  context: PendingQuestionContext,
-): Promise<void> {
+async function resumeSessionWithAnswers(context: PendingQuestionContext): Promise<void> {
   const runtime = getRuntime(context.thread.id)
   const resumed = await runtime?.resumeWithText({
     text: formatQuestionAnswersText(context),
@@ -361,9 +377,7 @@ async function resumeSessionWithAnswers(
  * The reply `.error` check is a safety net for the case where the request was
  * actually removed while the session still looked busy.
  */
-async function submitQuestionAnswers(
-  context: PendingQuestionContext,
-): Promise<void> {
+async function submitQuestionAnswers(context: PendingQuestionContext): Promise<void> {
   const client = getAgentBackendProvider().getBackend(context.directory)
   if (!client) {
     logger.error('Pi backend not found for directory')
@@ -387,7 +401,11 @@ async function submitQuestionAnswers(
   // A backend without a question tool cannot take the reply; resuming with the
   // answers below still gets them to the model.
   const replyResult = client.sessions.replyQuestion
-    ? await client.sessions.replyQuestion({ requestId: context.requestId, directory: context.directory, answers })
+    ? await client.sessions.replyQuestion({
+        requestId: context.requestId,
+        directory: context.directory,
+        answers,
+      })
     : new Error('Agent backend cannot reply to questions')
 
   if (!(replyResult instanceof Error)) {
@@ -426,11 +444,7 @@ export function parseAskUserQuestionTool(part: {
 
   const input = part.state?.input
 
-  if (
-    !input?.questions ||
-    !Array.isArray(input.questions) ||
-    input.questions.length === 0
-  ) {
+  if (!input?.questions || !Array.isArray(input.questions) || input.questions.length === 0) {
     return null
   }
 

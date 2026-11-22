@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ThreadChannel } from 'discord.js'
 import {
+  answerQuestionByVoice,
   areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
   pendingQuestionContexts,
@@ -29,6 +30,20 @@ afterEach(() => {
 })
 
 describe('ask-question', () => {
+  test.each(['merge', 'deploy', 'force-push', 'delete'])('voice never answers a destructive %s question', async (action) => {
+    const thread = createFakeThread()
+    await showAskUserQuestionDropdowns({
+      thread, sessionId: 'ses-1', directory: '/project', requestId: 'voice-danger',
+      input: { questions: [{ question: `Should we ${action}?`, header: 'Confirm', options: [
+        { label: 'Yes', description: action },
+        { label: 'Read only', description: `Also ${action}` },
+      ] }] },
+    })
+    expect(await answerQuestionByVoice(thread.id, 'Yes', 'Alice')).toBe(false)
+    expect(await answerQuestionByVoice(thread.id, 'Read only', 'Alice')).toBe(false)
+    expect(pendingQuestionContexts.size).toBe(1)
+  })
+
   test('dedupes duplicate question requests for the same thread', async () => {
     const thread = createFakeThread()
 
