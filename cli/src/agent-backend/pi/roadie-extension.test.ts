@@ -8,6 +8,7 @@ import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
 import roadieExtension from './roadie-extension.js'
+import { decidePermission } from './backend.js'
 import {
   FORM_TITLE,
   MAX_FORM_ROUNDS,
@@ -24,6 +25,62 @@ import {
   type NativeToolAsk,
 } from './roadie-extension.js'
 import type { NativeCallContinuation, NativeCallResult } from './mcp-native.js'
+
+describe('shared Pi spill hints', () => {
+  type Content = Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>
+  type Event = { toolName: string; toolCallId: string; input: Record<string, unknown>; content: Content; isError: boolean }
+  type Handler = (event: Event, ctx: unknown) => Promise<{ content: Content } | undefined>
+
+  function setup() {
+    const handlers: Handler[] = []
+    roadieExtension({
+      on: (name: string, callback: Handler) => { if (name === 'tool_result') handlers.push(callback) },
+      registerTool: () => {},
+      getAllTools: () => [],
+    } as unknown as Parameters<typeof roadieExtension>[0])
+    return async (content: Content) => {
+      const event: Event = { toolName: 'mcp__wordpress__search', toolCallId: 'call-1', input: {}, content, isError: false }
+      const ctx = { cwd: '/sessions/restricted-owner', sessionManager: { getSessionId: () => 'restricted-owner' } }
+      for (const handler of handlers) {
+        const result = await handler(event, ctx)
+        if (result) event.content = result.content
+      }
+      return event.content
+    }
+  }
+
+  test('restricted non-owner receives the preview but no unreadable spill path', async () => {
+    const spill = '/mnt/extrachill-workspace/.tmp/pi-mcp-c76ce9a0abdba59b.txt'
+    expect(decidePermission({
+      rules: [
+        { permission: '*', pattern: '*', action: 'allow' },
+        { permission: 'external_directory', pattern: '*', action: 'deny' },
+      ],
+      tool: 'read', input: { path: spill, offset: 1, limit: 100 }, cwd: '/sessions/restricted-owner',
+    })).toMatchObject({ action: 'deny', permission: 'external_directory' })
+    const image = { type: 'image' as const, data: 'image-data', mimeType: 'image/png' }
+    const result = await setup()([
+      { type: 'text', text: `Warning: truncated output (original token count: 30000)\npreview\n[Full output: ${spill} (read it with offset/limit)]` },
+      image,
+    ])
+    expect(result).toEqual([
+      { type: 'text', text: 'Warning: truncated output (original token count: 30000)\npreview\n[Output truncated. Narrow or paginate the request to retrieve more results.]' },
+      image,
+    ])
+    expect(JSON.stringify(result)).not.toContain(spill)
+    expect(JSON.stringify(result)).not.toContain('offset/limit')
+  })
+
+  test('also removes the codemode-style offset/limit hint', async () => {
+    const result = await setup()([{ type: 'text', text: 'preview\n[Full output: /tmp/pi-mcp-output.txt (read with offset/limit)]' }])
+    expect(result).toEqual([{ type: 'text', text: 'preview\n[Output truncated. Narrow or paginate the request to retrieve more results.]' }])
+  })
+
+  test('ordinary output is unchanged', async () => {
+    const content: Content = [{ type: 'text', text: 'Search returned three results.' }]
+    expect(await setup()(content)).toEqual(content)
+  })
+})
 
 describe('bounded compaction through the extension hook', () => {
   function setup() {
