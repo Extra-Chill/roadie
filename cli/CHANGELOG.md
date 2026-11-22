@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.86.4] - 2026-11-22
+
+### Fixed
+- stop advertising unreadable MCP spill files
+
 ## [0.86.3] - 2026-11-22
 
 ### Fixed
