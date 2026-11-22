@@ -12,6 +12,7 @@ import {
   resolveSessionSystemPrompt,
   systemPromptHasParentSession,
   getPromptContext,
+  getPersonMcpScopeLine,
   getSystemMessage,
   getSessionSystemPromptPath,
   ROADIE_SYSTEM_PROMPT_MARKER,
@@ -695,5 +696,16 @@ describe('system-message', () => {
         workingDirectory: { workingDirectory: '/w', label: 'b', projectDirectory: '/repo', kind: 'git-worktree' },
       }),
     ).not.toContain('This thread works in')
+  })
+})
+
+describe('person-scoped MCP turn note (issue #458)', () => {
+  test('names the speaker scope, or says there is none', () => {
+    const own = getPromptContext({ userId: '1', username: 'a', personMcpScope: 'rpm_0123456789ab' })
+    expect(own).toContain('only mcp__rpm_0123456789ab_*')
+    const none = getPromptContext({ userId: '1', username: 'a', personMcpScope: '' })
+    expect(none).toContain(getPersonMcpScopeLine(''))
+    expect(none).toContain('do not call any this turn')
+    expect(getPromptContext({ userId: '1', username: 'a' })).not.toContain('Person-scoped MCP')
   })
 })

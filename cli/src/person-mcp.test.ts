@@ -276,6 +276,9 @@ describe('two people in one channel', () => {
       evaluatePermission({ rules: sessionRules, permission: tool, targets: ['*'], fallback: 'allow' })
     expect(afterBob(aliceTool)).toBe('deny')
     expect(afterBob(bobTool)).toBe('allow')
+    // The turn also tells the model which scope it may use (issue #458).
+    expect(applyPersonToIngress({ ...base, userId: 'alice' }).personMcpScope).toBe(personMcpScope('wp:1'))
+    expect(applyPersonToIngress({ ...base, userId: 'carol' }).personMcpScope).toBe('')
   })
 
   test('scopes are unique per person key', () => {

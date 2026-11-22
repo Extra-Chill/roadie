@@ -12,6 +12,7 @@
 // per-turn synthetic context. session.command has no `system` field, so the
 // context-awareness plugin copies the pinned file onto command user messages.
 
+import { PERSON_MCP_PREFIX } from './person-mcp-name.js'
 import { applyFilters } from './hooks.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -441,9 +442,12 @@ export function getPromptContext({
   systemPromptFromSourceSession,
   parentSessionId,
   forkOrigin,
+  personMcpScope,
 }: {
   platform?: string
   sessionId?: string
+  /** Person-scoped MCP scope usable this turn ('' = none, undefined = say nothing). */
+  personMcpScope?: string
   /** Display name of the agent backend running this session (e.g. "Pi"). */
   backend?: string
   threadId?: string
@@ -502,6 +506,7 @@ export function getPromptContext({
         ]
       : []),
     ...(parentSessionId ? [getParentSessionInstructions(parentSessionId)] : []),
+    ...(personMcpScope === undefined ? [] : [getPersonMcpScopeLine(personMcpScope)]),
   ]
   const identityReminder = identityLines.length > 0
     ? `<system-reminder>\n${identityLines.join('\n')}\n</system-reminder>`
@@ -531,6 +536,16 @@ ${escapePromptText(repliedMessage.text)}
   // with the next text part (for example the user's actual prompt) when the
   // model concatenates message parts.
   return `${sections.join('\n\n')}\n`
+}
+
+/**
+ * Per-turn note on person-scoped MCP tools (`mcp__rpm_<hash>_<server>__…`).
+ * Each belongs to the person who connected it and is denied on anyone else's
+ * turn, so name the speaker's own scope (issue #458).
+ */
+export function getPersonMcpScopeLine(scope: string): string {
+  if (!scope) return `Person-scoped MCP tools (mcp__${PERSON_MCP_PREFIX}*) belong to whoever connected them; the current speaker has none, so do not call any this turn. They will be denied or not found. Use other tools, or ask the account owner to send the request.`
+  return `Person-scoped MCP tools usable this turn: only mcp__${scope}_* (the current speaker's own connected accounts). Tools under any other mcp__${PERSON_MCP_PREFIX}* scope belong to other people and will be denied or not found.`
 }
 
 type SystemPromptSection = PromptSection

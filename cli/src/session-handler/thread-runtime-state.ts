@@ -36,6 +36,8 @@ export type QueuedMessage = SessionTitleTurn & {
   actorVia?: 'chat' | 'cli'
   // Opaque host person id resolved by the person filter for this turn.
   personId?: string
+  // Person-scoped MCP scope usable this turn (see IngressInput.personMcpScope).
+  personMcpScope?: string
   // Image/file attachments extracted from the Discord message. Sent as
   // file parts alongside the prompt in the SDK call.
   images?: DiscordFileAttachment[]

@@ -2668,6 +2668,7 @@ export class ThreadSessionRuntime {
             sourceMessageTimestamp: input.sourceMessageTimestamp,
             sourceThreadId: input.sourceThreadId, threadName: this.chat.name || undefined,
             repliedMessage: input.repliedMessage,
+            personMcpScope: input.personMcpScope,
           })
           const parts: AgentPromptPart[] = [
             { kind: 'text', text: input.prompt }, { kind: 'text', text: context, synthetic: true },
@@ -2893,6 +2894,7 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
+        personMcpScope: input.personMcpScope,
         workingDirectory,
         currentAgent: resolvedAgent,
         workingDirectoryChanged,
@@ -3617,6 +3619,7 @@ export class ThreadSessionRuntime {
       sourceThreadId: input.sourceThreadId || this.thread.id,
       threadName: this.chat.name || undefined,
       repliedMessage: input.repliedMessage,
+      personMcpScope: input.personMcpScope,
       workingDirectory,
       currentAgent: earlyAgentPreference,
       workingDirectoryChanged,
@@ -3658,6 +3661,7 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.chat.name || undefined,
         repliedMessage: input.repliedMessage,
+        personMcpScope: input.personMcpScope,
         systemPromptFromSourceSession,
         forkOrigin,
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
