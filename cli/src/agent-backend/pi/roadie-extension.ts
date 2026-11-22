@@ -967,6 +967,24 @@ export default function roadieExtension(pi: ExtensionApi) {
     return undefined
   })
 
+  // Pi spills oversized MCP results into a shared workspace temp directory,
+  // not an owner-scoped directory. Do not advertise those files: a restricted
+  // session cannot read them, and allowing the shared directory would expose
+  // other sessions' output. Keep the preview and suggest server-side paging.
+  pi.on('tool_result', async (event) => {
+    let changed = false
+    const content = event.content.map((part) => {
+      if (part.type !== 'text') return part
+      const text = part.text.replace(
+        /\[Full output: [^\r\n]+ \(read (?:it )?with offset\/limit\)\]/g,
+        '[Output truncated. Narrow or paginate the request to retrieve more results.]',
+      )
+      if (text !== part.text) changed = true
+      return { ...part, text }
+    })
+    return changed ? { content } : undefined
+  })
+
   // Kitty graphics parity: extract images from bash output into image content
   // and strip the escape sequences from the text, so the model sees the image
   // instead of binary noise. Pi auto-resizes oversized result images itself.
