@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.86.1] - 2026-11-22
+
+### Fixed
+- show paired forwarded snapshots inside comment threads
+
 ## [0.86.0] - 2026-11-21
 
 ### Added
