@@ -3,6 +3,7 @@
 // - roadie_action_buttons: shows clickable action buttons in the thread
 // - roadie_sleep: persist a wake time so the session can sleep hours or days
 // - roadie_user_lookup: find guild members' mention IDs without a shell
+// - roadie_thread_lookup: find channels and threads by name without a shell
 //
 // IPC tools talk to the bot via SQLite rows; sleep writes session_sleeps.
 // Pi forwards each call to the bot process (./agent-backend/pi/backend.ts).
@@ -187,24 +188,30 @@ export type UserLookupDeps = {
   searchMembers(args: { guildId: string; query: string; limit: number }): Promise<unknown | Error>
 }
 
-async function defaultUserLookupDeps(): Promise<UserLookupDeps> {
+/**
+ * Bot-side Discord REST access shared by the lookup tools. Tool calls run
+ * inside the bot process (the backend forwards them there), so the bot's own
+ * credentials do the lookup, same as the `roadie user|thread|channel list`
+ * commands.
+ */
+async function guildLookupClient() {
   const { Routes } = await import('discord.js')
   const { createDiscordRest } = await import('./discord-urls.js')
   const { readRoadieSecret } = await import('./config.js')
   const { getThreadIdBySessionId, getBotToken } = await loadDatabaseModule()
-  // Runs inside the bot process (the backend forwards tool calls there), so
-  // the bot's own credentials do the lookup, same as `roadie user list`.
   let rest: ReturnType<typeof createDiscordRest> | undefined
   const getRest = async () => {
     if (rest) return rest
     const token = readRoadieSecret('ROADIE_BOT_TOKEN') || (await getBotToken().catch(() => undefined))?.token
-    if (!token) return new Error('No bot token available for member lookup')
+    if (!token) return new Error('No bot token available for lookup')
     rest = createDiscordRest(token)
     return rest
   }
   return {
-    getThreadId: async (sessionId) => (await getThreadIdBySessionId(sessionId)) ?? undefined,
-    async getGuildId(threadId) {
+    Routes,
+    getRest,
+    getThreadId: async (sessionId: string) => (await getThreadIdBySessionId(sessionId)) ?? undefined,
+    async getGuildId(threadId: string): Promise<string | undefined | Error> {
       const client = await getRest()
       if (client instanceof Error) return client
       const channel = await client.get(Routes.channel(threadId)).catch((cause: unknown) => new Error('Could not fetch thread', { cause }))
@@ -212,6 +219,14 @@ async function defaultUserLookupDeps(): Promise<UserLookupDeps> {
       const guildId = typeof channel === 'object' && channel !== null ? Reflect.get(channel, 'guild_id') : undefined
       return typeof guildId === 'string' ? guildId : undefined
     },
+  }
+}
+
+async function defaultUserLookupDeps(): Promise<UserLookupDeps> {
+  const { Routes, getRest, getThreadId, getGuildId } = await guildLookupClient()
+  return {
+    getThreadId,
+    getGuildId,
     async searchMembers({ guildId, query, limit }) {
       const client = await getRest()
       if (client instanceof Error) return client
@@ -267,7 +282,113 @@ export const roadieUserLookup = defineTool({
   },
 })
 
-export const ROADIE_TOOLS: RoadieTool[] = [roadieFileUpload, roadieActionButtons, roadieSleep, roadieUserLookup] as unknown as RoadieTool[]
+const THREAD_LOOKUP_LIMIT = 25
+
+/** Discord channel types the lookup reports. Private threads are never listed. */
+const CHANNEL_KIND: Record<number, string> = { 0: 'text', 2: 'voice', 5: 'announcement', 13: 'stage', 15: 'forum', 16: 'media' }
+const PUBLIC_THREAD_TYPES = new Set([10, 11])
+
+/**
+ * Side effects of roadie_thread_lookup, injectable for tests. Like
+ * roadie_user_lookup, the guild always comes from the session's own thread.
+ */
+export type ThreadLookupDeps = {
+  getThreadId(sessionId: string): Promise<string | undefined>
+  getGuildId(threadId: string): Promise<string | undefined | Error>
+  listChannels(guildId: string): Promise<unknown | Error>
+  listActiveThreads(guildId: string): Promise<unknown | Error>
+}
+
+async function defaultThreadLookupDeps(): Promise<ThreadLookupDeps> {
+  const { Routes, getRest, getThreadId, getGuildId } = await guildLookupClient()
+  return {
+    getThreadId,
+    getGuildId,
+    async listChannels(guildId) {
+      const client = await getRest()
+      if (client instanceof Error) return client
+      return client.get(Routes.guildChannels(guildId)).catch((cause: unknown) => new Error('Could not list channels', { cause }))
+    },
+    async listActiveThreads(guildId) {
+      const client = await getRest()
+      if (client instanceof Error) return client
+      return client.get(Routes.guildActiveThreads(guildId)).catch((cause: unknown) => new Error('Could not list active threads', { cause }))
+    },
+  }
+}
+
+type GuildChannel = { id: string; name: string; type: number; parent_id?: string | null }
+
+function asGuildChannels(value: unknown): GuildChannel[] {
+  return (Array.isArray(value) ? value : []).filter((entry): entry is GuildChannel => {
+    return typeof entry === 'object' && entry !== null
+      && typeof Reflect.get(entry, 'id') === 'string'
+      && typeof Reflect.get(entry, 'name') === 'string'
+      && typeof Reflect.get(entry, 'type') === 'number'
+  })
+}
+
+/**
+ * Find channels and active public threads whose name contains every word of
+ * `query`, in the guild of the session's thread. Returns names and mentions
+ * only, never message content.
+ */
+export async function lookupThreadGuildChannels({ query, sessionId, deps }: { query: string; sessionId: string; deps: ThreadLookupDeps }): Promise<string> {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 'Provide a non-empty name fragment to search for'
+  const threadId = await deps.getThreadId(sessionId)
+  if (!threadId) return 'Could not find thread for current session; thread lookup is only available in a chat thread'
+  const guildId = await deps.getGuildId(threadId)
+  if (guildId instanceof Error) return `Thread lookup failed: ${guildId.message}`
+  if (!guildId) return 'This thread is not in a Discord server, so there are no channels to look up'
+  const [channelsResult, threadsResult] = await Promise.all([deps.listChannels(guildId), deps.listActiveThreads(guildId)])
+  if (channelsResult instanceof Error) return `Thread lookup failed: ${channelsResult.message}`
+  const channels = asGuildChannels(channelsResult)
+  const names = new Map(channels.map((channel) => [channel.id, channel.name]))
+  const threads = threadsResult instanceof Error ? [] : asGuildChannels(
+    typeof threadsResult === 'object' && threadsResult !== null ? Reflect.get(threadsResult, 'threads') : [],
+  )
+  const matches = (name: string) => {
+    const lower = name.toLowerCase()
+    return words.every((word) => lower.includes(word))
+  }
+  const lines = [
+    ...channels
+      .filter((channel) => CHANNEL_KIND[channel.type] && matches(channel.name))
+      .map((channel) => `#${channel.name} (${CHANNEL_KIND[channel.type]} channel, ID: ${channel.id}) - link: <#${channel.id}>`),
+    ...threads
+      .filter((thread) => PUBLIC_THREAD_TYPES.has(thread.type) && matches(thread.name))
+      .map((thread) => {
+        const parent = thread.parent_id ? names.get(thread.parent_id) : undefined
+        const where = parent ? ` in #${parent}` : ''
+        return `${thread.name} (thread${where}, ID: ${thread.id}${thread.parent_id ? `, channel ID: ${thread.parent_id}` : ''}) - link: <#${thread.id}>`
+      }),
+  ]
+  const note = threadsResult instanceof Error ? `\n(Active threads could not be listed: ${threadsResult.message})` : ''
+  if (lines.length === 0) return `No channels or active threads found matching "${query.trim()}". Archived threads are not searched.${note}`
+  const shown = lines.slice(0, THREAD_LOOKUP_LIMIT)
+  const more = lines.length > shown.length ? `\n(${lines.length - shown.length} more; narrow the query)` : ''
+  return `Found ${lines.length} matching "${query.trim()}":\n${shown.join('\n')}${more}${note}`
+}
+
+export const roadieThreadLookup = defineTool({
+  name: 'roadie_thread_lookup',
+  description: dedent`
+    Find channels and active threads in this thread's Discord server by
+    name, to get their IDs and <#ID> links. Every word of the query must
+    appear in the name (case-insensitive). Put the <#ID> link in your reply
+    so people can click through. Archived and private
+    threads are not searched. Returns at most 25 matches.
+  `,
+  args: {
+    query: z.string().min(1).describe('Words from the channel or thread name, e.g. "fully loaded".'),
+  },
+  async execute({ query }, context) {
+    return lookupThreadGuildChannels({ query, sessionId: context.sessionId, deps: await defaultThreadLookupDeps() })
+  },
+})
+
+export const ROADIE_TOOLS: RoadieTool[] = [roadieFileUpload, roadieActionButtons, roadieSleep, roadieUserLookup, roadieThreadLookup] as unknown as RoadieTool[]
 
 /** Name, description and JSON Schema of each tool, for backends that register tools by schema. */
 export function roadieToolSchemas(): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
