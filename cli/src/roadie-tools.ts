@@ -2,6 +2,7 @@
 // - roadie_file_upload: prompts the chat user to upload files via native picker
 // - roadie_action_buttons: shows clickable action buttons in the thread
 // - roadie_sleep: persist a wake time so the session can sleep hours or days
+// - roadie_user_lookup: find guild members' mention IDs without a shell
 //
 // IPC tools talk to the bot via SQLite rows; sleep writes session_sleeps.
 // Pi forwards each call to the bot process (./agent-backend/pi/backend.ts).
@@ -173,7 +174,100 @@ export const roadieSleep = defineTool({
   },
 })
 
-export const ROADIE_TOOLS: RoadieTool[] = [roadieFileUpload, roadieActionButtons, roadieSleep] as unknown as RoadieTool[]
+const USER_LOOKUP_LIMIT = 20
+
+/**
+ * Side effects of roadie_user_lookup, injectable for tests. The guild always
+ * comes from the session's own thread, never from model input, so a lookup
+ * stays scoped to the guild the session lives in.
+ */
+export type UserLookupDeps = {
+  getThreadId(sessionId: string): Promise<string | undefined>
+  getGuildId(threadId: string): Promise<string | undefined | Error>
+  searchMembers(args: { guildId: string; query: string; limit: number }): Promise<unknown | Error>
+}
+
+async function defaultUserLookupDeps(): Promise<UserLookupDeps> {
+  const { Routes } = await import('discord.js')
+  const { createDiscordRest } = await import('./discord-urls.js')
+  const { readRoadieSecret } = await import('./config.js')
+  const { getThreadIdBySessionId, getBotToken } = await loadDatabaseModule()
+  // Runs inside the bot process (the backend forwards tool calls there), so
+  // the bot's own credentials do the lookup, same as `roadie user list`.
+  let rest: ReturnType<typeof createDiscordRest> | undefined
+  const getRest = async () => {
+    if (rest) return rest
+    const token = readRoadieSecret('ROADIE_BOT_TOKEN') || (await getBotToken().catch(() => undefined))?.token
+    if (!token) return new Error('No bot token available for member lookup')
+    rest = createDiscordRest(token)
+    return rest
+  }
+  return {
+    getThreadId: async (sessionId) => (await getThreadIdBySessionId(sessionId)) ?? undefined,
+    async getGuildId(threadId) {
+      const client = await getRest()
+      if (client instanceof Error) return client
+      const channel = await client.get(Routes.channel(threadId)).catch((cause: unknown) => new Error('Could not fetch thread', { cause }))
+      if (channel instanceof Error) return channel
+      const guildId = typeof channel === 'object' && channel !== null ? Reflect.get(channel, 'guild_id') : undefined
+      return typeof guildId === 'string' ? guildId : undefined
+    },
+    async searchMembers({ guildId, query, limit }) {
+      const client = await getRest()
+      if (client instanceof Error) return client
+      return client
+        .get(Routes.guildMembersSearch(guildId), { query: new URLSearchParams({ query, limit: String(limit) }) })
+        .catch((cause: unknown) => new Error('Discord member search failed', { cause }))
+    },
+  }
+}
+
+/** Resolve guild members matching `query` in the guild of the session's thread. */
+export async function lookupThreadGuildUsers({ query, sessionId, deps }: { query: string; sessionId: string; deps: UserLookupDeps }): Promise<string> {
+  const { isDiscordMemberLookupUnavailable, formatMemberLookupUnavailableMessage, isGuildMemberSearchResult } = await import('./cli-runner.js')
+  const trimmed = query.trim()
+  if (!trimmed) return 'Provide a non-empty name fragment to search for'
+  const threadId = await deps.getThreadId(sessionId)
+  if (!threadId) return 'Could not find thread for current session; user lookup is only available in a chat thread'
+  const guildId = await deps.getGuildId(threadId)
+  if (guildId instanceof Error) return `User lookup failed: ${guildId.message}`
+  if (!guildId) return 'This thread is not in a Discord server, so there are no guild members to look up'
+  const result = await deps.searchMembers({ guildId, query: trimmed, limit: USER_LOOKUP_LIMIT })
+  if (result instanceof Error) {
+    if (isDiscordMemberLookupUnavailable(result) || (result.cause instanceof Error && isDiscordMemberLookupUnavailable(result.cause))) {
+      return `${formatMemberLookupUnavailableMessage()}\nIn chat, mention a known user ID from chat metadata as <@ID>.`
+    }
+    return `User lookup failed: ${result.message}`
+  }
+  const members = (Array.isArray(result) ? result : [])
+    .filter((member): member is object => typeof member === 'object' && member !== null)
+    .filter(isGuildMemberSearchResult)
+    .slice(0, USER_LOOKUP_LIMIT)
+  if (members.length === 0) return `No users found matching "${trimmed}"`
+  const lines = members.map((member) => {
+    const displayName = member.nick || member.user.global_name || member.user.username
+    return `${displayName} (ID: ${member.user.id}) - mention: <@${member.user.id}>`
+  })
+  return `Found ${members.length} users matching "${trimmed}":\n${lines.join('\n')}`
+}
+
+export const roadieUserLookup = defineTool({
+  name: 'roadie_user_lookup',
+  description: dedent`
+    Look up members of this thread's Discord server by name to get their
+    user ID and mention. Use it to ping someone who has not spoken in the
+    thread: put the returned <@ID> mention in your reply.
+    Prefer IDs already in chat metadata. Returns at most 20 matches.
+  `,
+  args: {
+    query: z.string().min(1).describe('Name fragment to search for (username, display name or nickname).'),
+  },
+  async execute({ query }, context) {
+    return lookupThreadGuildUsers({ query, sessionId: context.sessionId, deps: await defaultUserLookupDeps() })
+  },
+})
+
+export const ROADIE_TOOLS: RoadieTool[] = [roadieFileUpload, roadieActionButtons, roadieSleep, roadieUserLookup] as unknown as RoadieTool[]
 
 /** Name, description and JSON Schema of each tool, for backends that register tools by schema. */
 export function roadieToolSchemas(): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {

@@ -431,7 +431,7 @@ describe('system-message', () => {
       - \`roadie session abort <session_id>\`: stop a mistakenly started session without hiding its thread.
       - \`roadie thread list --channel <channel_id> --json\`: discover remote thread IDs.
       - \`roadie channel list [--guild <guild_id>] [--json]\`: find a channel ID by name (id, name, type, parent category); \`roadie send --channel '#name'\` also resolves a unique name.
-      - \`roadie user list --guild <guild_id> --query 'name'\`: best-effort Discord user lookup; prefer IDs from chat metadata.
+      - Discord user lookup: prefer IDs from chat metadata; otherwise call the \`roadie_user_lookup\` tool (searches this thread's server, works without shell access). \`roadie user list --guild <guild_id> --query 'name'\` is the shell fallback.
       - \`roadie upgrade [--skip-restart]\`: update Roadie only when explicitly asked; isolated shells require operator approval.
       - Debug log: \`<data-dir>/roadie.log\` (current bot run); see \`docs/debugging-roadie.md\` for bug-report evidence.
 
