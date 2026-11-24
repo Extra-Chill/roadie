@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.88.0] - 2026-11-24
+
+### Added
+- add roadie_thread_lookup native tool for shell-less channel and thread lookup
+
+### Fixed
+- read the pools' agent dir in CLI children so session search resolves pool models
+
 ## [0.87.0] - 2026-11-24
 
 ### Added
