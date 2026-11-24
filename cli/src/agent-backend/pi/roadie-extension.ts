@@ -7,7 +7,7 @@
 //   title is ROADIE_PERMISSION_TITLE. Roadie evaluates its own permission policy
 //   and answers, or forwards the question to the person. A refusal blocks the call.
 // - Registers Roadie's own tools (roadie_file_upload, roadie_action_buttons,
-//   roadie_sleep, roadie_user_lookup) from the schemas in ROADIE_PI_TOOLS_FILE. Each call is sent to
+//   roadie_sleep, roadie_user_lookup, roadie_thread_lookup) from the schemas in ROADIE_PI_TOOLS_FILE. Each call is sent to
 //   Roadie as an `input` UI request titled ROADIE_TOOL_TITLE; Roadie runs the
 //   tool in the bot process and answers with the JSON result.
 // - Serves person-scoped remote MCP servers that speak the stateless

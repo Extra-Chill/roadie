@@ -611,7 +611,7 @@ Agent shells supply the current session and platform through the environment. Re
 - \`roadie project list [--all] [--json]\`: discover project directories and channel IDs, including remote channels with \`--all\`.
 - \`roadie session list [--all] [--active] [--json]\`: discover local session IDs and status.
 - \`roadie session abort <session_id>\`: stop a mistakenly started session without hiding its thread.
-- \`roadie thread list --channel <channel_id> --json\`: discover remote thread IDs.
+- Channel and thread lookup by name: call the \`roadie_thread_lookup\` tool (searches this server's channels and active threads, works without shell access). \`roadie thread list --channel <channel_id> --json\` is the shell fallback and also lists archived threads.
 - \`roadie channel list [--guild <guild_id>] [--json]\`: find a channel ID by name (id, name, type, parent category); \`roadie send --channel '#name'\` also resolves a unique name.
 - Discord user lookup: prefer IDs from chat metadata; otherwise call the \`roadie_user_lookup\` tool (searches this thread's server, works without shell access). \`roadie user list --guild <guild_id> --query 'name'\` is the shell fallback.
 - \`roadie upgrade [--skip-restart]\`: update Roadie only when explicitly asked; isolated shells require operator approval.
