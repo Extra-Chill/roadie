@@ -9,7 +9,7 @@ Pi backend (or the configured AgentBackend).
 1. Provide a Gemini Live API key using `ROADIE_GEMINI_API_KEY`, or preferably
    `ROADIE_GEMINI_API_KEY_FILE` pointing to a service-readable secret file. Keys
    are never written to the database. The default model is
-   `gemini-3.1-flash-live-preview`; your Google account must have Live access.
+   `gemini-3.8-live`; your Google account must have Live access.
 2. Enable one guild voice channel in the existing channels config:
 
    ```yaml

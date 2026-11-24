@@ -20,7 +20,7 @@ export const geminiVoiceProvider: VoiceProvider = {
   async connect({ key, tool, output, interrupted, completed, failed }) {
     let session: Session
     session = await new GoogleGenAI({ apiKey: key }).live.connect({
-      model: 'gemini-3.1-flash-live-preview',
+      model: 'gemini-3.8-live',
       config: {
         responseModalities: [Modality.AUDIO],
         systemInstruction: dispatcherInstructions,
