@@ -8,6 +8,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   piSettingsDefaultModel,
+  resolvePiAgentDir,
   clearResolvedDefaultProvider,
   getAgentBackendProvider,
   isRetiredSession,
@@ -165,5 +166,45 @@ describe('Pi default model from settings.json', () => {
     fs.writeFileSync(path.join(agentDir, 'settings.json'), '{not json')
     expect(piSettingsDefaultModel(agentDir)).toBeUndefined()
     expect(piSettingsDefaultModel(undefined)).toBeUndefined()
+  })
+})
+
+describe('Pi agent dir outside the pool-owning process', () => {
+  const tmp = () => fs.mkdtempSync(path.join(process.env['TMPDIR'] || os.tmpdir(), 'pi-agent-dir-'))
+
+  test('a running pool wins and is passed to Pi', () => {
+    expect(resolvePiAgentDir({ pool: { agentDir: '/pool' }, env: { PI_CODING_AGENT_DIR: '/explicit' } })).toEqual({
+      agentDir: '/pool',
+      env: { PI_CODING_AGENT_DIR: '/pool' },
+    })
+  })
+
+  test('an explicit PI_CODING_AGENT_DIR is kept as is', () => {
+    expect(resolvePiAgentDir({ env: { PI_CODING_AGENT_DIR: '/explicit' }, dataDir: tmp() })).toEqual({ agentDir: '/explicit', env: {} })
+  })
+
+  test('a CLI child of the bot reads the pool agent dir the bot wrote', () => {
+    // `roadie session search` from an agent shell runs in a bot child that
+    // never starts the pools; without this, ROADIE_PI_MODEL=roadie/opus was
+    // "not found" because Pi read ~/.pi/agent.
+    const dataDir = tmp()
+    fs.mkdirSync(path.join(dataDir, 'pi-agent'))
+    fs.writeFileSync(path.join(dataDir, 'pi-agent', 'models.json'), '{}')
+    expect(resolvePiAgentDir({ env: {}, dataDir })).toEqual({
+      agentDir: path.join(dataDir, 'pi-agent'),
+      env: { PI_CODING_AGENT_DIR: path.join(dataDir, 'pi-agent') },
+    })
+  })
+
+  test('ROADIE_PI_AGENT_DIR locates the written pool dir', () => {
+    const custom = tmp()
+    fs.writeFileSync(path.join(custom, 'models.json'), '{}')
+    expect(resolvePiAgentDir({ env: { ROADIE_PI_AGENT_DIR: custom }, dataDir: tmp() }).agentDir).toBe(custom)
+  })
+
+  test("without a written pool dir Pi keeps its own default", () => {
+    const result = resolvePiAgentDir({ env: {}, dataDir: tmp() })
+    expect(result.env).toEqual({})
+    expect(result.agentDir).toBe(path.join(os.homedir(), '.pi', 'agent'))
   })
 })

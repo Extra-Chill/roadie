@@ -74,13 +74,35 @@ export function piSettingsDefaultModel(agentDir: string | undefined): string | u
   }
 }
 
-/** The agent dir Pi reads: the pools' when they run, else PI_CODING_AGENT_DIR, else Pi's default. */
-function piAgentDir(): string | undefined {
-  return piPool?.agentDir || process.env['PI_CODING_AGENT_DIR'] || (os.homedir() ? path.join(os.homedir(), '.pi', 'agent') : undefined)
+/**
+ * The pools' agent dir when this process did not start the pools but the
+ * running bot wrote one: a CLI child of the bot (`session search`, `session
+ * read` from an agent shell) or an operator CLI on the bot host. Its models.json
+ * declares the pool rotations (e.g. `roadie/opus`) that ROADIE_PI_MODEL names,
+ * so Pi must read it or it exits with "Model not found" before listing any
+ * session.
+ */
+export function writtenPoolAgentDir({ env = process.env, dataDir = getDataDir() }: { env?: NodeJS.ProcessEnv; dataDir?: string } = {}): string | undefined {
+  const agentDir = env['ROADIE_PI_AGENT_DIR'] || path.join(dataDir, 'pi-agent')
+  return fs.existsSync(path.join(agentDir, 'models.json')) ? agentDir : undefined
+}
+
+/**
+ * The agent dir Pi reads: the pools' when they run, else PI_CODING_AGENT_DIR,
+ * else one the bot's pools wrote, else Pi's default. `env` is what Pi must be
+ * given to read it (empty when Pi finds it on its own).
+ */
+export function resolvePiAgentDir({ pool = piPool, env = process.env, dataDir }: { pool?: { agentDir: string }; env?: NodeJS.ProcessEnv; dataDir?: string } = {}): { agentDir: string | undefined; env: Record<string, string> } {
+  if (pool) return { agentDir: pool.agentDir, env: { PI_CODING_AGENT_DIR: pool.agentDir } }
+  if (env['PI_CODING_AGENT_DIR']) return { agentDir: env['PI_CODING_AGENT_DIR'], env: {} }
+  const written = writtenPoolAgentDir({ env, ...(dataDir && { dataDir }) })
+  if (written) return { agentDir: written, env: { PI_CODING_AGENT_DIR: written } }
+  return { agentDir: os.homedir() ? path.join(os.homedir(), '.pi', 'agent') : undefined, env: {} }
 }
 
 function buildPiProvider(): PiBackendProvider {
-  const model = process.env['ROADIE_PI_MODEL'] || piSettingsDefaultModel(piAgentDir())
+  const agent = resolvePiAgentDir()
+  const model = process.env['ROADIE_PI_MODEL'] || piSettingsDefaultModel(agent.agentDir)
   // Opt-in shell isolation (--isolate-shells): Pi's bash tool goes through
   // the isolated-shell wrapper, and Pi only takes a shell through
   // `shellPath` in a Roadie-owned agent dir (the pools'). Without that dir the
@@ -96,7 +118,8 @@ function buildPiProvider(): PiBackendProvider {
     injectionGuardDir: getInjectionGuardDir(),
     ...(model && { model }),
     ...(process.env['ROADIE_PI_TITLE_MODEL'] && { titleModel: process.env['ROADIE_PI_TITLE_MODEL'] }),
-    ...(piPool && { pool: piPool, env: { PI_CODING_AGENT_DIR: piPool.agentDir } }),
+    ...(piPool && { pool: piPool }),
+    ...(Object.keys(agent.env).length > 0 && { env: agent.env }),
     ...(isolateShellsUser && {
       isolateShells: { username: isolateShellsUser, dataDir: getDataDir(), agentDir: piPool?.agentDir ?? null },
     }),
