@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.87.0] - 2026-11-24
+
+### Added
+- add roadie_user_lookup native tool for shell-less member lookup
+
 ## [0.86.4] - 2026-11-22
 
 ### Fixed
