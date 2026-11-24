@@ -885,7 +885,7 @@ describe('real-session-task-normal', () => {
 
   test('getLatestRunInfo has model info', () => {
     expect(getLatestRunInfo({ events, sessionId })).toEqual({
-      model: 'gemini-3.5-flash-lite',
+      model: 'gemini-2.5-flash',
       providerID: 'cached-google-real-events',
       agent: 'build',
       tokensUsed: 39025,
@@ -1331,7 +1331,7 @@ describe('getLatestTurnTokenUsage', () => {
           reasoning: 0,
           cacheRead: 0, cacheWrite: 0,
         },
-        modelID: 'gemini-3.5-flash-lite',
+        modelID: 'gemini-2.5-flash',
         providerID: 'google',
       }),
     ]
@@ -1344,7 +1344,7 @@ describe('getLatestTurnTokenUsage', () => {
       cacheWrite: 0,
       total: 10,
       cost: 0,
-      model: 'gemini-3.5-flash-lite',
+      model: 'gemini-2.5-flash',
       providerID: 'google',
       assistantMessageCount: 1,
       userMessageId: 'msg_user_2',
@@ -1383,7 +1383,7 @@ describe('getLatestTurnTokenUsage', () => {
       cacheWrite: 0,
       total: 39025,
       cost: 0,
-      model: 'gemini-3.5-flash-lite',
+      model: 'gemini-2.5-flash',
       providerID: 'cached-google-real-events',
       assistantMessageCount: 1,
       userMessageId: 'msg_cb9aae4c9001CxCOkoqgiXRsi1',
@@ -1401,7 +1401,7 @@ describe('getLatestTurnTokenUsage', () => {
       cacheWrite: 0,
       total: 82720,
       cost: 0,
-      model: 'gemini-3.5-flash-lite',
+      model: 'gemini-2.5-flash',
       providerID: 'cached-google-real-events',
       assistantMessageCount: 2,
       userMessageId: 'msg_cb9b0ba6c001i3YH7bGffdB6BF',
@@ -1602,7 +1602,7 @@ describe('getPromptCacheClear', () => {
         messageId: 'msg_asst_2',
         parentID: 'msg_user_2',
         created: 4,
-        modelID: 'gemini-3.5-flash-lite',
+        modelID: 'gemini-2.5-flash',
         providerID: 'google',
         tokens: {
           input: 20100,

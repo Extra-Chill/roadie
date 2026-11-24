@@ -543,7 +543,7 @@ const INJECTION_GUARD_MODEL_PRIORITY = [
   'openai/gpt-5.4-nano',
   'openai/gpt-5.4-mini',
   'anthropic/claude-haiku-4-5',
-  'google/gemini-3.5-flash-lite',
+  'google/gemini-2.5-flash',
   'openai/gpt-4o-mini',
   'anthropic/claude-3-5-haiku-latest',
 ]
