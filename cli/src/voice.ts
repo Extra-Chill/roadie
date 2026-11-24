@@ -32,7 +32,7 @@ export async function transcribeAudio({ audio, context = '' }: { audio: () => Pr
         method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(60_000),
       })
     } else {
-      const model = getRoadieEnv('ROADIE_VOICE_MODEL') || 'gemini-2.5-flash'
+      const model = getRoadieEnv('ROADIE_VOICE_MODEL') || 'gemini-3.5-flash-lite'
       response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: Buffer.from(data).toString('base64') } }] }] }),

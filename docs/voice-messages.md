@@ -13,7 +13,7 @@ Configure the bot process environment:
 | `ROADIE_VOICE_PROVIDER` | `openai` (default) or `gemini` |
 | `ROADIE_OPENAI_API_KEY` | OpenAI API key, for OpenAI transcription |
 | `ROADIE_GEMINI_API_KEY` | Google Gemini API key, for Gemini transcription |
-| `ROADIE_VOICE_MODEL` | Optional provider model override; defaults to `gpt-4o-mini-transcribe` or `gemini-2.5-flash` |
+| `ROADIE_VOICE_MODEL` | Optional provider model override; defaults to `gpt-4o-mini-transcribe` or `gemini-3.5-flash-lite` |
 
 Keys use Roadie's secret handling: instead of a direct value, set `ROADIE_OPENAI_API_KEY_FILE` or `ROADIE_GEMINI_API_KEY_FILE` to a readable secret file. Direct values take precedence. These are transcription credentials, independent of the agent's model account.
 
