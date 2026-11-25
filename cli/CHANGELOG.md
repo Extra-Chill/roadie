@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.89.0] - 2026-11-25
+
+### Added
+- add Gemini Live hands-free thread dispatcher
+- transcribe Discord voice messages into agent prompts
+
+### Changed
+- bump GitHub Actions off the Node 20 runtime
+
 ## [0.88.1] - 2026-11-25
 
 ### Changed
