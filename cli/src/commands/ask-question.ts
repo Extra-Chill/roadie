@@ -310,36 +310,6 @@ export async function handleAskQuestionSelectMenu(
   }
 }
 
-/** Wording that keeps a question in Discord until the user is parked. */
-const VOICE_DEFERRED =
-  /merge|deploy|force[ -]?push|delete|remove|destroy|drop|publish|release|permission|credential|secret|production/i
-
-/**
- * Answer a pending single-question prompt by voice. Any listed option may be
- * chosen unless the question or its options mention a destructive action;
- * those stay in Discord. Returns false when nothing was answered.
- */
-export async function answerQuestionByVoice(
-  threadId: string,
-  option: string,
-  username: string,
-): Promise<boolean> {
-  const context = [...pendingQuestionContexts.values()].find(
-    (entry) => entry.thread.id === threadId,
-  )
-  if (!context || context.questions.length !== 1) return false
-  if (VOICE_DEFERRED.test(JSON.stringify(context.questions))) return false
-  const choice = context.questions[0]?.options.find(
-    (entry) => entry.label.toLowerCase() === option.trim().toLowerCase(),
-  )
-  if (!choice) return false
-  context.answers[0] = [choice.label]
-  deletePendingQuestionContextsForRequest({ threadId, requestId: context.requestId })
-  await sendThreadMessage(context.thread, `🎙️ ${username}: ${choice.label}`)
-  await submitQuestionAnswers(context)
-  return true
-}
-
 /**
  * Format collected answers as a plain-text summary the model can read when
  * the run is resumed after an abort (e.g. `"Which option?"="Alpha"`).

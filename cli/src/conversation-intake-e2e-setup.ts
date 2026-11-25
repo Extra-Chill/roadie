@@ -1,8 +1,6 @@
 // The same scenario drives both real adapter runtimes and the real
 // a real Pi against the scripted model server. Assertions observe chat and
 // backend history.
-import { VoiceDispatcher } from './voice-dispatcher.js'
-import { createVoiceThreadHost } from './voice-thread-host.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -503,41 +501,6 @@ export function setupConversationIntakeSuite(platform: Platform) {
       } finally {
         removeCallbackDeny()
       }
-    }
-    if (platform === 'discord') {
-      // Deterministic Live replacement drives actual dispatcher tools, native
-      // Discord intake, the Pi runtime, and the twin's durable thread history.
-      const member = await client.guilds.cache.get(spaceId)!.members.fetch(actors.alice)
-      const intake = client.listeners('messageCreate')[0] as (
-        message: import('discord.js').Message,
-      ) => Promise<void>
-      const driver = new VoiceDispatcher(createVoiceThreadHost(client, member, intake))
-      const listed = (await driver.call('list_threads', {})) as Array<{ index: number; id: string }>
-      const selected = listed.find((entry) => entry.id === threadId)!
-      expect(selected).toBeDefined()
-      await driver.call('focus_thread', { thread: String(selected.index) })
-      const before = (await threadMessages()).filter(answer).length
-      await driver.call('send_to_thread', { text: 'INTAKE_ANSWER voice dispatch' })
-      await wait(async () => (await threadMessages()).filter(answer).length > before)
-      expect(
-        (await threadMessages()).some((entry) =>
-          entry.text.includes('🎙️ alice: INTAKE_ANSWER voice dispatch'),
-        ),
-      ).toBe(true)
-      expect(
-        intakeRequests.some(
-          (request) => request.actor.id === actors.alice && request.text.includes('voice dispatch'),
-        ),
-      ).toBe(true)
-      expect(await driver.call('answer_pending', { option: 'deploy' })).toContain('parked')
-      expect(await driver.call('read_latest', {})).toContain('intake-answer')
-      await driver.call('abort_thread', {})
-      await driver.call('start_thread', { project: 'shared', text: 'INTAKE_ANSWER new voice thread' })
-      const refreshed = await driver.call('list_threads', {}) as Array<{ id: string }>
-      const created = refreshed.find((entry) => entry.id !== threadId)
-      expect(created).toBeDefined()
-      await wait(async () => !getRuntime(created!.id)?.isBusy())
-      disposeRuntime(created!.id)
     }
     // Physical thread creation remains a hard bound for native slash starts.
     const config = path.join(root, 'channels.json')

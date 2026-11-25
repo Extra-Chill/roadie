@@ -1,5 +1,8 @@
+// Discord voice transport: joins the configured voice channel for an
+// authorized speaker, pipes audio to the speech provider and back, and hands
+// everything else to the orchestrator bridge (voice-bridge.ts).
 import { PassThrough } from 'node:stream'
-import { ChannelType, Events, type Client, type Message, type VoiceState } from 'discord.js'
+import { ChannelType, Events, type Client, type VoiceState } from 'discord.js'
 import {
   AudioPlayerStatus,
   EndBehaviorType,
@@ -13,14 +16,8 @@ import {
 import prism from 'prism-media'
 import { readRoadieSecret } from './config.js'
 import { resolveChannelPolicy } from './channel-policy.js'
-import { addAction, removeAction } from './hooks.js'
-import { VoiceDispatcher, spokenText } from './voice-dispatcher.js'
-import { createVoiceThreadHost, voiceSpeakerAllowed } from './voice-thread-host.js'
-import {
-  geminiVoiceProvider,
-  type VoiceProvider,
-  type VoiceProviderSession,
-} from './voice-provider.js'
+import { startVoiceBridge, voiceSpeakerAllowed, type VoiceBridge, type VoiceIntake } from './voice-bridge.js'
+import { geminiVoiceProvider, type VoiceProvider } from './voice-provider.js'
 
 /** 48k stereo signed PCM → 16k mono. Discord decoder frames are 20ms. */
 export function voiceInput(frame: Buffer): Buffer {
@@ -40,9 +37,13 @@ export function voiceOutput(frame: Buffer): Buffer {
   return output
 }
 
-export function installVoiceDispatcher(
+/**
+ * Join an authorized speaker's voice channel when its policy names an
+ * orchestrator text channel (`voice: { channel }`), and leave with them.
+ */
+export function installVoiceBridge(
   client: Client,
-  intake: (message: Message) => Promise<void>,
+  intake: VoiceIntake,
   provider: VoiceProvider = geminiVoiceProvider,
 ): () => void {
   const sessions = new Map<string, { userId: string; channelId: string; close: () => void }>()
@@ -58,7 +59,7 @@ export function installVoiceDispatcher(
       !state.channel ||
       state.channel.type !== ChannelType.GuildVoice ||
       !state.member ||
-      resolveChannelPolicy(state.channel.id)?.voice !== true
+      !resolveChannelPolicy(state.channel.id)?.voice?.channel
     )
       return
     pending.add(state.guild.id)
@@ -84,105 +85,71 @@ export function installVoiceDispatcher(
       })
       const player = createAudioPlayer()
       connection.subscribe(player)
-      const host = createVoiceThreadHost(client, state.member, intake)
-      const dispatcher = new VoiceDispatcher(host)
-      let live: VoiceProviderSession | undefined
+      let bridge: VoiceBridge | undefined
       let audio: PassThrough | undefined
       const streams = new Set<{ destroy(): unknown }>()
       let closed = false
-      const idle = async ({ threadId }: { threadId: string }) => {
-        if (closed) return
-        const threads = await host.list()
-        const thread = threads.find((entry) => entry.id === threadId)
-        if (thread && !closed)
-          live?.announce(`${thread.label} finished: ${spokenText(await host.read(threadId))}`)
-      }
-      // Poll the UI state, not backend-specific events, so Pi extension forms
-      // and Roadie's permission policy both generate announcements.
-      const seen = new Map<string, string>()
-      let polling = false
-      const timer = setInterval(() => {
-        if (closed || polling) return
-        polling = true
-        void host
-          .list()
-          .then((threads) => {
-            for (const thread of threads) {
-              if (thread.status.startsWith('waiting') && seen.get(thread.id) !== thread.status)
-                live?.announce(`${thread.label}: ${thread.status}`)
-              seen.set(thread.id, thread.status)
-            }
-          })
-          .catch(() => {})
-          .finally(() => {
-            polling = false
-          })
-      }, 2000)
       const close = () => {
         if (closed) return
         closed = true
-        clearInterval(timer)
-        removeAction('session_idle', idle)
         for (const stream of streams) stream.destroy()
         streams.clear()
         audio?.destroy()
         player.stop(true)
-        live?.close()
+        bridge?.close()
         connection.destroy()
         sessions.delete(state.guild.id)
       }
       cleanup = close
       sessions.set(state.guild.id, { userId: state.id, channelId, close })
-      addAction('session_idle', idle)
       player.on('error', close)
       connection.on('error', close)
       connection.on(VoiceConnectionStatus.Disconnected, close)
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000)
-      live = await provider.connect({
+      bridge = await startVoiceBridge({
+        client,
+        member: state.member,
+        voiceChannelId: channelId,
+        intake,
+        provider,
         key,
-        async tool(name, args) {
-          if (
-            closed ||
-            state.member?.voice.channelId !== channelId ||
-            !(await voiceSpeakerAllowed(state.member, channelId))
-          )
-            throw new Error('Voice session is no longer authorized')
-          return dispatcher.call(name, args)
-        },
-        output(frame) {
-          if (closed) return
-          if (
-            !audio ||
-            audio.destroyed ||
-            audio.writableEnded ||
-            player.state.status === AudioPlayerStatus.Idle
-          ) {
+        audio: {
+          output(frame) {
+            if (closed) return
+            if (
+              !audio ||
+              audio.destroyed ||
+              audio.writableEnded ||
+              player.state.status === AudioPlayerStatus.Idle
+            ) {
+              audio?.destroy()
+              audio = new PassThrough()
+              player.play(createAudioResource(audio, { inputType: StreamType.Raw }))
+            }
+            // Bound playback buffering rather than retaining unbounded model audio.
+            if (audio.writableLength > 48_000 * 4 * 10) {
+              close()
+              return
+            }
+            audio.write(voiceOutput(frame))
+          },
+          completed() {
+            audio?.end()
+          },
+          interrupted() {
             audio?.destroy()
-            audio = new PassThrough()
-            player.play(createAudioResource(audio, { inputType: StreamType.Raw }))
-          }
-          // Bound playback buffering rather than retaining unbounded model audio.
-          if (audio.writableLength > 48_000 * 4 * 10) {
-            close()
-            return
-          }
-          audio.write(voiceOutput(frame))
+            audio = undefined
+            player.stop(true)
+          },
+          failed: close,
         },
-        completed() {
-          audio?.end()
-        },
-        interrupted() {
-          audio?.destroy()
-          audio = undefined
-          player.stop(true)
-        },
-        failed: close,
       })
-      if (closed || disposed || state.member.voice.channelId !== channelId) {
-        live.close()
+      if (!bridge || closed || disposed || state.member.voice.channelId !== channelId) {
+        bridge?.close()
         close()
         return
       }
+      const live = bridge.live
       connection.receiver.speaking.on('start', (userId) => {
         if (closed || userId !== state.id) return
         void (async () => {
@@ -196,7 +163,7 @@ export function installVoiceDispatcher(
           input.on('error', close)
           decoder.on('error', close)
           decoder.on('data', (frame: Buffer) => {
-            if (!closed) live?.audio(voiceInput(frame))
+            if (!closed) live.audio(voiceInput(frame))
           })
           input.on('end', () => {
             streams.delete(input)
