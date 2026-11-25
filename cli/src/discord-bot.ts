@@ -131,8 +131,10 @@ import {
   GatewayIntentBits,
   Partials,
   ThreadAutoArchiveDuration,
+  type GuildMember,
   type Message,
   type TextChannel,
+  type User,
   type ThreadChannel,
 } from 'discord.js'
 import fs from 'node:fs'
@@ -147,6 +149,7 @@ import {
   stopStdinCpuProfListener,
 } from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
+import { installVoiceBridge } from './voice-handler.js'
 import { getCachedPerson, IDENTITY_LOOKUP_FAILED_MESSAGE, isIdentityConfigured, personHas, resolvePerson } from './identity.js'
 import { offerDiscordLinkPrompt } from './commands/link.js'
 import { welcomeDiscordUser } from './commands/start.js'
@@ -581,7 +584,12 @@ export async function startDiscordBot({
     discordLogger.error('[GATEWAY] Session invalidated by Discord')
   })
 
-  discordClient.on(Events.MessageCreate, async (message: Message) => {
+  // The one intake entry point: typed messages and spoken voice messages both
+  // arrive here as (channel, speaker, text), so identity, channel policy,
+  // queueing and attribution are identical. `source` is the Discord message
+  // that carries the words (for voice, the posted transcript).
+  const handleDiscordIntake = async (incoming: DiscordIntake) => {
+    const { source: message, author, member: speakerMember, text: content, spoken = false } = incoming
     const threadIngressSlot =
       message.channel.isThread() || message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.DM
         ? reserveThreadIngress(message.channel.id)
@@ -589,7 +597,7 @@ export async function startDiscordBot({
     await runInThreadIngressSlot(threadIngressSlot, async () => {
     try {
       const isSelfBotMessage = Boolean(
-        discordClient.user && message.author?.id === discordClient.user.id,
+        discordClient.user && author?.id === discordClient.user.id,
       )
       const promptMarker = parseEmbedFooterMarker<ThreadStartMarker>({
         footer: message.embeds[0]?.footer?.text,
@@ -639,10 +647,10 @@ export async function startDiscordBot({
 
       // Remember who speaks here so agent replies can turn a plain @name into
       // a real <@id> ping without a network lookup on the send path.
-      if (!isSelfBotMessage && message.author) {
+      if (!isSelfBotMessage && author) {
         recordDiscordParticipant(message.channel.id, {
-          id: message.author.id,
-          names: [...discordUserNames(message.author), message.member?.nickname, message.member?.displayName],
+          id: author.id,
+          names: [...discordUserNames(author), speakerMember?.nickname, speakerMember?.displayName],
         })
       } else if (cliInjectedUserId && promptMarker?.username) {
         recordDiscordParticipant(message.channel.id, { id: cliInjectedUserId, names: [promptMarker.username] })
@@ -652,10 +660,10 @@ export async function startDiscordBot({
       // reconciliation did not give the bot the "Roadie" role yet. Other bots
       // still need Roadie permission so multi-agent orchestration stays opt-in.
       const isInjectedSelfBotMessage =
-        isCliInjectedPrompt && message.author?.id === discordClient.user?.id
+        isCliInjectedPrompt && author?.id === discordClient.user?.id
 
-      if (message.author?.bot && !isInjectedSelfBotMessage) {
-        const member = await resolveGuildMessageMember(message)
+      if (author?.bot && !isInjectedSelfBotMessage) {
+        const member = speakerMember ?? (await resolveGuildMessageMember(message))
         if (!hasRoadieBotPermission(member, message.guild)) {
           return
         }
@@ -665,7 +673,7 @@ export async function startDiscordBot({
       // In channels these are fully ignored. In threads they are added to the
       // session context without triggering the AI (noReply), so the agent sees
       // user-to-user conversation on the next real turn.
-      const leadingMentionMatch = message.content?.match(/^<@!?(\d+)>/)
+      const leadingMentionMatch = content?.match(/^<@!?(\d+)>/)
       const isLeadingMentionToOtherUser =
         leadingMentionMatch &&
         leadingMentionMatch[1] !== discordClient.user?.id
@@ -686,7 +694,7 @@ export async function startDiscordBot({
       // Forward + comment arrive as two messages: the bare forward waits for
       // its comment, which then carries it into a single conversation turn.
       const pairsForwards =
-        !isCliInjectedPrompt && !message.author.bot &&
+        !isCliInjectedPrompt && !author.bot &&
         (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.DM)
       if (pairsForwards && isBareForward(message) && (await parkForward(message))) {
         return
@@ -696,29 +704,29 @@ export async function startDiscordBot({
       // Check mention mode BEFORE permission check for text channels.
       // When mention mode is enabled, users without Roadie role can message
       // without getting a permission error - we just silently ignore.
-      const channel = message.channel
+      const channel = incoming.channel
       const isDm = channel.type === ChannelType.DM
       if (isDm) {
         registerDiscordDmChannel(channel.id)
         const policy = resolveChannelPolicy(channel.id)
         // An explicit audience is required: an omitted who must not open a
         // private host runtime to every Discord user. No guild roles in DMs.
-        if (!policy?.who || message.author.bot) return
+        if (!policy?.who || author.bot) return
         const person = await resolvePerson({
-          actor: { platform: 'discord', id: message.author.id, name: message.author.displayName },
+          actor: { platform: 'discord', id: author.id, name: author.displayName },
           context: { channelId: channel.id },
         })
         if (person?.lookupFailed || (isIdentityConfigured() && (!person || !personHas(person, 'sessions')))) return
         if (!channelAllowsSpeaker(channel.id, {
-          userId: message.author.id, personId: person?.personId,
+          userId: author.id, personId: person?.personId,
           isGuildOwner: false, roleNames: [], roleIds: [],
         })) return
       }
-      if (isDm && ['/new', '/abort'].includes(message.content.trim())) {
+      if (isDm && ['/new', '/abort'].includes(content.trim())) {
         if (decideRespond(channel.id) === 'ignore') return
         const runtime = getRuntime(channel.id)
         await runtime?.abortActiveRunAndWait({ reason: 'DM conversation command' })
-        if (message.content.trim() === '/new') {
+        if (content.trim() === '/new') {
           disposeRuntime(channel.id)
           await setThreadSession(channel.id, '')
           await resetConversationAdmission({ platform: 'discord', spaceId: channel.id, threadId: channel.id })
@@ -752,8 +760,8 @@ export async function startDiscordBot({
         // Mentions only gate new conversations in channels; threads continue.
         if (!explicitIntake && mentionRequired && (channel.type === ChannelType.GuildText || isDm)) {
           const botMentioned =
-            discordClient.user && message.mentions.has(discordClient.user.id)
-          const isShellCommand = message.content?.startsWith('!')
+            discordClient.user && (spoken || message.mentions.has(discordClient.user.id))
+          const isShellCommand = content?.startsWith('!')
           if (!botMentioned && !isShellCommand) {
             voiceLogger.log(`[IGNORED] Mention required in this channel, bot not mentioned`)
             return
@@ -766,7 +774,7 @@ export async function startDiscordBot({
       // by another machine. Resolve the "owning" channel: for threads, check
       // the parent channel; for text channels, check the channel itself.
       if (!isCliInjectedPrompt && message.guild) {
-        const channel = message.channel
+        const channel = incoming.channel
         let owningChannelId: string | undefined
         if (
           [
@@ -792,7 +800,7 @@ export async function startDiscordBot({
       }
 
       if (!isCliInjectedPrompt && message.guild) {
-        const member = await resolveGuildMessageMember(message)
+        const member = speakerMember ?? (await resolveGuildMessageMember(message))
         if (!member) {
           return
         }
@@ -802,8 +810,8 @@ export async function startDiscordBot({
         const person = await resolvePerson({
           actor: {
             platform: 'discord',
-            id: message.author.id,
-            name: member.displayName || message.author.displayName,
+            id: author.id,
+            name: member.displayName || author.displayName,
           },
           context: { guildId: message.guild.id, channelId: message.channelId },
         })
@@ -811,14 +819,14 @@ export async function startDiscordBot({
         // Channel policy audience. Speakers outside it are ignored silently so
         // ordinary conversation in shared channels gets no denial replies.
         const speakerAllowed = channelAllowsSpeaker(message.channelId, {
-          userId: message.author.id,
-          isGuildOwner: message.guild.ownerId === message.author.id,
+          userId: author.id,
+          isGuildOwner: message.guild.ownerId === author.id,
           roleNames: member.roles.cache.map((role) => role.name),
           roleIds: [...member.roles.cache.keys()],
-          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId,
+          personId: getCachedPerson({ platform: 'discord', id: author.id })?.personId,
         })
         if (!speakerAllowed) {
-          voiceLogger.log(`[IGNORED] ${message.author.id} is outside this channel's audience`)
+          voiceLogger.log(`[IGNORED] ${author.id} is outside this channel's audience`)
           return
         }
 
@@ -837,8 +845,8 @@ export async function startDiscordBot({
           // failure) gets a private Link prompt when the host offers a
           // provider, at most once per actor per interval.
           const offered = await offerDiscordLinkPrompt({
-            user: message.author,
-            displayName: member.displayName || message.author.displayName,
+            user: author,
+            displayName: member.displayName || author.displayName,
             person,
             context: { guildId: message.guild.id, channelId: message.channelId },
             replyInChannel: async ({ content, components }) =>
@@ -861,9 +869,9 @@ export async function startDiscordBot({
       // Bots never reach here; CLI-asserted actors are excluded.
       if (!isCliInjectedPrompt && message.guild) {
         void welcomeDiscordUser({
-          user: message.author,
-          displayName: message.member?.displayName || message.author.displayName,
-          person: getCachedPerson({ platform: 'discord', id: message.author.id }),
+          user: author,
+          displayName: speakerMember?.displayName || author.displayName,
+          person: getCachedPerson({ platform: 'discord', id: author.id }),
           channelId: message.channelId,
         })
       }
@@ -888,7 +896,7 @@ export async function startDiscordBot({
         const scope = { platform: 'discord', spaceId: thread.guildId, threadId: thread.id }
         const admission = await readConversationAdmission(scope)
         const botMentioned =
-          discordClient.user && message.mentions.has(discordClient.user.id)
+          discordClient.user && (spoken || message.mentions.has(discordClient.user.id))
         const botCreatedThread =
           discordClient.user && thread.ownerId === discordClient.user.id
         if (
@@ -910,12 +918,12 @@ export async function startDiscordBot({
           return
         }
         const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
-          actor: { platform: 'discord', id: message.author.id }, spaceId: thread.guildId,
-          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+          actor: { platform: 'discord', id: author.id }, spaceId: thread.guildId,
+          personId: getCachedPerson({ platform: 'discord', id: author.id })?.personId, messageId: message.id, text: content,
           channelId: thread.parentId ?? thread.id, threadId: thread.id, eligible: true,
           isNewConversation: !hasExistingSession && !admission, createsThread: false,
           hasSession: Boolean(hasExistingSession), mentionsBot: Boolean(botMentioned),
-          isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
+          isCommand: content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
           legacyOutcome: isLeadingMentionToOtherUser ? 'context' : 'respond',
         })
         if (intake.outcome === 'ignore') return
@@ -947,8 +955,8 @@ export async function startDiscordBot({
 
         // ! prefix runs a shell command in the thread's working directory
         // instead of starting/continuing a session.
-        if (intake.outcome === 'respond' && message.content?.startsWith('!') && projectDirectory) {
-          const shellCmd = message.content.slice(1).trim()
+        if (!spoken && intake.outcome === 'respond' && content?.startsWith('!') && projectDirectory) {
+          const shellCmd = content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
             if (!(await allowShellCommand({ message, isCliInjectedPrompt }))) {
@@ -993,13 +1001,13 @@ export async function startDiscordBot({
           channelId: parent?.id || undefined,
           appId: currentAppId,
         })
-        await recordConversationAdmission({ scope, actor: { platform: 'discord', id: message.author.id }, starter: !hasExistingSession && !admission, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
+        await recordConversationAdmission({ scope, actor: { platform: 'discord', id: author.id }, starter: !hasExistingSession && !admission, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
 
         // Cancel interactive UI when a real user sends a message.
         // Context-only messages (user-to-user replies) should not interrupt
         // the active run or dismiss pending UI.
         const dismissSourceUi = async () => {
-          if (message.author.bot || isCliInjectedPrompt || intake.outcome === 'context') return
+          if (author.bot || isCliInjectedPrompt || intake.outcome === 'context') return
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
           if (dismissedPermission) {
@@ -1043,12 +1051,12 @@ export async function startDiscordBot({
         await runtime.enqueueIncoming({
           prompt: '',
           personId: cliInjectedPersonId,
-          userId: cliInjectedUserId || message.author.id,
+          userId: cliInjectedUserId || author.id,
           actorVia: cliInjectedPersonId || cliInjectedUserId ? 'cli' : 'chat',
           username:
             cliInjectedUsername ||
-            message.member?.displayName ||
-            message.author.displayName,
+            speakerMember?.displayName ||
+            author.displayName,
           sourceMessageId: message.id,
           sourceMessageTimestamp: message.createdAt.toISOString(),
           sourceThreadId: thread.id,
@@ -1069,7 +1077,7 @@ export async function startDiscordBot({
                 scheduledTaskRunId: sessionStartSource.scheduledTaskRunId,
               }
             : undefined,
-          preprocess: async () => {
+          preprocess: spoken ? async () => ({ prompt: content, mode: 'direct' as const }) : async () => {
             return preprocessExistingThreadMessage({
               message,
               thread,
@@ -1100,7 +1108,7 @@ export async function startDiscordBot({
 
         if (!projectDirectory) {
           const botMentioned = Boolean(
-            discordClient.user && message.mentions.has(discordClient.user.id),
+            discordClient.user && (spoken || message.mentions.has(discordClient.user.id)),
           )
           if (botMentioned) {
             // TODO: Consider creating/using a session for any text channel when Roadie is
@@ -1142,8 +1150,8 @@ export async function startDiscordBot({
         }
 
         // ! prefix runs a shell command instead of starting a session
-        if (message.content?.startsWith('!')) {
-          const shellCmd = message.content.slice(1).trim()
+        if (!spoken && content?.startsWith('!')) {
+          const shellCmd = content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
             if (!(await allowShellCommand({ message, isCliInjectedPrompt }))) {
@@ -1170,16 +1178,16 @@ export async function startDiscordBot({
           const hasExistingSession = await getThreadSession(channel.id)
           const admission = await readConversationAdmission(scope)
           const botMentioned = Boolean(
-            discordClient.user && message.mentions.has(discordClient.user.id),
+            discordClient.user && (spoken || message.mentions.has(discordClient.user.id)),
           )
           const isNewConversation = !hasExistingSession && !admission
           const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
-            actor: { platform: 'discord', id: message.author.id }, spaceId,
-            personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+            actor: { platform: 'discord', id: author.id }, spaceId,
+            personId: getCachedPerson({ platform: 'discord', id: author.id })?.personId, messageId: message.id, text: content,
             channelId: channel.id, threadId: channel.id, eligible: true,
             isNewConversation, createsThread: false,
             hasSession: Boolean(hasExistingSession), mentionsBot: botMentioned,
-            isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
+            isCommand: content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser),
             legacyOutcome: 'respond',
           })
           if (intake.outcome === 'ignore') return
@@ -1192,9 +1200,9 @@ export async function startDiscordBot({
             channelId: channel.id,
             appId: currentAppId,
           })
-          await recordConversationAdmission({ scope, actor: { platform: 'discord', id: message.author.id }, starter: isNewConversation, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
+          await recordConversationAdmission({ scope, actor: { platform: 'discord', id: author.id }, starter: isNewConversation, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
 
-          if (!message.author.bot && !isCliInjectedPrompt && intake.outcome !== 'context') {
+          if (!author.bot && !isCliInjectedPrompt && intake.outcome !== 'context') {
             cancelHtmlActionsForThread(channel.id)
             if (await cancelPendingPermission(channel.id)) {
               await runtime.abortActiveRunAndWait({ reason: 'user sent a new message while permission was pending' })
@@ -1209,9 +1217,9 @@ export async function startDiscordBot({
           await runtime.enqueueIncoming({
             prompt: '',
             personId: cliInjectedPersonId,
-            userId: cliInjectedUserId || message.author.id,
+            userId: cliInjectedUserId || author.id,
             actorVia: cliInjectedPersonId || cliInjectedUserId ? 'cli' : 'chat',
-            username: cliInjectedUsername || message.member?.displayName || message.author.displayName,
+            username: cliInjectedUsername || speakerMember?.displayName || author.displayName,
             sourceMessageId: message.id,
             sourceThreadId: channel.id,
             sourceChannelId: message.channelId,
@@ -1239,11 +1247,11 @@ export async function startDiscordBot({
           return
         }
         const intake = isCliInjectedPrompt ? { outcome: 'respond' as const, admit: false } : await resolveConversationIntake({
-          actor: { platform: 'discord', id: message.author.id }, spaceId: channel.guildId, channelId: channel.id,
-          personId: getCachedPerson({ platform: 'discord', id: message.author.id })?.personId, messageId: message.id, text: message.content,
+          actor: { platform: 'discord', id: author.id }, spaceId: channel.guildId, channelId: channel.id,
+          personId: getCachedPerson({ platform: 'discord', id: author.id })?.personId, messageId: message.id, text: content,
           eligible: true, isNewConversation: true, createsThread: true, hasSession: false,
-          mentionsBot: Boolean(discordClient.user && message.mentions.has(discordClient.user.id)),
-          isCommand: message.content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser), legacyOutcome: 'respond',
+          mentionsBot: Boolean(discordClient.user && (spoken || message.mentions.has(discordClient.user.id))),
+          isCommand: content.trimStart().startsWith('/'), directedElsewhere: Boolean(isLeadingMentionToOtherUser), legacyOutcome: 'respond',
         })
         if (intake.outcome !== 'respond') return
 
@@ -1262,7 +1270,7 @@ export async function startDiscordBot({
         if (forwarded) await postForwardedSnapshot(thread, forwarded)
 
         // Add user to thread so it appears in their sidebar
-        await thread.members.add(message.author.id)
+        await thread.members.add(author.id)
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
@@ -1278,12 +1286,12 @@ export async function startDiscordBot({
           channelId: channel.id,
           appId: currentAppId,
         })
-        await recordConversationAdmission({ scope: { platform: 'discord', spaceId: channel.guildId, threadId: thread.id }, actor: { platform: 'discord', id: message.author.id }, starter: true, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
+        await recordConversationAdmission({ scope: { platform: 'discord', spaceId: channel.guildId, threadId: thread.id }, actor: { platform: 'discord', id: author.id }, starter: true, decision: intake, actorVia: isCliInjectedPrompt ? 'cli' : 'chat' })
         await channelRuntime.enqueueIncoming({
           prompt: '',
-          userId: message.author.id,
+          userId: author.id,
           username:
-            message.member?.displayName || message.author.displayName,
+            speakerMember?.displayName || author.displayName,
           sourceMessageId: message.id,
           sourceThreadId: thread.id,
           sourceChannelId: message.channelId,
@@ -1314,7 +1322,19 @@ export async function startDiscordBot({
       }
     }
     })
-  })
+  }
+  const handleNativeMessage = (message: Message) =>
+    handleDiscordIntake({
+      channel: message.channel,
+      author: message.author,
+      member: message.member,
+      text: message.content,
+      source: message,
+    })
+  activeDiscordIntake = handleDiscordIntake
+  discordClient.on(Events.MessageCreate, handleNativeMessage)
+  stopVoiceBridge?.()
+  stopVoiceBridge = installVoiceBridge(discordClient, handleDiscordIntake)
 
   // Handle bot-initiated threads created by `roadie send` (without --notify-only)
   // Uses a YAML embed marker to pass options (start, cwd, agent, model)
@@ -1624,6 +1644,26 @@ export async function startDiscordBot({
 // Child groups and the hard shutdown deadline are owned by one coordinator.
 let activeDiscordClient: Client | null = null
 
+/** A message entering Roadie: where, who and what was said. */
+export type DiscordIntake = {
+  channel: Message['channel']
+  author: User
+  member: GuildMember | null
+  text: string
+  /** The Discord message carrying the words; replies and attachments use it. */
+  source: Message
+  /** Spoken through the voice bridge: addressed to Roadie, never a shell command. */
+  spoken?: boolean
+}
+
+let stopVoiceBridge: (() => void) | undefined
+let activeDiscordIntake: ((incoming: DiscordIntake) => Promise<void>) | null = null
+
+/** The connected bot's message intake, shared by typed and spoken messages. */
+export function getActiveDiscordIntake() {
+  return activeDiscordIntake
+}
+
 /** The connected bot client; scoped in-process operations must not log in again. */
 export function getActiveDiscordClient(): Client | null {
   return activeDiscordClient
@@ -1692,6 +1732,9 @@ async function cleanupBot() {
       )
     }
 
+    stopVoiceBridge?.()
+    stopVoiceBridge = undefined
+    activeDiscordIntake = null
     voiceLogger.log('[SHUTDOWN] Stopping agent backend')
     await stopAgentBackend()
 

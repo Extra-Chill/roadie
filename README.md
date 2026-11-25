@@ -331,6 +331,7 @@ The CLI covers the same ground for scripts and other agents: `roadie send` (star
 
 ## Documentation
 
+- [Hands-free voice orchestrator](docs/voice.md)
 - [Application channel and runtime bindings](docs/application-bindings.md)
 - [Host prompt configuration](docs/prompt-config.md)
 - [Discord voice message transcription](docs/voice-messages.md)
