@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.88.1] - 2026-11-25
+
+### Changed
+- realign e2e fixtures with the retired bash description and current system prompt
+
 ## [0.88.0] - 2026-11-24
 
 ### Added
