@@ -143,7 +143,7 @@ function createMatchers(): FakeMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: COMMAND_SYSTEM_CHECK_TEMPLATE,
-      promptTextIncludes: 'roadie upload-to-discord --session',
+      promptTextIncludes: 'roadie upload-to-chat <file>',
     },
     then: {
       parts: [
@@ -533,7 +533,7 @@ describe.skipIf(!findPi())('agent model resolution', () => {
     'session.command path includes roadie system prompt on first message',
     async () => {
       // Leading /command is rewritten to session.command. Without system
-      // injection the matcher requiring "roadie upload-to-discord --session"
+      // injection the matcher requiring "roadie upload-to-chat <file>"
       // never matches and the bot falls through to the generic "ok" reply.
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: `/${COMMAND_SYSTEM_CHECK_NAME}`,

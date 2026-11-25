@@ -369,7 +369,8 @@ describe('checkIsolatedShellSetup', () => {
   })
 })
 
-describe('resolveAgentAccount', () => {
+// Reads the passwd database through getent, which only Linux hosts provide.
+describe.skipIf(process.platform !== 'linux')('resolveAgentAccount', () => {
   test('refuses a uid 0 account: dropping to root isolates nothing', async () => {
     const account = await resolveAgentAccount({ username: 'root' })
     expect(account).toBeInstanceOf(Error)

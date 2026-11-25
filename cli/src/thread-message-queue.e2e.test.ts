@@ -58,8 +58,6 @@ function createMatchers(): FakeMatcher[] {
           toolName: 'bash',
           input: JSON.stringify({
             command: 'mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt',
-            description: 'Create marker file for e2e test',
-            hasSideEffect: true,
           }),
         },
         {
@@ -562,7 +560,7 @@ describe.skipIf(!findPi())('thread message queue ordering', () => {
         -# *using fake/fake-1*
         > running create filecreating marker
 
-        -# ┣ bash _Create marker file for e2e test_
+        -# ┣ bash _mkdir -p tmp && printf "created" > tmp/bash-tool-e…_
 
         file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ fake-1*"
