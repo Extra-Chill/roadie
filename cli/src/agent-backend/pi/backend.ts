@@ -783,6 +783,15 @@ export class PiBackendProvider implements AgentBackendProvider {
     ownSessionId = state.sessionId
     await this.writeShellEnv(shellEnvFile, state.sessionId)
     const header = readSessionHeader(state.sessionFile)
+    // Roadie's title is authoritative over the name in the Pi file: a session
+    // renamed while not running (setTitle persists it, #477) or a fork carrying
+    // the source's stale Pi name must come back with Roadie's title, and Pi is
+    // brought in line so its file names the session the same way.
+    const sessionTitle = title ?? (this.titleFor(state.sessionId) || state.sessionName || '')
+    if (sessionTitle && sessionTitle !== state.sessionName) {
+      const named = await child.request({ type: 'set_session_name', name: sessionTitle }, { timeoutMs: this.rpcTimeoutMs })
+      if (named instanceof Error) logger.warn(`Could not sync Pi session ${state.sessionId} name: ${named.message}`)
+    }
     const session: RunningSession = {
       id: state.sessionId,
       directory,
@@ -792,7 +801,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       shellEnvFile,
       process: child,
       translator: new PiEventTranslator(state.sessionId),
-      title: title ?? state.sessionName ?? this.titleFor(state.sessionId),
+      title: sessionTitle,
       createdAt: header?.createdAt || Date.now(),
       updatedAt: Date.now(),
       busy: false,
@@ -1406,7 +1415,6 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (title) {
           this.titles.set(session.id, title)
           this.persistSessionState(session.id, { title })
-          await session.process.request({ type: 'set_session_name', name: title })
         }
         const agentSession = this.toAgentSession(session)
         this.emit([{ type: 'session.created', session: agentSession }], { type: 'session_created' })
@@ -1595,12 +1603,17 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       setTitle: async ({ sessionId, title }) => {
         this.titles.set(sessionId, title)
-        // A session that is not running has no Pi-side name to update, but its
-        // persisted title must still move, or the old one comes back after a
-        // restart (listOnDisk reads this state).
+        // A session that is not running has no Pi-side name to update (start()
+        // syncs it from this state), but its persisted title must still move,
+        // or the old one comes back after a restart (listOnDisk reads this
+        // state). Either way the rename is announced, so chat threads follow.
         this.persistSessionState(sessionId, { title })
         const session = this.sessions.get(sessionId)
-        if (!session) return undefined
+        if (!session) {
+          const stored = await this.backend.sessions.get({ sessionId })
+          if (stored && !(stored instanceof Error)) this.emit([{ type: 'session.updated', session: stored }], { type: 'session_renamed' })
+          return undefined
+        }
         session.title = title
         const result = await session.process.request({ type: 'set_session_name', name: title })
         if (result instanceof Error) return new AgentRequestError({ detail: result.message })
