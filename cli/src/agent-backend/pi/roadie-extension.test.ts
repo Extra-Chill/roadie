@@ -26,6 +26,31 @@ import {
 } from './roadie-extension.js'
 import type { NativeCallContinuation, NativeCallResult } from './mcp-native.js'
 
+describe('side-effecting built-in overrides', () => {
+  test('only bash, edit and write opt their batches into sequential execution', async () => {
+    const { createBashToolDefinition, createEditToolDefinition, createWriteToolDefinition, createReadToolDefinition } = await import('@earendil-works/pi-coding-agent')
+    type Tool = ReturnType<typeof createBashToolDefinition>
+    const tools = new Map<string, Tool>()
+    let start!: (event: unknown, ctx: ExtensionContext) => Promise<void>
+    roadieExtension({
+      on: (name: string, callback: typeof start) => { if (name === 'session_start') start = callback },
+      registerTool: (tool: Tool) => { tools.set(tool.name, tool) },
+      getAllTools: () => [],
+    } as unknown as Parameters<typeof roadieExtension>[0])
+    const cwd = os.tmpdir()
+    await start({}, { cwd } as ExtensionContext)
+    for (const create of [createBashToolDefinition, createEditToolDefinition, createWriteToolDefinition]) {
+      const builtin = create(cwd)
+      const override = tools.get(builtin.name)
+      expect(override?.executionMode).toBe('sequential')
+      expect(override?.promptSnippet).toEqual(builtin.promptSnippet)
+      expect(override?.promptGuidelines).toEqual(builtin.promptGuidelines)
+    }
+    expect(tools.has('read')).toBe(false)
+    expect(createReadToolDefinition(cwd).executionMode).not.toBe('sequential')
+  })
+})
+
 describe('shared Pi spill hints', () => {
   type Content = Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>
   type Event = { toolName: string; toolCallId: string; input: Record<string, unknown>; content: Content; isError: boolean }

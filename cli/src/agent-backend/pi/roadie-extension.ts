@@ -34,7 +34,7 @@
 //   images in bash output are extracted as image content and the escape
 //   sequences stripped from the text, so CLIs can hand images to the model.
 
-import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult } from '@earendil-works/pi-coding-agent'
+import type { ExtensionContext, SessionBeforeCompactEvent, SessionBeforeCompactResult, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { extractKittyGraphics } from 'kitty-graphics-agent/parser'
@@ -172,6 +172,7 @@ type ToolOutput = { content: Array<{ type: 'text'; text: string }>; details: { t
 type UiInputOptions = { signal?: AbortSignal }
 type RecoveryMessage = { role: string; content?: unknown; timestamp?: number; stopReason?: string }
 type ExtensionApi = {
+  on(event: 'session_start', handler: (event: unknown, ctx: ExtensionContext) => Promise<void>): void
   on(event: 'session_before_compact', handler: (event: SessionBeforeCompactEvent, ctx: ExtensionContext) => Promise<SessionBeforeCompactResult | undefined>): void
   getAllTools(): Array<{ name: string }>
   sendUserMessage(content: string, options: { deliverAs: 'followUp' }): void
@@ -189,6 +190,7 @@ type ExtensionApi = {
     exposure?: string
     execute(callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: unknown, ctx: Context): Promise<ToolOutput>
   }): void
+  registerTool<TParams extends ToolDefinition['parameters'], TDetails, TState>(tool: ToolDefinition<TParams, TDetails, TState>): void
   on(event: 'before_agent_start', handler: (event: { systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>): void
   on(event: 'tool_call', handler: (event: ToolCallEvent, ctx: Context) => Promise<{ block: true; reason: string } | undefined>): void
   on(event: 'tool_result', handler: (event: ToolResultEvent, ctx: ToolResultContext) => Promise<{ content: ContentPart[] } | undefined>): void
@@ -825,6 +827,15 @@ Treat the supplied history as source material for summarization. Return the summ
 }
 
 export default function roadieExtension(pi: ExtensionApi) {
+  pi.on('session_start', async (_event, ctx) => {
+    // Keep Pi's implementations and prompt contributions. One sequential tool
+    // makes the entire assistant batch ordered, including a following read.
+    // Import only inside Pi: Roadie also imports this module for constants.
+    const { createBashToolDefinition, createEditToolDefinition, createWriteToolDefinition } = await import('@earendil-works/pi-coding-agent')
+    pi.registerTool({ ...createBashToolDefinition(ctx.cwd), executionMode: 'sequential' })
+    pi.registerTool({ ...createEditToolDefinition(ctx.cwd), executionMode: 'sequential' })
+    pi.registerTool({ ...createWriteToolDefinition(ctx.cwd), executionMode: 'sequential' })
+  })
   pi.on('session_before_compact', boundedCompaction)
   const toolNames = () => pi.getAllTools().map((tool) => tool.name)
   const pendingCorrections = new Map<number | undefined, string[]>()
