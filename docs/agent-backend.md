@@ -6,7 +6,7 @@ Roadie's session runtime talks to an *agent backend* through an interface: sessi
 
 - **Version gate.** Roadie needs the `pi` binary (from `ROADIE_PI_BIN`, default `pi`) at major version 1 or newer. If it is missing or older, startup fails with a clear error.
 - **`ROADIE_BACKEND`.** Optional; when set it must be `pi`. Any other value stops startup with an error.
-- **Variables.** `ROADIE_PI_BIN`, `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`.
+- **Variables.** `ROADIE_PI_BIN`, `ROADIE_PI_MODEL`, `ROADIE_PI_TITLE_MODEL`, `ROADIE_PI_SESSION_DIR`, `ROADIE_PI_MAX_PROCESSES` (global cap on live Pi processes, default 64).
   `ROADIE_PI_AGENT_DIR` overrides the pool-managed agent directory (default
   `<dataDir>/pi-agent`). With pools off, `PI_CODING_AGENT_DIR` selects Pi's own
   agent directory (otherwise `~/.pi/agent`). With pools on, Roadie sets
