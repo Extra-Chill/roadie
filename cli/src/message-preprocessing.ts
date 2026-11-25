@@ -21,6 +21,7 @@ import {
   getTextAttachments,
 } from './message-formatting.js'
 import { getThreadSession } from './database.js'
+import { resolveVoiceMessage } from './voice-message.js'
 import { channelAllowsSpeaker } from './channel-policy.js'
 import { getCachedPerson, resolvePerson } from './identity.js'
 import { hasNoRoadieRole, hasRoadieBotPermission, resolveGuildMessageMember } from './discord-utils.js'
@@ -93,18 +94,23 @@ export async function resolveMessagePrompt({
   message,
   text,
   includeExtras = true,
+  thread,
 }: {
   message: Message
   text: string
   /** Append serialized embeds, polls and forwards of `message`. */
   includeExtras?: boolean
+  thread?: ThreadChannel
 }): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
+  const voice = await resolveVoiceMessage(message, thread)
+  if (voice.failed) return { prompt: '', mode: 'direct' }
   const [images, textAttachments] = await Promise.all([
     getFileAttachments(message),
     getTextAttachments(message),
   ])
   const prompt = [
     text,
+    voice.text,
     includeExtras ? serializeMessageExtras(message) : '',
     textAttachments,
   ]
@@ -216,6 +222,7 @@ export async function preprocessExistingThreadMessage({
     text: messageContent,
     // The roadie marker embed of CLI injections is metadata, not prompt text.
     includeExtras: !isCliInjected,
+    thread,
   })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
     return { prompt: '', mode: 'direct', skip: true }
@@ -269,7 +276,7 @@ export async function preprocessNewSessionMessage({
     prompt = `Context from thread:\n${context}\n\nUser request:\n${prompt}`
   }
 
-  const resolved = await resolveMessagePrompt({ message, text: prompt })
+  const resolved = await resolveMessagePrompt({ message, text: prompt, thread })
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
     return { prompt: '', mode: 'direct', skip: true }
   }
@@ -310,6 +317,7 @@ export async function preprocessChannelMessage({
  */
 export async function preprocessNewThreadMessage({
   message,
+  thread,
   forwarded,
 }: {
   message: Message
@@ -321,7 +329,7 @@ export async function preprocessNewThreadMessage({
   const repliedMessage = await getRepliedMessageContext({ message })
   const resolved = await withForwarded(
     forwarded,
-    await resolveMessagePrompt({ message, text: messageContent }),
+    await resolveMessagePrompt({ message, text: messageContent, thread }),
   )
   if (shouldSkipEmptyPrompt({ message, ...resolved })) {
     return { prompt: '', mode: 'direct', skip: true }
