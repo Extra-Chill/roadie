@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.89.1] - 2026-11-25
+
+### Fixed
+- default to current transcription models
+
 ## [0.89.0] - 2026-11-25
 
 ### Added
