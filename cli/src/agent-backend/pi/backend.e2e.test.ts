@@ -50,6 +50,11 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
 
   beforeAll(async () => {
     server = await startFakeModelServer({ matchers: [
+      { id: 'batch-write-read', when: { latestUserTextEquals: 'BATCH_WRITE_READ', lastMessageRole: 'user' }, then: { parts: [
+        { type: 'tool-call', toolCallId: 'batch-bash', toolName: 'bash', input: JSON.stringify({ command: 'sleep 0.3; printf v2 > batch.txt' }) },
+        { type: 'tool-call', toolCallId: 'batch-read', toolName: 'read', input: JSON.stringify({ path: 'batch.txt' }) },
+        { type: 'finish', finishReason: 'tool-calls' },
+      ] } },
       { id: 'roadie-compaction', when: { rawPromptIncludes: 'Create a compact continuation summary of at most', toolsEmpty: true }, then: { parts: [
         { type: 'text-delta', id: 'summary', delta: 'ROADIE_BOUNDED_SUMMARY' },
         { type: 'finish', finishReason: 'stop' },
@@ -105,6 +110,25 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     const done = events.find((e) => e.type === 'message' && e.message.role === 'assistant' && e.message.completedAt)
     expect(done?.type === 'message' && done.message.finish).toBe('stop')
   })
+
+  test('a read batched after bash sees the new content in the session cwd', async () => {
+    const directory = path.join(root, 'batch-project')
+    fs.mkdirSync(directory)
+    fs.writeFileSync(path.join(directory, 'batch.txt'), 'v1')
+    const session = await provider.getBackend().sessions.create({ directory })
+    if (session instanceof Error) throw session
+    // The overridden built-in still passes through Roadie's permission hook.
+    await provider.getBackend().sessions.setPermissions({ sessionId: session.id, permission: [{ permission: 'bash', pattern: '*', action: 'ask' }] })
+    await provider.getBackend().sessions.prompt({ sessionId: session.id, directory, parts: [{ kind: 'text', text: 'BATCH_WRITE_READ' }] })
+    const asked = await until(() => events.find((e) => e.type === 'permission.asked' && e.request.sessionId === session.id))
+    if (asked.type !== 'permission.asked') throw new Error('unreachable')
+    expect(fs.readFileSync(path.join(directory, 'batch.txt'), 'utf8')).toBe('v1')
+    await provider.getBackend().sessions.replyPermission({ requestId: asked.request.id, directory, reply: 'once' })
+    await until(() => idleCount(session.id) > 0 ? true : undefined)
+    const read = events.findLast((e) => e.type === 'part' && e.part.sessionId === session.id && e.part.kind === 'tool' && e.part.tool === 'read')
+    expect(read?.type === 'part' && read.part.kind === 'tool' && read.part.status).toBe('completed')
+    expect(read?.type === 'part' && read.part.kind === 'tool' && read.part.output).toBe('v2')
+  }, 30_000)
 
   test('Roadie compaction persists an extension summary and the next prompt replies', async () => {
     const project = path.join(root, 'compact-project')
