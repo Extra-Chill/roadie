@@ -29,6 +29,42 @@ export type PiResponse = PiRecord & {
   error?: string
 }
 
+export class PiProcessLimitError extends errore.createTaggedError({
+  name: 'PiProcessLimitError',
+  message: '$detail',
+}) {}
+
+/**
+ * Global cap on live Roadie-spawned Pi processes (#477). Normal use is one per
+ * active session plus a few short-lived probes; anything past the cap is a
+ * spawn loop, so it fails clearly instead of running the host out of memory.
+ * Configure with ROADIE_PI_MAX_PROCESSES or setPiProcessLimit().
+ */
+export const DEFAULT_PI_PROCESS_LIMIT = 64
+
+function envProcessLimit(): number | undefined {
+  const value = Number(process.env['ROADIE_PI_MAX_PROCESSES'])
+  return Number.isInteger(value) && value > 0 ? value : undefined
+}
+
+let processLimit: number | undefined
+const liveProcesses = new Set<PiProcess>()
+
+/** The cap in force: setPiProcessLimit(), else ROADIE_PI_MAX_PROCESSES, else the default. */
+export function piProcessLimit(): number {
+  return processLimit ?? envProcessLimit() ?? DEFAULT_PI_PROCESS_LIMIT
+}
+
+/** Override the cap (a positive integer); undefined restores the env/default. */
+export function setPiProcessLimit(limit: number | undefined): void {
+  processLimit = limit !== undefined && Number.isInteger(limit) && limit > 0 ? limit : undefined
+}
+
+/** How many Roadie-spawned Pi processes have not exited yet. */
+export function livePiProcessCount(): number {
+  return liveProcesses.size
+}
+
 export type PiProcessOptions = {
   bin: string
   args: string[]
@@ -63,13 +99,29 @@ export class PiProcess {
   /** Usable: not exited and not being stopped. */
   get running(): boolean { return !this.exited && !this.stopping }
 
-  constructor(options: PiProcessOptions) {
+  /**
+   * Start a Pi process, unless the global cap is reached: then return a
+   * PiProcessLimitError and start nothing.
+   */
+  static spawn(options: PiProcessOptions): PiProcess | PiProcessLimitError {
+    const limit = piProcessLimit()
+    if (liveProcesses.size >= limit) {
+      logger.warn(`Refusing to start pi: ${liveProcesses.size} Pi processes already running (limit ${limit}, ROADIE_PI_MAX_PROCESSES)`)
+      return new PiProcessLimitError({
+        detail: `Too many Pi processes running (${liveProcesses.size}, limit ${limit}); not starting another. Raise ROADIE_PI_MAX_PROCESSES if this is expected.`,
+      })
+    }
+    return new PiProcess(options)
+  }
+
+  private constructor(options: PiProcessOptions) {
     this.child = childProcesses.track(spawn(options.bin, ['--mode', 'rpc', ...options.args], {
       ...PROCESS_GROUP_SPAWN_OPTIONS,
       cwd: options.cwd,
       env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     }))
+    liveProcesses.add(this)
     this.child.stdout.setEncoding('utf8')
     this.child.stdout.on('data', (chunk: string) => this.onData(chunk))
     this.child.stderr.setEncoding('utf8')
@@ -85,14 +137,21 @@ export class PiProcess {
       if (this.stderrBuffer.includes('[roadie-mcp]')) logger.warn(this.stderrBuffer)
       this.stderrBuffer = ''
     })
-    this.child.on('exit', (code) => {
+    const gone = (code: number | null, why?: string) => {
+      if (this.exited) return
       this.exited = true
-      const reason = `pi exited with code ${code}${this.stderrTail ? `: ${this.stderrTail.trim().slice(-500)}` : ''}`
+      liveProcesses.delete(this)
+      const reason = why ?? `pi exited with code ${code}${this.stderrTail ? `: ${this.stderrTail.trim().slice(-500)}` : ''}`
       for (const resolve of this.pending.values()) {
         resolve({ type: 'response', command: 'unknown', success: false, error: reason })
       }
       this.pending.clear()
       for (const listener of this.exitListeners) listener(code)
+    }
+    this.child.on('exit', (code) => gone(code))
+    // A spawn failure (ENOENT) emits error and never exit.
+    this.child.on('error', (error) => {
+      if (this.child.pid === undefined) gone(null, `could not start pi: ${error.message}`)
     })
     // A write after exit raises EPIPE asynchronously; requests already resolve on exit.
     this.child.stdin.on('error', () => {})
@@ -140,14 +199,30 @@ export class PiProcess {
     this.child.stdin.write(`${JSON.stringify(record)}\n`)
   }
 
-  /** Send a command and wait for its response. A failed response becomes an error. */
-  async request<T = unknown>(command: Record<string, unknown> & { type: string }): Promise<T | PiRpcError> {
+  /**
+   * Send a command and wait for its response. A failed response becomes an
+   * error. With `timeoutMs`, a response that does not arrive in time becomes
+   * an error too (the process is left to the caller to kill).
+   */
+  async request<T = unknown>(
+    command: Record<string, unknown> & { type: string },
+    { timeoutMs }: { timeoutMs?: number } = {},
+  ): Promise<T | PiRpcError> {
     if (!this.running) return new PiRpcError({ detail: `pi is not running (${command.type})` })
     const id = `roadie-${++this.nextId}`
+    let timer: ReturnType<typeof setTimeout> | undefined
     const response = await new Promise<PiResponse>((resolve) => {
       this.pending.set(id, resolve)
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        timer = setTimeout(() => {
+          this.pending.delete(id)
+          resolve({ type: 'response', command: command.type, success: false, error: `pi did not answer ${command.type} within ${timeoutMs}ms` })
+        }, timeoutMs)
+        timer.unref?.()
+      }
       this.send({ ...command, id })
     })
+    clearTimeout(timer)
     if (!response.success) {
       return new PiRpcError({ detail: response.error || `pi rejected ${command.type}` })
     }

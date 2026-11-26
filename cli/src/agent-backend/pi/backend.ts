@@ -3,7 +3,13 @@
 // Pi has no server. Each session is a child process started in the session's
 // directory, persisting to a JSONL file under Roadie's data dir. A session not
 // running (after a restart, or never prompted here) is started lazily with
-// `--session <file>` the first time it is read or prompted.
+// `--session <file>` the first time it is prompted. Reading its history never
+// starts one: the session file is read from disk (./session-file.ts, #477).
+//
+// Process hygiene (#477): every Pi process goes through PiProcess.spawn, which
+// refuses to start past a global cap (ROADIE_PI_MAX_PROCESSES), and every
+// throwaway process (probes, forks, titles) has a bounded request timeout and
+// is killed in `finally`.
 //
 // Permissions: the Roadie Pi extension (./roadie-extension.ts) turns every tool
 // call into a `confirm` UI request. The backend answers it from the session's
@@ -55,6 +61,7 @@ import {
 } from '../types.js'
 import { PiEventTranslator, finalAssistantText, finalTextBlock, toAgentHistory, type PiMessage } from './events.js'
 import { PiProcess, type PiRecord } from './rpc.js'
+import { readPiSessionMessages } from './session-file.js'
 import { roadieToolSchemas, runRoadieTool } from '../../roadie-tools.js'
 import { ROADIE_PI_BASE_PROMPT } from './prompt.js'
 import { agentFor, piAgents } from './agents.js'
@@ -170,6 +177,12 @@ export type PiBackendOptions = {
   idleTimeoutMs?: number
   /** Roadie data dir for the file-edit log (`roadie session editors`). */
   fileEditLogDir?: string
+  /**
+   * Longest wait for a Pi process to answer a startup or throwaway request
+   * (probe, fork, title, history fallback); past it the request fails and the
+   * throwaway process is killed. Default 60 seconds.
+   */
+  rpcTimeoutMs?: number
   /** Model for title generation (a small one), as "provider/model". Defaults to `model`. */
   titleModel?: string
   /** Base system prompt replacing Pi's default. Defaults to ROADIE_PI_BASE_PROMPT. */
@@ -481,14 +494,19 @@ export class PiBackendProvider implements AgentBackendProvider {
   /** Project commands and skills Pi finds for a directory (extension commands are Pi's own UI). */
   private async commands(directory: string): Promise<AgentCommand[] | Error> {
     const running = [...this.sessions.values()].find((session) => session.directory === directory && session.process.running)
-    const probe = running?.process ?? new PiProcess({
+    const probe = running?.process ?? PiProcess.spawn({
       bin: this.options.bin,
       args: [...this.spawnArgs([], directory).filter((arg, i, all) => arg !== '--session-dir' && all[i - 1] !== '--session-dir'), '--no-session'],
       cwd: directory,
       env: { ...process.env, ...this.options.env },
     })
-    const result = await probe.request<{ commands: PiCommand[] }>({ type: 'get_commands' })
-    if (!running) probe.kill()
+    if (probe instanceof Error) return probe
+    let result: { commands: PiCommand[] } | Error
+    try {
+      result = await probe.request<{ commands: PiCommand[] }>({ type: 'get_commands' }, { timeoutMs: this.rpcTimeoutMs })
+    } finally {
+      if (!running) void probe.kill()
+    }
     if (result instanceof Error) return result
     return result.commands.flatMap((command): AgentCommand[] => {
       if (command.source === 'prompt') return [{ name: command.name, ...(command.description && { description: command.description }), source: 'command' }]
@@ -518,7 +536,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       })[0]
       if (!entryId) return new AgentRequestError({ detail: `No user message ${messageId} in Pi session ${header.id}` })
     }
-    const child = new PiProcess({
+    const child = PiProcess.spawn({
       bin: this.options.bin,
       args: [
         '--session-dir', this.options.sessionDir,
@@ -529,20 +547,21 @@ export class PiBackendProvider implements AgentBackendProvider {
       cwd: header.cwd,
       env: { ...process.env, ...this.options.env },
     })
+    if (child instanceof Error) return child
     try {
       if (entryId) {
-        const forked = await child.request<{ cancelled?: boolean }>({ type: 'fork', entryId })
+        const forked = await child.request<{ cancelled?: boolean }>({ type: 'fork', entryId }, { timeoutMs: this.rpcTimeoutMs })
         if (forked instanceof Error) return new AgentRequestError({ detail: forked.message })
         if (forked?.cancelled) return new AgentRequestError({ detail: 'Pi cancelled the fork' })
       }
-      const state = await child.request<{ sessionId: string; sessionFile: string }>({ type: 'get_state' })
+      const state = await child.request<{ sessionId: string; sessionFile: string }>({ type: 'get_state' }, { timeoutMs: this.rpcTimeoutMs })
       if (state instanceof Error) return state
       if (state.sessionFile === file) return new AgentRequestError({ detail: 'Pi did not create a fork' })
       // Pi writes a session file with its first entry; a fork has entries already.
       if (!fs.existsSync(state.sessionFile)) return new AgentRequestError({ detail: 'Pi fork file was not written' })
       return state
     } finally {
-      child.kill()
+      void child.kill()
     }
   }
 
@@ -555,7 +574,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     const model = this.options.titleModel ?? this.options.model
     if (!model) return new AgentRequestError({ detail: 'No model configured for Pi titles' })
     const poolKey = this.options.pool?.issueKey(() => sessionId)
-    const child = new PiProcess({
+    const child = PiProcess.spawn({
       bin: this.options.bin,
       args: ['--no-session', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
         // `minimal`, not `off`: adaptive-thinking models reject disabled thinking.
@@ -563,6 +582,10 @@ export class PiBackendProvider implements AgentBackendProvider {
       cwd: directory,
       env: { ...scrubbedProcessEnv(), ...this.options.env, ...(poolKey && { [PI_KEY_ENV]: poolKey }) },
     })
+    if (child instanceof Error) {
+      if (poolKey) this.options.pool?.revokeKey(poolKey)
+      return new AgentRequestError({ detail: child.message })
+    }
     try {
       const done = new Promise<Extract<PiMessage, { role: 'assistant' }> | undefined>((resolve) => {
         child.onRecord((record) => {
@@ -572,7 +595,7 @@ export class PiBackendProvider implements AgentBackendProvider {
         })
         child.onExit(() => resolve(undefined))
       })
-      const accepted = await child.request({ type: 'prompt', message: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) })
+      const accepted = await child.request({ type: 'prompt', message: prompt.slice(0, TITLE_PROMPT_MAX_CHARS) }, { timeoutMs: this.rpcTimeoutMs })
       if (accepted instanceof Error) return new AgentRequestError({ detail: accepted.message })
       const reply = await Promise.race([done, new Promise<undefined>((resolve) => setTimeout(resolve, 15_000))])
       const text = reply ? finalTextBlock(reply) : ''
@@ -580,9 +603,14 @@ export class PiBackendProvider implements AgentBackendProvider {
       if (reply?.errorMessage) return new AgentRequestError({ detail: `Title model failed: ${reply.errorMessage}` })
       return new AgentRequestError({ detail: reply ? 'Pi returned an empty title' : 'Title request ended without a reply' })
     } finally {
-      child.kill()
+      void child.kill()
       if (poolKey) this.options.pool?.revokeKey(poolKey)
     }
+  }
+
+  /** The bound on startup and throwaway requests (rpcTimeoutMs). */
+  private get rpcTimeoutMs(): number {
+    return this.options.rpcTimeoutMs ?? 60_000
   }
 
   /** Whether `sessionId` is a Pi session this provider runs or can resume. */
@@ -715,7 +743,7 @@ export class PiBackendProvider implements AgentBackendProvider {
     const poolKey = this.options.pool?.issueKey(() => ownSessionId)
     const shellEnvFile = path.join(this.options.sessionDir, `shell-env-${processId}.json`)
     fs.writeFileSync(shellEnvFile, '{}', { mode: 0o600 })
-    const child = new PiProcess({
+    const child = PiProcess.spawn({
       bin: this.options.bin,
       args: this.spawnArgs(extra, directory),
       cwd: directory,
@@ -736,9 +764,17 @@ export class PiBackendProvider implements AgentBackendProvider {
         ...(poolKey && { [PI_KEY_ENV]: poolKey }),
       },
     })
-    const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' })
+    if (child instanceof Error) {
+      fs.rmSync(mcpFile, { force: true })
+      fs.rmSync(shellEnvFile, { force: true })
+      fs.rmSync(systemFile, { force: true })
+      if (poolKey) this.options.pool?.revokeKey(poolKey)
+      return new AgentRequestError({ detail: child.message })
+    }
+    const state = await child.request<{ sessionId: string; sessionFile: string; sessionName?: string; model?: PiModel; thinkingLevel?: string }>({ type: 'get_state' }, { timeoutMs: this.rpcTimeoutMs })
     if (state instanceof Error) {
-      child.kill()
+      void child.kill()
+      fs.rmSync(systemFile, { force: true })
       fs.rmSync(mcpFile, { force: true })
       fs.rmSync(shellEnvFile, { force: true })
       if (poolKey) this.options.pool?.revokeKey(poolKey)
@@ -747,6 +783,15 @@ export class PiBackendProvider implements AgentBackendProvider {
     ownSessionId = state.sessionId
     await this.writeShellEnv(shellEnvFile, state.sessionId)
     const header = readSessionHeader(state.sessionFile)
+    // Roadie's title is authoritative over the name in the Pi file: a session
+    // renamed while not running (setTitle persists it, #477) or a fork carrying
+    // the source's stale Pi name must come back with Roadie's title, and Pi is
+    // brought in line so its file names the session the same way.
+    const sessionTitle = title ?? (this.titleFor(state.sessionId) || state.sessionName || '')
+    if (sessionTitle && sessionTitle !== state.sessionName) {
+      const named = await child.request({ type: 'set_session_name', name: sessionTitle }, { timeoutMs: this.rpcTimeoutMs })
+      if (named instanceof Error) logger.warn(`Could not sync Pi session ${state.sessionId} name: ${named.message}`)
+    }
     const session: RunningSession = {
       id: state.sessionId,
       directory,
@@ -756,7 +801,7 @@ export class PiBackendProvider implements AgentBackendProvider {
       shellEnvFile,
       process: child,
       translator: new PiEventTranslator(state.sessionId),
-      title: title ?? state.sessionName ?? this.titleFor(state.sessionId),
+      title: sessionTitle,
       createdAt: header?.createdAt || Date.now(),
       updatedAt: Date.now(),
       busy: false,
@@ -1207,6 +1252,54 @@ export class PiBackendProvider implements AgentBackendProvider {
     session.idleTimer.unref?.()
   }
 
+  /**
+   * A session's Pi messages, as `get_messages` returns them. A running session
+   * answers from its live process (it may hold messages not yet written).
+   * Otherwise the session file is read from disk: reading history never starts
+   * a session process (#477), so a search across hundreds of sessions leaves
+   * none behind. A file this backend cannot project goes to a throwaway Pi
+   * that is killed as soon as it answers.
+   */
+  private async readMessages(sessionId: string, directory?: string): Promise<PiMessage[] | AgentRequestError> {
+    const running = this.sessions.get(sessionId)
+    if (running?.process.running) {
+      const result = await running.process.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
+      if (result instanceof Error) return new AgentRequestError({ detail: result.message })
+      return result.messages
+    }
+    const file = this.findSessionFile(sessionId)
+    if (!file) return new AgentRequestError({ detail: `Pi session ${sessionId} not found` })
+    const fromFile = readPiSessionMessages(file)
+    if (!(fromFile instanceof Error)) return fromFile
+    logger.warn(`Reading Pi session ${sessionId} through a throwaway process: ${fromFile.message}`)
+    return this.readMessagesThroughPi({ sessionId, file, directory })
+  }
+
+  /** `get_messages` from a short-lived Pi on the session file, killed in finally. Never a session process. */
+  private async readMessagesThroughPi({ sessionId, file, directory }: { sessionId: string; file: string; directory?: string }): Promise<PiMessage[] | AgentRequestError> {
+    const cwd = readSessionHeader(file)?.cwd ?? directory
+    if (!cwd) return new AgentRequestError({ detail: `Pi session ${sessionId} has no working directory` })
+    const child = PiProcess.spawn({
+      bin: this.options.bin,
+      args: [
+        '--session-dir', this.options.sessionDir,
+        '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
+        ...(this.options.model ? ['--model', this.options.model] : []),
+        '--session', file,
+      ],
+      cwd,
+      env: { ...process.env, ...this.options.env },
+    })
+    if (child instanceof Error) return new AgentRequestError({ detail: child.message })
+    try {
+      const result = await child.request<{ messages: PiMessage[] }>({ type: 'get_messages' }, { timeoutMs: this.rpcTimeoutMs })
+      if (result instanceof Error) return new AgentRequestError({ detail: result.message })
+      return result.messages
+    } finally {
+      void child.kill()
+    }
+  }
+
   private toAgentSession(session: { id: string; title: string; directory: string; createdAt: number; updatedAt: number; model?: { provider: string; id: string } }): AgentSession {
     return {
       id: session.id,
@@ -1230,14 +1323,19 @@ export class PiBackendProvider implements AgentBackendProvider {
     const probe = (async () => {
       // Any running process can list models; otherwise start a throwaway one.
       const running = [...this.sessions.values()].find((session) => session.process.running)
-      const probe = running?.process ?? new PiProcess({
+      const probe = running?.process ?? PiProcess.spawn({
         bin: this.options.bin,
         args: ['--no-session', '--no-extensions', ...(this.options.model ? ['--model', this.options.model] : [])],
         cwd: this.options.sessionDir,
         env: { ...process.env, ...this.options.env },
       })
-      const result = await probe.request<{ models: PiModel[] }>({ type: 'get_available_models' })
-      if (!running) probe.kill()
+      if (probe instanceof Error) return probe
+      let result: { models: PiModel[] } | Error
+      try {
+        result = await probe.request<{ models: PiModel[] }>({ type: 'get_available_models' }, { timeoutMs: this.rpcTimeoutMs })
+      } finally {
+        if (!running) void probe.kill()
+      }
       if (result instanceof Error) return result
       const byProvider = new Map<string, PiModel[]>()
       for (const model of result.models) {
@@ -1317,7 +1415,6 @@ export class PiBackendProvider implements AgentBackendProvider {
         if (title) {
           this.titles.set(session.id, title)
           this.persistSessionState(session.id, { title })
-          await session.process.request({ type: 'set_session_name', name: title })
         }
         const agentSession = this.toAgentSession(session)
         this.emit([{ type: 'session.created', session: agentSession }], { type: 'session_created' })
@@ -1344,11 +1441,9 @@ export class PiBackendProvider implements AgentBackendProvider {
         this.persistSessionState(sessionId, { permissionRules: permission })
       },
       messages: async ({ sessionId, directory, limit }) => {
-        const session = await this.ensure(sessionId, directory)
-        if (session instanceof Error) return session
-        const result = await session.process.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
-        if (result instanceof Error) return new AgentRequestError({ detail: result.message })
-        const history = toAgentHistory({ messages: result.messages, sessionId })
+        const messages = await this.readMessages(sessionId, directory)
+        if (messages instanceof Error) return messages
+        const history = toAgentHistory({ messages, sessionId })
         return limit !== undefined ? history.slice(-limit) : history
       },
       prompt: async ({ sessionId, directory, parts, system, agent, model, variant, noReply }) => {
@@ -1508,12 +1603,17 @@ export class PiBackendProvider implements AgentBackendProvider {
       },
       setTitle: async ({ sessionId, title }) => {
         this.titles.set(sessionId, title)
-        // A session that is not running has no Pi-side name to update, but its
-        // persisted title must still move, or the old one comes back after a
-        // restart (listOnDisk reads this state).
+        // A session that is not running has no Pi-side name to update (start()
+        // syncs it from this state), but its persisted title must still move,
+        // or the old one comes back after a restart (listOnDisk reads this
+        // state). Either way the rename is announced, so chat threads follow.
         this.persistSessionState(sessionId, { title })
         const session = this.sessions.get(sessionId)
-        if (!session) return undefined
+        if (!session) {
+          const stored = await this.backend.sessions.get({ sessionId })
+          if (stored && !(stored instanceof Error)) this.emit([{ type: 'session.updated', session: stored }], { type: 'session_renamed' })
+          return undefined
+        }
         session.title = title
         const result = await session.process.request({ type: 'set_session_name', name: title })
         if (result instanceof Error) return new AgentRequestError({ detail: result.message })

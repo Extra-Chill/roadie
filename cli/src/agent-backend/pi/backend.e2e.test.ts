@@ -600,6 +600,23 @@ describe.skipIf(!bin)('Pi backend over real pi processes', () => {
     expect(history instanceof Error ? 0 : history.length).toBeGreaterThan(4)
   })
 
+  test('a fork renamed before it runs keeps the rename when it starts, over the Pi name it inherited', async () => {
+    const forked = await provider.getBackend().sessions.fork({ sessionId, directory: project })
+    if (forked instanceof Error) throw forked
+    const running = () => (provider as unknown as { sessions: Map<string, unknown> }).sessions.has(forked.id)
+    // Reading history leaves it stopped (#477), so the rename lands on disk only.
+    await provider.getBackend().sessions.messages({ sessionId: forked.id, directory: project })
+    expect(running()).toBe(false)
+    const renamed = events.length
+    expect(await provider.getBackend().sessions.setTitle!({ sessionId: forked.id, directory: project, title: 'renamed fork' })).toBeUndefined()
+    await until(() => events.slice(renamed).find((e) => e.type === 'session.updated' && e.session.id === forked.id && e.session.title === 'renamed fork'), 5_000)
+    const before = idleCount(forked.id)
+    await provider.getBackend().sessions.prompt({ sessionId: forked.id, directory: project, parts: [{ kind: 'text', text: 'hello fork' }] })
+    await until(() => (idleCount(forked.id) > before ? true : undefined))
+    const session = await provider.getBackend().sessions.get({ sessionId: forked.id })
+    expect(session instanceof Error ? undefined : session?.title).toBe('renamed fork')
+  })
+
   test('noReply records a context-only message without a model turn; the next turn sees it', async () => {
     const session = await provider.getBackend().sessions.create({ directory: project })
     if (session instanceof Error) throw session
