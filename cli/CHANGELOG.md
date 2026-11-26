@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.89.2] - 2026-11-26
+
+### Fixed
+- read non-running session history from disk instead of starting Pi
+
 ## [0.89.1] - 2026-11-25
 
 ### Fixed
